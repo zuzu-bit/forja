@@ -1,18 +1,17 @@
-name: Build FORJA APK
+name: Build FORJA APK v3
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
-    paths:
-      - "forja-source.tar.gz.b64"
-      - ".github/workflows/build-apk.yml"
   pull_request:
     branches: [ main ]
     paths:
-      - "forja-source.tar.gz.b64"
+      - "forja-source-v3.part*"
       - ".github/workflows/build-apk.yml"
-      - "build-trigger.txt"
+  push:
+    branches: [ main ]
+    paths:
+      - "forja-source-v3.part*"
+      - ".github/workflows/build-apk.yml"
 
 permissions:
   contents: read
@@ -40,30 +39,61 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Set up Gradle 8.10.2
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.10.2"
-
-      - name: Restore Android project
+      - name: Install Gradle 8.10.2
         run: |
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --output /tmp/gradle-8.10.2-bin.zip \
+            https://services.gradle.org/distributions/gradle-8.10.2-bin.zip
+          mkdir -p "$HOME/gradle"
+          unzip -q /tmp/gradle-8.10.2-bin.zip -d "$HOME/gradle"
+          "$HOME/gradle/gradle-8.10.2/bin/gradle" --version
+
+      - name: Restore and validate Android source
+        run: |
+          cat \
+            forja-source-v3.part01 \
+            forja-source-v3.part02 \
+            forja-source-v3.part03 \
+            forja-source-v3.part04 \
+            forja-source-v3.part05 \
+            forja-source-v3.part06 \
+            > forja-source.tar.gz.b64
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("forja-source.tar.gz.b64")
+          source = path.read_text()
+          wrong = "Vuzwa"
+          correct = "Vulwa"
+          assert source.count(wrong) == 1, "Unexpected transferred-source difference"
+          path.write_text(source.replace(wrong, correct, 1))
+          PY
+          echo "b6bc1082bba66542e7805c7f7b737d43b18f415af5a8821ea5099a9f5f4f91da  forja-source.tar.gz.b64" | sha256sum --check
           mkdir -p android-project
           base64 --decode forja-source.tar.gz.b64 | tar -xz -C android-project
           test -f android-project/settings.gradle.kts
           test -f android-project/app/build.gradle.kts
+          test -f android-project/app/debug.keystore
+          echo "c4d9c16a07464a560028799dc43460d7f0c4664556be12d44b0222ad79e62d60  android-project/app/debug.keystore" | sha256sum --check
 
-      - name: Build debug APK
-        run: gradle -p android-project :app:assembleDebug --no-daemon --stacktrace
-
-      - name: Prepare APK
+      - name: Build signed debug APK
         run: |
-          test -s android-project/app/build/outputs/apk/debug/app-debug.apk
-          cp android-project/app/build/outputs/apk/debug/app-debug.apk FORJA-debug.apk
+          "$HOME/gradle/gradle-8.10.2/bin/gradle" \
+            -p android-project :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Verify and prepare APK
+        run: |
+          APK="android-project/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+          cp "$APK" FORJA-v3-debug.apk
+          sha256sum FORJA-v3-debug.apk | tee FORJA-v3-debug.apk.sha256
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FORJA-APK
-          path: FORJA-debug.apk
+          name: FORJA-V3-APK
+          path: |
+            FORJA-v3-debug.apk
+            FORJA-v3-debug.apk.sha256
           if-no-files-found: error
           retention-days: 7
