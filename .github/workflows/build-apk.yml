@@ -1,18 +1,17 @@
-name: Build FORJA APK
+name: Build FORJA APK v2
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ agent/build-apk-google-v2 ]
     paths:
-      - "forja-source.tar.gz.b64"
+      - "overlay-chunks/**"
       - ".github/workflows/build-apk.yml"
   pull_request:
     branches: [ main ]
     paths:
-      - "forja-source.tar.gz.b64"
+      - "overlay-chunks/**"
       - ".github/workflows/build-apk.yml"
-      - "build-trigger.txt"
 
 permissions:
   contents: read
@@ -40,30 +39,57 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Set up Gradle 8.10.2
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.10.2"
-
-      - name: Restore Android project
+      - name: Install Gradle 8.10.2
         run: |
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --output /tmp/gradle-8.10.2-bin.zip \
+            https://services.gradle.org/distributions/gradle-8.10.2-bin.zip
+          mkdir -p "$HOME/gradle"
+          unzip -q /tmp/gradle-8.10.2-bin.zip -d "$HOME/gradle"
+          "$HOME/gradle/gradle-8.10.2/bin/gradle" --version
+
+      - name: Restore and update Android project
+        run: |
+          set -euo pipefail
           mkdir -p android-project
           base64 --decode forja-source.tar.gz.b64 | tar -xz -C android-project
+
+          cat overlay-chunks/part-* > /tmp/forja-v2-overlay.tar.gz.b64
+          echo "1c092f5ce8893a1abaf382e0dee5f8873005d8b01fb1d350ca835c20d710e4f9  /tmp/forja-v2-overlay.tar.gz.b64" | sha256sum -c -
+          base64 --decode /tmp/forja-v2-overlay.tar.gz.b64 > /tmp/forja-v2-overlay.tar.gz
+          echo "05de36a0142eff548d776d40de56e16c991dbb64ffd9576e7f77920b5c3844d4  /tmp/forja-v2-overlay.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/forja-v2-overlay.tar.gz -C android-project
+
           test -f android-project/settings.gradle.kts
           test -f android-project/app/build.gradle.kts
+          test -f android-project/app/google-services.json
+          test ! -f android-project/app/debug.keystore
+          test ! -f android-project/app/debug.keystore.b64
 
-      - name: Build debug APK
-        run: gradle -p android-project :app:assembleDebug --no-daemon --stacktrace
-
-      - name: Prepare APK
+      - name: Build unsigned release APK
         run: |
-          test -s android-project/app/build/outputs/apk/debug/app-debug.apk
-          cp android-project/app/build/outputs/apk/debug/app-debug.apk FORJA-debug.apk
+          "$HOME/gradle/gradle-8.10.2/bin/gradle" \
+            -p android-project :app:assembleRelease \
+            --no-daemon --stacktrace
 
-      - name: Upload APK artifact
+      - name: Align APK and package signing tool
+        run: |
+          set -euo pipefail
+          INPUT="android-project/app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -s "$INPUT"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 \
+            "$INPUT" FORJA-v2-aligned-unsigned.apk
+          test -s FORJA-v2-aligned-unsigned.apk
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" apksigner.jar
+          sha256sum FORJA-v2-aligned-unsigned.apk apksigner.jar > SHA256SUMS.txt
+
+      - name: Upload unsigned APK build
         uses: actions/upload-artifact@v4
         with:
-          name: FORJA-APK
-          path: FORJA-debug.apk
+          name: FORJA-V2-UNSIGNED
+          path: |
+            FORJA-v2-aligned-unsigned.apk
+            apksigner.jar
+            SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 7
