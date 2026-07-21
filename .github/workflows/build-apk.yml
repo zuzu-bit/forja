@@ -57,7 +57,8 @@ jobs:
           test -f android-project/app/build.gradle.kts
 
       - name: Build debug APK
-        run: "$HOME/gradle/gradle-8.10.2/bin/gradle" -p android-project :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          "$HOME/gradle/gradle-8.10.2/bin/gradle" -p android-project :app:assembleDebug --no-daemon --stacktrace
 
       - name: Prepare APK
         run: |
