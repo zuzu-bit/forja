@@ -50,7 +50,23 @@ jobs:
 
       - name: Restore and validate Android source
         run: |
-          cat forja-source-v3.part* > forja-source.tar.gz.b64
+          cat \
+            forja-source-v3.part01 \
+            forja-source-v3.part02 \
+            forja-source-v3.part03 \
+            forja-source-v3.part04 \
+            forja-source-v3.part05 \
+            forja-source-v3.part06 \
+            > forja-source.tar.gz.b64
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("forja-source.tar.gz.b64")
+          source = path.read_text()
+          wrong = "Vuzwa"
+          correct = "Vulwa"
+          assert source.count(wrong) == 1, "Unexpected transferred-source difference"
+          path.write_text(source.replace(wrong, correct, 1))
+          PY
           echo "b6bc1082bba66542e7805c7f7b737d43b18f415af5a8821ea5099a9f5f4f91da  forja-source.tar.gz.b64" | sha256sum --check
           mkdir -p android-project
           base64 --decode forja-source.tar.gz.b64 | tar -xz -C android-project
