@@ -1,0 +1,25 @@
+package com.forja.app.core.network
+
+import com.forja.app.core.network.dto.AuthResponse
+import com.forja.app.core.network.dto.LoginRequest
+import com.forja.app.core.network.dto.RegisterRequest
+import com.forja.app.core.network.dto.UserDto
+import retrofit2.http.Body
+import retrofit2.http.GET
+import retrofit2.http.POST
+
+/**
+ * Contractul cu backendul FORJA (Express + Prisma).
+ * ⚠️ Ajustează rutele dacă backendul folosește alte căi.
+ */
+interface ApiService {
+
+    @POST("api/auth/login")
+    suspend fun login(@Body body: LoginRequest): AuthResponse
+
+    @POST("api/auth/register")
+    suspend fun register(@Body body: RegisterRequest): AuthResponse
+
+    @GET("api/users/me")
+    suspend fun me(): UserDto
+}

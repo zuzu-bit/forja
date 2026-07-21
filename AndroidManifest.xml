@@ -1,0 +1,16 @@
+package com.forja.app.core.navigation
+
+import kotlinx.serialization.Serializable
+
+/** Destinațiile aplicației (navigație type-safe). */
+sealed interface Route {
+
+    @Serializable
+    data object Login : Route
+
+    @Serializable
+    data object Register : Route
+
+    @Serializable
+    data object Dashboard : Route
+}
