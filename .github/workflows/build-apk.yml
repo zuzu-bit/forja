@@ -7,6 +7,12 @@ on:
     paths:
       - "forja-source.tar.gz.b64"
       - ".github/workflows/build-apk.yml"
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "forja-source.tar.gz.b64"
+      - ".github/workflows/build-apk.yml"
+      - "build-trigger.txt"
 
 permissions:
   contents: read
