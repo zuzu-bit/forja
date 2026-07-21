@@ -40,10 +40,14 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Set up Gradle 8.10.2
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.10.2"
+      - name: Install Gradle 8.10.2
+        run: |
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --output /tmp/gradle-8.10.2-bin.zip \
+            https://services.gradle.org/distributions/gradle-8.10.2-bin.zip
+          mkdir -p "$HOME/gradle"
+          unzip -q /tmp/gradle-8.10.2-bin.zip -d "$HOME/gradle"
+          "$HOME/gradle/gradle-8.10.2/bin/gradle" --version
 
       - name: Restore Android project
         run: |
@@ -53,7 +57,7 @@ jobs:
           test -f android-project/app/build.gradle.kts
 
       - name: Build debug APK
-        run: gradle -p android-project :app:assembleDebug --no-daemon --stacktrace
+        run: "$HOME/gradle/gradle-8.10.2/bin/gradle" -p android-project :app:assembleDebug --no-daemon --stacktrace
 
       - name: Prepare APK
         run: |
