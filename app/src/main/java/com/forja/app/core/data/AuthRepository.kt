@@ -9,6 +9,7 @@ import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 import kotlin.math.absoluteValue
 
 data class ForjaUser(
@@ -24,6 +25,9 @@ class AuthRepository(
 ) {
     val currentUid: String? get() = auth.currentUser?.uid
     val isLoggedIn: Boolean get() = auth.currentUser != null
+
+    /** Numele tastat la înregistrare — folosit dacă profilul se creează abia mai târziu. */
+    private var pendingName: String? = null
 
     /** Mesaje de eroare oneste, în română: ce s-a întâmplat + ce urmează. */
     fun humanError(e: Throwable): String = when (e) {
@@ -43,20 +47,28 @@ class AuthRepository(
         val res = auth.createUserWithEmailAndPassword(email.trim(), password).await()
         val uid = res.user!!.uid
         val code = inviteCodeFor(uid)
+        pendingName = name.trim()
         val user = ForjaUser(uid, name.trim(), email.trim(), code)
-        db.collection("users").document(uid).set(
-            mapOf(
-                "name" to user.name,
-                "email" to user.email,
-                "inviteCode" to code,
-                "createdAt" to System.currentTimeMillis(),
-                "ghostUntil" to 0L,
-                "state" to "idle",
-                "weekKm" to 0.0
-            ),
-            SetOptions.merge()
-        ).await()
-        db.collection("inviteCodes").document(code).set(mapOf("uid" to uid)).await()
+        // Profilul în Firestore — cu limită de timp: dacă baza de date nu e încă
+        // disponibilă, NU blocăm intrarea în aplicație; loadProfile() îl creează
+        // automat la prima conexiune reușită.
+        try {
+            withTimeout(8000) {
+                db.collection("users").document(uid).set(
+                    mapOf(
+                        "name" to user.name,
+                        "email" to user.email,
+                        "inviteCode" to code,
+                        "createdAt" to System.currentTimeMillis(),
+                        "ghostUntil" to 0L,
+                        "state" to "idle",
+                        "weekKm" to 0.0
+                    ),
+                    SetOptions.merge()
+                ).await()
+                db.collection("inviteCodes").document(code).set(mapOf("uid" to uid)).await()
+            }
+        } catch (_: Exception) { /* se sincronizează mai târziu */ }
         return user
     }
 
@@ -67,11 +79,25 @@ class AuthRepository(
 
     suspend fun loadProfile(): ForjaUser? {
         val uid = currentUid ?: return null
+        return try {
+            withTimeout(8000) { loadOrCreateProfile(uid) }
+        } catch (_: Exception) {
+            // Firestore indisponibil — profil local provizoriu, sincronizat la următoarea șansă.
+            ForjaUser(
+                uid,
+                auth.currentUser?.email?.substringBefore('@') ?: "Sportiv",
+                auth.currentUser?.email ?: "",
+                inviteCodeFor(uid)
+            )
+        }
+    }
+
+    private suspend fun loadOrCreateProfile(uid: String): ForjaUser {
         val snap = db.collection("users").document(uid).get().await()
         if (!snap.exists()) {
-            // Cont vechi fără profil — îl creăm acum.
+            // Profil lipsă (creat offline sau cont vechi) — îl creăm acum.
             val code = inviteCodeFor(uid)
-            val name = auth.currentUser?.email?.substringBefore('@') ?: "Sportiv"
+            val name = pendingName ?: auth.currentUser?.email?.substringBefore('@') ?: "Sportiv"
             db.collection("users").document(uid).set(
                 mapOf(
                     "name" to name, "email" to (auth.currentUser?.email ?: ""),

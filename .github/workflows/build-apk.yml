@@ -59,13 +59,18 @@ jobs:
           else
             AUTH_STATUS="NECUNOSCUT: $(echo "$R" | head -c 200)"
           fi
-          F=$(curl -s -o /dev/null -w "%{http_code}" "https://firestore.googleapis.com/v1/projects/$PROJECT/databases/(default)/documents/ping/ping" || true)
-          case "$F" in
-            403) FS_STATUS="EXISTĂ ✓ (regulile blochează accesul anonim — corect)";;
-            404) FS_STATUS="NECREAT — deschide Firestore Database în consola Firebase și apasă Create database";;
-            200) FS_STATUS="EXISTĂ ✓ (atenție: reguli complet deschise)";;
-            *) FS_STATUS="NECUNOSCUT (HTTP $F)";;
-          esac
+          FS_URL="https://firestore.googleapis.com/v1/projects/$PROJECT/databases/(default)/documents/ping/ping"
+          F=$(curl -s -o /tmp/fs_body -w "%{http_code}" "$FS_URL" || true)
+          if grep -q "SERVICE_DISABLED\|has not been used" /tmp/fs_body 2>/dev/null; then
+            FS_STATUS="NECREAT — deschide Firestore Database în consola Firebase și apasă Create database"
+          else
+            case "$F" in
+              403) FS_STATUS="EXISTĂ ✓ (regulile blochează accesul anonim — corect)";;
+              404) FS_STATUS="NECREAT — deschide Firestore Database în consola Firebase și apasă Create database";;
+              200) FS_STATUS="EXISTĂ ✓ (atenție: reguli complet deschise)";;
+              *) FS_STATUS="NECUNOSCUT (HTTP $F)";;
+            esac
+          fi
           {
             echo "AUTH_STATUS<<EOF"; echo "$AUTH_STATUS"; echo "EOF"
             echo "FS_STATUS<<EOF"; echo "$FS_STATUS"; echo "EOF"
