@@ -15,7 +15,7 @@ android {
         applicationId = "com.forja.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
+        versionCode = 5
         versionName = "1.2"
         vectorDrawables { useSupportLibrary = true }
         // Serverul central FORJA — injectat de CI după deploy; gol = căile locale.

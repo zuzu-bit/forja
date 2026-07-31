@@ -226,8 +226,8 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit) {
 
         SettingRow(
             "Date & confidențialitate",
-            "Mesele și somnul se analizează pe telefon. Locația pleacă doar către prietenii tăi, doar când nu ești fantomă.",
-            onClick = { toast.show("Nimic nu pleacă de pe telefon fără să confirmi.") }
+            "Jurnalele (mese, somn, activități) se sincronizează în contul tău FORJA. Pozele și clipurile audio NU se stochează — se analizează și dispar. Locația: doar prietenii, doar când nu ești fantomă.",
+            onClick = { toast.show("Pozele și sunetele nu se stochează nicăieri — se analizează și dispar.") }
         ) { }
 
         Spacer(Modifier.height(18.dp))

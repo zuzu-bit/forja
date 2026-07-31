@@ -318,18 +318,18 @@ fun MealCameraScreen(onClose: () -> Unit) {
                     text = "Confirmă",
                     onClick = {
                         scope.launch {
-                            app.db.mealDao().insert(
-                                MealEntity(
-                                    epochDay = Fmt.epochDay(),
-                                    mealType = mealType,
-                                    name = a.fel.ifBlank { components.joinToString(" + ") { it.nume }.take(48) },
-                                    kcal = totalKcal, protein = totalP, carbs = totalC, fat = totalG,
-                                    grams = components.sumOf { it.grame },
-                                    source = "ESTIMARE AI · POZĂ",
-                                    confidence = a.incredere,
-                                    at = System.currentTimeMillis()
-                                )
+                            val meal = MealEntity(
+                                epochDay = Fmt.epochDay(),
+                                mealType = mealType,
+                                name = a.fel.ifBlank { components.joinToString(" + ") { it.nume }.take(48) },
+                                kcal = totalKcal, protein = totalP, carbs = totalC, fat = totalG,
+                                grams = components.sumOf { it.grame },
+                                source = "ESTIMARE AI · POZĂ",
+                                confidence = a.incredere,
+                                at = System.currentTimeMillis()
                             )
+                            val id = app.db.mealDao().insert(meal)
+                            com.forja.app.core.data.CloudSync.meal(app.auth.currentUid, meal.copy(id = id))
                             toast.show("Salvat: $totalKcal kcal · P $totalP · C $totalC · G $totalG.")
                             analysis = null
                             onClose()

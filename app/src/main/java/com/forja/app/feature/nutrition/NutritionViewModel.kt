@@ -94,27 +94,27 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
     fun dismissPending() { _pending.value = null }
     fun clearError() { _lookupError.value = null }
 
-    /** Salvează cu porția aleasă. Fracțiile sunt UI, nu AI — scalare liniară. */
+    /** Salvează cu porția aleasă + sincronizează în baza companiei. */
     fun confirmPending(mealType: Int, grams: Int) {
         val p = _pending.value ?: return
         val f = grams / 100.0
         viewModelScope.launch {
-            dao.insert(
-                MealEntity(
-                    epochDay = Fmt.epochDay(),
-                    mealType = mealType,
-                    name = p.product.name + (p.product.brand?.let { " · $it" } ?: ""),
-                    kcal = (p.product.kcal100 * f).roundToInt(),
-                    protein = (p.product.protein100 * f).roundToInt(),
-                    carbs = (p.product.carbs100 * f).roundToInt(),
-                    fat = (p.product.fat100 * f).roundToInt(),
-                    grams = grams,
-                    source = p.source,
-                    confidence = if (p.source.startsWith("EXACT")) "exactă" else "ridicată",
-                    at = System.currentTimeMillis(),
-                    barcode = p.product.barcode
-                )
+            val meal = MealEntity(
+                epochDay = Fmt.epochDay(),
+                mealType = mealType,
+                name = p.product.name + (p.product.brand?.let { " · $it" } ?: ""),
+                kcal = (p.product.kcal100 * f).roundToInt(),
+                protein = (p.product.protein100 * f).roundToInt(),
+                carbs = (p.product.carbs100 * f).roundToInt(),
+                fat = (p.product.fat100 * f).roundToInt(),
+                grams = grams,
+                source = p.source,
+                confidence = if (p.source.startsWith("EXACT")) "exactă" else "ridicată",
+                at = System.currentTimeMillis(),
+                barcode = p.product.barcode
             )
+            val id = dao.insert(meal)
+            com.forja.app.core.data.CloudSync.meal(forja.auth.currentUid, meal.copy(id = id))
             _pending.value = null
         }
     }
@@ -122,17 +122,20 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
     /** Intrare manuală simplă — onestă: sursă MANUAL. */
     fun addManual(mealType: Int, name: String, kcal: Int, protein: Int, carbs: Int, fat: Int, grams: Int) {
         viewModelScope.launch {
-            dao.insert(
-                MealEntity(
-                    epochDay = Fmt.epochDay(), mealType = mealType, name = name,
-                    kcal = kcal, protein = protein, carbs = carbs, fat = fat, grams = grams,
-                    source = "MANUAL", confidence = "—", at = System.currentTimeMillis()
-                )
+            val meal = MealEntity(
+                epochDay = Fmt.epochDay(), mealType = mealType, name = name,
+                kcal = kcal, protein = protein, carbs = carbs, fat = fat, grams = grams,
+                source = "MANUAL", confidence = "—", at = System.currentTimeMillis()
             )
+            val id = dao.insert(meal)
+            com.forja.app.core.data.CloudSync.meal(forja.auth.currentUid, meal.copy(id = id))
         }
     }
 
     fun deleteMeal(id: Long) {
-        viewModelScope.launch { dao.delete(id) }
+        viewModelScope.launch {
+            dao.delete(id)
+            com.forja.app.core.data.CloudSync.deleteMeal(forja.auth.currentUid, id)
+        }
     }
 }

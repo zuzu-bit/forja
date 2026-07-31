@@ -123,15 +123,15 @@ class GoTrackService : Service() {
             val end = System.currentTimeMillis()
             val durS = (end - s.startedAt) / 1000
             scope.launch {
-                app.db.activityDao().insert(
-                    ActivityEntity(
-                        startAt = s.startedAt, endAt = end,
-                        distanceM = s.distanceM, durationS = durS,
-                        kcal = kcalFor(s.sport, s.distanceM),
-                        polyline = s.points.joinToString(";") { "${it.first},${it.second}" },
-                        type = s.sport
-                    )
+                val activity = ActivityEntity(
+                    startAt = s.startedAt, endAt = end,
+                    distanceM = s.distanceM, durationS = durS,
+                    kcal = kcalFor(s.sport, s.distanceM),
+                    polyline = s.points.joinToString(";") { "${it.first},${it.second}" },
+                    type = s.sport
                 )
+                val newId = app.db.activityDao().insert(activity)
+                com.forja.app.core.data.CloudSync.activity(app.auth.currentUid, activity.copy(id = newId))
                 // Publică rezumatul către prieteni: km-ii reali ai săptămânii + ultima activitate.
                 app.auth.currentUid?.let { uid ->
                     try {

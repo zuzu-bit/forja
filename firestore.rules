@@ -11,6 +11,12 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create, update: if isMe(uid);
       allow delete: if false;
+
+      // Jurnalele private (mese, somn, activități): DOAR proprietarul.
+      // Compania le vede din consola Firebase; prietenii nu le văd niciodată.
+      match /{sub}/{docId} {
+        allow read, write: if isMe(uid);
+      }
     }
 
     // Coduri de invitație: citire pentru oricine conectat, scriere doar pentru propriul cod.

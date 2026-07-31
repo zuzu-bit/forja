@@ -90,6 +90,9 @@ interface SleepDao {
     @Query("SELECT * FROM sleep_events WHERE sessionId = :sessionId ORDER BY at")
     fun eventsForSession(sessionId: Long): Flow<List<SleepEventEntity>>
 
+    @Query("SELECT * FROM sleep_events WHERE sessionId = :sessionId")
+    suspend fun eventsForSessionOnce(sessionId: Long): List<SleepEventEntity>
+
     @Query("DELETE FROM sleep_events WHERE id = :id")
     suspend fun deleteEvent(id: Long)
 }

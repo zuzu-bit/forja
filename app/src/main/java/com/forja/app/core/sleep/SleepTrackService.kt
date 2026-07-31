@@ -315,12 +315,21 @@ class SleepTrackService : Service(), SensorEventListener {
                     else -> 40
                 }
                 val score = (durationScore - movePenalty).roundToInt().coerceIn(15, 98)
-                dao.update(
-                    s.copy(
-                        endAt = end, movements = moves, score = score,
-                        deepMin = deep, lightMin = light, remMin = rem, phases = phases
-                    )
+                val updated = s.copy(
+                    endAt = end, movements = moves, score = score,
+                    deepMin = deep, lightMin = light, remMin = rem, phases = phases
                 )
+                dao.update(updated)
+                // Raportul urcă în baza companiei — fără clipuri audio, doar cifrele.
+                try {
+                    val events = dao.eventsForSessionOnce(s.id)
+                    com.forja.app.core.data.CloudSync.sleep(
+                        app.auth.currentUid, updated,
+                        snoreCount = events.count { it.type == "snore" },
+                        talkCount = events.count { it.type == "talk" },
+                        soundCount = events.count { it.type == "sound" }
+                    )
+                } catch (_: Exception) { }
             }
             stopSelf()
         }
