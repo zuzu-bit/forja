@@ -52,6 +52,25 @@ jobs:
           npm install --no-audit --no-fund
           WHO=$(npx wrangler@3 whoami 2>&1 || true)
           echo "$WHO" | head -10
+          # Subdomeniul workers.dev (numele public al serverului) — îl înregistrăm automat dacă lipsește.
+          ACC=$(echo "$WHO" | grep -oE '[0-9a-f]{32}' | head -1)
+          if [ -n "$ACC" ]; then
+            SUB=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$ACC/workers/subdomain" \
+              | grep -oE '"subdomain":"[^"]+"' | head -1 | cut -d'"' -f4)
+            if [ -z "$SUB" ]; then
+              WANTED="forja-$(echo "$ACC" | cut -c1-8)"
+              echo "Înregistrez subdomeniul: $WANTED.workers.dev"
+              curl -s -X PUT \
+                -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"subdomain\":\"$WANTED\"}" \
+                "https://api.cloudflare.com/client/v4/accounts/$ACC/workers/subdomain" | head -c 400
+              echo ""
+            else
+              echo "Subdomeniu existent: $SUB.workers.dev"
+            fi
+          fi
           OUT=$(npx wrangler@3 deploy 2>&1 | tee /dev/stderr) || true
           URL=$(echo "$OUT" | grep -oE "https://[a-z0-9.-]+\.workers\.dev" | head -1)
           if [ -z "$URL" ]; then
