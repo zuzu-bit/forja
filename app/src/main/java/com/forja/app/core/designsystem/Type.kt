@@ -1,4 +1,8 @@
+@file:OptIn(ExperimentalTextApi::class)
+
 package com.forja.app.core.designsystem
+
+import androidx.compose.ui.text.ExperimentalTextApi
 
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle

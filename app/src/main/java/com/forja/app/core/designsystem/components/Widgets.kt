@@ -1,7 +1,12 @@
 package com.forja.app.core.designsystem.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -131,13 +136,11 @@ fun Avatar(
     live: Boolean = false,
     bg: Color = Surface2
 ) {
-    val infinite = androidx.compose.animation.core.rememberInfiniteTransition(label = "live")
+    val infinite = rememberInfiniteTransition(label = "live")
     val pulse by infinite.animateFloat(
         initialValue = 0.75f, targetValue = 1f,
-        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-            androidx.compose.animation.core.tween(1200),
-            androidx.compose.animation.core.RepeatMode.Reverse
-        ), label = "pulse"
+        animationSpec = infiniteRepeatable(tween(1200), RepeatMode.Reverse),
+        label = "pulse"
     )
     val initials = name.trim().split(Regex("\\s+")).take(2).mapNotNull { it.firstOrNull()?.uppercase() }.joinToString("")
     Box(
