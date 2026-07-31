@@ -49,10 +49,10 @@ jobs:
           PROJECT=forja-65093
           AUTH_STATUS="NECUNOSCUT"
           FS_STATUS="NECUNOSCUT"
-          R=$(curl -s -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$API_KEY" -H 'Content-Type: application/json' -d '{"returnSecureToken":true}' || true)
-          if echo "$R" | grep -q "ADMIN_ONLY_OPERATION\|OPERATION_NOT_ALLOWED"; then
+          R=$(curl -s -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$API_KEY" -H 'Content-Type: application/json' -d '{"email":"verificare@forja-check.test","password":"x","returnSecureToken":true}' || true)
+          if echo "$R" | grep -q "OPERATION_NOT_ALLOWED\|PASSWORD_LOGIN_DISABLED"; then
             AUTH_STATUS="NEACTIVAT — activează Email/Password în consola Firebase (Authentication → Sign-in method)"
-          elif echo "$R" | grep -q "MISSING_EMAIL\|idToken"; then
+          elif echo "$R" | grep -q "EMAIL_NOT_FOUND\|INVALID_LOGIN_CREDENTIALS\|INVALID_PASSWORD"; then
             AUTH_STATUS="ACTIV ✓"
           elif echo "$R" | grep -q "CONFIGURATION_NOT_FOUND"; then
             AUTH_STATUS="NEACTIVAT — deschide Authentication în consola Firebase și apasă Get started, apoi activează Email/Password"
