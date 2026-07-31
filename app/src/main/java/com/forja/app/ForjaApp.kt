@@ -9,6 +9,7 @@ import com.forja.app.core.data.Prefs
 import com.forja.app.core.data.PresenceRepository
 import com.forja.app.core.data.db.ForjaDatabase
 import com.forja.app.core.data.db.Seed
+import com.forja.app.core.network.GeminiFood
 import com.forja.app.core.network.OpenFoodFacts
 import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.FirebaseFirestore
@@ -28,6 +29,7 @@ class ForjaApp : Application() {
     lateinit var friends: FriendsRepository
     lateinit var presence: PresenceRepository
     lateinit var foodApi: OpenFoodFacts
+    lateinit var geminiFood: GeminiFood
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
@@ -43,6 +45,7 @@ class ForjaApp : Application() {
         friends = FriendsRepository()
         presence = PresenceRepository(this)
         foodApi = OpenFoodFacts()
+        geminiFood = GeminiFood()
 
         // osmdroid: user agent + cache intern (fără permisiuni de stocare).
         Configuration.getInstance().userAgentValue = packageName

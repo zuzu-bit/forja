@@ -26,9 +26,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 data class GoState(
     val recording: Boolean = false,
+    val sport: String = "run",           // run · walk · ride
     val startedAt: Long = 0L,
     val distanceM: Double = 0.0,
     val points: List<Pair<Double, Double>> = emptyList(),
@@ -36,8 +38,8 @@ data class GoState(
 )
 
 /**
- * Înregistrare traseu (GO): serviciu foreground cu FusedLocation la 1s —
- * polilinie live + consolă TIMP/KM/RITM. În producție NU se oprește la părăsirea ecranului.
+ * Înregistrare traseu (GO) à la Strava: alergare / mers / ciclism.
+ * Serviciu foreground cu FusedLocation la 1s — polilinie live + consolă.
  */
 class GoTrackService : Service() {
 
@@ -53,16 +55,16 @@ class GoTrackService : Service() {
                 finish()
                 return START_NOT_STICKY
             }
-            else -> begin()
+            else -> begin(intent?.getStringExtra(EXTRA_SPORT) ?: "run")
         }
         return START_STICKY
     }
 
     @SuppressLint("MissingPermission")
-    private fun begin() {
+    private fun begin(sport: String) {
         if (state.value.recording) return
-        startForeground(NOTIF_ID, buildNotification())
-        state.value = GoState(recording = true, startedAt = System.currentTimeMillis())
+        startForeground(NOTIF_ID, buildNotification(sport))
+        state.value = GoState(recording = true, sport = sport, startedAt = System.currentTimeMillis())
         val app = ForjaApp.from(this)
         val client = LocationServices.getFusedLocationProviderClient(this)
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
@@ -79,14 +81,14 @@ class GoTrackService : Service() {
                     val (plat, plng) = pts.last()
                     val res = FloatArray(1)
                     android.location.Location.distanceBetween(plat, plng, loc.latitude, loc.longitude, res)
-                    if (res[0] < 200) dist += res[0]   // ignoră salturi GPS
+                    if (res[0] < 300) dist += res[0]   // ignoră salturi GPS
                 }
                 state.value = s.copy(
                     distanceM = dist,
                     points = pts + (loc.latitude to loc.longitude),
                     lastSpeedMps = if (loc.hasSpeed()) loc.speed.toDouble() else 0.0
                 )
-                // Publică live către prieteni (dacă nu e fantomă) — max la 5s.
+                // Publică live către prieteni — max la 5s.
                 val now = System.currentTimeMillis()
                 if (now - lastFirestorePush > 5000) {
                     lastFirestorePush = now
@@ -95,7 +97,7 @@ class GoTrackService : Service() {
                             mapOf(
                                 "lat" to loc.latitude, "lng" to loc.longitude,
                                 "speedMps" to (if (loc.hasSpeed()) loc.speed.toDouble() else 0.0),
-                                "state" to "run",
+                                "state" to state.value.sport,
                                 "locUpdatedAt" to now
                             ), SetOptions.merge()
                         )
@@ -125,31 +127,48 @@ class GoTrackService : Service() {
                     ActivityEntity(
                         startAt = s.startedAt, endAt = end,
                         distanceM = s.distanceM, durationS = durS,
-                        kcal = Fmt.kcalRun(s.distanceM),
-                        polyline = s.points.joinToString(";") { "${it.first},${it.second}" }
+                        kcal = kcalFor(s.sport, s.distanceM),
+                        polyline = s.points.joinToString(";") { "${it.first},${it.second}" },
+                        type = s.sport
                     )
                 )
-                // Actualizează km-ii săptămânii pentru prieteni.
+                // Publică rezumatul către prieteni: km-ii reali ai săptămânii + ultima activitate.
                 app.auth.currentUid?.let { uid ->
-                    val weekM = s.distanceM // aproximație rapidă; corectat la următoarea citire
-                    try { app.friends.publishWeekKm(uid, weekM / 1000.0) } catch (_: Exception) {}
+                    try {
+                        val weekM = app.db.activityDao().distanceSinceOnce(Fmt.startOfWeekMillis())
+                        FirebaseFirestore.getInstance().collection("users").document(uid).set(
+                            mapOf(
+                                "weekKm" to weekM / 1000.0,
+                                "state" to "idle",
+                                "lastActivityType" to s.sport,
+                                "lastActivityKm" to s.distanceM / 1000.0,
+                                "lastActivityDurS" to durS,
+                                "lastActivityAt" to end
+                            ), SetOptions.merge()
+                        )
+                    } catch (_: Exception) { }
                 }
-                state.value = GoState()
+                state.value = GoState(sport = s.sport)
                 stopSelf()
             }
         } else {
-            state.value = GoState()
+            state.value = GoState(sport = s.sport)
             stopSelf()
         }
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(sport: String): Notification {
         val pi = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
+        val label = when (sport) {
+            "walk" -> "Mersul tău se înregistrează"
+            "ride" -> "Tura ta pe roți se înregistrează"
+            else -> "Alergarea ta se înregistrează"
+        }
         return NotificationCompat.Builder(this, "go")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("FORJA înregistrează traseul")
+            .setContentTitle(label)
             .setContentText("Atinge pentru consolă. Oprești din hartă.")
             .setOngoing(true)
             .setContentIntent(pi)
@@ -167,10 +186,22 @@ class GoTrackService : Service() {
     companion object {
         const val NOTIF_ID = 32
         const val ACTION_STOP = "com.forja.app.go.STOP"
+        const val EXTRA_SPORT = "sport"
         val state = MutableStateFlow(GoState())
 
-        fun start(context: Context) {
-            context.startForegroundService(Intent(context, GoTrackService::class.java))
+        fun kcalFor(sport: String, distanceM: Double): Int {
+            val perKm = when (sport) {
+                "walk" -> 50
+                "ride" -> 25
+                else -> 62
+            }
+            return (distanceM / 1000.0 * perKm).roundToInt()
+        }
+
+        fun start(context: Context, sport: String = "run") {
+            context.startForegroundService(
+                Intent(context, GoTrackService::class.java).putExtra(EXTRA_SPORT, sport)
+            )
         }
         fun stop(context: Context) {
             context.startForegroundService(

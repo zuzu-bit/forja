@@ -83,6 +83,15 @@ interface SleepDao {
 
     @Query("SELECT * FROM sleep_sessions WHERE endAt IS NOT NULL AND startAt >= :since ORDER BY startAt")
     fun finishedSince(since: Long): Flow<List<SleepSessionEntity>>
+
+    @Insert
+    suspend fun insertEvent(e: SleepEventEntity): Long
+
+    @Query("SELECT * FROM sleep_events WHERE sessionId = :sessionId ORDER BY at")
+    fun eventsForSession(sessionId: Long): Flow<List<SleepEventEntity>>
+
+    @Query("DELETE FROM sleep_events WHERE id = :id")
+    suspend fun deleteEvent(id: Long)
 }
 
 @Dao
@@ -98,6 +107,15 @@ interface ActivityDao {
 
     @Query("SELECT * FROM activities ORDER BY startAt DESC LIMIT 1")
     fun last(): Flow<ActivityEntity?>
+
+    @Query("SELECT * FROM activities ORDER BY startAt DESC")
+    fun all(): Flow<List<ActivityEntity>>
+
+    @Query("SELECT * FROM activities WHERE id = :id")
+    suspend fun byId(id: Long): ActivityEntity?
+
+    @Query("SELECT COALESCE(SUM(distanceM),0) FROM activities WHERE startAt >= :since")
+    suspend fun distanceSinceOnce(since: Long): Double
 }
 
 @Dao

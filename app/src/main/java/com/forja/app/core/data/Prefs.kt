@@ -22,6 +22,10 @@ class Prefs(private val context: Context) {
         val focusUnlockUntil = longPreferencesKey("focus_unlock_until")
         val focusActive = booleanPreferencesKey("focus_active")
         val cachedName = stringPreferencesKey("cached_name")
+        val geminiKey = stringPreferencesKey("gemini_key")
+        val alarmEnabled = booleanPreferencesKey("alarm_enabled")
+        val alarmHour = intPreferencesKey("alarm_hour")
+        val alarmMinute = intPreferencesKey("alarm_minute")
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }
@@ -47,4 +51,16 @@ class Prefs(private val context: Context) {
 
     val cachedName: Flow<String> = context.dataStore.data.map { it[K.cachedName] ?: "" }
     suspend fun setCachedName(v: String) = context.dataStore.edit { it[K.cachedName] = v }
+
+    val geminiKey: Flow<String> = context.dataStore.data.map { it[K.geminiKey] ?: "" }
+    suspend fun setGeminiKey(v: String) = context.dataStore.edit { it[K.geminiKey] = v.trim() }
+
+    val alarmEnabled: Flow<Boolean> = context.dataStore.data.map { it[K.alarmEnabled] ?: false }
+    suspend fun setAlarmEnabled(v: Boolean) = context.dataStore.edit { it[K.alarmEnabled] = v }
+
+    val alarmHour: Flow<Int> = context.dataStore.data.map { it[K.alarmHour] ?: 7 }
+    val alarmMinute: Flow<Int> = context.dataStore.data.map { it[K.alarmMinute] ?: 0 }
+    suspend fun setAlarmTime(h: Int, m: Int) = context.dataStore.edit {
+        it[K.alarmHour] = h; it[K.alarmMinute] = m
+    }
 }

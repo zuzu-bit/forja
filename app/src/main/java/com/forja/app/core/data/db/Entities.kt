@@ -81,7 +81,20 @@ data class SleepSessionEntity(
     val score: Int = 0,
     val deepMin: Int = 0,
     val lightMin: Int = 0,
-    val remMin: Int = 0
+    val remMin: Int = 0,
+    val phases: String = ""  // hipnogramă: „startMin,endMin,tip;…" (deep|light|rem|awake)
+)
+
+/** Eveniment de somn detectat local: sforăit / vorbit / mișcare, cu clip audio de 5s. */
+@Entity(tableName = "sleep_events")
+data class SleepEventEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: Long,
+    val type: String,        // snore · talk · move
+    val at: Long,
+    val durationS: Int,
+    val intensity: Int,      // 1 Redus · 2 Moderat · 3 Puternic
+    val clipPath: String? = null
 )
 
 @Entity(tableName = "activities")
@@ -92,7 +105,8 @@ data class ActivityEntity(
     val distanceM: Double,
     val durationS: Long,
     val kcal: Int,
-    val polyline: String     // „lat,lng;lat,lng;…"
+    val polyline: String,    // „lat,lng;lat,lng;…"
+    val type: String = "run" // run · walk · ride
 )
 
 @Entity(tableName = "focus_rules")

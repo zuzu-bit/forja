@@ -13,8 +13,13 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
+import androidx.compose.material.icons.automirrored.filled.DirectionsRun
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,6 +43,9 @@ import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.location.GoTrackService
 import com.forja.app.core.util.Fmt
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.launch
@@ -81,7 +89,7 @@ private fun warmMatrix(): ColorMatrixColorFilter {
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("MissingPermission")
 @Composable
-fun MapScreen() {
+fun MapScreen(onOpenActivities: () -> Unit = {}) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
     val scope = rememberCoroutineScope()
@@ -111,6 +119,7 @@ fun MapScreen() {
     val ghostActive = ghostUntil == -1L || ghostUntil > System.currentTimeMillis()
     var ghostOpen by remember { mutableStateOf(false) }
     var friendsOpen by remember { mutableStateOf(false) }
+    var sportOpen by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<Friend?>(null) }
 
     val go by GoTrackService.state.collectAsState()
@@ -190,33 +199,52 @@ fun MapScreen() {
             }
         }
 
-        // Poziția mea: marker „Tu" + centrare inițială
-        LaunchedEffect(hasLocation) {
-            if (!hasLocation) return@LaunchedEffect
+        // Poziția mea LIVE cât timp harta e deschisă: update la 3s, centrare la primul fix.
+        var hadFirstFix by remember { mutableStateOf(false) }
+        DisposableEffect(hasLocation) {
+            if (!hasLocation) return@DisposableEffect onDispose { }
             val client = LocationServices.getFusedLocationProviderClient(context)
-            try {
-                val loc = client.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null).await()
-                if (loc != null) {
-                    val map = mapRef.value
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
+                .setMinUpdateDistanceMeters(0f)
+                .build()
+            val cb = object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    val loc = result.lastLocation ?: return
+                    val map = mapRef.value ?: return
                     val p = GeoPoint(loc.latitude, loc.longitude)
-                    if (map != null) {
-                        if (myMarker.value == null) {
-                            val m = Marker(map).apply {
-                                position = p
-                                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                                icon = MapMarkers.friendMarker(context, "Tu", me = true, ghost = ghostActive)
-                                title = "Tu"
-                            }
-                            myMarker.value = m
-                            map.overlays.add(m)
-                        } else {
-                            myMarker.value?.position = p
+                    val existing = myMarker.value
+                    if (existing == null) {
+                        val m = Marker(map).apply {
+                            position = p
+                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                            icon = MapMarkers.friendMarker(context, "Tu", me = true, ghost = ghostActive)
+                            title = "Tu"
                         }
+                        myMarker.value = m
+                        map.overlays.add(m)
+                    } else {
+                        existing.position = p
+                    }
+                    if (!hadFirstFix) {
+                        hadFirstFix = true
+                        map.controller.setZoom(16.0)
                         map.controller.animateTo(p)
-                        map.invalidate()
+                    }
+                    map.invalidate()
+                }
+            }
+            try {
+                // Ultimul fix cunoscut — instant, ca să nu aștepți GPS-ul.
+                client.lastLocation.addOnSuccessListener { loc ->
+                    if (loc != null) {
+                        cb.onLocationResult(LocationResult.create(listOf(loc)))
                     }
                 }
-            } catch (_: Exception) { }
+                client.requestLocationUpdates(request, cb, android.os.Looper.getMainLooper())
+            } catch (_: SecurityException) { }
+            onDispose {
+                client.removeLocationUpdates(cb)
+            }
         }
 
         // Traseul GO — glow 13dp @16% + linie 4,5dp amber, camera follow.
@@ -284,6 +312,10 @@ fun MapScreen() {
                 )
             }
             Row {
+                MapFab(icon = { Icon(Icons.Outlined.History, "Activitățile tale", tint = TextSecondary, modifier = Modifier.size(20.dp)) }) {
+                    onOpenActivities()
+                }
+                Spacer(Modifier.width(10.dp))
                 MapFab(icon = { Icon(Icons.Outlined.Search, null, tint = TextSecondary, modifier = Modifier.size(20.dp)) }) {
                     friendsOpen = true
                 }
@@ -354,12 +386,21 @@ fun MapScreen() {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         GoStat("TIMP", Fmt.durationMs(elapsedS))
                         GoStat("KM", Fmt.km(go.distanceM, 2))
-                        GoStat(
-                            "RITM",
-                            if (go.distanceM >= 50)
-                                Fmt.pace((elapsedS / (go.distanceM / 1000.0)).toLong())
-                            else "—"
-                        )
+                        if (go.sport == "ride") {
+                            GoStat(
+                                "VITEZĂ",
+                                if (go.distanceM >= 50 && elapsedS > 0)
+                                    Fmt.km(go.distanceM / elapsedS * 3600, 1)
+                                else "—"
+                            )
+                        } else {
+                            GoStat(
+                                "RITM",
+                                if (go.distanceM >= 50)
+                                    Fmt.pace((elapsedS / (go.distanceM / 1000.0)).toLong())
+                                else "—"
+                            )
+                        }
                         Box(
                             Modifier
                                 .size(46.dp)
@@ -380,23 +421,42 @@ fun MapScreen() {
                     }
                 }
             } else {
-                Box(
-                    Modifier
-                        .align(Alignment.End)
-                        .size(58.dp)
-                        .clip(CircleShape)
-                        .background(AccentGradient)
-                        .pressable({
-                            if (hasLocation) {
-                                GoTrackService.start(context)
-                                toast.show("GO. Fiecare metru se vede.")
-                            } else {
-                                permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                            }
-                        }),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Filled.PlayArrow, "GO", tint = OnAccent, modifier = Modifier.size(28.dp))
+                Column(Modifier.align(Alignment.End), horizontalAlignment = Alignment.CenterHorizontally) {
+                    // Recentrare pe mine
+                    MapFab(icon = {
+                        Icon(
+                            Icons.Filled.MyLocation, "Centrează pe mine",
+                            tint = if (hadFirstFix) Accent2 else TextDim,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }) {
+                        val p = myMarker.value?.position
+                        if (p != null) {
+                            mapRef.value?.controller?.setZoom(16.0)
+                            mapRef.value?.controller?.animateTo(p)
+                        } else if (!hasLocation) {
+                            permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                        } else {
+                            toast.show("Aștept semnalul GPS — ieși sub cer liber dacă ești în casă.")
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Box(
+                        Modifier
+                            .size(58.dp)
+                            .clip(CircleShape)
+                            .background(AccentGradient)
+                            .pressable({
+                                if (hasLocation) {
+                                    sportOpen = true
+                                } else {
+                                    permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                                }
+                            }),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.PlayArrow, "GO", tint = OnAccent, modifier = Modifier.size(28.dp))
+                    }
                 }
             }
         }
@@ -469,6 +529,48 @@ fun MapScreen() {
                         modifier = Modifier.weight(1f)
                     )
                 }
+            }
+        }
+    }
+
+    // Selector de sport pentru GO — Alergare / Mers / Ciclism
+    if (sportOpen) {
+        ModalBottomSheet(
+            onDismissRequest = { sportOpen = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = Surface1, shape = SheetShape
+        ) {
+            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+                Text("Ce faci acum?", style = TitleModule.copy(fontSize = 20.sp))
+                Spacer(Modifier.height(4.dp))
+                Text("Consola și caloriile se adaptează sportului.", style = BodySmall)
+                Spacer(Modifier.height(14.dp))
+                @Composable
+                fun sportOption(label: String, sub: String, sport: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+                    ForjaCard(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .pressable({
+                                sportOpen = false
+                                GoTrackService.start(context, sport)
+                                toast.show("GO. Fiecare metru se vede.")
+                            }),
+                        fill = Surface2, padding = 14.dp
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(icon, null, tint = Accent2, modifier = Modifier.size(24.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(label, style = BodyStrong.copy(fontSize = 15.sp))
+                                Text(sub, style = BodyTiny.copy(color = TextSecondary))
+                            }
+                        }
+                    }
+                }
+                sportOption("Alergare", "ritm pe km · ca la alergătorii serioși", "run", Icons.AutoMirrored.Filled.DirectionsRun)
+                sportOption("Mers", "plimbare, hike, pași — tot contează", "walk", Icons.AutoMirrored.Filled.DirectionsWalk)
+                sportOption("Ciclism", "viteză în km/h în loc de ritm", "ride", Icons.AutoMirrored.Filled.DirectionsBike)
             }
         }
     }

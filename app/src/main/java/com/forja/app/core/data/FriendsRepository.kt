@@ -20,7 +20,10 @@ data class Friend(
     val speedMps: Double,
     val locUpdatedAt: Long,
     val weekKm: Double,
-    val ghost: Boolean
+    val ghost: Boolean,
+    val lastActivityType: String? = null,
+    val lastActivityKm: Double = 0.0,
+    val lastActivityAt: Long = 0L
 )
 
 class FriendsRepository(
@@ -79,7 +82,10 @@ class FriendsRepository(
                                 speedMps = u.getDouble("speedMps") ?: 0.0,
                                 locUpdatedAt = u.getLong("locUpdatedAt") ?: 0L,
                                 weekKm = u.getDouble("weekKm") ?: 0.0,
-                                ghost = ghost
+                                ghost = ghost,
+                                lastActivityType = u.getString("lastActivityType"),
+                                lastActivityKm = u.getDouble("lastActivityKm") ?: 0.0,
+                                lastActivityAt = u.getLong("lastActivityAt") ?: 0L
                             )
                             trySend(cache.values.toList())
                         }

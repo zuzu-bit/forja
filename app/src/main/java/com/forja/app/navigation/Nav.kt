@@ -13,4 +13,8 @@ object Route {
     const val MAP = "map"
     const val FOCUS = "focus"
     const val PROFILE = "profile"
+    const val ACTIVITIES = "activities"
+    const val ACTIVITY_DETAIL = "activity/{id}"
+    const val MEAL_CAMERA = "meal_camera"
+    fun activityDetail(id: Long) = "activity/$id"
 }

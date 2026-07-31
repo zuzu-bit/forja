@@ -36,7 +36,8 @@ private data class ModuleCard(
 fun DashboardScreen(
     onOpenModule: (String) -> Unit,
     onOpenProfile: () -> Unit,
-    onOpenMap: () -> Unit
+    onOpenMap: () -> Unit,
+    onOpenActivities: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
@@ -149,9 +150,10 @@ fun DashboardScreen(
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    if (todayKm > 0) "săptămâna asta: ${Fmt.km(weekDistance)} km"
+                    if (todayKm > 0 || weekDistance > 0) "săptămâna asta: ${Fmt.km(weekDistance)} km · vezi tot →"
                     else "apasă GO pe hartă și pornește prima tură",
-                    style = BodySmall.copy(color = TextSecondary)
+                    style = BodySmall.copy(color = TextSecondary),
+                    modifier = Modifier.pressable(onOpenActivities)
                 )
             }
         }

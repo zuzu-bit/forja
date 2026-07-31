@@ -185,6 +185,16 @@ fun FriendsSheet(
                                     }
                                 )
                             )
+                            if (f.lastActivityType != null && f.lastActivityKm > 0) {
+                                Text(
+                                    "ultima: ${Fmt.km(f.lastActivityKm * 1000)} km ${
+                                        when (f.lastActivityType) {
+                                            "walk" -> "mers"; "ride" -> "ciclism"; else -> "alergare"
+                                        }
+                                    } · ${Fmt.freshness(f.lastActivityAt)}",
+                                    style = BodyTiny.copy(color = Accent2)
+                                )
+                            }
                             if (f.weekKm > 0) {
                                 Text(
                                     "${Fmt.km(f.weekKm * 1000)} km săptămâna asta",

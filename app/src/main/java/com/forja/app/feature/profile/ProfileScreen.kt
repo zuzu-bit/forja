@@ -172,6 +172,26 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit) {
             }
         ) { Text("copiază", style = BodySmall.copy(color = Accent2)) }
 
+        val geminiKey by app.prefs.geminiKey.collectAsState(initial = "")
+        var aiKeyOpen by remember { mutableStateOf(false) }
+        SettingRow(
+            "Analiza AI a pozelor cu mâncare",
+            if (geminiKey.isBlank()) "neactivată — cheie gratuită Gemini, 2 minute" else "activă ✓ · atinge ca să schimbi cheia",
+            onClick = { aiKeyOpen = true }
+        ) { Text(if (geminiKey.isBlank()) "activează →" else "schimbă", style = BodySmall.copy(color = Accent2)) }
+        if (aiKeyOpen) {
+            com.forja.app.feature.nutrition.AiKeySheet(
+                onSaved = { key ->
+                    scope.launch {
+                        app.prefs.setGeminiKey(key)
+                        aiKeyOpen = false
+                        toast.show("Cheie AI salvată.")
+                    }
+                },
+                onClose = { aiKeyOpen = false }
+            )
+        }
+
         SettingRow(
             "Date & confidențialitate",
             "Mesele și somnul se analizează pe telefon. Locația pleacă doar către prietenii tăi, doar când nu ești fantomă.",

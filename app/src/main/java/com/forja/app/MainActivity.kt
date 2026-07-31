@@ -174,7 +174,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 DashboardScreen(
                     onOpenModule = { r -> nav.navigate(r) },
                     onOpenProfile = { nav.navigate(Route.PROFILE) },
-                    onOpenMap = { nav.navigate(Route.MAP) }
+                    onOpenMap = { nav.navigate(Route.MAP) },
+                    onOpenActivities = { nav.navigate(Route.ACTIVITIES) }
                 )
             }
             composable(Route.WORKOUT) {
@@ -184,13 +185,34 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 WorkoutLiveScreen(onExit = { nav.popBackStack(Route.WORKOUT, false) })
             }
             composable(Route.NUTRITION) {
-                NutritionScreen(onScan = { nav.navigate(Route.SCANNER) })
+                NutritionScreen(
+                    onScan = { nav.navigate(Route.SCANNER) },
+                    onPhotograph = { nav.navigate(Route.MEAL_CAMERA) }
+                )
             }
             composable(Route.SCANNER) {
                 ScannerScreen(onClose = { nav.popBackStack() })
             }
             composable(Route.SLEEP) { SleepScreen() }
-            composable(Route.MAP) { MapScreen() }
+            composable(Route.MAP) {
+                MapScreen(onOpenActivities = { nav.navigate(Route.ACTIVITIES) })
+            }
+            composable(Route.ACTIVITIES) {
+                com.forja.app.feature.activities.ActivitiesScreen(
+                    onOpenDetail = { id -> nav.navigate(Route.activityDetail(id)) },
+                    onBack = { nav.popBackStack() }
+                )
+            }
+            composable(
+                Route.ACTIVITY_DETAIL,
+                arguments = listOf(androidx.navigation.navArgument("id") { type = androidx.navigation.NavType.LongType })
+            ) { entry ->
+                val id = entry.arguments?.getLong("id") ?: 0L
+                com.forja.app.feature.activities.ActivityDetailScreen(activityId = id, onBack = { nav.popBackStack() })
+            }
+            composable(Route.MEAL_CAMERA) {
+                com.forja.app.feature.nutrition.MealCameraScreen(onClose = { nav.popBackStack() })
+            }
             composable(Route.FOCUS) { FocusScreen() }
             composable(Route.PROFILE) {
                 ProfileScreen(

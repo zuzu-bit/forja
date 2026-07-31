@@ -38,11 +38,13 @@ import com.forja.app.core.network.FoodProduct
 import com.forja.app.core.util.Fmt
 import java.time.LocalTime
 
-/** Nutriție: buget kcal real, jurnalul meselor, cod de bare + căutare în baza verificată. */
+/** Nutriție à la BitePal: poza e regina, codul de bare e adjunctul, baza de date decide. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NutritionScreen(onScan: () -> Unit) {
-    val activity = LocalContext.current as ComponentActivity
+fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
+    val context = LocalContext.current
+    val activity = context as ComponentActivity
+    val app = remember { com.forja.app.ForjaApp.from(context) }
     val vm: NutritionViewModel = viewModel(viewModelStoreOwner = activity)
     val meals by vm.meals.collectAsState()
     val kcal by vm.kcalToday.collectAsState()
@@ -50,7 +52,10 @@ fun NutritionScreen(onScan: () -> Unit) {
     val pending by vm.pending.collectAsState()
     val lookupError by vm.lookupError.collectAsState()
     val toast = LocalToast.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
+    val geminiKey by app.prefs.geminiKey.collectAsState(initial = "")
+    var keyOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     var manualOpen by remember { mutableStateOf(false) }
 
@@ -194,21 +199,46 @@ fun NutritionScreen(onScan: () -> Unit) {
 
         Spacer(Modifier.height(8.dp))
         PrimaryButton(
-            text = "Scanează codul de bare",
-            onClick = onScan,
+            text = "Fotografiază masa",
+            onClick = {
+                if (geminiKey.isBlank()) keyOpen = true else onPhotograph()
+            },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
         )
+        if (geminiKey.isBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "prima dată îți activezi analiza AI — gratuit, 2 minute",
+                style = BodyTiny.copy(color = Accent2),
+                modifier = Modifier.padding(horizontal = 20.dp)
+            )
+        }
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            SecondaryButton("Caută un aliment", onClick = { searchOpen = true }, modifier = Modifier.weight(1f))
+            SecondaryButton("Cod de bare", onClick = onScan, modifier = Modifier.weight(1f))
             Spacer(Modifier.width(10.dp))
-            SecondaryButton("Adaug manual", onClick = { manualOpen = true }, modifier = Modifier.weight(1f))
+            SecondaryButton("Caută", onClick = { searchOpen = true }, modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(10.dp))
+            SecondaryButton("Manual", onClick = { manualOpen = true }, modifier = Modifier.weight(1f))
         }
         Spacer(Modifier.height(6.dp))
         Text(
-            "Valorile vin din baza de date verificată OpenFoodFacts — estimările sunt mereu editabile, niciodată adevăr absolut.",
+            "AI-ul estimează din poză, codul de bare dă valori exacte din OpenFoodFacts — și totul rămâne editabil.",
             style = BodyTiny.copy(color = TextDim2),
             modifier = Modifier.padding(horizontal = 20.dp)
+        )
+    }
+
+    if (keyOpen) {
+        AiKeySheet(
+            onSaved = { key ->
+                scope.launch {
+                    app.prefs.setGeminiKey(key)
+                    keyOpen = false
+                    toast.show("Cheie salvată. Fotografiază prima masă!")
+                }
+            },
+            onClose = { keyOpen = false }
         )
     }
 
@@ -320,6 +350,58 @@ fun PortionSheet(
                 text = "Confirmă",
                 onClick = { onConfirm(mealType, grams) },
                 modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+/** Activarea analizei AI: cheia Gemini a utilizatorului — gratuită, o dată. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AiKeySheet(onSaved: (String) -> Unit, onClose: () -> Unit) {
+    var key by remember { mutableStateOf("") }
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Surface1, shape = SheetShape
+    ) {
+        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text("Activează analiza pozelor", style = TitleModule.copy(fontSize = 20.sp))
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "FORJA folosește AI-ul Google (Gemini) cu cheia TA gratuită — pozele pleacă doar către contul tău, nu prin serverele FORJA.",
+                style = Body
+            )
+            Spacer(Modifier.height(12.dp))
+            Text("PAȘII (2 MINUTE, O SINGURĂ DATĂ)", style = monoLabel(9, 0.14f).copy(color = Accent2))
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "1. Deschide aistudio.google.com/apikey (logat cu contul Google)\n" +
+                    "2. Apasă „Create API key\" și copiază codul\n" +
+                    "3. Lipește-l aici",
+                style = BodySmall.copy(lineHeight = 19.sp)
+            )
+            Spacer(Modifier.height(14.dp))
+            TextField(
+                value = key,
+                onValueChange = { key = it },
+                singleLine = true,
+                placeholder = { Text("AIza…", style = BodySmall) },
+                textStyle = BodyStrong.copy(fontSize = 14.sp),
+                modifier = Modifier.fillMaxWidth().clip(SecondaryShape),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Surface2, unfocusedContainerColor = Surface2,
+                    focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                    cursorColor = Accent2,
+                    focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
+                )
+            )
+            Spacer(Modifier.height(14.dp))
+            PrimaryButton(
+                text = "Salvează cheia",
+                onClick = { if (key.trim().length > 20) onSaved(key.trim()) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = key.trim().length > 20
             )
         }
     }
