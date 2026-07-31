@@ -35,15 +35,24 @@ jobs:
       - name: Deploy serverul central FORJA (dacă secretele există)
         id: deploy
         run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "Secretele Cloudflare lipsesc — serverul nu se publică (aplicația folosește căile locale)."
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Secretul CLOUDFLARE_API_TOKEN lipsește — serverul nu se publică (aplicația folosește căile locale)."
             echo "url=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # CLOUDFLARE_ACCOUNT_ID e OPȚIONAL: pe conturi cu un singur cont, wrangler îl deduce singur.
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then unset CLOUDFLARE_ACCOUNT_ID; fi
           cd server
           npm install --no-audit --no-fund
+          npx wrangler@3 whoami 2>&1 | head -8 || true
           OUT=$(npx wrangler@3 deploy 2>&1 | tee /dev/stderr)
           URL=$(echo "$OUT" | grep -oE "https://[a-z0-9.-]+\.workers\.dev" | head -1)
+          if [ -z "$URL" ]; then
+            echo "Deploy eșuat — verifică tokenul. Ieșire wrangler:"
+            echo "$OUT" | tail -20
+            echo "url=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -n "$GEMINI_API_KEY" ]; then
             printf '%s' "$GEMINI_API_KEY" | npx wrangler@3 secret put GEMINI_API_KEY >/dev/null 2>&1 || true
           fi
