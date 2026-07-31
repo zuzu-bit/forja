@@ -30,11 +30,54 @@ function json(data, status = 200) {
   });
 }
 
-// ── Analiza meselor: poza → Gemini cu CHEIA COMPANIEI ─────────────────────────
-async function handleMeal(request, env) {
-  if (!env.GEMINI_API_KEY) {
-    return json({ error: "Serverul nu are încă cheia AI configurată." }, 503);
+const MEAL_PROMPT =
+  'Analizează fotografia unei mese. Răspunde DOAR cu JSON valid, fără alt text, cu structura exactă: ' +
+  '{"fel":"numele scurt al felului în română","incredere":"ridicată|medie|scăzută",' +
+  '"componente":[{"nume":"...","grame":0,"kcal":0,"proteine":0,"carbo":0,"grasimi":0}]}. ' +
+  "Descompune farfuria pe componente vizibile (nu un singur fel!), estimează gramaje realiste pentru porția din imagine " +
+  "și calculează kcal și macronutrienții per componentă la gramajul estimat. " +
+  "Ține cont de blind spots: grăsimi de gătit invizibile → încredere scăzută. " +
+  'Dacă imaginea nu conține mâncare, întoarce {"fel":"","incredere":"scăzută","componente":[]}.';
+
+function extractMealJson(text) {
+  if (!text) return null;
+  const cleaned = text.trim().replace(/^```json/, "").replace(/^```/, "").replace(/```$/, "").trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (_) {
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    if (m) {
+      try { return JSON.parse(m[0]); } catch (_) { }
+    }
   }
+  return null;
+}
+
+// ── Analiza meselor fără NICIO cheie: banca de modele open-source Cloudflare ──
+async function mealViaModelBank(env, imageB64) {
+  const bytes = Uint8Array.from(atob(imageB64), (c) => c.charCodeAt(0));
+  const models = ["@cf/meta/llama-3.2-11b-vision-instruct", "@cf/llava-hf/llava-1.5-7b-hf"];
+  for (const model of models) {
+    try {
+      const r = await env.AI.run(model, {
+        image: [...bytes],
+        prompt: MEAL_PROMPT,
+        max_tokens: 900,
+      });
+      const out = (r && (r.response || r.description || r.text)) || "";
+      const parsed = extractMealJson(out);
+      if (parsed && parsed.componente && parsed.componente.length > 0) {
+        parsed.incredere = parsed.incredere || "medie";
+        return json(parsed);
+      }
+    } catch (_) { }
+  }
+  return json({ error: "Modelul open-source n-a recunoscut masa. Încearcă un unghi de sus, cu lumină." }, 422);
+}
+
+// ── Analiza meselor: poza → serverul FORJA (Gemini dacă există cheia companiei,
+//    altfel banca de modele open-source Cloudflare — zero chei) ────────────────
+async function handleMeal(request, env) {
   let body;
   try {
     body = await request.json();
@@ -46,15 +89,11 @@ async function handleMeal(request, env) {
     return json({ error: "Lipsește poza." }, 400);
   }
 
-  const prompt =
-    'Analizează fotografia unei mese. Răspunde DOAR cu JSON valid, fără alt text, cu structura exactă: ' +
-    '{"fel":"numele scurt al felului în română","incredere":"ridicată|medie|scăzută",' +
-    '"componente":[{"nume":"...","grame":0,"kcal":0,"proteine":0,"carbo":0,"grasimi":0}]}. ' +
-    "Descompune farfuria pe componente vizibile (nu un singur fel!), estimează gramaje realiste pentru porția din imagine " +
-    "și calculează kcal și macronutrienții per componentă la gramajul estimat. " +
-    "Ține cont de blind spots: grăsimi de gătit invizibile → încredere scăzută. " +
-    'Dacă imaginea nu conține mâncare, întoarce {"fel":"","incredere":"scăzută","componente":[]}.';
+  if (!env.GEMINI_API_KEY) {
+    return mealViaModelBank(env, image);
+  }
 
+  const prompt = MEAL_PROMPT;
   const models = ["gemini-2.0-flash", "gemini-1.5-flash"];
   let lastErr = "AI indisponibil.";
   for (const model of models) {
@@ -97,9 +136,8 @@ async function handleMeal(request, env) {
         lastErr = "Răspuns AI gol.";
         continue;
       }
-      const cleaned = text.trim().replace(/^```json/, "").replace(/^```/, "").replace(/```$/, "").trim();
-      const parsed = JSON.parse(cleaned);
-      if (!parsed.componente || parsed.componente.length === 0) {
+      const parsed = extractMealJson(text);
+      if (!parsed || !parsed.componente || parsed.componente.length === 0) {
         return json({ error: "N-am recunoscut mâncare în poză. Încearcă un unghi de sus, cu lumină." }, 422);
       }
       return json(parsed);
@@ -107,7 +145,8 @@ async function handleMeal(request, env) {
       lastErr = "Eroare la analiza AI.";
     }
   }
-  return json({ error: lastErr }, 502);
+  // Gemini a picat — încercăm banca de modele, să nu rămână utilizatorul fără analiză.
+  return mealViaModelBank(env, image);
 }
 
 // ── Sunetele de somn: clip 5s → Whisper → vorbit real vs sforăit ─────────────
@@ -136,7 +175,12 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/") {
-      return json({ ok: true, service: "forja-api", ai: !!env.AI, gemini: !!env.GEMINI_API_KEY });
+      return json({
+        ok: true,
+        service: "forja-api",
+        meals: env.GEMINI_API_KEY ? "gemini" : "banca-de-modele-cloudflare",
+        audio: env.AI ? "whisper" : "indisponibil",
+      });
     }
     if (request.method !== "POST") return json({ error: "Metodă greșită." }, 405);
 

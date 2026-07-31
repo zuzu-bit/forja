@@ -59,7 +59,12 @@ jobs:
           echo "Server publicat la: $URL"
           echo "## Serverul central FORJA" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: $URL" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Cheie Gemini pe server: $([ -n \"$GEMINI_API_KEY\" ] && echo configurată || echo LIPSĂ)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "- Analiza meselor: Gemini (cheia companiei)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Analiza meselor: banca de modele open-source Cloudflare (fără chei)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "- Sunete somn: Whisper (fără chei)" >> "$GITHUB_STEP_SUMMARY"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
   build:
