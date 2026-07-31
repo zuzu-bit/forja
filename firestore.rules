@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isMe(uid) { return signedIn() && request.auth.uid == uid; }
+
+    // Profiluri: oricine e conectat poate citi (nume, stare, poziție — doar ce publici),
+    // dar doar tu îți poți scrie documentul.
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create, update: if isMe(uid);
+      allow delete: if false;
+    }
+
+    // Coduri de invitație: citire pentru oricine conectat, scriere doar pentru propriul cod.
+    match /inviteCodes/{code} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // Prietenii: doar membrii pot crea/șterge relația lor.
+    match /friendships/{id} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+      allow create: if signedIn() && request.auth.uid in request.resource.data.members
+                    && request.resource.data.members.size() == 2;
+      allow delete: if signedIn() && request.auth.uid in resource.data.members;
+      allow update: if false;
+    }
+
+    // Energie (kudos): trimiți doar tu, citește doar destinatarul; un fulger pe zi (id compus).
+    match /energy/{id} {
+      allow read: if signedIn() && resource.data.to == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.from == request.auth.uid;
+      allow update, delete: if false;
+    }
+  }
+}

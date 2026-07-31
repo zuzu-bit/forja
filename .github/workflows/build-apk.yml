@@ -5,25 +5,25 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "forja-source.tar.gz.b64"
+      - "app/**"
+      - "gradle/**"
+      - "*.gradle.kts"
+      - "gradle.properties"
       - ".github/workflows/build-apk.yml"
-  pull_request:
-    branches: [ main ]
-    paths:
-      - "forja-source.tar.gz.b64"
-      - ".github/workflows/build-apk.yml"
-      - "build-trigger.txt"
 
 permissions:
-  contents: read
+  contents: write
+  issues: write
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -32,39 +32,86 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android 35 SDK
-        run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Set up Gradle 8.10.2
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.10.2"
-          validate-wrappers: false
-
-      - name: Restore Android project
-        run: |
-          mkdir -p android-project
-          base64 --decode forja-source.tar.gz.b64 | tar -xz -C android-project
-          test -f android-project/settings.gradle.kts
-          test -f android-project/app/build.gradle.kts
 
       - name: Build debug APK
-        run: gradle -p android-project :app:assembleDebug --no-daemon --stacktrace
-
-      - name: Prepare APK
+        id: gradle_build
         run: |
-          test -s android-project/app/build/outputs/apk/debug/app-debug.apk
-          cp android-project/app/build/outputs/apk/debug/app-debug.apk FORJA-debug.apk
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build.log
 
-      - name: Upload APK artifact
+      - name: Verifică serviciile Firebase (forja-65093)
+        id: fbcheck
+        if: success()
+        run: |
+          API_KEY=$(python3 -c "import json;print(json.load(open('app/google-services.json'))['client'][0]['api_key'][0]['current_key'])")
+          PROJECT=forja-65093
+          AUTH_STATUS="NECUNOSCUT"
+          FS_STATUS="NECUNOSCUT"
+          R=$(curl -s -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$API_KEY" -H 'Content-Type: application/json' -d '{"returnSecureToken":true}' || true)
+          if echo "$R" | grep -q "ADMIN_ONLY_OPERATION\|OPERATION_NOT_ALLOWED"; then
+            AUTH_STATUS="NEACTIVAT — activează Email/Password în consola Firebase (Authentication → Sign-in method)"
+          elif echo "$R" | grep -q "MISSING_EMAIL\|idToken"; then
+            AUTH_STATUS="ACTIV ✓"
+          elif echo "$R" | grep -q "CONFIGURATION_NOT_FOUND"; then
+            AUTH_STATUS="NEACTIVAT — deschide Authentication în consola Firebase și apasă Get started, apoi activează Email/Password"
+          else
+            AUTH_STATUS="NECUNOSCUT: $(echo "$R" | head -c 200)"
+          fi
+          F=$(curl -s -o /dev/null -w "%{http_code}" "https://firestore.googleapis.com/v1/projects/$PROJECT/databases/(default)/documents/ping/ping" || true)
+          case "$F" in
+            403) FS_STATUS="EXISTĂ ✓ (regulile blochează accesul anonim — corect)";;
+            404) FS_STATUS="NECREAT — deschide Firestore Database în consola Firebase și apasă Create database";;
+            200) FS_STATUS="EXISTĂ ✓ (atenție: reguli complet deschise)";;
+            *) FS_STATUS="NECUNOSCUT (HTTP $F)";;
+          esac
+          {
+            echo "AUTH_STATUS<<EOF"; echo "$AUTH_STATUS"; echo "EOF"
+            echo "FS_STATUS<<EOF"; echo "$FS_STATUS"; echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "## Stare Firebase" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Autentificare email/parolă: $AUTH_STATUS" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Baza de date Firestore: $FS_STATUS" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publică APK-ul la Releases
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTH_STATUS: ${{ steps.fbcheck.outputs.AUTH_STATUS }}
+          FS_STATUS: ${{ steps.fbcheck.outputs.FS_STATUS }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk FORJA.apk
+          SIZE=$(du -h FORJA.apk | cut -f1)
+          NOTES=$(cat << EOF
+          ## FORJA — aplicația Android (build #${{ github.run_number }})
+
+          **Instalare pe telefon:** descarcă \`FORJA.apk\` de mai jos direct pe telefon, deschide fișierul și acceptă instalarea din surse necunoscute. Mărime: $SIZE.
+
+          **Stare servicii Firebase la momentul build-ului:**
+          - Autentificare email/parolă: $AUTH_STATUS
+          - Baza de date Firestore: $FS_STATUS
+
+          Commit: ${{ github.sha }}
+          EOF
+          )
+          gh release delete apk-latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create apk-latest FORJA.apk --title "FORJA — ultimul APK (build #${{ github.run_number }})" --notes "$NOTES" --latest
+
+      - name: Upload artifact (backup)
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: FORJA-APK
-          path: FORJA-debug.apk
-          if-no-files-found: error
-          retention-days: 7
+          name: FORJA-apk-run${{ github.run_number }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Raportează eroarea de build ca issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="Build eșuat · run ${{ github.run_number }}"
+          LOG=$(grep -E "error:|e: |FAILURE:|Caused by|What went wrong|> Task .* FAILED" -A 3 build.log 2>/dev/null | head -c 55000 || true)
+          if [ -z "$LOG" ]; then LOG=$(tail -c 55000 build.log 2>/dev/null || echo "fără log"); fi
+          BODY=$(printf '%s\n\n```\n%s\n```\nCommit: %s' "Log de eroare (extras automat):" "$LOG" "${{ github.sha }}")
+          gh issue create --title "$TITLE" --body "$BODY" --label build-error 2>/dev/null || gh issue create --title "$TITLE" --body "$BODY"

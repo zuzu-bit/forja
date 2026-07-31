@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "955509443921",
+    "project_id": "forja-65093",
+    "storage_bucket": "forja-65093.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:955509443921:android:c9489b6adc1b0fdc8f9770",
+        "android_client_info": {
+          "package_name": "com.forja.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDjZX8AtW9GQUnqA9UtPaVD8dAlw4dOKZI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

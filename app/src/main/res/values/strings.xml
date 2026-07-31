@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FORJA</string>
+    <string name="notif_channel_go">Înregistrare traseu</string>
+    <string name="notif_channel_sleep">Sesiune de somn</string>
+    <string name="notif_channel_focus">Focus</string>
+    <string name="notif_channel_social">Prieteni</string>
+</resources>
