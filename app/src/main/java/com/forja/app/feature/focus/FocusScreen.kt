@@ -245,7 +245,7 @@ fun FocusScreen() {
                 Text("Acces la utilizare", style = TitleModule.copy(fontSize = 20.sp))
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Ca să blocheze aplicațiile alese, FORJA are nevoie de permisiunea „Usage Access" din Android.",
+                    "Ca să blocheze aplicațiile alese, FORJA are nevoie de permisiunea „Usage Access” din Android.",
                     style = Body
                 )
                 Spacer(Modifier.height(6.dp))
