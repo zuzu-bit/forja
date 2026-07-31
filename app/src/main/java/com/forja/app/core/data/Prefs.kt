@@ -26,6 +26,9 @@ class Prefs(private val context: Context) {
         val alarmEnabled = booleanPreferencesKey("alarm_enabled")
         val alarmHour = intPreferencesKey("alarm_hour")
         val alarmMinute = intPreferencesKey("alarm_minute")
+        val bgShareOn = booleanPreferencesKey("bg_share_on")
+        val ghostUntilLocal = longPreferencesKey("ghost_until_local")
+        val bgBannerDismissed = booleanPreferencesKey("bg_banner_dismissed")
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }
@@ -63,4 +66,13 @@ class Prefs(private val context: Context) {
     suspend fun setAlarmTime(h: Int, m: Int) = context.dataStore.edit {
         it[K.alarmHour] = h; it[K.alarmMinute] = m
     }
+
+    val bgShareOn: Flow<Boolean> = context.dataStore.data.map { it[K.bgShareOn] ?: false }
+    suspend fun setBgShareOn(v: Boolean) = context.dataStore.edit { it[K.bgShareOn] = v }
+
+    val ghostUntilLocal: Flow<Long> = context.dataStore.data.map { it[K.ghostUntilLocal] ?: 0L }
+    suspend fun setGhostUntilLocal(v: Long) = context.dataStore.edit { it[K.ghostUntilLocal] = v }
+
+    val bgBannerDismissed: Flow<Boolean> = context.dataStore.data.map { it[K.bgBannerDismissed] ?: false }
+    suspend fun setBgBannerDismissed() = context.dataStore.edit { it[K.bgBannerDismissed] = true }
 }

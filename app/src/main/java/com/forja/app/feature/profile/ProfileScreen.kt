@@ -172,13 +172,45 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit) {
             }
         ) { Text("copiază", style = BodySmall.copy(color = Accent2)) }
 
+        // Locația în fundal — harta VIU trăiește și cu aplicația închisă.
+        val bgShareOn by app.prefs.bgShareOn.collectAsState(initial = false)
+        SettingRow(
+            "Locație în fundal",
+            if (com.forja.app.core.location.BgLocation.hasBackground(context))
+                "prietenii te văd mereu — fantoma e singura excepție"
+            else "necesită „Se permite tot timpul” — pornește de pe hartă",
+        ) {
+            ForjaSwitch(checked = bgShareOn && com.forja.app.core.location.BgLocation.hasBackground(context), onCheckedChange = { on ->
+                scope.launch {
+                    if (on && !com.forja.app.core.location.BgLocation.hasBackground(context)) {
+                        toast.show("Deschide harta și apasă „Activează” pe cardul galben.")
+                    } else {
+                        app.prefs.setBgShareOn(on)
+                        if (on) com.forja.app.core.location.BgLocation.registerIfReady(context)
+                        else com.forja.app.core.location.BgLocation.unregister(context)
+                        toast.show(if (on) "Locația în fundal e pornită." else "Locația în fundal e oprită.")
+                    }
+                }
+            })
+        }
+
         val geminiKey by app.prefs.geminiKey.collectAsState(initial = "")
         var aiKeyOpen by remember { mutableStateOf(false) }
+        val serverOn = app.forjaApi.available
         SettingRow(
             "Analiza AI a pozelor cu mâncare",
-            if (geminiKey.isBlank()) "neactivată — cheie gratuită Gemini, 2 minute" else "activă ✓ · atinge ca să schimbi cheia",
-            onClick = { aiKeyOpen = true }
-        ) { Text(if (geminiKey.isBlank()) "activează →" else "schimbă", style = BodySmall.copy(color = Accent2)) }
+            when {
+                serverOn -> "prin serverul FORJA ✓ — fără chei la tine"
+                geminiKey.isBlank() -> "neactivată — cheie gratuită Gemini, 2 minute"
+                else -> "cu cheia ta · serverul FORJA vine în curând"
+            },
+            onClick = { if (!serverOn) aiKeyOpen = true }
+        ) {
+            Text(
+                if (serverOn) "server ✓" else if (geminiKey.isBlank()) "activează →" else "schimbă",
+                style = BodySmall.copy(color = if (serverOn) Positive else Accent2)
+            )
+        }
         if (aiKeyOpen) {
             com.forja.app.feature.nutrition.AiKeySheet(
                 onSaved = { key ->

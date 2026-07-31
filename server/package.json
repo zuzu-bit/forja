@@ -1,0 +1,8 @@
+{
+  "name": "forja-api",
+  "private": true,
+  "description": "Serverul central FORJA — analiza meselor și a sunetelor de somn, cu cheile companiei.",
+  "dependencies": {
+    "jose": "^5.9.6"
+  }
+}

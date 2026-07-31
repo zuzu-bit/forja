@@ -26,6 +26,10 @@ class PresenceRepository(
 
     var manualState: String? = null   // „sleep" în sesiune de somn
 
+    /** Oglinda locală a fantomei — citită sincron de publicatori. */
+    @Volatile var ghostUntilCache: Long = 0L
+    fun isGhostNow(): Boolean = ghostUntilCache == -1L || ghostUntilCache > System.currentTimeMillis()
+
     fun stateFor(speedMps: Double): String = when {
         manualState != null -> manualState!!
         speedMps >= 5.0 -> "ride"

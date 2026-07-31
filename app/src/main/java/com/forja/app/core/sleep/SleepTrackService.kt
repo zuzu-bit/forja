@@ -201,23 +201,36 @@ class SleepTrackService : Service(), SensorEventListener {
         else -> 1
     }
 
-    /** Salvează evenimentul + clipul de 5s din ring buffer, LOCAL. */
-    private fun saveEvent(type: String, at: Long, durationS: Int, intensity: Int) {
+    /**
+     * Salvează evenimentul + clipul de 5s (LOCAL), apoi cere serverului FORJA
+     * verdictul REAL (Whisper): vorbire → „Vorbire", altfel „Sforăit".
+     * Fără server, eticheta rămâne onestă: „Sunet" — nu ghicim.
+     */
+    private fun saveEvent(typeHint: String, at: Long, durationS: Int, intensity: Int) {
         val app = ForjaApp.from(this)
         val snapshot = ShortArray(sampleRate * 5)
         val start = (ringPos - snapshot.size + ring.size * 2) % ring.size
         for (i in snapshot.indices) snapshot[i] = ring[(start + i) % ring.size]
         scope.launch {
             var path: String? = null
+            var wavBytes: ByteArray? = null
             try {
                 val dir = File(filesDir, "sleep_clips").apply { mkdirs() }
-                val f = File(dir, "${sessionId}_${type}_$at.wav")
+                val f = File(dir, "${sessionId}_${typeHint}_$at.wav")
                 writeWav(f, snapshot, sampleRate)
                 path = f.absolutePath
+                wavBytes = f.readBytes()
             } catch (_: Exception) { }
+
+            val finalType = if (app.forjaApi.available && wavBytes != null) {
+                val verdict = try { app.forjaApi.classifySleepAudio(wavBytes) } catch (_: Exception) { null }
+                verdict?.type ?: "sound"
+            } else {
+                "sound"
+            }
             app.db.sleepDao().insertEvent(
                 SleepEventEntity(
-                    sessionId = sessionId, type = type, at = at,
+                    sessionId = sessionId, type = finalType, at = at,
                     durationS = durationS, intensity = intensity, clipPath = path
                 )
             )

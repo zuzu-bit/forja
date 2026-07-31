@@ -90,7 +90,6 @@ fun MealCameraScreen(onClose: () -> Unit) {
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     scope.launch {
-                        val key = app.prefs.geminiKey.first()
                         val bytes = downscaleJpeg(file)
                         file.delete()
                         if (bytes == null) {
@@ -98,14 +97,30 @@ fun MealCameraScreen(onClose: () -> Unit) {
                             toast.show("Poza nu s-a putut citi. Mai încearcă.")
                             return@launch
                         }
-                        when (val res = app.geminiFood.analyze(key, bytes)) {
-                            is GeminiFood.Result.Ok -> {
-                                analyzing = false
-                                analysis = res.analysis
+                        // Calea profesionistă: serverul central FORJA (zero chei la utilizator).
+                        if (app.forjaApi.available) {
+                            when (val res = app.forjaApi.analyzeMeal(bytes)) {
+                                is com.forja.app.core.network.ForjaApi.MealResult.Ok -> {
+                                    analyzing = false
+                                    analysis = res.analysis
+                                }
+                                is com.forja.app.core.network.ForjaApi.MealResult.Fail -> {
+                                    analyzing = false
+                                    toast.show(res.message)
+                                }
                             }
-                            is GeminiFood.Result.Fail -> {
-                                analyzing = false
-                                toast.show(res.message)
+                        } else {
+                            // Fallback: cheia proprie (până e publicat serverul).
+                            val key = app.prefs.geminiKey.first()
+                            when (val res = app.geminiFood.analyze(key, bytes)) {
+                                is GeminiFood.Result.Ok -> {
+                                    analyzing = false
+                                    analysis = res.analysis
+                                }
+                                is GeminiFood.Result.Fail -> {
+                                    analyzing = false
+                                    toast.show(res.message)
+                                }
                             }
                         }
                     }

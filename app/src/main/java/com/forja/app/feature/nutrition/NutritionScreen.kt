@@ -199,21 +199,24 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
         }
 
         Spacer(Modifier.height(8.dp))
+        val serverOn = app.forjaApi.available
         PrimaryButton(
             text = "Fotografiază masa",
             onClick = {
-                if (geminiKey.isBlank()) keyOpen = true else onPhotograph()
+                if (serverOn || geminiKey.isNotBlank()) onPhotograph() else keyOpen = true
             },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
         )
-        if (geminiKey.isBlank()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "prima dată îți activezi analiza AI — gratuit, 2 minute",
-                style = BodyTiny.copy(color = Accent2),
-                modifier = Modifier.padding(horizontal = 20.dp)
-            )
-        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            when {
+                serverOn -> "analiza rulează pe serverul FORJA — fără nicio cheie la tine"
+                geminiKey.isNotBlank() -> "analiza folosește cheia ta — serverul FORJA vine în curând"
+                else -> "prima dată îți activezi analiza AI — gratuit, 2 minute"
+            },
+            style = BodyTiny.copy(color = if (serverOn) Positive else Accent2),
+            modifier = Modifier.padding(horizontal = 20.dp)
+        )
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
             SecondaryButton("Cod de bare", onClick = onScan, modifier = Modifier.weight(1f))

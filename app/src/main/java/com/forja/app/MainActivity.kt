@@ -119,14 +119,22 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
         Route.DASHBOARD, Route.WORKOUT, Route.NUTRITION, Route.SLEEP, Route.MAP, Route.FOCUS, Route.PROFILE
     )
 
-    // Publicarea prezenței doar cât timp aplicația e în prim-plan și utilizatorul e conectat.
+    // Fantoma: oglinda locală mereu la zi, respectată de orice publicare.
+    LaunchedEffect(Unit) {
+        app.prefs.ghostUntilLocal.collect { app.presence.ghostUntilCache = it }
+    }
+
+    // Publicarea prezenței cât timp aplicația e în prim-plan (fundalul e treaba BgLocation).
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, route) {
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             val uid = app.auth.currentUid
             if (uid != null) {
                 when (event) {
-                    Lifecycle.Event.ON_START -> app.presence.start(uid) { false }
+                    Lifecycle.Event.ON_START -> {
+                        app.presence.start(uid) { app.presence.isGhostNow() }
+                        com.forja.app.core.location.BgLocation.registerIfReady(app)
+                    }
                     Lifecycle.Event.ON_STOP -> app.presence.stop()
                     else -> {}
                 }

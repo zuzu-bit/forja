@@ -432,6 +432,7 @@ private fun SleepEventCard(ev: SleepEventEntity, app: ForjaApp) {
     val typeName = when (ev.type) {
         "snore" -> "Sforăit"
         "talk" -> "Vorbire"
+        "sound" -> "Sunet"
         else -> "Mișcare"
     }
     val intensityWord = when (ev.intensity) {

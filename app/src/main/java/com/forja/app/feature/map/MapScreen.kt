@@ -95,14 +95,31 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
 
+    // Acceptă și locația aproximativă — mai bine ceva decât nimic; cerem precisă când lipsește.
     var hasLocation by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            com.forja.app.core.location.BgLocation.hasFine(context) ||
+                com.forja.app.core.location.BgLocation.hasCoarse(context)
         )
     }
-    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
-        hasLocation = res[Manifest.permission.ACCESS_FINE_LOCATION] == true
+    var hasBackground by remember {
+        mutableStateOf(com.forja.app.core.location.BgLocation.hasBackground(context))
     }
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
+        hasLocation = res[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            res[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+    }
+    val bgPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        hasBackground = granted
+        if (granted) {
+            scope.launch {
+                app.prefs.setBgShareOn(true)
+                com.forja.app.core.location.BgLocation.registerIfReady(context)
+                toast.show("Gata — prietenii te văd și când FORJA e închisă. Fantoma rămâne excepția.")
+            }
+        }
+    }
+    val bgBannerDismissed by app.prefs.bgBannerDismissed.collectAsState(initial = true)
     LaunchedEffect(Unit) {
         if (!hasLocation) {
             permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
@@ -333,6 +350,37 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
             }
         }
 
+        // Banner: activează locația în fundal — inima hărții VIU.
+        if (hasLocation && !hasBackground && !bgBannerDismissed && !go.recording) {
+            ForjaCard(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 64.dp)
+                    .padding(horizontal = 16.dp)
+                    .fillMaxWidth(),
+                fill = Color(0xF0121214),
+                stroke = Color(0x66FFB300)
+            ) {
+                Text("Prietenii să te vadă mereu?", style = BodyStrong.copy(fontSize = 14.sp))
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    "Acum te văd doar cât e FORJA deschisă. Alege „Se permite tot timpul” și harta trăiește și în fundal — fantoma rămâne singura excepție.",
+                    style = BodyTiny.copy(color = TextSecondary)
+                )
+                Spacer(Modifier.height(10.dp))
+                Row {
+                    PrimaryButton("Activează", small = true, onClick = {
+                        bgPermLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                    }, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(10.dp))
+                    SecondaryButton("Nu acum", onClick = {
+                        scope.launch { app.prefs.setBgBannerDismissed() }
+                    }, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+
         // Chip stare fantomă
         if (ghostActive) {
             Row(
@@ -357,6 +405,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                     modifier = Modifier.pressable({
                         scope.launch {
                             app.auth.currentUid?.let { app.friends.setGhost(it, 0L) }
+                            app.prefs.setGhostUntilLocal(0L)
                             ghostUntil = 0L
                             toast.show("Ești din nou vizibil pe hartă.")
                         }
@@ -596,6 +645,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                             .pressable({
                                 scope.launch {
                                     app.auth.currentUid?.let { app.friends.setGhost(it, until) }
+                                    app.prefs.setGhostUntilLocal(until)
                                     ghostUntil = until
                                     ghostOpen = false
                                     toast.show(
@@ -625,6 +675,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                         onClick = {
                             scope.launch {
                                 app.auth.currentUid?.let { app.friends.setGhost(it, 0L) }
+                                app.prefs.setGhostUntilLocal(0L)
                                 ghostUntil = 0L
                                 ghostOpen = false
                                 toast.show("Ești din nou vizibil pe hartă.")
