@@ -137,6 +137,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AUTH_STATUS: ${{ steps.fbcheck.outputs.AUTH_STATUS }}
           FS_STATUS: ${{ steps.fbcheck.outputs.FS_STATUS }}
+          FORJA_API_URL: ${{ needs.deploy-api.outputs.url }}
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk FORJA.apk
           SIZE=$(du -h FORJA.apk | cut -f1)
@@ -148,6 +149,7 @@ jobs:
           **Stare servicii Firebase la momentul build-ului:**
           - Autentificare email/parolă: $AUTH_STATUS
           - Baza de date Firestore: $FS_STATUS
+          - Serverul central FORJA: ${FORJA_API_URL:-neconfigurat — analiza rulează local}
 
           Commit: ${{ github.sha }}
           EOF
