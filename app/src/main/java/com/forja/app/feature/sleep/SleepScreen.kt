@@ -53,6 +53,18 @@ fun SleepScreen() {
     val alarmEnabled by app.prefs.alarmEnabled.collectAsState(initial = false)
     val alarmHour by app.prefs.alarmHour.collectAsState(initial = 7)
     val alarmMinute by app.prefs.alarmMinute.collectAsState(initial = 0)
+    val alarmWindow by app.prefs.alarmWindowMin.collectAsState(initial = 40)
+
+    fun startSleepExtras() {
+        // Plasa de siguranță (ca Gemini): alarma de sistem la ora-limită.
+        if (alarmEnabled) {
+            val ok = com.forja.app.core.sleep.SystemAlarm.set(
+                context, alarmHour, alarmMinute,
+                "FORJA · plasă de siguranță — trebuia să fii treaz"
+            )
+            if (ok) toast.show("Alarmă setată și în Ceasul telefonului, la %02d:%02d — plasă de siguranță.".format(alarmHour, alarmMinute))
+        }
+    }
 
     var hasMic by remember {
         mutableStateOf(
@@ -62,6 +74,7 @@ fun SleepScreen() {
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         hasMic = granted
         SleepTrackService.start(context)
+        startSleepExtras()
         toast.show(
             if (granted) "Noapte bună. Microfonul ascultă local — nimic nu pleacă de pe telefon."
             else "Noapte bună. Fără microfon: doar mișcarea se analizează."
@@ -173,6 +186,7 @@ fun SleepScreen() {
                 onClick = {
                     if (hasMic) {
                         SleepTrackService.start(context)
+                        startSleepExtras()
                         toast.show("Noapte bună. Lasă telefonul lângă tine, cu fața în jos.")
                     } else {
                         micLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -191,8 +205,8 @@ fun SleepScreen() {
 
         Spacer(Modifier.height(20.dp))
 
-        // Alarma deșteaptă
-        SectionLabel("Alarma deșteaptă", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
+        // Alarma circadiană — „treaz cel târziu la…"
+        SectionLabel("Alarma circadiană", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
         Spacer(Modifier.height(10.dp))
         ForjaCard(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp),
@@ -200,12 +214,14 @@ fun SleepScreen() {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
+                    Text("TREAZ CEL TÂRZIU LA", style = monoLabel(8, 0.14f).copy(color = SleepTextDim))
                     Text(
                         "%02d:%02d".format(alarmHour, alarmMinute),
                         style = heroNumeral(34)
                     )
                     Text(
-                        if (alarmEnabled) "te trezește în somn ușor, în fereastra de 30 min dinainte"
+                        if (alarmEnabled)
+                            "te trezesc la finalul unui ciclu de somn, cu cel mult $alarmWindow min înainte — niciodată mai târziu"
                         else "oprită",
                         style = BodyTiny.copy(color = SleepTextDim)
                     )
@@ -213,7 +229,7 @@ fun SleepScreen() {
                 ForjaSwitch(checked = alarmEnabled, onCheckedChange = { on ->
                     scope.launch {
                         app.prefs.setAlarmEnabled(on)
-                        if (on) toast.show("Alarmă setată la %02d:%02d — activă la următoarea sesiune de somn.".format(alarmHour, alarmMinute))
+                        if (on) toast.show("La culcare setez și alarma din Ceas la %02d:%02d — plasă de siguranță.".format(alarmHour, alarmMinute))
                     }
                 })
             }
@@ -251,6 +267,27 @@ fun SleepScreen() {
                         .padding(horizontal = 10.dp, vertical = 6.dp)
                 ) {
                     Text("+15 min", style = BodyStrong.copy(fontSize = 13.sp, color = SleepTextDim))
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text("FEREASTRA DE TREZIRE", style = monoLabel(8, 0.14f).copy(color = SleepTextDim))
+            Spacer(Modifier.height(6.dp))
+            Row {
+                listOf(20, 30, 40).forEach { w ->
+                    val sel = w == alarmWindow
+                    Box(
+                        Modifier
+                            .padding(end = 8.dp)
+                            .clip(ChipShape)
+                            .background(if (sel) TabPillActive else Color(0x1A7896BE))
+                            .pressable({ scope.launch { app.prefs.setAlarmWindowMin(w) } })
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            "$w min",
+                            style = BodyStrong.copy(fontSize = 13.sp, color = if (sel) Accent2 else SleepTextDim)
+                        )
+                    }
                 }
             }
         }

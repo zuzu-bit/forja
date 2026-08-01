@@ -267,7 +267,13 @@ class SleepTrackService : Service(), SensorEventListener {
         }
     }
 
-    /** Alarma deșteaptă: în fereastra de 30 min dinaintea orei, prima mișcare te trezește. */
+    /**
+     * Alarma circadiană: „treaz cel târziu la H:M".
+     * În fereastra aleasă (20/30/40 min înainte), te trezește la primul dintre:
+     * · finalul unui ciclu de somn (~90 min, cu ~15 min latență la adormire)
+     * · un moment de somn ușor (mișcare recentă)
+     * · ora-limită — niciodată mai târziu.
+     */
     private fun startAlarmWatcher(app: ForjaApp) {
         scope.launch {
             while (isActive && !alarmFired) {
@@ -277,15 +283,27 @@ class SleepTrackService : Service(), SensorEventListener {
                     if (!enabled) continue
                     val h = app.prefs.alarmHour.first()
                     val m = app.prefs.alarmMinute.first()
+                    val windowMs = app.prefs.alarmWindowMin.first().coerceIn(10, 90) * 60_000L
                     val zone = ZoneId.systemDefault()
-                    var target = LocalDate.now().atTime(h, m).atZone(zone).toInstant().toEpochMilli()
-                    if (target <= sessionStartAt) {
-                        target = LocalDate.now().plusDays(1).atTime(h, m).atZone(zone).toInstant().toEpochMilli()
+                    var deadline = LocalDate.now().atTime(h, m).atZone(zone).toInstant().toEpochMilli()
+                    if (deadline <= sessionStartAt) {
+                        deadline = LocalDate.now().plusDays(1).atTime(h, m).atZone(zone).toInstant().toEpochMilli()
                     }
                     val now = System.currentTimeMillis()
-                    val inWindow = now >= target - 30 * 60_000 && now < target
+                    val windowStart = deadline - windowMs
+
+                    // Granițele ciclurilor: adormire ~15 min + k × 90 min.
+                    var cycleTarget = 0L
+                    var t = sessionStartAt + 15 * 60_000L
+                    while (t <= deadline) {
+                        if (t >= windowStart) cycleTarget = t
+                        t += 90 * 60_000L
+                    }
+
+                    val inWindow = now in windowStart until deadline
                     val recentMovement = movementTimes.any { now - it < 3 * 60_000 }
-                    if (now >= target || (inWindow && recentMovement)) {
+                    val atCycleEnd = cycleTarget in 1..now
+                    if (now >= deadline || (inWindow && (recentMovement || atCycleEnd))) {
                         alarmFired = true
                         fireAlarm()
                     }

@@ -53,19 +53,67 @@ fun FocusScreen() {
     var permOpen by remember { mutableStateOf(false) }
     var pickerOpen by remember { mutableStateOf(false) }
     var screenTimeMin by remember { mutableStateOf(-1) }
+    var opensToday by remember { mutableStateOf(-1) }
+    var topApps by remember { mutableStateOf<List<Triple<String, Int, Float>>>(emptyList()) }
+    var weekMinutes by remember { mutableStateOf<List<Int>>(emptyList()) }
+    val detoxUntil by app.prefs.detoxUntil.collectAsState(initial = 0L)
 
+    var tick by remember { mutableStateOf(0L) }
     LaunchedEffect(Unit) {
         focusActive = app.prefs.focusActive.first()
+        while (true) { kotlinx.coroutines.delay(30_000); tick++ }
     }
-    // Timp de ecran real azi (dacă avem permisiunea)
-    LaunchedEffect(hasUsage) {
+    // Raportul de utilizare — azi + săptămâna, per aplicație (à la Digital Detox).
+    LaunchedEffect(hasUsage, tick) {
         if (hasUsage) {
             try {
                 val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+                val pm = context.packageManager
                 val start = Fmt.startOfDayMillis()
-                val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, System.currentTimeMillis())
-                val total = stats.filter { it.lastTimeUsed >= start }.sumOf { it.totalTimeInForeground }
+                val now = System.currentTimeMillis()
+                val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, now)
+                val perApp = HashMap<String, Long>()
+                stats.filter { it.lastTimeUsed >= start }.forEach {
+                    perApp[it.packageName] = (perApp[it.packageName] ?: 0L) + it.totalTimeInForeground
+                }
+                perApp.remove(context.packageName)
+                val total = perApp.values.sum()
                 screenTimeMin = (total / 60000).toInt()
+                val top = perApp.entries
+                    .filter { it.value >= 60_000 }
+                    .sortedByDescending { it.value }
+                    .take(6)
+                val maxV = top.firstOrNull()?.value?.coerceAtLeast(1) ?: 1
+                topApps = top.mapNotNull { e ->
+                    val label = try {
+                        pm.getApplicationLabel(pm.getApplicationInfo(e.key, 0)).toString()
+                    } catch (_: Exception) { return@mapNotNull null }
+                    Triple(label, (e.value / 60000).toInt(), e.value.toFloat() / maxV)
+                }
+                // Deschideri azi
+                var opens = 0
+                val events = usm.queryEvents(start, now)
+                val ev = android.app.usage.UsageEvents.Event()
+                var lastPkg = ""
+                while (events.hasNextEvent()) {
+                    events.getNextEvent(ev)
+                    if (ev.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED && ev.packageName != lastPkg) {
+                        opens++; lastPkg = ev.packageName
+                    }
+                }
+                opensToday = opens
+                // Săptămâna: 7 zile de total
+                weekMinutes = (6 downTo 0).map { ago ->
+                    val ds = Fmt.startOfDayMillis(ago.toLong())
+                    val de = ds + 24 * 3600_000
+                    val dayStats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, ds, minOf(de, now))
+                    val m = HashMap<String, Long>()
+                    dayStats.filter { it.lastTimeUsed in ds until de }.forEach {
+                        m[it.packageName] = maxOf(m[it.packageName] ?: 0L, it.totalTimeInForeground)
+                    }
+                    m.remove(context.packageName)
+                    (m.values.sum() / 60000).toInt()
+                }
             } catch (_: Exception) { screenTimeMin = -1 }
         }
     }
@@ -133,12 +181,132 @@ fun FocusScreen() {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                if (screenTimeMin >= 0) "Timp de ecran azi: ${Fmt.durationHm(screenTimeMin)}"
+                if (screenTimeMin >= 0)
+                    "Timp de ecran azi: ${Fmt.durationHm(screenTimeMin)}" +
+                        (if (opensToday >= 0) " · $opensToday deschideri" else "")
                 else "Timpul de ecran apare după ce dai permisiunea.",
                 style = monoLabel(9, 0.12f).copy(color = Accent2)
             )
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
+
+            // Detox digital: totul în pauză, în afară de esențiale (telefon, mesaje, FORJA).
+            val detoxOn = detoxUntil > System.currentTimeMillis()
+            ForjaCard(Modifier.fillMaxWidth(), fill = Color(0xE6121214)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Detox digital", style = BodyStrong.copy(fontSize = 15.sp))
+                        Text(
+                            if (detoxOn) {
+                                val left = ((detoxUntil - System.currentTimeMillis()) / 60000).toInt() + tick.toInt() * 0
+                                "activ · mai sunt ${Fmt.durationHm(left.coerceAtLeast(1))} · doar telefon, mesaje și FORJA"
+                            } else "blochează tot, în afară de telefon, mesaje și FORJA",
+                            style = BodyTiny.copy(color = if (detoxOn) Accent2 else TextSecondary)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                if (detoxOn) {
+                    SecondaryButton("Oprește detoxul", onClick = {
+                        scope.launch {
+                            app.prefs.setDetoxUntil(0L)
+                            toast.show("Detox oprit. Ai rezistat — contează.")
+                        }
+                    }, modifier = Modifier.fillMaxWidth())
+                } else {
+                    Row {
+                        listOf(30, 60, 120).forEach { min ->
+                            SecondaryButton(
+                                if (min < 120) "$min min" else "2 ore",
+                                onClick = {
+                                    if (!hasUsage) { permOpen = true; return@SecondaryButton }
+                                    scope.launch {
+                                        app.prefs.setDetoxUntil(System.currentTimeMillis() + min * 60_000L)
+                                        FocusMonitorService.start(context)
+                                        toast.show("Detox pornit. Ne vedem peste ${Fmt.durationHm(min)}.")
+                                    }
+                                },
+                                modifier = Modifier.weight(1f).padding(end = if (min < 120) 8.dp else 0.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // Raportul de azi — pe aplicații
+            if (hasUsage && topApps.isNotEmpty()) {
+                SectionLabel("Raportul de azi", Modifier.align(Alignment.Start))
+                Spacer(Modifier.height(8.dp))
+                ForjaCard(Modifier.fillMaxWidth(), fill = Color(0xE6121214)) {
+                    topApps.forEachIndexed { i, (label, min, frac) ->
+                        Column(Modifier.padding(bottom = if (i < topApps.size - 1) 10.dp else 0.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(label, style = BodyStrong.copy(fontSize = 13.sp), maxLines = 1, modifier = Modifier.weight(1f))
+                                Text(Fmt.durationHm(min), style = BodySmall.copy(color = TextSecondary))
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(5.dp)
+                                    .clip(CircleShape)
+                                    .background(SwitchOff)
+                            ) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth(frac.coerceIn(0.03f, 1f))
+                                        .fillMaxHeight()
+                                        .clip(CircleShape)
+                                        .background(AccentGradient)
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+                // Săptămâna ta de ecran
+                if (weekMinutes.size == 7) {
+                    SectionLabel("Săptămâna ta de ecran", Modifier.align(Alignment.Start))
+                    Spacer(Modifier.height(8.dp))
+                    ForjaCard(Modifier.fillMaxWidth(), fill = Color(0xE6121214)) {
+                        val maxW = (weekMinutes.maxOrNull() ?: 0).coerceAtLeast(60)
+                        Row(
+                            Modifier.fillMaxWidth().height(70.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            weekMinutes.forEachIndexed { i, min ->
+                                val isToday = i == 6
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Box(
+                                        Modifier
+                                            .width(20.dp)
+                                            .fillMaxHeight((min.toFloat() / maxW).coerceIn(0.05f, 1f))
+                                            .clip(CircleShape)
+                                            .background(if (isToday) AccentGradient else androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFF34343C), Color(0xFF23232A))))
+                                    )
+                                    Spacer(Modifier.height(5.dp))
+                                    val dayIdx = (java.time.LocalDate.now().dayOfWeek.value - 1 - (6 - i) + 7) % 7
+                                    Text(
+                                        if (isToday) "azi" else Fmt.dayLetters[dayIdx],
+                                        style = monoLabel(8, 0.08f).copy(color = if (isToday) Accent2 else TextDim)
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        val avg = weekMinutes.filter { it > 0 }.let { if (it.isEmpty()) 0 else it.sum() / it.size }
+                        Text(
+                            if (avg > 0) "media ${Fmt.durationHm(avg)} pe zi" else "datele se adună zi de zi",
+                            style = monoLabel(8, 0.10f).copy(color = TextDim)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
 
             if (!hasUsage) {
                 PrimaryButton("Vezi permisiunea", onClick = { permOpen = true }, modifier = Modifier.fillMaxWidth())

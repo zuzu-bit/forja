@@ -29,6 +29,8 @@ class Prefs(private val context: Context) {
         val bgShareOn = booleanPreferencesKey("bg_share_on")
         val ghostUntilLocal = longPreferencesKey("ghost_until_local")
         val bgBannerDismissed = booleanPreferencesKey("bg_banner_dismissed")
+        val alarmWindowMin = intPreferencesKey("alarm_window_min")
+        val detoxUntil = longPreferencesKey("detox_until")
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }
@@ -75,4 +77,12 @@ class Prefs(private val context: Context) {
 
     val bgBannerDismissed: Flow<Boolean> = context.dataStore.data.map { it[K.bgBannerDismissed] ?: false }
     suspend fun setBgBannerDismissed() = context.dataStore.edit { it[K.bgBannerDismissed] = true }
+
+    /** Fereastra alarmei circadiene: cu câte minute înainte de ora-limită are voie să sune. */
+    val alarmWindowMin: Flow<Int> = context.dataStore.data.map { it[K.alarmWindowMin] ?: 40 }
+    suspend fun setAlarmWindowMin(v: Int) = context.dataStore.edit { it[K.alarmWindowMin] = v }
+
+    /** Detox: totul blocat (în afară de esențiale) până la această oră. 0 = oprit. */
+    val detoxUntil: Flow<Long> = context.dataStore.data.map { it[K.detoxUntil] ?: 0L }
+    suspend fun setDetoxUntil(v: Long) = context.dataStore.edit { it[K.detoxUntil] = v }
 }

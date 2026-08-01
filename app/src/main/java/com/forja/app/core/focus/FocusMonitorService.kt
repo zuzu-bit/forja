@@ -44,18 +44,58 @@ class FocusMonitorService : Service() {
         return START_STICKY
     }
 
+    /** Esențialele care NU se blochează niciodată: launcher, telefon, mesaje, FORJA. */
+    private fun essentialPackages(): Set<String> {
+        val set = mutableSetOf(packageName)
+        try {
+            val home = packageManager.resolveActivity(
+                Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0
+            )?.activityInfo?.packageName
+            if (home != null) set.add(home)
+        } catch (_: Exception) { }
+        try {
+            val dialer = packageManager.resolveActivity(
+                Intent(Intent.ACTION_DIAL), 0
+            )?.activityInfo?.packageName
+            if (dialer != null) set.add(dialer)
+        } catch (_: Exception) { }
+        try {
+            android.provider.Telephony.Sms.getDefaultSmsPackage(this)?.let { set.add(it) }
+        } catch (_: Exception) { }
+        set.add("com.android.settings")
+        return set
+    }
+
     private fun monitor() {
         val app = ForjaApp.from(this)
+        val essentials = essentialPackages()
         scope.launch {
             while (true) {
                 delay(1200)
                 try {
-                    val rules = app.db.focusDao().enabledRules()
-                    if (rules.isEmpty()) continue
                     val unlockUntil = app.prefs.focusUnlockUntil.first()
                     if (System.currentTimeMillis() < unlockUntil) continue
 
+                    val detoxUntil = app.prefs.detoxUntil.first()
+                    val detoxOn = System.currentTimeMillis() < detoxUntil
+                    val rules = app.db.focusDao().enabledRules()
+                    if (!detoxOn && rules.isEmpty()) continue
+
                     val fg = foregroundPackage() ?: continue
+
+                    // Detox: totul în pauză, în afară de esențiale.
+                    if (detoxOn && fg !in essentials && System.currentTimeMillis() - lastBlockShown > 4000) {
+                        lastBlockShown = System.currentTimeMillis()
+                        startActivity(
+                            Intent(this@FocusMonitorService, FocusBlockActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                putExtra("label", "Detox: telefonul")
+                                putExtra("until", com.forja.app.core.util.Fmt.clock(detoxUntil))
+                            }
+                        )
+                        continue
+                    }
+
                     val cal = Calendar.getInstance()
                     val nowMin = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
                     val rule = rules.firstOrNull {
