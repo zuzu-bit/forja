@@ -122,17 +122,20 @@ jobs:
             if npx wrangler@3 r2 object get "forja-media/$MID.jpg" --file /tmp/chk.bin >/dev/null 2>&1; then
               GEN_SKIP=$((GEN_SKIP+1)); continue
             fi
-            RESP=$(curl -s --max-time 120 -X POST \
-              -H "X-Admin: $ACC" \
-              -H "Content-Type: application/json" \
-              -d "{\"key\":\"$MID.jpg\",\"prompt\":\"$MPROMPT, $BASE_PROMPT\"}" \
-              "$URL/media/_generate" || true)
-            if echo "$RESP" | jq -e '.ok' >/dev/null 2>&1; then
-              GEN_OK=$((GEN_OK+1))
-            else
-              GEN_ERR=$((GEN_ERR+1))
-              echo "FLUX a eșuat pentru $MID: $(echo "$RESP" | head -c 200)"
-            fi
+            DONE=0
+            for TRY in 1 2 3; do
+              RESP=$(curl -s --max-time 150 -X POST \
+                -H "X-Admin: $ACC" \
+                -H "Content-Type: application/json" \
+                -d "{\"key\":\"$MID.jpg\",\"prompt\":\"$MPROMPT, $BASE_PROMPT\"}" \
+                "$URL/media/_generate" || true)
+              if echo "$RESP" | jq -e '.ok' >/dev/null 2>&1; then
+                GEN_OK=$((GEN_OK+1)); DONE=1; break
+              fi
+              echo "FLUX încercarea $TRY pentru $MID: $(echo "$RESP" | head -c 160)"
+              sleep 6
+            done
+            [ "$DONE" = "0" ] && GEN_ERR=$((GEN_ERR+1))
           done << 'MEDIAEOF'
           354016637|night city boulevard bokeh, warm amber street lanterns glowing, blurred lights, no people
           430398119|a woman in her 30s running along an empty city boulevard before dawn, warm sodium streetlights, breath visible in cold air, seen from the side
