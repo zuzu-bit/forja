@@ -52,7 +52,20 @@ jobs:
           cd server
           npm install --no-audit --no-fund
           # Stocarea înregistrărilor de somn (se șterg automat la 24h).
-          npx wrangler@3 r2 bucket create forja-sleep 2>/dev/null || true
+          npx wrangler@3 r2 bucket create forja-sleep 2>&1 | tail -2 || true
+          CFG="wrangler.toml"
+          R2STATE="activă"
+          if ! npx wrangler@3 r2 bucket list 2>/dev/null | grep -q "forja-sleep"; then
+            # Tokenul nu are permisiunea R2 → publicăm fără stocare, restul rămâne live.
+            awk 'BEGIN{skip=0} /^\[\[r2_buckets\]\]/{skip=3; next} skip>0{skip--; next} {print}' wrangler.toml > wrangler-nor2.toml
+            CFG="wrangler-nor2.toml"
+            R2STATE="INACTIVĂ — adaugă la token permisiunea Account → Workers R2 Storage → Edit"
+            if ! gh issue list --state open --search "Stocarea R2 in:title" --json number -q '.[].number' | grep -q .; then
+              gh issue create --title "Stocarea R2 nu e activă (înregistrările de somn)" --body "Tokenul Cloudflare nu are permisiunea R2. Fix (30 sec, tokenul rămâne același): dash.cloudflare.com/profile/api-tokens → la tokenul «Edit Cloudflare Workers» apasă ⋯ → Edit → Add more → Account / Workers R2 Storage / Edit → Continue to summary → Save. Apoi rulează un build nou." 2>/dev/null || true
+            fi
+          fi
+          echo "Stocare R2: $R2STATE"
+          echo "- Stocarea înregistrărilor (R2): $R2STATE" >> "$GITHUB_STEP_SUMMARY"
           WHO=$(npx wrangler@3 whoami 2>&1 || true)
           echo "$WHO" | head -10
           # Subdomeniul workers.dev (numele public al serverului) — îl înregistrăm automat dacă lipsește.
@@ -74,7 +87,7 @@ jobs:
               echo "Subdomeniu existent: $SUB.workers.dev"
             fi
           fi
-          OUT=$(npx wrangler@3 deploy 2>&1 | tee /dev/stderr) || true
+          OUT=$(npx wrangler@3 deploy -c "$CFG" 2>&1 | tee /dev/stderr) || true
           URL=$(echo "$OUT" | grep -oE "https://[a-z0-9.-]+\.workers\.dev" | head -1)
           if [ -z "$URL" ]; then
             echo "url=" >> "$GITHUB_OUTPUT"
