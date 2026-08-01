@@ -222,16 +222,22 @@ class SleepTrackService : Service(), SensorEventListener {
                 wavBytes = f.readBytes()
             } catch (_: Exception) { }
 
-            val finalType = if (app.forjaApi.available && wavBytes != null) {
+            var finalType = "sound"
+            var transcript: String? = null
+            if (app.forjaApi.available && wavBytes != null) {
                 val verdict = try { app.forjaApi.classifySleepAudio(wavBytes) } catch (_: Exception) { null }
-                verdict?.type ?: "sound"
-            } else {
-                "sound"
+                if (verdict != null) {
+                    finalType = verdict.type
+                    if (verdict.type == "talk" && verdict.transcript.isNotBlank()) {
+                        transcript = verdict.transcript
+                    }
+                }
             }
             app.db.sleepDao().insertEvent(
                 SleepEventEntity(
                     sessionId = sessionId, type = finalType, at = at,
-                    durationS = durationS, intensity = intensity, clipPath = path
+                    durationS = durationS, intensity = intensity, clipPath = path,
+                    transcript = transcript
                 )
             )
         }

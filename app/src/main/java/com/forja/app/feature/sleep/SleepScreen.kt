@@ -466,6 +466,13 @@ private fun SleepEventCard(ev: SleepEventEntity, app: ForjaApp) {
             Text(intensityWord, style = BodySmall.copy(color = if (ev.intensity >= 3) Accent2 else SleepTextDim))
         }
         if (expanded) {
+            if (!ev.transcript.isNullOrBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Ai zis: „${ev.transcript}”",
+                    style = BodySmall.copy(color = SleepRem)
+                )
+            }
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (ev.clipPath != null && File(ev.clipPath).exists()) {

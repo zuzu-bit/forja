@@ -72,7 +72,7 @@ class ForjaApi {
         }
     }
 
-    data class AudioVerdict(val type: String, val words: Int)
+    data class AudioVerdict(val type: String, val words: Int, val transcript: String)
 
     /** Clip de somn (WAV 5s) → Whisper pe server: vorbire reală vs sforăit. */
     suspend fun classifySleepAudio(wavBytes: ByteArray): AudioVerdict? = withContext(Dispatchers.IO) {
@@ -88,7 +88,8 @@ class ForjaApi {
                 val root = json.parseToJsonElement(resp.body?.string() ?: return@withContext null).jsonObject
                 val type = root["type"]?.jsonPrimitive?.contentOrNull ?: return@withContext null
                 val words = root["words"]?.jsonPrimitive?.intOrNull ?: 0
-                AudioVerdict(type, words)
+                val transcript = root["transcript"]?.jsonPrimitive?.contentOrNull ?: ""
+                AudioVerdict(type, words, transcript)
             }
         } catch (_: Exception) { null }
     }

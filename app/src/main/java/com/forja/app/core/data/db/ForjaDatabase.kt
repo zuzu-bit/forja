@@ -12,7 +12,7 @@ import androidx.room.RoomDatabase
         MealEntity::class, SleepSessionEntity::class, SleepEventEntity::class,
         ActivityEntity::class, FocusRuleEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class ForjaDatabase : RoomDatabase() {

@@ -85,16 +85,17 @@ data class SleepSessionEntity(
     val phases: String = ""  // hipnogramă: „startMin,endMin,tip;…" (deep|light|rem|awake)
 )
 
-/** Eveniment de somn detectat local: sforăit / vorbit / mișcare, cu clip audio de 5s. */
+/** Eveniment de somn detectat local: sforăit / vorbit / sunet / mișcare, cu clip de 5s. */
 @Entity(tableName = "sleep_events")
 data class SleepEventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val sessionId: Long,
-    val type: String,        // snore · talk · move
+    val type: String,        // snore · talk · sound · move
     val at: Long,
     val durationS: Int,
     val intensity: Int,      // 1 Redus · 2 Moderat · 3 Puternic
-    val clipPath: String? = null
+    val clipPath: String? = null,
+    val transcript: String? = null   // ce a auzit Whisper, dacă a fost vorbire
 )
 
 @Entity(tableName = "activities")
