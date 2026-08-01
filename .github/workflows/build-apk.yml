@@ -110,6 +110,9 @@ jobs:
           if [ -n "$GEMINI_API_KEY" ]; then
             printf '%s' "$GEMINI_API_KEY" | npx wrangler@3 secret put GEMINI_API_KEY >/dev/null 2>&1 || true
           fi
+          # Cheia de administrare: doar CI poate cere serverului să genereze media.
+          printf '%s' "$ACC" | npx wrangler@3 secret put ADMIN_KEY >/dev/null 2>&1 || true
+          sleep 8
 
           # ── Pozele aplicației: generate cu FLUX (banca de modele, gratuit) direct în R2 ──
           BASE_PROMPT="vertical candid documentary photograph, cinematic color grade, deep graphite shadows, warm amber highlights, subtle film grain, shallow depth of field, natural imperfect real moment, no studio look, no text, no watermark, no logo"
@@ -120,15 +123,12 @@ jobs:
               GEN_SKIP=$((GEN_SKIP+1)); continue
             fi
             RESP=$(curl -s --max-time 120 -X POST \
-              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "X-Admin: $ACC" \
               -H "Content-Type: application/json" \
-              -d "{\"prompt\":\"$MPROMPT, $BASE_PROMPT\",\"steps\":8}" \
-              "https://api.cloudflare.com/client/v4/accounts/$ACC/ai/run/@cf/black-forest-labs/flux-1-schnell" || true)
-            IMGB64=$(echo "$RESP" | jq -r '.result.image // empty' 2>/dev/null)
-            if [ -n "$IMGB64" ]; then
-              echo "$IMGB64" | base64 -d > "/tmp/$MID.jpg"
-              npx wrangler@3 r2 object put "forja-media/$MID.jpg" --file "/tmp/$MID.jpg" --content-type image/jpeg >/dev/null 2>&1 \
-                && GEN_OK=$((GEN_OK+1)) || GEN_ERR=$((GEN_ERR+1))
+              -d "{\"key\":\"$MID.jpg\",\"prompt\":\"$MPROMPT, $BASE_PROMPT\"}" \
+              "$URL/media/_generate" || true)
+            if echo "$RESP" | jq -e '.ok' >/dev/null 2>&1; then
+              GEN_OK=$((GEN_OK+1))
             else
               GEN_ERR=$((GEN_ERR+1))
               echo "FLUX a eșuat pentru $MID: $(echo "$RESP" | head -c 200)"

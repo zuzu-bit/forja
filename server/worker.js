@@ -390,6 +390,29 @@ export default {
         return json([]);
       }
     }
+    // Administrare (doar CI, cu cheia de admin): generează o poză cu FLUX direct în R2.
+    if (request.method === "POST" && url.pathname === "/media/_generate") {
+      if (!env.ADMIN_KEY || request.headers.get("X-Admin") !== env.ADMIN_KEY) {
+        return json({ error: "Interzis." }, 403);
+      }
+      if (!env.MEDIA || !env.AI) return json({ error: "Media/AI neconfigurate." }, 503);
+      let body;
+      try { body = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
+      const key = String(body.key || "").replace(/[^0-9a-zA-Z._-]/g, "");
+      const prompt = String(body.prompt || "").slice(0, 1200);
+      if (!key || !prompt) return json({ error: "Lipsește key/prompt." }, 400);
+      try {
+        const r = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", { prompt, steps: 8 });
+        const b64 = r && r.image;
+        if (!b64) return json({ error: "FLUX n-a întors imagine." }, 502);
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        await env.MEDIA.put(key, bytes, { httpMetadata: { contentType: "image/jpeg" } });
+        return json({ ok: true, key, size: bytes.length });
+      } catch (e) {
+        return json({ error: "Generarea a eșuat: " + String(e && e.message ? e.message : e).slice(0, 200) }, 502);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.startsWith("/media/")) {
       if (!env.MEDIA) return json({ error: "Media neconfigurată." }, 404);
       const key = decodeURIComponent(url.pathname.slice("/media/".length)).replace(/[^0-9a-zA-Z._-]/g, "");
