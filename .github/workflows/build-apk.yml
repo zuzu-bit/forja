@@ -250,6 +250,9 @@ jobs:
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk FORJA.apk
           SIZE=$(du -h FORJA.apk | cut -f1)
+          MEDIA_LIST=$(curl -s --max-time 30 "$FORJA_API_URL/media/_list" 2>/dev/null || echo "[]")
+          MEDIA_COUNT=$(echo "$MEDIA_LIST" | jq 'length' 2>/dev/null || echo "?")
+          MEDIA_NAMES=$(echo "$MEDIA_LIST" | jq -r 'join(", ")' 2>/dev/null | head -c 600 || echo "")
           NOTES=$(cat << EOF
           ## FORJA — aplicația Android (build #${{ github.run_number }})
 
@@ -259,6 +262,7 @@ jobs:
           - Autentificare email/parolă: $AUTH_STATUS
           - Baza de date Firestore: $FS_STATUS
           - Serverul central FORJA: ${FORJA_API_URL:-neconfigurat — analiza rulează local}
+          - Media licențiată/generată în R2: $MEDIA_COUNT fișiere ($MEDIA_NAMES)
 
           <details><summary>Diagnoza modelelor AI</summary>
 
