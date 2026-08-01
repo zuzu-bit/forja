@@ -27,6 +27,13 @@ class ForjaApi {
     private val client = OkHttpClient.Builder()
         .callTimeout(60, TimeUnit.SECONDS)
         .build()
+
+    // Analiza AI în doi pași + upload-urile mari au nevoie de răbdare, nu de 60s.
+    private val longClient = OkHttpClient.Builder()
+        .callTimeout(300, TimeUnit.SECONDS)
+        .readTimeout(300, TimeUnit.SECONDS)
+        .writeTimeout(300, TimeUnit.SECONDS)
+        .build()
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     val available: Boolean get() = BuildConfig.FORJA_API_URL.isNotBlank()
@@ -53,7 +60,7 @@ class ForjaApi {
                 .header("Authorization", "Bearer $token")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
-            client.newCall(req).execute().use { resp ->
+            longClient.newCall(req).execute().use { resp ->
                 val text = resp.body?.string() ?: ""
                 if (!resp.isSuccessful) {
                     val msg = try {
@@ -67,8 +74,12 @@ class ForjaApi {
                 }
                 MealResult.Ok(analysis)
             }
-        } catch (_: Exception) {
-            MealResult.Fail("Serverul FORJA nu răspunde. Verifică internetul.")
+        } catch (e: Exception) {
+            MealResult.Fail(
+                if (e is java.io.InterruptedIOException || e is java.net.SocketTimeoutException)
+                    "Analiza durează prea mult acum — serverul AI e aglomerat. Mai încearcă o dată."
+                else "Serverul FORJA nu răspunde. Verifică internetul."
+            )
         }
     }
 
@@ -83,7 +94,7 @@ class ForjaApi {
                 .header("Authorization", "Bearer $token")
                 .post(file.readBytes().toRequestBody("audio/mp4".toMediaType()))
                 .build()
-            client.newCall(req).execute().use { it.isSuccessful }
+            longClient.newCall(req).execute().use { it.isSuccessful }
         } catch (_: Exception) { false }
     }
 

@@ -68,6 +68,16 @@ class ForjaApp : Application() {
                 }
             } catch (_: Exception) { }
         }
+        appScope.launch {
+            // Paznicul Focus/Detox repornește dacă era activ (ucis de sistem, update etc.).
+            try {
+                val focusOn = prefs.focusActive.first()
+                val detoxOn = prefs.detoxUntil.first() > System.currentTimeMillis()
+                if (focusOn || detoxOn) {
+                    com.forja.app.core.focus.FocusMonitorService.start(this@ForjaApp)
+                }
+            } catch (_: Exception) { }
+        }
         createChannels()
     }
 

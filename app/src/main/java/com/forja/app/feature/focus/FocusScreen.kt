@@ -49,6 +49,8 @@ fun FocusScreen() {
 
     val rules by app.db.focusDao().rules().collectAsState(initial = emptyList())
     var hasUsage by remember { mutableStateOf(FocusMonitorService.hasUsageAccess(context)) }
+    var hasOverlay by remember { mutableStateOf(android.provider.Settings.canDrawOverlays(context)) }
+    var overlayOpen by remember { mutableStateOf(false) }
     var focusActive by remember { mutableStateOf(false) }
     var permOpen by remember { mutableStateOf(false) }
     var pickerOpen by remember { mutableStateOf(false) }
@@ -118,9 +120,25 @@ fun FocusScreen() {
         }
     }
 
-    // Reîmprospătează la revenirea din setări
-    LaunchedEffect(permOpen) {
-        if (!permOpen) hasUsage = FocusMonitorService.hasUsageAccess(context)
+    // Reîmprospătează permisiunile la fiecare revenire pe ecran.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                hasUsage = FocusMonitorService.hasUsageAccess(context)
+                hasOverlay = android.provider.Settings.canDrawOverlays(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
+    fun ensureBlockingPermissions(onReady: () -> Unit) {
+        when {
+            !hasUsage -> permOpen = true
+            !hasOverlay -> overlayOpen = true
+            else -> onReady()
+        }
     }
 
     Box(Modifier.fillMaxSize().background(Surface0)) {
@@ -219,11 +237,12 @@ fun FocusScreen() {
                             SecondaryButton(
                                 if (min < 120) "$min min" else "2 ore",
                                 onClick = {
-                                    if (!hasUsage) { permOpen = true; return@SecondaryButton }
-                                    scope.launch {
-                                        app.prefs.setDetoxUntil(System.currentTimeMillis() + min * 60_000L)
-                                        FocusMonitorService.start(context)
-                                        toast.show("Detox pornit. Ne vedem peste ${Fmt.durationHm(min)}.")
+                                    ensureBlockingPermissions {
+                                        scope.launch {
+                                            app.prefs.setDetoxUntil(System.currentTimeMillis() + min * 60_000L)
+                                            FocusMonitorService.start(context)
+                                            toast.show("Detox pornit. Ne vedem peste ${Fmt.durationHm(min)}.")
+                                        }
                                     }
                                 },
                                 modifier = Modifier.weight(1f).padding(end = if (min < 120) 8.dp else 0.dp)
@@ -310,6 +329,8 @@ fun FocusScreen() {
 
             if (!hasUsage) {
                 PrimaryButton("Vezi permisiunea", onClick = { permOpen = true }, modifier = Modifier.fillMaxWidth())
+            } else if (!hasOverlay) {
+                PrimaryButton("Permite blocarea (peste alte aplicații)", onClick = { overlayOpen = true }, modifier = Modifier.fillMaxWidth())
             } else if (!focusActive) {
                 PrimaryButton(
                     "Pornește Focus",
@@ -317,10 +338,12 @@ fun FocusScreen() {
                         if (rules.none { it.enabled }) {
                             pickerOpen = true
                         } else {
-                            FocusMonitorService.start(context)
-                            focusActive = true
-                            scope.launch { app.prefs.setFocusActive(true) }
-                            toast.show("Focus pornit. Respiră.")
+                            ensureBlockingPermissions {
+                                FocusMonitorService.start(context)
+                                focusActive = true
+                                scope.launch { app.prefs.setFocusActive(true) }
+                                toast.show("Focus pornit. Respiră.")
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
@@ -399,6 +422,51 @@ fun FocusScreen() {
                 style = BodyTiny.copy(color = TextDim),
                 textAlign = TextAlign.Center
             )
+        }
+    }
+
+    // Sheet-ul „peste alte aplicații" — fără el, Android nu ne lasă să afișăm ecranul de blocare (ca la Forest).
+    if (overlayOpen) {
+        ModalBottomSheet(
+            onDismissRequest = { overlayOpen = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = Surface1, shape = SheetShape
+        ) {
+            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+                Text("Afișare peste alte aplicații", style = TitleModule.copy(fontSize = 20.sp))
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Ca să apară ecranul de respirație PESTE aplicația blocată (exact ca la Forest), Android cere permisiunea „Afișare peste alte aplicații”.",
+                    style = Body
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "FORJA o folosește doar pentru ecranul de blocare — nimic altceva nu se desenează peste telefonul tău.",
+                    style = BodySmall.copy(color = TextSecondary)
+                )
+                Spacer(Modifier.height(18.dp))
+                Row {
+                    SecondaryButton("Nu acum", onClick = { overlayOpen = false }, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(10.dp))
+                    PrimaryButton(
+                        "Permite",
+                        onClick = {
+                            overlayOpen = false
+                            try {
+                                context.startActivity(
+                                    Intent(
+                                        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                        android.net.Uri.parse("package:${context.packageName}")
+                                    )
+                                )
+                            } catch (_: Exception) {
+                                toast.show("Deschide Setări → Aplicații → FORJA → Afișare peste alte aplicații.")
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
         }
     }
 

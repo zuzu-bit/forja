@@ -111,11 +111,21 @@ class BgLocationReceiver : BroadcastReceiver() {
     }
 }
 
-/** După restart de telefon, urmărirea se reînscrie singură. */
+/** După restart de telefon: locația în fundal + paznicul Focus/Detox repornesc singuri. */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             BgLocation.registerIfReady(context)
+            val app = context.applicationContext as? ForjaApp ?: return
+            CoroutineScope(Dispatchers.Default).launch {
+                try {
+                    val focusOn = app.prefs.focusActive.first()
+                    val detoxOn = app.prefs.detoxUntil.first() > System.currentTimeMillis()
+                    if (focusOn || detoxOn) {
+                        com.forja.app.core.focus.FocusMonitorService.start(context)
+                    }
+                } catch (_: Exception) { }
+            }
         }
     }
 }

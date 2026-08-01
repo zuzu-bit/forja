@@ -80,28 +80,32 @@ object GalleryScan {
         return out
     }
 
-    /** Analizează o listă de poze; întoarce mesele găsite (fără să salveze nimic). */
+    /** Analizează pozele (3 în paralel); întoarce mesele găsite (fără să salveze nimic). */
     suspend fun scan(
         app: ForjaApp,
         images: List<Pair<Uri, Long>>,
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }
-    ): List<PendingMeal> {
-        val found = mutableListOf<PendingMeal>()
-        images.forEachIndexed { i, (uri, takenAt) ->
-            onProgress(i, images.size)
-            val bytes = MealAnalyze.readUri(app, uri) ?: return@forEachIndexed
-            when (val res = MealAnalyze.analyzeJpeg(app, bytes)) {
-                is AnalyzeOutcome.Ok -> {
-                    val path = MealAnalyze.savePhoto(app, bytes)
-                    if (path != null) {
-                        found.add(PendingMeal(res.analysis, takenAt, path))
+    ): List<PendingMeal> = kotlinx.coroutines.coroutineScope {
+        val found = java.util.Collections.synchronizedList(mutableListOf<PendingMeal>())
+        var done = 0
+        onProgress(0, images.size)
+        images.chunked(3).forEach { batch ->
+            batch.map { (uri, takenAt) ->
+                kotlinx.coroutines.async {
+                    val bytes = MealAnalyze.readUri(app, uri, maxSide = 1120) ?: return@async
+                    when (val res = MealAnalyze.analyzeJpeg(app, bytes)) {
+                        is AnalyzeOutcome.Ok -> {
+                            val path = MealAnalyze.savePhoto(app, bytes)
+                            if (path != null) found.add(PendingMeal(res.analysis, takenAt, path))
+                        }
+                        is AnalyzeOutcome.Fail -> { /* nu e mâncare sau analiza a picat */ }
                     }
                 }
-                is AnalyzeOutcome.Fail -> { /* nu e mâncare sau analiza a picat — trecem mai departe */ }
-            }
+            }.forEach { it.await() }
+            done += batch.size
+            onProgress(done, images.size)
         }
-        onProgress(images.size, images.size)
-        return found
+        found.toList()
     }
 
     // ── Coada de confirmare (nimic nu intră în jurnal fără OK-ul tău) ──────────
