@@ -109,7 +109,7 @@ jobs:
           if [ -n "$GEMINI_API_KEY" ]; then
             printf '%s' "$GEMINI_API_KEY" | npx wrangler@3 secret put GEMINI_API_KEY >/dev/null 2>&1 || true
           fi
-          sleep 10
+          sleep 45
           DIAG=$(curl -s --max-time 280 "$URL/v1/diag" || true)
           if [ -z "$DIAG" ]; then
             sleep 10
