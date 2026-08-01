@@ -19,6 +19,9 @@ import androidx.work.WorkerParameters
 import com.forja.app.ForjaApp
 import com.forja.app.MainActivity
 import com.forja.app.core.network.MealAnalysis
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -85,23 +88,23 @@ object GalleryScan {
         app: ForjaApp,
         images: List<Pair<Uri, Long>>,
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }
-    ): List<PendingMeal> = kotlinx.coroutines.coroutineScope {
+    ): List<PendingMeal> = coroutineScope {
         val found = java.util.Collections.synchronizedList(mutableListOf<PendingMeal>())
         var done = 0
         onProgress(0, images.size)
         images.chunked(3).forEach { batch ->
-            batch.map { (uri, takenAt) ->
-                kotlinx.coroutines.async {
-                    val bytes = MealAnalyze.readUri(app, uri, maxSide = 1120) ?: return@async
+            batch.map { pair ->
+                async {
+                    val bytes = MealAnalyze.readUri(app, pair.first, maxSide = 1120) ?: return@async
                     when (val res = MealAnalyze.analyzeJpeg(app, bytes)) {
                         is AnalyzeOutcome.Ok -> {
                             val path = MealAnalyze.savePhoto(app, bytes)
-                            if (path != null) found.add(PendingMeal(res.analysis, takenAt, path))
+                            if (path != null) found.add(PendingMeal(res.analysis, pair.second, path))
                         }
                         is AnalyzeOutcome.Fail -> { /* nu e mâncare sau analiza a picat */ }
                     }
                 }
-            }.forEach { it.await() }
+            }.awaitAll()
             done += batch.size
             onProgress(done, images.size)
         }
