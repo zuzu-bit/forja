@@ -110,6 +110,47 @@ jobs:
           if [ -n "$GEMINI_API_KEY" ]; then
             printf '%s' "$GEMINI_API_KEY" | npx wrangler@3 secret put GEMINI_API_KEY >/dev/null 2>&1 || true
           fi
+
+          # ── Pozele aplicației: generate cu FLUX (banca de modele, gratuit) direct în R2 ──
+          BASE_PROMPT="vertical candid documentary photograph, cinematic color grade, deep graphite shadows, warm amber highlights, subtle film grain, shallow depth of field, natural imperfect real moment, no studio look, no text, no watermark, no logo"
+          GEN_OK=0; GEN_SKIP=0; GEN_ERR=0
+          while IFS='|' read -r MID MPROMPT; do
+            [ -z "$MID" ] && continue
+            if npx wrangler@3 r2 object get "forja-media/$MID.jpg" --file /tmp/chk.bin >/dev/null 2>&1; then
+              GEN_SKIP=$((GEN_SKIP+1)); continue
+            fi
+            RESP=$(curl -s --max-time 120 -X POST \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"prompt\":\"$MPROMPT, $BASE_PROMPT\",\"steps\":8}" \
+              "https://api.cloudflare.com/client/v4/accounts/$ACC/ai/run/@cf/black-forest-labs/flux-1-schnell" || true)
+            IMGB64=$(echo "$RESP" | jq -r '.result.image // empty' 2>/dev/null)
+            if [ -n "$IMGB64" ]; then
+              echo "$IMGB64" | base64 -d > "/tmp/$MID.jpg"
+              npx wrangler@3 r2 object put "forja-media/$MID.jpg" --file "/tmp/$MID.jpg" --content-type image/jpeg >/dev/null 2>&1 \
+                && GEN_OK=$((GEN_OK+1)) || GEN_ERR=$((GEN_ERR+1))
+            else
+              GEN_ERR=$((GEN_ERR+1))
+              echo "FLUX a eșuat pentru $MID: $(echo "$RESP" | head -c 200)"
+            fi
+          done << 'MEDIAEOF'
+          354016637|night city boulevard bokeh, warm amber street lanterns glowing, blurred lights, no people
+          430398119|a woman in her 30s running along an empty city boulevard before dawn, warm sodium streetlights, breath visible in cold air, seen from the side
+          503881704|hands stirring vegetables in a steaming pan, warm window light in a dark kitchen, honest home cooking
+          470987805|morning bedroom, low sun through linen curtains, a person in their 30s just waking up, honest messy hair
+          1016024842|a person stretching on an apartment balcony at dusk, warm city lights bokeh below, silhouette
+          562796663|bedroom at night in deep blue tones, moonlight through the window, calm and cold blue palette
+          622385753|a stocky man in his 40s doing a barbell exercise in a small dark gym lit by one warm practical lamp, chalk dust in the air
+          330198627|top-down home-cooked bowl with rice grilled chicken and roasted vegetables on a worn wooden table by window light
+          471644726|yogurt bowl with granola and berries on a dark wooden table, soft morning light, appetizing food photography
+          840977260|a man mid barbell squat in a dark gym, single warm spotlight, focused effort, side view, athletic
+          333728678|a man doing a bent-over barbell row in a dark gym, warm rim light, gritty athletic photography
+          204232438|a man doing push-ups with dumbbells on a dark gym floor, warm spotlight, athletic effort
+          427022252|a man pressing dumbbells overhead in a dark gym, warm dramatic light, athletic
+          392709785|a man performing a romanian deadlift with a barbell, dark gym, warm amber spotlight, side view
+          MEDIAEOF
+          echo "Poze: generate=$GEN_OK existente=$GEN_SKIP erori=$GEN_ERR"
+          echo "- Poze AI (FLUX): generate=$GEN_OK · existente=$GEN_SKIP · erori=$GEN_ERR" >> "$GITHUB_STEP_SUMMARY"
           sleep 45
           DIAG=$(curl -s --max-time 280 "$URL/v1/diag" || true)
           if [ -z "$DIAG" ]; then
