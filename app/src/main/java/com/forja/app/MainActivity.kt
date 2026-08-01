@@ -112,7 +112,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
         Route.WORKOUT to ForjaTab.Antrenament,
         Route.MAP to ForjaTab.Harta,
         Route.NUTRITION to ForjaTab.Nutritie,
-        Route.SLEEP to ForjaTab.Somn
+        Route.SLEEP to ForjaTab.Somn,
+        Route.FOCUS to ForjaTab.Focus
     )
     val currentTab = tabFor[route ?: ""]
     val tabsVisible = route in setOf(
@@ -151,6 +152,7 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             ForjaTab.Harta -> Route.MAP
             ForjaTab.Nutritie -> Route.NUTRITION
             ForjaTab.Somn -> Route.SLEEP
+            ForjaTab.Focus -> Route.FOCUS
         }
         nav.navigate(target) {
             popUpTo(Route.DASHBOARD) { saveState = true }

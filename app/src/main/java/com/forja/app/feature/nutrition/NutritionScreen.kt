@@ -50,7 +50,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
     val meals by vm.meals.collectAsState()
     val kcal by vm.kcalToday.collectAsState()
     val target by vm.kcalTarget.collectAsState()
-    val pending by vm.pending.collectAsState()
+    val vmPending by vm.pending.collectAsState()
     val lookupError by vm.lookupError.collectAsState()
     val toast = LocalToast.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -59,6 +59,84 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
     var keyOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     var manualOpen by remember { mutableStateOf(false) }
+
+    // ── Galerie: alegere manuală + scanare à la Bixby Vision ──
+    val galleryScanOn by app.prefs.galleryScanOn.collectAsState(initial = false)
+    var galleryAnalyzing by remember { mutableStateOf(false) }
+    var galleryAnalysis by remember { mutableStateOf<com.forja.app.core.network.MealAnalysis?>(null) }
+    var galleryBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var pending by remember { mutableStateOf(GalleryScan.loadPending(context)) }
+    var pendingOpen by remember { mutableStateOf(false) }
+    var scanning by remember { mutableStateOf(false) }
+    var scanProgress by remember { mutableStateOf(0 to 0) }
+
+    val pickLauncher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            galleryAnalyzing = true
+            scope.launch {
+                val bytes = MealAnalyze.readUri(context, uri)
+                if (bytes == null) {
+                    galleryAnalyzing = false
+                    toast.show("Poza nu s-a putut citi.")
+                    return@launch
+                }
+                galleryBytes = bytes
+                when (val res = MealAnalyze.analyzeJpeg(app, bytes)) {
+                    is AnalyzeOutcome.Ok -> { galleryAnalyzing = false; galleryAnalysis = res.analysis }
+                    is AnalyzeOutcome.Fail -> { galleryAnalyzing = false; toast.show(res.message) }
+                }
+            }
+        }
+    }
+
+    fun runManualScan() {
+        if (scanning) return
+        scanning = true
+        scope.launch {
+            val images = GalleryScan.recentImages(context, limit = 10)
+            if (images.isEmpty()) {
+                scanning = false
+                toast.show("Nicio poză recentă în galerie.")
+                return@launch
+            }
+            val found = GalleryScan.scan(app, images) { done, total -> scanProgress = done to total }
+            scanning = false
+            if (found.isEmpty()) {
+                toast.show("Nicio mâncare găsită în ultimele ${images.size} poze.")
+            } else {
+                pending = pending + found
+                GalleryScan.savePending(context, pending)
+                pendingOpen = true
+            }
+        }
+    }
+
+    val scanPermLauncher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { res ->
+        if (res[GalleryScan.readPermissionName()] == true) runManualScan()
+        else toast.show("Fără acces la galerie, nu pot scana pozele.")
+    }
+    val enableScanLauncher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { res ->
+        if (res[GalleryScan.readPermissionName()] == true) {
+            scope.launch {
+                app.prefs.setGalleryScanOn(true)
+                GalleryScan.scheduleDaily(context)
+                toast.show("Gata — seara mă uit peste pozele zilei și îți propun mesele găsite.")
+            }
+        } else {
+            toast.show("Fără acces la galerie, scanarea rămâne oprită.")
+        }
+    }
+    fun scanPermissions(): Array<String> {
+        val list = mutableListOf(GalleryScan.readPermissionName())
+        if (android.os.Build.VERSION.SDK_INT >= 33) list.add(android.Manifest.permission.POST_NOTIFICATIONS)
+        return list.toTypedArray()
+    }
 
     LaunchedEffect(lookupError) {
         lookupError?.let {
@@ -161,10 +239,21 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                     entries.forEach { m ->
                         ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), padding = 12.dp) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Filled.Check, contentDescription = null,
-                                    tint = Positive, modifier = Modifier.size(18.dp)
-                                )
+                                if (m.photoPath != null && java.io.File(m.photoPath).exists()) {
+                                    AsyncImage(
+                                        model = java.io.File(m.photoPath),
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(width = 44.dp, height = 54.dp)
+                                            .clip(ThumbShape)
+                                    )
+                                } else {
+                                    Icon(
+                                        Icons.Filled.Check, contentDescription = null,
+                                        tint = Positive, modifier = Modifier.size(18.dp)
+                                    )
+                                }
                                 Spacer(Modifier.width(10.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(m.name, style = BodyStrong.copy(fontSize = 14.sp), maxLines = 1)
@@ -219,8 +308,22 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
         )
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            SecondaryButton("Cod de bare", onClick = onScan, modifier = Modifier.weight(1f))
+            SecondaryButton(
+                if (galleryAnalyzing) "se analizează…" else "Din galerie",
+                onClick = {
+                    if (!galleryAnalyzing) pickLauncher.launch(
+                        androidx.activity.result.PickVisualMediaRequest(
+                            androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly
+                        )
+                    )
+                },
+                modifier = Modifier.weight(1f)
+            )
             Spacer(Modifier.width(10.dp))
+            SecondaryButton("Cod de bare", onClick = onScan, modifier = Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
             SecondaryButton("Caută", onClick = { searchOpen = true }, modifier = Modifier.weight(1f))
             Spacer(Modifier.width(10.dp))
             SecondaryButton("Manual", onClick = { manualOpen = true }, modifier = Modifier.weight(1f))
@@ -231,6 +334,69 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
             style = BodyTiny.copy(color = TextDim2),
             modifier = Modifier.padding(horizontal = 20.dp)
         )
+
+        Spacer(Modifier.height(18.dp))
+
+        // Scanarea galeriei — à la Bixby Vision, strict cu acordul tău.
+        ForjaCard(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Scanarea galeriei", style = BodyStrong.copy(fontSize = 15.sp))
+                    Text(
+                        if (galleryScanOn) "seara mă uit peste pozele zilei și îți propun mesele găsite — tu confirmi"
+                        else "pentru pozele făcute cu camera normală (Insta, oraș) — nimic nu se salvează fără OK-ul tău",
+                        style = BodyTiny.copy(color = TextSecondary)
+                    )
+                }
+                ForjaSwitch(checked = galleryScanOn, onCheckedChange = { on ->
+                    if (on) {
+                        if (GalleryScan.hasReadPermission(context)) {
+                            scope.launch {
+                                app.prefs.setGalleryScanOn(true)
+                                GalleryScan.scheduleDaily(context)
+                                toast.show("Gata — seara mă uit peste pozele zilei.")
+                            }
+                        } else {
+                            enableScanLauncher.launch(scanPermissions())
+                        }
+                    } else {
+                        scope.launch {
+                            app.prefs.setGalleryScanOn(false)
+                            GalleryScan.cancelDaily(context)
+                            toast.show("Scanarea galeriei e oprită.")
+                        }
+                    }
+                })
+            }
+            Spacer(Modifier.height(10.dp))
+            SecondaryButton(
+                if (scanning) "scanez… ${scanProgress.first}/${scanProgress.second}" else "Scanează ultimele 10 poze acum",
+                onClick = {
+                    if (scanning) return@SecondaryButton
+                    if (GalleryScan.hasReadPermission(context)) runManualScan()
+                    else scanPermLauncher.launch(scanPermissions())
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        // Mese găsite în galerie — așteaptă confirmarea.
+        if (pending.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            ForjaCard(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .pressable({ pendingOpen = true }),
+                stroke = Color(0x66FFB300)
+            ) {
+                Text(
+                    "${pending.size} ${if (pending.size == 1) "masă găsită" else "mese găsite"} în galerie",
+                    style = BodyStrong.copy(fontSize = 14.sp)
+                )
+                Text("atinge ca să le vezi și să confirmi", style = BodyTiny.copy(color = Accent2))
+            }
+        }
     }
 
     if (keyOpen) {
@@ -252,7 +418,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
     if (manualOpen) {
         ManualAddSheet(vm = vm, onClose = { manualOpen = false })
     }
-    pending?.let { p ->
+    vmPending?.let { p ->
         PortionSheet(
             product = p.product,
             source = p.source,
@@ -262,6 +428,110 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
             },
             onDismiss = { vm.dismissPending() }
         )
+    }
+
+    // Rezultatul analizei din galerie (poză aleasă manual).
+    galleryAnalysis?.let { a ->
+        MealResultSheet(
+            analysis = a,
+            initialMealType = MealAnalyze.mealTypeForTime(System.currentTimeMillis()),
+            onConfirm = { components, mealType ->
+                scope.launch {
+                    val photoPath = galleryBytes?.let { MealAnalyze.savePhoto(context, it) }
+                    val meal = MealAnalyze.saveMeal(app, a, components, mealType, System.currentTimeMillis(), photoPath)
+                    toast.show("Salvat: ${meal.kcal} kcal.")
+                    galleryAnalysis = null
+                }
+            },
+            onDismiss = { galleryAnalysis = null }
+        )
+    }
+
+    // Mesele găsite de scanare — confirmare una câte una.
+    if (pendingOpen && pending.isNotEmpty()) {
+        PendingMealsSheet(
+            items = pending,
+            onConfirm = { item ->
+                scope.launch {
+                    MealAnalyze.saveMeal(
+                        app, item.analysis, item.analysis.componente,
+                        MealAnalyze.mealTypeForTime(item.at), item.at, item.photoPath
+                    )
+                    pending = pending.filter { it !== item }
+                    GalleryScan.savePending(context, pending)
+                    toast.show("Adăugată în jurnal.")
+                    if (pending.isEmpty()) pendingOpen = false
+                }
+            },
+            onIgnore = { item ->
+                runCatching { java.io.File(item.photoPath).delete() }
+                pending = pending.filter { it !== item }
+                GalleryScan.savePending(context, pending)
+                if (pending.isEmpty()) pendingOpen = false
+            },
+            onClose = { pendingOpen = false }
+        )
+    }
+}
+
+/** Lista meselor găsite în galerie: poză + estimare, confirmate de tine. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PendingMealsSheet(
+    items: List<PendingMeal>,
+    onConfirm: (PendingMeal) -> Unit,
+    onIgnore: (PendingMeal) -> Unit,
+    onClose: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Surface1, shape = SheetShape
+    ) {
+        Column(
+            Modifier
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp)
+                .fillMaxHeight(0.85f)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text("Mese găsite în galerie", style = TitleModule.copy(fontSize = 20.sp))
+            Spacer(Modifier.height(4.dp))
+            Text("AI-ul a propus — tu decizi. Ce ignori se șterge de tot.", style = BodySmall)
+            Spacer(Modifier.height(12.dp))
+            items.forEach { item ->
+                ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), fill = Surface2, padding = 12.dp) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AsyncImage(
+                            model = java.io.File(item.photoPath),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(54.dp)
+                                .clip(ThumbShape)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                item.analysis.fel.ifBlank { "Masă" },
+                                style = BodyStrong.copy(fontSize = 14.sp), maxLines = 1
+                            )
+                            Text(
+                                "${item.analysis.componente.sumOf { it.kcal }} kcal · " +
+                                    "${mealTypeNames[MealAnalyze.mealTypeForTime(item.at)]} · ${Fmt.clock(item.at)}",
+                                style = BodyTiny.copy(color = TextSecondary)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Row {
+                        PrimaryButton("Adaugă", small = true, onClick = { onConfirm(item) }, modifier = Modifier.weight(1f))
+                        Spacer(Modifier.width(10.dp))
+                        SecondaryButton("Ignoră", onClick = { onIgnore(item) }, modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
     }
 }
 

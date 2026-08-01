@@ -69,7 +69,8 @@ data class MealEntity(
     val confidence: String,  // „ridicată" · „medie" · „—"
     val at: Long,
     val confirmed: Boolean = true,
-    val barcode: String? = null
+    val barcode: String? = null,
+    val photoPath: String? = null    // miniatura mesei, salvată în aplicație
 )
 
 @Entity(tableName = "sleep_sessions")

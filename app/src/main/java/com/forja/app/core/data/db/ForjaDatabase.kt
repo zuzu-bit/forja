@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
@@ -12,7 +14,7 @@ import androidx.room.RoomDatabase
         MealEntity::class, SleepSessionEntity::class, SleepEventEntity::class,
         ActivityEntity::class, FocusRuleEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class ForjaDatabase : RoomDatabase() {
@@ -25,13 +27,22 @@ abstract class ForjaDatabase : RoomDatabase() {
     companion object {
         @Volatile private var instance: ForjaDatabase? = null
 
+        // De la v4 încolo migrăm FĂRĂ pierdere de date.
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE meals ADD COLUMN photoPath TEXT")
+            }
+        }
+
         fun get(context: Context): ForjaDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     ForjaDatabase::class.java,
                     "forja.db"
-                ).fallbackToDestructiveMigration().build().also { instance = it }
+                ).addMigrations(MIGRATION_4_5)
+                    .fallbackToDestructiveMigration()
+                    .build().also { instance = it }
             }
     }
 }

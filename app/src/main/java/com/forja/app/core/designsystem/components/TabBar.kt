@@ -11,6 +11,7 @@ import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.SelfImprovement
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,7 +30,8 @@ enum class ForjaTab(val label: String, val icon: ImageVector) {
     Antrenament("Antren.", Icons.Outlined.FitnessCenter),
     Harta("Hartă", Icons.Outlined.Map),
     Nutritie("Nutriție", Icons.Outlined.PhotoCamera),
-    Somn("Somn", Icons.Outlined.Bedtime)
+    Somn("Somn", Icons.Outlined.Bedtime),
+    Focus("Focus", Icons.Outlined.SelfImprovement)
 }
 
 @Composable
@@ -59,6 +61,7 @@ fun ForjaTabBar(
         ) {
             TabItem(ForjaTab.Azi, current, onSelect)
             TabItem(ForjaTab.Antrenament, current, onSelect)
+            TabItem(ForjaTab.Focus, current, onSelect)
             CenterMapTab(selected = current == ForjaTab.Harta) { onSelect(ForjaTab.Harta) }
             TabItem(ForjaTab.Nutritie, current, onSelect)
             TabItem(ForjaTab.Somn, current, onSelect)
@@ -75,7 +78,7 @@ private fun TabItem(tab: ForjaTab, current: ForjaTab?, onSelect: (ForjaTab) -> U
             .clip(RoundedCornerShape(12.dp))
             .background(if (selected) TabPillActive else Color.Transparent)
             .pressable({ onSelect(tab) })
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .padding(horizontal = 9.dp, vertical = 7.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(tab.icon, contentDescription = tab.label, tint = tint, modifier = Modifier.size(21.dp))

@@ -19,6 +19,7 @@ import com.google.firebase.firestore.persistentCacheSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 
@@ -59,6 +60,14 @@ class ForjaApp : Application() {
         Configuration.getInstance().osmdroidTileCache = getDir("osmdroid_tiles", MODE_PRIVATE)
 
         appScope.launch { Seed.ensure(db) }
+        appScope.launch {
+            // Scanarea galeriei rămâne programată dacă utilizatorul a activat-o.
+            try {
+                if (prefs.galleryScanOn.first()) {
+                    com.forja.app.feature.nutrition.GalleryScan.scheduleDaily(this@ForjaApp)
+                }
+            } catch (_: Exception) { }
+        }
         createChannels()
     }
 
