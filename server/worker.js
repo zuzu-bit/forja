@@ -56,15 +56,28 @@ function extractMealJson(text) {
 // ── Analiza meselor fără NICIO cheie — pipeline în doi pași, ca profesioniștii:
 //    1) modelul de VEDERE identifică alimentele și gramajele
 //    2) modelul mare de TEXT (nutriționistul) completează kcal + P/C/G în română ──
+// Modelele Meta cer o acceptare de licență unică per cont: promptul „agree”.
+async function runWithAgree(env, model, input) {
+  try {
+    return await env.AI.run(model, input);
+  } catch (e) {
+    const msg = String(e && e.message ? e.message : e);
+    if (msg.includes("5016") || msg.toLowerCase().includes("agree")) {
+      try { await env.AI.run(model, { prompt: "agree" }); } catch (_) { }
+      return await env.AI.run(model, input);
+    }
+    throw e;
+  }
+}
+
 async function runText(env, prompt, maxTokens = 900) {
   const models = [
     "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     "@cf/meta/llama-3.1-70b-instruct",
-    "@cf/meta/llama-3.1-8b-instruct",
   ];
   for (const model of models) {
     try {
-      const r = await env.AI.run(model, {
+      const r = await runWithAgree(env, model, {
         messages: [{ role: "user", content: prompt }],
         max_tokens: maxTokens,
         temperature: 0.2,
@@ -108,7 +121,7 @@ async function mealViaModelBank(env, imageB64) {
   let visionErr = "";
   for (const model of visionModels) {
     try {
-      const r = await env.AI.run(model, {
+      const r = await runWithAgree(env, model, {
         image: [...bytes],
         prompt:
           "Describe every food item visible in this photo and estimate the portion weight in grams for each. " +
@@ -157,7 +170,7 @@ async function handleDiag(env) {
   const visionModels = ["@cf/meta/llama-3.2-11b-vision-instruct", "@cf/llava-hf/llava-1.5-7b-hf"];
   for (const m of visionModels) {
     try {
-      const r = await env.AI.run(m, { image: [...tiny], prompt: "one word: color?", max_tokens: 10 });
+      const r = await runWithAgree(env, m, { image: [...tiny], prompt: "one word: color?", max_tokens: 10 });
       results[m] = "OK: " + String((r && (r.response || r.description || r.text)) || "?").slice(0, 40);
     } catch (e) {
       results[m] = "ERR: " + String(e && e.message ? e.message : e).slice(0, 120);
@@ -166,11 +179,10 @@ async function handleDiag(env) {
   const textModels = [
     "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     "@cf/meta/llama-3.1-70b-instruct",
-    "@cf/meta/llama-3.1-8b-instruct",
   ];
   for (const m of textModels) {
     try {
-      const r = await env.AI.run(m, { messages: [{ role: "user", content: "Say OK" }], max_tokens: 5 });
+      const r = await runWithAgree(env, m, { messages: [{ role: "user", content: "Say OK" }], max_tokens: 5 });
       results[m] = "OK: " + String((r && (r.response || r.text)) || "?").slice(0, 40);
     } catch (e) {
       results[m] = "ERR: " + String(e && e.message ? e.message : e).slice(0, 120);
