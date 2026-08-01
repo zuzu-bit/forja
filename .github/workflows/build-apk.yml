@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       url: ${{ steps.deploy.outputs.url }}
+      diag: ${{ steps.deploy.outputs.diag }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -50,6 +51,8 @@ jobs:
           if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then unset CLOUDFLARE_ACCOUNT_ID; fi
           cd server
           npm install --no-audit --no-fund
+          # Stocarea înregistrărilor de somn (se șterg automat la 24h).
+          npx wrangler@3 r2 bucket create forja-sleep 2>/dev/null || true
           WHO=$(npx wrangler@3 whoami 2>&1 || true)
           echo "$WHO" | head -10
           # Subdomeniul workers.dev (numele public al serverului) — îl înregistrăm automat dacă lipsește.
@@ -81,6 +84,15 @@ jobs:
           if [ -n "$GEMINI_API_KEY" ]; then
             printf '%s' "$GEMINI_API_KEY" | npx wrangler@3 secret put GEMINI_API_KEY >/dev/null 2>&1 || true
           fi
+          sleep 6
+          DIAG=$(curl -s --max-time 120 "$URL/v1/diag" || echo '{"diag":"indisponibil"}')
+          echo "DIAG: $DIAG"
+          echo "$DIAG" > /tmp/diag.json
+          {
+            echo "diag<<DIAGEOF"
+            echo "$DIAG"
+            echo "DIAGEOF"
+          } >> "$GITHUB_OUTPUT"
           echo "Server publicat la: $URL"
           echo "## Serverul central FORJA" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: $URL" >> "$GITHUB_STEP_SUMMARY"
@@ -163,6 +175,7 @@ jobs:
           AUTH_STATUS: ${{ steps.fbcheck.outputs.AUTH_STATUS }}
           FS_STATUS: ${{ steps.fbcheck.outputs.FS_STATUS }}
           FORJA_API_URL: ${{ needs.deploy-api.outputs.url }}
+          API_DIAG: ${{ needs.deploy-api.outputs.diag }}
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk FORJA.apk
           SIZE=$(du -h FORJA.apk | cut -f1)
@@ -175,6 +188,13 @@ jobs:
           - Autentificare email/parolă: $AUTH_STATUS
           - Baza de date Firestore: $FS_STATUS
           - Serverul central FORJA: ${FORJA_API_URL:-neconfigurat — analiza rulează local}
+
+          <details><summary>Diagnoza modelelor AI</summary>
+
+          \`\`\`json
+          ${API_DIAG:-fără date}
+          \`\`\`
+          </details>
 
           Commit: ${{ github.sha }}
           EOF

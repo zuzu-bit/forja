@@ -55,13 +55,16 @@ class SleepTrackService : Service(), SensorEventListener {
     private var lastMovementAt = 0L
     private val movementTimes = mutableListOf<Long>()
 
-    // Audio
+    // Audio — 32 kHz pentru claritate; clipurile Whisper se reduc la 16 kHz.
     private var audioRecord: AudioRecord? = null
     private var audioJob: kotlinx.coroutines.Job? = null
-    private val sampleRate = 16000
+    private val sampleRate = 32000
     private val ringSeconds = 6
     private val ring = ShortArray(sampleRate * ringSeconds)
     private var ringPos = 0
+    private var totalWritten = 0L
+    private var fullRecorder: AacRecorder? = null
+    private var fullFile: File? = null
     private var baseline = 250.0
     private var lastSnoreEventAt = 0L
     private var lastTalkEventAt = 0L
@@ -99,6 +102,17 @@ class SleepTrackService : Service(), SensorEventListener {
                 SleepSessionEntity(startAt = sessionStartAt)
             )
             if (existing != null) sessionStartAt = existing.startAt
+            // Înregistrarea completă a nopții (AAC) — pornită după ce știm sesiunea.
+            try {
+                val dir = File(filesDir, "sleep_full").apply { mkdirs() }
+                // Curățenie: fișierele mai vechi de 24h dispar și local.
+                dir.listFiles()?.forEach {
+                    if (System.currentTimeMillis() - it.lastModified() > 24 * 3600_000) it.delete()
+                }
+                val f = File(dir, "$sessionId.m4a")
+                fullFile = f
+                fullRecorder = AacRecorder(sampleRate, f)
+            } catch (_: Exception) { }
         }
         // Mișcare
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -139,6 +153,9 @@ class SleepTrackService : Service(), SensorEventListener {
                         ring[ringPos] = chunk[i]
                         ringPos = (ringPos + 1) % ring.size
                     }
+                    totalWritten += n
+                    // înregistrarea completă (AAC)
+                    fullRecorder?.feed(chunk, n)
                     processChunk(chunk, n)
                 }
             }
@@ -208,16 +225,23 @@ class SleepTrackService : Service(), SensorEventListener {
      */
     private fun saveEvent(typeHint: String, at: Long, durationS: Int, intensity: Int) {
         val app = ForjaApp.from(this)
-        val snapshot = ShortArray(sampleRate * 5)
-        val start = (ringPos - snapshot.size + ring.size * 2) % ring.size
-        for (i in snapshot.indices) snapshot[i] = ring[(start + i) % ring.size]
+        // Ultimele 5 secunde REAL scrise (fără ecouri, fără zone goale),
+        // reduse la 16 kHz pentru Whisper.
+        val wantedFull = sampleRate * 5
+        val copyLen = minOf(totalWritten, wantedFull.toLong()).toInt()
+        if (copyLen < sampleRate) return
+        val full = ShortArray(copyLen)
+        val start = ((ringPos - copyLen) % ring.size + ring.size) % ring.size
+        for (i in 0 until copyLen) full[i] = ring[(start + i) % ring.size]
+        val snapshot = ShortArray(copyLen / 2)
+        for (i in snapshot.indices) snapshot[i] = full[i * 2]
         scope.launch {
             var path: String? = null
             var wavBytes: ByteArray? = null
             try {
                 val dir = File(filesDir, "sleep_clips").apply { mkdirs() }
                 val f = File(dir, "${sessionId}_${typeHint}_$at.wav")
-                writeWav(f, snapshot, sampleRate)
+                writeWav(f, snapshot, 16000)
                 path = f.absolutePath
                 wavBytes = f.readBytes()
             } catch (_: Exception) { }
@@ -301,6 +325,8 @@ class SleepTrackService : Service(), SensorEventListener {
             audioRecord?.release()
         } catch (_: Exception) { }
         audioRecord = null
+        try { fullRecorder?.stop() } catch (_: Exception) { }
+        fullRecorder = null
         val app = ForjaApp.from(this)
         app.presence.manualState = null
         app.auth.currentUid?.let { app.presence.publishState(it, "idle") }
@@ -321,18 +347,42 @@ class SleepTrackService : Service(), SensorEventListener {
                     else -> 40
                 }
                 val score = (durationScore - movePenalty).roundToInt().coerceIn(15, 98)
+
+                // Înregistrarea completă → stocarea companiei, disponibilă 24h.
+                var recordedUntil = 0L
+                val f = fullFile
+                if (f != null && f.exists() && f.length() > 4000 && app.forjaApi.available) {
+                    val ok = try { app.forjaApi.uploadSleepRecording(s.id, f) } catch (_: Exception) { false }
+                    if (ok) recordedUntil = end + 24 * 3600_000
+                }
+                if (f != null && f.exists() && f.length() > 4000 && recordedUntil == 0L) {
+                    // n-a urcat — rămâne local, tot 24h (curățată la următoarea sesiune)
+                    recordedUntil = end + 24 * 3600_000
+                }
+
+                val events = dao.eventsForSessionOnce(s.id)
+                val snoreCount = events.count { it.type == "snore" }
+                val talkCount = events.count { it.type == "talk" }
+
+                // Rezumatul de dimineață — două propoziții din cifre reale.
+                val summary = if (app.forjaApi.available) {
+                    try {
+                        app.forjaApi.sleepSummary(totalMin, score, deep, rem, moves, snoreCount, talkCount) ?: ""
+                    } catch (_: Exception) { "" }
+                } else ""
+
                 val updated = s.copy(
                     endAt = end, movements = moves, score = score,
-                    deepMin = deep, lightMin = light, remMin = rem, phases = phases
+                    deepMin = deep, lightMin = light, remMin = rem, phases = phases,
+                    summary = summary, recordedUntil = recordedUntil
                 )
                 dao.update(updated)
-                // Raportul urcă în baza companiei — fără clipuri audio, doar cifrele.
+                // Raportul urcă în baza companiei — cifrele + rezumatul, nu audio-ul brut.
                 try {
-                    val events = dao.eventsForSessionOnce(s.id)
                     com.forja.app.core.data.CloudSync.sleep(
                         app.auth.currentUid, updated,
-                        snoreCount = events.count { it.type == "snore" },
-                        talkCount = events.count { it.type == "talk" },
+                        snoreCount = snoreCount,
+                        talkCount = talkCount,
                         soundCount = events.count { it.type == "sound" }
                     )
                 } catch (_: Exception) { }
@@ -420,6 +470,7 @@ class SleepTrackService : Service(), SensorEventListener {
             audioRecord?.stop()
             audioRecord?.release()
         } catch (_: Exception) { }
+        try { fullRecorder?.stop() } catch (_: Exception) { }
         scope.cancel()
         super.onDestroy()
     }

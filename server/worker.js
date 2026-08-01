@@ -57,7 +57,11 @@ function extractMealJson(text) {
 //    1) modelul de VEDERE identifică alimentele și gramajele
 //    2) modelul mare de TEXT (nutriționistul) completează kcal + P/C/G în română ──
 async function runText(env, prompt, maxTokens = 900) {
-  const models = ["@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/meta/llama-3.1-8b-instruct"];
+  const models = [
+    "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "@cf/meta/llama-3.1-70b-instruct",
+    "@cf/meta/llama-3.1-8b-instruct",
+  ];
   for (const model of models) {
     try {
       const r = await env.AI.run(model, {
@@ -101,21 +105,29 @@ async function mealViaModelBank(env, imageB64) {
 
   // Pasul 1: ce se vede în farfurie (sarcină simplă — la asta modelele de vedere sunt bune).
   let draft = "";
+  let visionErr = "";
   for (const model of visionModels) {
     try {
       const r = await env.AI.run(model, {
         image: [...bytes],
         prompt:
-          "List every food item visible in this photo with an estimated portion weight in grams. " +
-          "Format: one item per line, 'name - grams'. Nothing else. If there is no food, answer exactly: NO_FOOD",
+          "Describe every food item visible in this photo and estimate the portion weight in grams for each. " +
+          "One item per line, format: name - grams.",
         max_tokens: 400,
       });
       const out = ((r && (r.response || r.description || r.text)) || "").trim();
-      if (out && !out.toUpperCase().includes("NO_FOOD")) { draft = out; break; }
-    } catch (_) { }
+      // „Fără mâncare” doar dacă e răspunsul întreg, nu un ecou al instrucțiunii.
+      const upper = out.toUpperCase();
+      if (out.length > 3 && !upper.startsWith("NO_FOOD") && upper !== "NO FOOD") {
+        draft = out;
+        break;
+      }
+    } catch (e) {
+      visionErr = `${model}: ${String(e && e.message ? e.message : e).slice(0, 160)}`;
+    }
   }
   if (!draft) {
-    return json({ error: "N-am recunoscut mâncare în poză. Încearcă un unghi de sus, cu lumină." }, 422);
+    return json({ error: `[vedere] Modelele n-au putut citi poza.${visionErr ? " Detaliu: " + visionErr : ""} Mai încearcă o poză cu lumină.` }, 422);
   }
 
   // Pasul 2: nutriționistul (model mare de text) pune cifrele — în română.
@@ -130,7 +142,43 @@ async function mealViaModelBank(env, imageB64) {
     parsed.incredere = parsed.incredere || "medie";
     return json(parsed);
   }
-  return json({ error: "Analiza n-a reușit de data asta. Mai încearcă o poză." }, 422);
+  return json({ error: "[nutriționist] Modelul de text n-a produs valorile. Mai încearcă o dată." }, 422);
+}
+
+// ── Autodiagnoză: care modele răspund pe acest cont (citită de CI la deploy) ──
+const TINY_JPEG_B64 =
+  "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a" +
+  "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAA" +
+  "AAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==";
+
+async function handleDiag(env) {
+  const results = {};
+  const tiny = Uint8Array.from(atob(TINY_JPEG_B64), (c) => c.charCodeAt(0));
+  const visionModels = ["@cf/meta/llama-3.2-11b-vision-instruct", "@cf/llava-hf/llava-1.5-7b-hf"];
+  for (const m of visionModels) {
+    try {
+      const r = await env.AI.run(m, { image: [...tiny], prompt: "one word: color?", max_tokens: 10 });
+      results[m] = "OK: " + String((r && (r.response || r.description || r.text)) || "?").slice(0, 40);
+    } catch (e) {
+      results[m] = "ERR: " + String(e && e.message ? e.message : e).slice(0, 120);
+    }
+  }
+  const textModels = [
+    "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "@cf/meta/llama-3.1-70b-instruct",
+    "@cf/meta/llama-3.1-8b-instruct",
+  ];
+  for (const m of textModels) {
+    try {
+      const r = await env.AI.run(m, { messages: [{ role: "user", content: "Say OK" }], max_tokens: 5 });
+      results[m] = "OK: " + String((r && (r.response || r.text)) || "?").slice(0, 40);
+    } catch (e) {
+      results[m] = "ERR: " + String(e && e.message ? e.message : e).slice(0, 120);
+    }
+  }
+  results["r2"] = env.RECORDS ? "OK: binding prezent" : "ERR: lipsă binding";
+  results["gemini"] = env.GEMINI_API_KEY ? "configurat" : "absent (banca de modele)";
+  return json(results);
 }
 
 // ── Analiza meselor: poza → serverul FORJA (Gemini dacă există cheia companiei,
@@ -254,6 +302,48 @@ async function handleSleepAudio(request, env) {
   });
 }
 
+// ── Înregistrarea completă a nopții → R2 (contul companiei), ștearsă la 24h ──
+async function handleRecordingUpload(request, env, uid, sessionId) {
+  if (!env.RECORDS) return json({ error: "Stocarea R2 nu e configurată încă." }, 503);
+  const buf = await request.arrayBuffer();
+  if (!buf || buf.byteLength < 1000) return json({ error: "Înregistrare goală." }, 400);
+  if (buf.byteLength > 80_000_000) return json({ error: "Înregistrare prea mare." }, 413);
+  await env.RECORDS.put(`${uid}/${sessionId}.m4a`, buf, {
+    httpMetadata: { contentType: "audio/mp4" },
+    customMetadata: { at: String(Date.now()) },
+  });
+  return json({ ok: true, expiresInHours: 24 });
+}
+
+async function handleRecordingGet(env, uid, sessionId) {
+  if (!env.RECORDS) return json({ error: "Stocarea R2 nu e configurată încă." }, 503);
+  const obj = await env.RECORDS.get(`${uid}/${sessionId}.m4a`);
+  if (!obj) return json({ error: "Înregistrarea a expirat (se șterge automat după 24h)." }, 404);
+  const at = Number(obj.customMetadata && obj.customMetadata.at) || 0;
+  if (at > 0 && Date.now() - at > 24 * 3600_000) {
+    await env.RECORDS.delete(`${uid}/${sessionId}.m4a`);
+    return json({ error: "Înregistrarea a expirat (se șterge automat după 24h)." }, 404);
+  }
+  return new Response(obj.body, {
+    headers: { "content-type": "audio/mp4", "cache-control": "no-store" },
+  });
+}
+
+// ── Rezumatul de dimineață — două propoziții calde, din cifre reale ──────────
+async function handleSleepSummary(request, env) {
+  let s;
+  try { s = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
+  const prompt =
+    "Ești un coach de somn cald și onest, care scrie în română. Din datele: " +
+    `durată ${s.minutes || 0} minute, scor ${s.score || 0}/100, profund ${s.deepMin || 0} min, ` +
+    `REM ${s.remMin || 0} min, ${s.movements || 0} mișcări, ${s.snoreEvents || 0} episoade de sforăit, ` +
+    `${s.talkEvents || 0} episoade de vorbit. ` +
+    "Scrie EXACT două propoziții scurte: prima descrie noaptea, a doua dă un sfat blând și concret. " +
+    "Fără diagnostice medicale, fără emoji, fără introducere.";
+  const out = (await runText(env, prompt, 160)).trim();
+  return json({ summary: out.slice(0, 400) });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -263,15 +353,49 @@ export default {
         service: "forja-api",
         meals: env.GEMINI_API_KEY ? "gemini" : "banca-de-modele-cloudflare",
         audio: env.AI ? "whisper" : "indisponibil",
+        records: !!env.RECORDS,
       });
     }
-    if (request.method !== "POST") return json({ error: "Metodă greșită." }, 405);
+    if (request.method === "GET" && url.pathname === "/v1/diag") {
+      return handleDiag(env);
+    }
 
     const uid = await requireUser(request);
     if (!uid) return json({ error: "Cont FORJA necesar." }, 401);
 
+    const session = (url.searchParams.get("session") || "").replace(/[^0-9a-zA-Z_-]/g, "").slice(0, 40);
+
+    if (request.method === "GET" && url.pathname === "/v1/sleep-recording") {
+      if (!session) return json({ error: "Lipsește sesiunea." }, 400);
+      return handleRecordingGet(env, uid, session);
+    }
+    if (request.method !== "POST") return json({ error: "Metodă greșită." }, 405);
+
     if (url.pathname === "/v1/meal") return handleMeal(request, env);
     if (url.pathname === "/v1/sleep-audio") return handleSleepAudio(request, env);
+    if (url.pathname === "/v1/sleep-summary") return handleSleepSummary(request, env);
+    if (url.pathname === "/v1/sleep-recording") {
+      if (!session) return json({ error: "Lipsește sesiunea." }, 400);
+      return handleRecordingUpload(request, env, uid, session);
+    }
     return json({ error: "Rută necunoscută." }, 404);
+  },
+
+  // Curățenie orară: orice înregistrare mai veche de 24h dispare.
+  async scheduled(event, env) {
+    if (!env.RECORDS) return;
+    try {
+      let cursor;
+      do {
+        const page = await env.RECORDS.list({ cursor, limit: 500 });
+        for (const obj of page.objects) {
+          const at = Number(obj.customMetadata && obj.customMetadata.at) || obj.uploaded?.getTime?.() || 0;
+          if (at > 0 && Date.now() - at > 24 * 3600_000) {
+            await env.RECORDS.delete(obj.key);
+          }
+        }
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+    } catch (_) { }
   },
 };

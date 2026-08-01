@@ -257,6 +257,27 @@ fun SleepScreen() {
 
         Spacer(Modifier.height(20.dp))
 
+        // Rezumatul de dimineață — AI, două propoziții din cifre reale.
+        if (!last?.summary.isNullOrBlank()) {
+            ForjaCard(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                fill = SleepCard, stroke = SleepStroke
+            ) {
+                SectionLabel("Rezumatul dimineții", color = SleepTextDim)
+                Spacer(Modifier.height(6.dp))
+                Text(last!!.summary, style = Body.copy(color = TextPrimary, fontSize = 14.sp, lineHeight = 19.sp))
+            }
+            Spacer(Modifier.height(20.dp))
+        }
+
+        // Înregistrarea completă a nopții — disponibilă 24h, apoi dispare singură.
+        last?.let { s ->
+            if (s.recordedUntil > System.currentTimeMillis()) {
+                NightRecordingCard(session = s, app = app)
+                Spacer(Modifier.height(20.dp))
+            }
+        }
+
         // Hipnograma — ciclurile nopții
         SectionLabel("Ciclurile nopții", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
         Spacer(Modifier.height(10.dp))
@@ -379,6 +400,157 @@ fun SleepScreen() {
             textAlign = TextAlign.Start,
             modifier = Modifier.padding(horizontal = 20.dp)
         )
+    }
+}
+
+/**
+ * Player-ul întregii nopți: local dacă fișierul mai există, altfel din stocarea
+ * companiei (se șterge automat la 24h). „Sari la moment” pentru fiecare eveniment.
+ */
+@Composable
+private fun NightRecordingCard(session: com.forja.app.core.data.db.SleepSessionEntity, app: ForjaApp) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val toast = LocalToast.current
+    val events by app.db.sleepDao().eventsForSession(session.id).collectAsState(initial = emptyList())
+
+    var player by remember { mutableStateOf<MediaPlayer?>(null) }
+    var preparing by remember { mutableStateOf(false) }
+    var playing by remember { mutableStateOf(false) }
+    var positionS by remember { mutableStateOf(0) }
+    var durationS by remember { mutableStateOf(0) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            try { player?.release() } catch (_: Exception) { }
+        }
+    }
+    LaunchedEffect(playing) {
+        while (playing) {
+            kotlinx.coroutines.delay(500)
+            try {
+                player?.let {
+                    positionS = it.currentPosition / 1000
+                    if (durationS == 0 && it.duration > 0) durationS = it.duration / 1000
+                }
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun preparePlayer(onReady: (MediaPlayer) -> Unit) {
+        val existing = player
+        if (existing != null) { onReady(existing); return }
+        if (preparing) return
+        preparing = true
+        scope.launch {
+            try {
+                val mp = MediaPlayer()
+                val local = java.io.File(java.io.File(context.filesDir, "sleep_full"), "${session.id}.m4a")
+                if (local.exists() && local.length() > 4000) {
+                    mp.setDataSource(local.absolutePath)
+                } else if (app.forjaApi.available) {
+                    val auth = app.forjaApi.authHeader()
+                    if (auth == null) {
+                        toast.show("Intră în cont ca să asculți înregistrarea.")
+                        preparing = false
+                        return@launch
+                    }
+                    mp.setDataSource(
+                        context,
+                        android.net.Uri.parse(app.forjaApi.sleepRecordingUrl(session.id)),
+                        mapOf("Authorization" to auth)
+                    )
+                } else {
+                    toast.show("Înregistrarea nu mai e disponibilă.")
+                    preparing = false
+                    return@launch
+                }
+                mp.setOnPreparedListener {
+                    preparing = false
+                    player = mp
+                    durationS = (mp.duration / 1000).coerceAtLeast(0)
+                    onReady(mp)
+                }
+                mp.setOnCompletionListener { playing = false; positionS = 0 }
+                mp.setOnErrorListener { _, _, _ ->
+                    preparing = false
+                    playing = false
+                    toast.show("Înregistrarea nu s-a putut reda — poate a expirat (24h).")
+                    true
+                }
+                mp.prepareAsync()
+            } catch (_: Exception) {
+                preparing = false
+                toast.show("Înregistrarea nu s-a putut deschide.")
+            }
+        }
+    }
+
+    ForjaCard(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        fill = SleepCard, stroke = SleepStroke
+    ) {
+        SectionLabel("Înregistrarea nopții", color = SleepTextDim)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Toată noaptea, dacă vrei s-o auzi. Se șterge automat după 24 de ore — de peste tot.",
+            style = BodyTiny.copy(color = SleepTextDim)
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PrimaryButton(
+                text = when {
+                    preparing -> "se încarcă…"
+                    playing -> "Pauză"
+                    else -> "▶ Ascultă toată noaptea"
+                },
+                small = true,
+                onClick = {
+                    val p = player
+                    if (p != null && playing) {
+                        p.pause(); playing = false
+                    } else {
+                        preparePlayer { mp -> mp.start(); playing = true }
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                if (durationS > 0) "${Fmt.durationMs(positionS.toLong())} / ${Fmt.durationMs(durationS.toLong())}"
+                else "--:-- / --:--",
+                style = monoLabel(10, 0.08f).copy(color = SleepTextDim)
+            )
+        }
+        val audioEvents = events.filter { it.type in setOf("snore", "talk", "sound") }
+        if (audioEvents.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text("SARI LA MOMENT", style = monoLabel(8, 0.14f).copy(color = SleepTextDim))
+            Spacer(Modifier.height(6.dp))
+            Row {
+                audioEvents.take(4).forEach { ev ->
+                    Box(
+                        Modifier
+                            .padding(end = 8.dp)
+                            .background(Color(0x1A7896BE), ChipShape)
+                            .pressable({
+                                val offsetMs = (ev.at - session.startAt - 5000).coerceAtLeast(0)
+                                preparePlayer { mp ->
+                                    mp.seekTo(offsetMs.toInt())
+                                    mp.start()
+                                    playing = true
+                                }
+                            })
+                            .padding(horizontal = 9.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            "${if (ev.type == "talk") "vorbit" else "sforăit"} · ${Fmt.clock(ev.at)}",
+                            style = BodyTiny.copy(color = SleepRem)
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

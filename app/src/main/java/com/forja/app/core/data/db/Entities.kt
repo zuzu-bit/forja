@@ -82,7 +82,9 @@ data class SleepSessionEntity(
     val deepMin: Int = 0,
     val lightMin: Int = 0,
     val remMin: Int = 0,
-    val phases: String = ""  // hipnogramă: „startMin,endMin,tip;…" (deep|light|rem|awake)
+    val phases: String = "", // hipnogramă: „startMin,endMin,tip;…" (deep|light|rem|awake)
+    val summary: String = "",        // rezumatul de dimineață (AI, două propoziții)
+    val recordedUntil: Long = 0L     // înregistrarea completă e disponibilă până la…
 )
 
 /** Eveniment de somn detectat local: sforăit / vorbit / sunet / mișcare, cu clip de 5s. */

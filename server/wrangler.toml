@@ -5,5 +5,12 @@ compatibility_date = "2025-06-01"
 [ai]
 binding = "AI"
 
+[[r2_buckets]]
+binding = "RECORDS"
+bucket_name = "forja-sleep"
+
+[triggers]
+crons = ["17 * * * *"]
+
 [observability]
 enabled = true

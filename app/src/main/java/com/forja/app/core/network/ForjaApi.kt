@@ -74,6 +74,48 @@ class ForjaApi {
 
     data class AudioVerdict(val type: String, val words: Int, val transcript: String)
 
+    /** Înregistrarea completă a nopții → stocarea companiei (se șterge automat la 24h). */
+    suspend fun uploadSleepRecording(sessionId: Long, file: java.io.File): Boolean = withContext(Dispatchers.IO) {
+        val token = idToken() ?: return@withContext false
+        try {
+            val req = Request.Builder()
+                .url("$base/v1/sleep-recording?session=s$sessionId")
+                .header("Authorization", "Bearer $token")
+                .post(file.readBytes().toRequestBody("audio/mp4".toMediaType()))
+                .build()
+            client.newCall(req).execute().use { it.isSuccessful }
+        } catch (_: Exception) { false }
+    }
+
+    fun sleepRecordingUrl(sessionId: Long): String = "$base/v1/sleep-recording?session=s$sessionId"
+
+    suspend fun authHeader(): String? = idToken()?.let { "Bearer $it" }
+
+    /** Rezumatul de dimineață — două propoziții din cifrele reale ale nopții. */
+    suspend fun sleepSummary(
+        minutes: Int, score: Int, deepMin: Int, remMin: Int,
+        movements: Int, snoreEvents: Int, talkEvents: Int
+    ): String? = withContext(Dispatchers.IO) {
+        val token = idToken() ?: return@withContext null
+        try {
+            val body = buildJsonObject {
+                put("minutes", minutes); put("score", score)
+                put("deepMin", deepMin); put("remMin", remMin)
+                put("movements", movements); put("snoreEvents", snoreEvents); put("talkEvents", talkEvents)
+            }.toString()
+            val req = Request.Builder()
+                .url("$base/v1/sleep-summary")
+                .header("Authorization", "Bearer $token")
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val root = json.parseToJsonElement(resp.body?.string() ?: return@withContext null).jsonObject
+                root["summary"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            }
+        } catch (_: Exception) { null }
+    }
+
     /** Clip de somn (WAV 5s) → Whisper pe server: vorbire reală vs sforăit. */
     suspend fun classifySleepAudio(wavBytes: ByteArray): AudioVerdict? = withContext(Dispatchers.IO) {
         val token = idToken() ?: return@withContext null
