@@ -372,6 +372,40 @@ export default {
       return handleDiag(env);
     }
 
+    // ── Media licențiată (Adobe Stock FREE, fără watermark) — publică, cache lung ──
+    if (request.method === "GET" && url.pathname === "/media/_list") {
+      if (!env.MEDIA) return json([]);
+      try {
+        const keys = [];
+        let cursor;
+        do {
+          const page = await env.MEDIA.list({ cursor, limit: 1000 });
+          for (const o of page.objects) keys.push(o.key);
+          cursor = page.truncated ? page.cursor : undefined;
+        } while (cursor);
+        return new Response(JSON.stringify(keys), {
+          headers: { "content-type": "application/json", "cache-control": "public, max-age=300" },
+        });
+      } catch (_) {
+        return json([]);
+      }
+    }
+    if (request.method === "GET" && url.pathname.startsWith("/media/")) {
+      if (!env.MEDIA) return json({ error: "Media neconfigurată." }, 404);
+      const key = decodeURIComponent(url.pathname.slice("/media/".length)).replace(/[^0-9a-zA-Z._-]/g, "");
+      if (!key) return json({ error: "Lipsește fișierul." }, 400);
+      const obj = await env.MEDIA.get(key);
+      if (!obj) return json({ error: "Nu există." }, 404);
+      const type = key.endsWith(".mp4") ? "video/mp4" : key.endsWith(".png") ? "image/png" : "image/jpeg";
+      return new Response(obj.body, {
+        headers: {
+          "content-type": type,
+          "cache-control": "public, max-age=604800, immutable",
+          "accept-ranges": "bytes",
+        },
+      });
+    }
+
     const uid = await requireUser(request);
     if (!uid) return json({ error: "Cont FORJA necesar." }, 401);
 

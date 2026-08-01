@@ -9,6 +9,10 @@ binding = "AI"
 binding = "RECORDS"
 bucket_name = "forja-sleep"
 
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "forja-media"
+
 [triggers]
 crons = ["17 * * * *"]
 

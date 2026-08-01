@@ -23,7 +23,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 
-class ForjaApp : Application() {
+class ForjaApp : Application(), coil.ImageLoaderFactory {
+
+    override fun newImageLoader(): coil.ImageLoader =
+        coil.ImageLoader.Builder(this)
+            .components { add(com.forja.app.core.media.MediaInterceptor) }
+            .build()
 
     lateinit var db: ForjaDatabase
     lateinit var prefs: Prefs
@@ -60,6 +65,7 @@ class ForjaApp : Application() {
         Configuration.getInstance().osmdroidTileCache = getDir("osmdroid_tiles", MODE_PRIVATE)
 
         appScope.launch { Seed.ensure(db) }
+        appScope.launch { com.forja.app.core.media.Media.refresh() }
         appScope.launch {
             // Scanarea galeriei rămâne programată dacă utilizatorul a activat-o.
             try {

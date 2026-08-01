@@ -54,6 +54,7 @@ jobs:
           # Stocarea înregistrărilor de somn (se șterg automat la 24h).
           R2OUT=$(npx wrangler@3 r2 bucket create forja-sleep 2>&1 || true)
           echo "$R2OUT" | tail -3
+          npx wrangler@3 r2 bucket create forja-media 2>&1 | tail -2 || true
           CFG="wrangler.toml"
           R2STATE="activă"
           if npx wrangler@3 r2 bucket list 2>/dev/null | grep -q "forja-sleep"; then

@@ -39,6 +39,10 @@ fun VideoSurface(
     enabled: Boolean = true
 ) {
     val reduced = LocalReducedMotion.current
+    // Originalele licențiate (fără watermark) înlocuiesc automat preview-urile.
+    val manifest by com.forja.app.core.media.Media.manifest.collectAsState()
+    val url = remember(url, manifest) { com.forja.app.core.media.Media.resolve(url) }
+    val posterUrl = remember(posterUrl, manifest) { posterUrl?.let { com.forja.app.core.media.Media.resolve(it) } }
     val playVideo = enabled && !reduced && url.isNotBlank()
 
     Box(modifier.background(Surface1)) {
