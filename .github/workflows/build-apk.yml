@@ -55,6 +55,11 @@ jobs:
           npx wrangler@3 r2 bucket create forja-sleep 2>&1 | tail -2 || true
           CFG="wrangler.toml"
           R2STATE="activă"
+          if npx wrangler@3 r2 bucket list 2>/dev/null | grep -q "forja-sleep"; then
+            for n in $(gh issue list --state open --search "Stocarea R2 in:title" --json number -q '.[].number'); do
+              gh issue close "$n" -c "Rezolvat — permisiunea R2 funcționează, stocarea înregistrărilor e activă ✓" || true
+            done
+          fi
           if ! npx wrangler@3 r2 bucket list 2>/dev/null | grep -q "forja-sleep"; then
             # Tokenul nu are permisiunea R2 → publicăm fără stocare, restul rămâne live.
             awk 'BEGIN{skip=0} /^\[\[r2_buckets\]\]/{skip=3; next} skip>0{skip--; next} {print}' wrangler.toml > wrangler-nor2.toml
@@ -97,8 +102,12 @@ jobs:
           if [ -n "$GEMINI_API_KEY" ]; then
             printf '%s' "$GEMINI_API_KEY" | npx wrangler@3 secret put GEMINI_API_KEY >/dev/null 2>&1 || true
           fi
-          sleep 6
-          DIAG=$(curl -s --max-time 120 "$URL/v1/diag" || echo '{"diag":"indisponibil"}')
+          sleep 10
+          DIAG=$(curl -s --max-time 280 "$URL/v1/diag" || true)
+          if [ -z "$DIAG" ]; then
+            sleep 10
+            DIAG=$(curl -s --max-time 280 "$URL/v1/diag" || echo '{"diag":"indisponibil (curl a eșuat de două ori)"}')
+          fi
           echo "DIAG: $DIAG"
           echo "$DIAG" > /tmp/diag.json
           {
