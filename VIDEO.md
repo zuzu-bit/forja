@@ -1,58 +1,62 @@
-# Clipurile FORJA — generate cu AI, gratuit (Veo în aplicația Gemini)
+# Clipurile FORJA — generate gratuit cu Veo (aplicația Gemini)
 
-Pozele se generează SINGURE (FLUX, pe serverul companiei). Pentru cele 11 clipuri
-video nu există generator gratuit prin API — dar **Veo e gratuit manual** în
-aplicația **Gemini** (gemini.google.com sau aplicația de telefon), cu o limită
-de câteva clipuri pe zi. Le faci în 2-3 seri, în ritmul tău.
+Pozele se generează singure (FLUX, pe server). Pentru cele 11 clipuri folosești
+**Veo gratuit în aplicația Gemini** (gemini.google.com), câteva pe zi.
+
+⚠️ **Important**: Gemini refuză prompturile „tehnice" (cu negative, specificații de
+loop, «Muted», «9:16 1080×1920»). Prompturile de mai jos sunt scrise NATURAL —
+astea trec. Dacă unul e totuși refuzat, schimbă un cuvânt (ex: „a man" → „an athlete")
+și reîncearcă. Regula designerilor rămâne: regenerezi până „ai crede că e filmat".
 
 ## Pașii per clip
 
-1. Deschide **gemini.google.com** (cont Google gratuit) → alege generarea **Video**.
-2. Lipește promptul clipului (mai jos) → generează. Dacă nu-ți place, regenerezi —
-   regula designerilor: „regenerezi până treci testul «aș crede că e filmat»”.
-3. Descarcă MP4-ul → redenumește-l EXACT ca în titlu (ex: `1070207993.mp4`).
-4. **dash.cloudflare.com → R2 → forja-media → Upload** → trage fișierul.
-5. Repornește FORJA — clipul apare automat, fără build nou.
+1. gemini.google.com → generare **Video** → lipește promptul → generează.
+2. Descarcă MP4-ul → redenumește EXACT ca în titlu (ex: `1070207993.mp4`).
+3. dash.cloudflare.com → **R2 → forja-media → Upload** → trage fișierul.
+4. Repornește FORJA — clipul intră automat în aplicație.
 
-Alternative gratuite dacă termini limita zilnică: kling.ai sau hailuoai.video
-(credite zilnice gratuite). Aceleași prompturi.
-
-## Formatul comun (e deja inclus în fiecare prompt)
-
-9:16 vertical · 6–8s · loop perfect (primul și ultimul cadru identice) ·
-grade: umbre grafit + accente ambră caldă (#FFB300) · mut · fără text.
+Nu-ți face griji de „loop perfect": aplicația rulează clipul în buclă oricum,
+iar la mișcări lente tăietura nu se simte.
 
 ---
 
-### 1070207993.mp4 — Alergare în zori (onboarding 1 + dashboard zi)
-Cinematic vertical video, a woman in her 30s running at a steady pace along a pre-dawn Bucharest street, warm sodium streetlights, breath visible in cold air, ponytail swinging naturally. Camera: slow lateral tracking, locked speed. 6s seamless loop: the stride cycle starts and ends on the left foot strike, identical framing. Grade: deep graphite shadows, warm amber highlights #FFB300, subtle film grain. Muted, no text. 9:16, 1080×1920. No morphing hands, no face drift, no camera shake.
+### 1070207993.mp4 — Alergare în zori (onboarding 1 + dashboard)
+Vertical cinematic video of a woman jogging at a steady pace down an empty city street just before sunrise. Warm orange streetlights glow in the dark, her breath is visible in the cold air. Filmed from the side in a moody film style with deep shadows, warm amber highlights and subtle grain.
 
 ### 194926378.mp4 — Gătit (onboarding 2)
-Cinematic vertical video, close on hands stirring vegetables in a steaming pan, warm window light in a dark kitchen, steam rising. Camera: slow push-in. 6s seamless loop: one full stirring cycle, identical first and last frame. Grade: graphite shadows, warm amber highlights #FFB300, film grain. Muted, no text. 9:16. No morphing hands.
+Vertical cinematic video, close-up of hands slowly stirring vegetables in a steaming pan. A dark cozy kitchen lit only by warm window light, steam rising gently. Moody film look with deep shadows, warm amber tones and subtle grain.
 
 ### 512887976.mp4 — Trezire (onboarding 3)
-Cinematic vertical video, morning bedroom with low sun through linen curtains, a person in their 30s slowly waking and turning toward the light, honest bedhead. Camera: static with a breathing feel. 7s seamless loop of a gentle turn. Grade: graphite shadows, warm amber highlights. Muted, no text. 9:16. No face distortion over time.
+Vertical cinematic video of a person slowly waking up in bed in the morning, turning gently toward soft sunlight coming through linen curtains. Warm golden light, calm atmosphere, deep soft shadows, film grain.
 
 ### 499136769.mp4 — Seara pe balcon (dashboard seară + Focus)
-Cinematic vertical video, a person stretching slowly on an apartment balcony at dusk, warm city bokeh lights below. Camera: static breathing frame. 7s seamless loop of one stretch cycle. Grade: graphite shadows, warm amber highlights #FFB300, grain. Muted, no text. 9:16.
+Vertical cinematic video of a person stretching slowly on an apartment balcony at dusk, with warm blurry city lights glowing below. Calm silhouette, deep shadows, warm amber highlights, subtle film grain.
 
-### 1126445619.mp4 — Dimineața (header Somn)
-Cinematic vertical video, sunlight slowly moving across linen curtains and an empty bed in the morning, dust particles in the light beam. Camera: static. 8s seamless loop. Grade: soft graphite shadows, warm golden highlights. Muted, no text. 9:16.
+### 1126445619.mp4 — Dimineața liniștită (header Somn)
+Vertical cinematic video of morning sunlight slowly drifting across linen curtains and an empty bed, tiny dust particles floating in the warm light beam. Very calm and quiet mood, soft shadows, golden tones, film grain.
 
 ### 840977260.mp4 — Genuflexiuni
-Cinematic vertical video, a man performing barbell squats in a dark gym under one warm spotlight, side view, controlled tempo. Camera: static broadcast frame. 6s seamless loop: exactly one full rep, identical start and end position. Grade: graphite shadows, warm amber highlights, grain. Muted, no text. 9:16. No morphing hands.
+Vertical cinematic video of an athlete doing slow barbell squats in a dark gym lit by a single warm spotlight, seen from the side. Steady controlled movement, moody sports film look with deep shadows, warm amber highlights and subtle grain.
 
 ### 333728678.mp4 — Ramat
-Same style: a man doing bent-over barbell rows in a dark gym, warm rim light, side view. 6s seamless loop of one rep. Static broadcast camera. Graphite + warm amber grade, muted, no text, 9:16.
+Vertical cinematic video of an athlete doing slow bent-over barbell rows in a dark gym, warm rim light glowing on his back. Steady controlled movement, gritty cinematic sports look, deep shadows and warm amber highlights.
 
 ### 204232438.mp4 — Flotări
-Same style: a man doing push-ups on dumbbells on a dark gym floor, warm spotlight. 6s seamless loop of one rep, frontal-side view. Static camera, graphite + amber grade, muted, no text, 9:16.
+Vertical cinematic video of an athlete doing slow push-ups on dumbbells on a dark gym floor under a warm spotlight. Controlled steady rhythm, cinematic sports film look with deep shadows, warm highlights and grain.
 
 ### 427022252.mp4 — Presă umeri
-Same style: a man pressing dumbbells overhead, seated, dark gym, warm dramatic light, frontal view. 6s seamless loop of one rep. Static camera, graphite + amber grade, muted, no text, 9:16.
+Vertical cinematic video of an athlete slowly pressing dumbbells overhead while seated in a dark gym, dramatic warm light from one side. Controlled tempo, moody cinematic sports look, deep shadows and amber highlights.
 
 ### 392709785.mp4 — Îndreptări românești
-Same style: a man performing romanian deadlifts with a barbell, dark gym, warm amber spotlight, side view. 6s seamless loop of one rep. Static camera, graphite + amber grade, muted, no text, 9:16.
+Vertical cinematic video of an athlete performing slow romanian deadlifts with a barbell in a dark gym, warm amber spotlight, seen from the side. Smooth controlled movement, cinematic film look with deep shadows and grain.
 
-### 522228989.mp4 — Unghiul lateral (comun tuturor exercițiilor)
-Cinematic vertical video, a man training with a barbell in a dark gym seen from a strict lateral angle, warm practical lamp in background. 6s seamless loop of one slow controlled rep. Static camera, graphite shadows + warm amber highlights, muted, no text, 9:16.
+### 522228989.mp4 — Unghiul lateral (comun exercițiilor)
+Vertical cinematic video of an athlete training with a barbell in a dark gym, filmed exactly from the side, a warm practical lamp glowing in the background. Slow controlled repetitions, moody cinematic look with graphite shadows and warm amber highlights.
+
+---
+
+## Alternativă: Kling / Hailuo (dacă termini limita Veo)
+
+kling.ai și hailuoai.video au credite zilnice gratuite și ACCEPTĂ prompturi
+tehnice. Acolo poți adăuga la oricare prompt de mai sus, la final:
+„6 second seamless loop, first and last frame identical, static camera, no text".
