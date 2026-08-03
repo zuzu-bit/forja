@@ -205,46 +205,40 @@ fun SleepScreen() {
 
         Spacer(Modifier.height(20.dp))
 
-        // Sunete de adormit — generate pe telefon
+        // Sunete de adormit — generate pe telefon, carduri mari cu imagini
         SectionLabel("Sunete de adormit", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Generate pe telefon, fără internet. Se opresc singure după ~30 min sau când apeși din nou.",
+            style = BodyTiny.copy(color = SleepTextDim),
+            modifier = Modifier.padding(horizontal = 20.dp)
+        )
+        Spacer(Modifier.height(12.dp))
         val playingSound by com.forja.app.core.sleep.SleepSounds.current.collectAsState()
-        ForjaCard(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            fill = SleepCard, stroke = SleepStroke
-        ) {
-            Text(
-                "Ploaie, valuri, vânt — generate pe telefon, fără internet. Se opresc singure când te trezești sau la timer.",
-                style = BodyTiny.copy(color = SleepTextDim)
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                listOf("rain" to "Ploaie", "waves" to "Valuri", "wind" to "Vânt", "white" to "Alb").forEach { (key, label) ->
-                    val active = playingSound == key
-                    Box(
-                        Modifier
-                            .clip(ChipShape)
-                            .background(if (active) TabPillActive else Color(0x1A7896BE))
-                            .pressable({ com.forja.app.core.sleep.SleepSounds.toggle(key, timerMinutes = 30) })
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            (if (active) "⏸ " else "▶ ") + label,
-                            style = BodySmall.copy(color = if (active) Accent2 else SleepTextDim, fontSize = 13.sp)
+        val sounds = listOf(
+            Triple("rain", "Ploaie", "snd_rain.jpg"),
+            Triple("waves", "Valuri", "snd_waves.jpg"),
+            Triple("wind", "Vânt", "snd_wind.jpg"),
+            Triple("noise", "Zgomot roz", "snd_noise.jpg")
+        )
+        Column(Modifier.padding(horizontal = 20.dp)) {
+            sounds.chunked(2).forEach { row ->
+                Row(Modifier.fillMaxWidth()) {
+                    row.forEachIndexed { idx, (key, label, img) ->
+                        SoundCard(
+                            label = label,
+                            imageKey = img,
+                            active = playingSound == key,
+                            modifier = Modifier.weight(1f).padding(end = if (idx == 0) 10.dp else 0.dp),
+                            onClick = { com.forja.app.core.sleep.SleepSounds.toggle(key, timerMinutes = 30) }
                         )
                     }
                 }
-            }
-            if (playingSound != null) {
                 Spacer(Modifier.height(10.dp))
-                Text(
-                    "sună · se oprește în ~30 min sau când apeși din nou",
-                    style = monoLabel(8, 0.10f).copy(color = Accent2)
-                )
             }
         }
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(10.dp))
 
         // Alarma circadiană — „treaz cel târziu la…"
         SectionLabel("Alarma circadiană", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
@@ -628,6 +622,63 @@ private fun NightRecordingCard(session: com.forja.app.core.data.db.SleepSessionE
                     }
                 }
             }
+        }
+    }
+}
+
+/** Card de sunet — mare, cu imagine de fundal generată, glow amber când sună. */
+@Composable
+private fun SoundCard(
+    label: String,
+    imageKey: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(Radii.card)
+    val imgUrl = remember(imageKey) { com.forja.app.core.media.Media.mediaUrl(imageKey) }
+    Box(
+        modifier
+            .height(104.dp)
+            .clip(shape)
+            .background(SleepCard)
+            .border(1.5.dp, if (active) Color(0xB3FFB300) else SleepStroke, shape)
+            .pressable(onClick)
+    ) {
+        if (imgUrl != null) {
+            coil.compose.AsyncImage(
+                model = imgUrl, contentDescription = label,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    0f to Color(0x330B111C), 0.5f to Color(0x990B111C), 1f to Color(0xE60B111C)
+                )
+            )
+        )
+        Row(
+            Modifier.align(Alignment.BottomStart).padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier.size(26.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(if (active) AccentGradient else Brush.linearGradient(listOf(Color(0x66FFFFFF), Color(0x33FFFFFF)))),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(if (active) "⏸" else "▶", style = BodySmall.copy(color = if (active) OnAccent else Color.White, fontSize = 12.sp))
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(label, style = BodyStrong.copy(fontSize = 15.sp, color = Color.White))
+        }
+        if (active) {
+            Text(
+                "sună",
+                style = monoLabel(8, 0.14f).copy(color = Accent2),
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp)
+            )
         }
     }
 }

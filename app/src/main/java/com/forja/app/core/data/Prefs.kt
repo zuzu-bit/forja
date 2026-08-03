@@ -37,6 +37,7 @@ class Prefs(private val context: Context) {
         val detoxLetter = stringPreferencesKey("detox_letter")
         val detoxWords = stringPreferencesKey("detox_words")
         val detoxSlips = intPreferencesKey("detox_slips")
+        val permsIntroSeen = booleanPreferencesKey("perms_intro_seen")
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }
@@ -118,4 +119,8 @@ class Prefs(private val context: Context) {
     /** Cuvintele-declanșator, setate de el. NU pleacă niciodată de pe telefon. */
     val detoxWords: Flow<String> = context.dataStore.data.map { it[K.detoxWords] ?: "" }
     suspend fun setDetoxWords(v: String) = context.dataStore.edit { it[K.detoxWords] = v }
+
+    /** Ecranul de pornire cu permisiuni a fost arătat o dată. */
+    val permsIntroSeen: Flow<Boolean> = context.dataStore.data.map { it[K.permsIntroSeen] ?: false }
+    suspend fun setPermsIntroSeen() = context.dataStore.edit { it[K.permsIntroSeen] = true }
 }

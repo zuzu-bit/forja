@@ -181,6 +181,13 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 })
             }
             composable(Route.DASHBOARD) {
+                // Prima dată: arată o singură dată ecranul „Pornire FORJA" cu permisiunile la un loc.
+                LaunchedEffect(Unit) {
+                    if (!app.prefs.permsIntroSeen.first()) {
+                        app.prefs.setPermsIntroSeen()
+                        nav.navigate(Route.PERMISSIONS)
+                    }
+                }
                 DashboardScreen(
                     onOpenModule = { r -> nav.navigate(r) },
                     onOpenProfile = { nav.navigate(Route.PROFILE) },

@@ -151,6 +151,10 @@ jobs:
           204232438|a man doing push-ups with dumbbells on a dark gym floor, warm spotlight, athletic effort
           427022252|a man pressing dumbbells overhead in a dark gym, warm dramatic light, athletic
           392709785|a man performing a romanian deadlift with a barbell, dark gym, warm amber spotlight, side view
+          snd_rain|rain on a dark window at night, blurred warm city lights behind wet glass, cozy calm moody atmosphere, no text
+          snd_waves|calm ocean waves at dusk under a moody deep blue sky, soft foam, peaceful serene, no text
+          snd_wind|wind moving through a dark misty pine forest at night, moody atmospheric calm, no text
+          snd_noise|abstract calm starry night sky, deep blue with soft glow, minimal peaceful dreamy, no text
           MEDIAEOF
           echo "Poze: generate=$GEN_OK existente=$GEN_SKIP erori=$GEN_ERR"
           echo "- Poze AI (FLUX): generate=$GEN_OK · existente=$GEN_SKIP · erori=$GEN_ERR" >> "$GITHUB_STEP_SUMMARY"

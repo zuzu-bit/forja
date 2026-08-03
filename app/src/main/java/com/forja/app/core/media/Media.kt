@@ -42,6 +42,12 @@ object Media {
         }
     }
 
+    /** URL direct către un fișier din stocarea companiei (ex: imagini pentru sunete). */
+    fun mediaUrl(key: String): String? {
+        if (BuildConfig.FORJA_API_URL.isBlank()) return null
+        return "$base/media/$key"
+    }
+
     /** Preview cu watermark → originalul licențiat, dacă există pe server. */
     fun resolve(url: String): String {
         if (BuildConfig.FORJA_API_URL.isBlank()) return url

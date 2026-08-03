@@ -175,6 +175,12 @@ fun PermissionsScreen(onBack: () -> Unit) {
             style = BodyTiny.copy(color = TextDim2),
             modifier = Modifier.padding(horizontal = 20.dp)
         )
+        Spacer(Modifier.height(20.dp))
+        PrimaryButton(
+            "Continuă în FORJA",
+            onClick = onBack,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
+        )
     }
 }
 

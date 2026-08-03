@@ -120,11 +120,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
         }
     }
     val bgBannerDismissed by app.prefs.bgBannerDismissed.collectAsState(initial = true)
-    LaunchedEffect(Unit) {
-        if (!hasLocation) {
-            permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-        }
-    }
+    // Nu mai cerem locația automat la intrare — o cere doar butonul GO / recentrare.
 
     var friends by remember { mutableStateOf<List<Friend>>(emptyList()) }
     LaunchedEffect(Unit) {
