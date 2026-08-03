@@ -55,10 +55,11 @@ fun BreathScreen() {
     )
 
     Column(
-        Modifier.fillMaxSize().background(Surface0).statusBarsPadding().padding(horizontal = 24.dp),
+        Modifier.fillMaxSize().background(Surface0).statusBarsPadding()
+            .padding(horizontal = 24.dp).padding(bottom = 120.dp),   // lasă loc barei de jos
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(18.dp))
         Text("Respiră", style = TitleModule.copy(fontSize = 26.sp))
         Spacer(Modifier.height(6.dp))
         Text(
@@ -70,7 +71,7 @@ fun BreathScreen() {
         Spacer(Modifier.weight(1f))
 
         Box(
-            Modifier.size(260.dp).scale(scale).clip(CircleShape)
+            Modifier.size(200.dp).scale(scale).clip(CircleShape)
                 .background(
                     Brush.radialGradient(
                         listOf(Color(0x333B6FB0), Color(0x1FFFB300), Color(0x00000000))

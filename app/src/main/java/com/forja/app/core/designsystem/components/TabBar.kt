@@ -61,10 +61,10 @@ fun ForjaTabBar(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TabItem(ForjaTab.Azi, current, onSelect)
             TabItem(ForjaTab.Antrenament, current, onSelect)
             TabItem(ForjaTab.Focus, current, onSelect)
-            CenterMapTab(selected = current == ForjaTab.Harta) { onSelect(ForjaTab.Harta) }
+            TabItem(ForjaTab.Harta, current, onSelect)
+            CenterHomeTab(selected = current == ForjaTab.Azi) { onSelect(ForjaTab.Azi) }
             TabItem(ForjaTab.Nutritie, current, onSelect)
             TabItem(ForjaTab.Somn, current, onSelect)
             TabItem(ForjaTab.Respiro, current, onSelect)
@@ -91,7 +91,7 @@ private fun TabItem(tab: ForjaTab, current: ForjaTab?, onSelect: (ForjaTab) -> U
 }
 
 @Composable
-private fun CenterMapTab(selected: Boolean, onClick: () -> Unit) {
+private fun CenterHomeTab(selected: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .size(54.dp)
@@ -104,8 +104,8 @@ private fun CenterMapTab(selected: Boolean, onClick: () -> Unit) {
         contentAlignment = Alignment.Center
     ) {
         Icon(
-            ForjaTab.Harta.icon,
-            contentDescription = "Hartă",
+            ForjaTab.Azi.icon,
+            contentDescription = "Azi",
             tint = if (selected) OnAccent else TextSecondary,
             modifier = Modifier.size(24.dp)
         )

@@ -172,16 +172,14 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
 
             Spacer(Modifier.height(22.dp))
             val activeRule = rules.firstOrNull { it.enabled }
-            Text(
-                when {
-                    !focusActive -> "Alege ce aplicații intră în pauză.\nRestul rămâne neatins."
-                    activeRule != null -> "${activeRule.label} e blocat până la ${"%02d:%02d".format(activeRule.untilHour, activeRule.untilMinute)}."
-                    else -> "Focus pornit — adaugă aplicații mai jos."
-                },
-                style = Body.copy(fontSize = 15.sp, color = TextPrimary),
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(8.dp))
+            if (activeRule != null) {
+                Text(
+                    "${activeRule.label} e blocat până la ${"%02d:%02d".format(activeRule.untilHour, activeRule.untilMinute)}.",
+                    style = Body.copy(fontSize = 15.sp, color = TextPrimary),
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             Text(
                 if (screenTimeMin >= 0)
                     "Timp de ecran azi: ${Fmt.durationHm(screenTimeMin)}" +
@@ -698,8 +696,19 @@ private fun DetoxAddictionSection() {
             },
             onNext = { guardStep = (guardStep + 1).coerceAtMost(3) },
             onOpenAccess = {
-                try { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                catch (_: Exception) { toast.show("Deschide Setări → Accesibilitate → FORJA.") }
+                // Deschide direct pagina serviciului FORJA din Accesibilitate (dacă telefonul suportă), altfel lista.
+                val cn = android.content.ComponentName(context, com.forja.app.core.detox.ForjaGuardService::class.java).flattenToString()
+                val tries = listOf(
+                    Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
+                        putExtra(":settings:show_fragment_args", android.os.Bundle().apply { putString(":settings:fragment_args_key", cn) })
+                    },
+                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                )
+                var ok = false
+                for (i in tries) {
+                    try { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(i); ok = true; break } catch (_: Exception) { }
+                }
+                if (!ok) toast.show("Deschide Setări → Accesibilitate → FORJA.")
             },
             onClose = { guardStep = 0 }
         )
