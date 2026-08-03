@@ -205,6 +205,47 @@ fun SleepScreen() {
 
         Spacer(Modifier.height(20.dp))
 
+        // Sunete de adormit — generate pe telefon
+        SectionLabel("Sunete de adormit", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
+        Spacer(Modifier.height(10.dp))
+        val playingSound by com.forja.app.core.sleep.SleepSounds.current.collectAsState()
+        ForjaCard(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            fill = SleepCard, stroke = SleepStroke
+        ) {
+            Text(
+                "Ploaie, valuri, vânt — generate pe telefon, fără internet. Se opresc singure când te trezești sau la timer.",
+                style = BodyTiny.copy(color = SleepTextDim)
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                listOf("rain" to "Ploaie", "waves" to "Valuri", "wind" to "Vânt", "white" to "Alb").forEach { (key, label) ->
+                    val active = playingSound == key
+                    Box(
+                        Modifier
+                            .clip(ChipShape)
+                            .background(if (active) TabPillActive else Color(0x1A7896BE))
+                            .pressable({ com.forja.app.core.sleep.SleepSounds.toggle(key, timerMinutes = 30) })
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            (if (active) "⏸ " else "▶ ") + label,
+                            style = BodySmall.copy(color = if (active) Accent2 else SleepTextDim, fontSize = 13.sp)
+                        )
+                    }
+                }
+            }
+            if (playingSound != null) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "sună · se oprește în ~30 min sau când apeși din nou",
+                    style = monoLabel(8, 0.10f).copy(color = Accent2)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
         // Alarma circadiană — „treaz cel târziu la…"
         SectionLabel("Alarma circadiană", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
         Spacer(Modifier.height(10.dp))

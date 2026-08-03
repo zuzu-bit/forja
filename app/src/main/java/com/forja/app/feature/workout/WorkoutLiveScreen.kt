@@ -116,31 +116,38 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
         Spacer(Modifier.height(18.dp))
 
         if (!live.resting) {
-            // Numerale mari: SERIA n/total · REPETĂRI · KG
+            // Numerale mari: SERIA n/total · REPETĂRI · SARCINĂ — pe un singur rând, fără rupere.
             Row(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
+                verticalAlignment = Alignment.Bottom
             ) {
-                Column {
+                Column(Modifier.weight(1f)) {
                     SectionLabel("Seria")
                     Row(verticalAlignment = Alignment.Bottom) {
-                        CountUpNumeral(target = live.setNo.toFloat(), size = 56, decimals = 0)
+                        Text("${live.setNo}", style = heroNumeral(42), maxLines = 1, softWrap = false)
                         Text(
                             "/${ex.sets}",
-                            style = heroNumeral(24).copy(color = TextDim),
-                            modifier = Modifier.padding(bottom = 6.dp)
+                            style = heroNumeral(20).copy(color = TextDim),
+                            maxLines = 1,
+                            modifier = Modifier.padding(bottom = 5.dp)
                         )
                     }
                 }
-                Column {
+                Column(Modifier.weight(1f)) {
                     SectionLabel("Repetări")
-                    CountUpNumeral(target = ex.reps.toFloat(), size = 56, decimals = 0)
+                    Text("${ex.reps}", style = heroNumeral(42), maxLines = 1, softWrap = false)
                 }
-                Column {
+                Column(Modifier.weight(1.15f)) {
                     SectionLabel(ex.loadLabel)
-                    Text(ex.load, style = heroNumeral(56))
+                    Text(
+                        ex.load,
+                        style = heroNumeral(if (ex.load.length > 3) 26 else 42),
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Clip
+                    )
                 }
             }
 

@@ -15,8 +15,8 @@ android {
         applicationId = "com.forja.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "1.9"
+        versionCode = 17
+        versionName = "2.0"
         vectorDrawables { useSupportLibrary = true }
         // Serverul central FORJA — injectat de CI după deploy; gol = căile locale.
         buildConfigField("String", "FORJA_API_URL", "\"${System.getenv("FORJA_API_URL") ?: ""}\"")

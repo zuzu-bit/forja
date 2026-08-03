@@ -18,6 +18,9 @@ interface WorkoutDao {
     @Query("SELECT COUNT(*) FROM plans")
     suspend fun planCount(): Int
 
+    @Query("UPDATE exercises SET sets = :sets, reps = :reps, load = :load WHERE id = :id")
+    suspend fun updateExerciseParams(id: Int, sets: Int, reps: Int, load: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertExercises(items: List<ExerciseEntity>)
 

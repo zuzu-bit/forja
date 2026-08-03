@@ -26,7 +26,7 @@ import java.time.format.DateTimeFormatter
 
 /** Profil: identitate + controale oneste, nimic îngropat. Statistici reale din Room. */
 @Composable
-fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit) {
+fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermissions: () -> Unit = {}) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
     val scope = rememberCoroutineScope()
@@ -143,6 +143,12 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit) {
         Spacer(Modifier.height(22.dp))
         SectionLabel("Setări")
         Spacer(Modifier.height(10.dp))
+
+        SettingRow(
+            "Permisiuni & pornire",
+            "Toate într-un singur loc — activează ce ai nevoie, ca aplicația să nu te mai întrebe prin ecrane.",
+            onClick = onOpenPermissions
+        ) { Text("deschide →", style = BodySmall.copy(color = Accent2)) }
 
         SettingRow(
             "Notificări",

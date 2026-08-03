@@ -17,5 +17,6 @@ object Route {
     const val ACTIVITY_DETAIL = "activity/{id}"
     const val MEAL_CAMERA = "meal_camera"
     const val CLEANUP = "cleanup"
+    const val PERMISSIONS = "permissions"
     fun activityDetail(id: Long) = "activity/$id"
 }

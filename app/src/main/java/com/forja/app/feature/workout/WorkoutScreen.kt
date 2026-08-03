@@ -11,9 +11,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.graphics.Color as GfxColor
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +44,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
     val plans by vm.plans.collectAsState()
     val planIdx by vm.planIdx.collectAsState()
     val exercises by vm.planExercises.collectAsState()
+    var editing by remember { mutableStateOf<com.forja.app.core.data.db.ExerciseEntity?>(null) }
 
     Column(
         Modifier
@@ -131,8 +139,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
                 ForjaCard(
                     Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 10.dp)
-                        .pressable({ vm.startSession(fromExercise = pos); onStartLive() }),
+                        .padding(bottom = 10.dp),
                     padding = 10.dp
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -152,16 +159,28 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
                                 style = monoLabel(9, 0.10f).copy(color = TextSecondary)
                             )
                             Spacer(Modifier.height(3.dp))
-                            Text("VIDEO DEMO · LOOP", style = monoLabel(8, 0.12f).copy(color = Accent2))
+                            Text("ATINGE ✎ CA SĂ EDITEZI", style = monoLabel(8, 0.12f).copy(color = Accent2))
                         }
                         Icon(
-                            Icons.Filled.PlayArrow, contentDescription = "Pornește",
-                            tint = TextPrimary,
+                            Icons.Filled.Edit, contentDescription = "Editează",
+                            tint = TextSecondary,
                             modifier = Modifier
                                 .size(34.dp)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(Surface2)
                                 .border(1.dp, StrokeCardStrong, RoundedCornerShape(10.dp))
+                                .pressable({ editing = e })
+                                .padding(7.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            Icons.Filled.PlayArrow, contentDescription = "Pornește",
+                            tint = OnAccent,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(AccentGradient)
+                                .pressable({ vm.startSession(fromExercise = pos); onStartLive() })
                                 .padding(6.dp)
                         )
                     }
@@ -177,5 +196,77 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
         )
+    }
+
+    editing?.let { ex ->
+        ExerciseEditSheet(
+            exercise = ex,
+            onSave = { sets, reps, load -> vm.updateExercise(ex.id, sets, reps, load); editing = null },
+            onClose = { editing = null }
+        )
+    }
+}
+
+/** Editează seriile, repetările și greutatea unui exercițiu, înainte de sesiune. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExerciseEditSheet(
+    exercise: com.forja.app.core.data.db.ExerciseEntity,
+    onSave: (sets: Int, reps: Int, load: String) -> Unit,
+    onClose: () -> Unit
+) {
+    var sets by remember { mutableStateOf(exercise.sets) }
+    var reps by remember { mutableStateOf(exercise.reps) }
+    var load by remember { mutableStateOf(exercise.load) }
+
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Surface1, shape = SheetShape
+    ) {
+        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text(exercise.name, style = TitleModule.copy(fontSize = 20.sp))
+            Spacer(Modifier.height(4.dp))
+            Text("Ajustează-le pe ale tale — se salvează.", style = BodySmall)
+            Spacer(Modifier.height(18.dp))
+
+            @Composable
+            fun stepper(label: String, value: Int, onMinus: () -> Unit, onPlus: () -> Unit) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    SectionLabel(label)
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SecondaryButton("−", onClick = onMinus, padV = 8.dp)
+                        Text("$value", style = heroNumeral(30), modifier = Modifier.padding(horizontal = 16.dp))
+                        SecondaryButton("+", onClick = onPlus, padV = 8.dp)
+                    }
+                }
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                stepper("Serii", sets, { sets = (sets - 1).coerceAtLeast(1) }, { sets = (sets + 1).coerceAtMost(20) })
+                stepper("Repetări", reps, { reps = (reps - 1).coerceAtLeast(1) }, { reps = (reps + 1).coerceAtMost(100) })
+            }
+
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("Greutate / sarcină")
+            Spacer(Modifier.height(8.dp))
+            TextField(
+                value = load,
+                onValueChange = { load = it },
+                singleLine = true,
+                placeholder = { Text("ex: 62,5 · corp · 2×14", style = BodySmall) },
+                textStyle = BodyStrong.copy(fontSize = 15.sp),
+                modifier = Modifier.fillMaxWidth().clip(SecondaryShape),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Surface2, unfocusedContainerColor = Surface2,
+                    focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                    cursorColor = Accent2,
+                    focusedIndicatorColor = GfxColor.Transparent, unfocusedIndicatorColor = GfxColor.Transparent
+                )
+            )
+            Spacer(Modifier.height(18.dp))
+            PrimaryButton("Salvează", onClick = { onSave(sets, reps, load.trim()) }, modifier = Modifier.fillMaxWidth())
+        }
     }
 }

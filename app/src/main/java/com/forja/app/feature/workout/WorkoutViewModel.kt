@@ -67,6 +67,14 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { loadPlan(idx) }
     }
 
+    /** Editare de către utilizator a seriilor/repetărilor/greutății, înainte de sesiune. */
+    fun updateExercise(id: Int, sets: Int, reps: Int, load: String) {
+        viewModelScope.launch {
+            dao.updateExerciseParams(id, sets.coerceIn(1, 20), reps.coerceIn(1, 100), load.ifBlank { "corp" })
+            loadPlan(_planIdx.value)
+        }
+    }
+
     private suspend fun loadPlan(idx: Int) {
         val plan = _plans.value.getOrNull(idx) ?: return
         _planExercises.value = dao.exercisesForPlan(plan.id)

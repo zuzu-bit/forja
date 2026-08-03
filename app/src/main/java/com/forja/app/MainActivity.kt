@@ -229,13 +229,17 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             composable(Route.CLEANUP) {
                 com.forja.app.feature.cleanup.CleanupScreen(onBack = { nav.popBackStack() })
             }
+            composable(Route.PERMISSIONS) {
+                com.forja.app.feature.permissions.PermissionsScreen(onBack = { nav.popBackStack() })
+            }
             composable(Route.PROFILE) {
                 ProfileScreen(
                     onLogout = {
                         app.auth.logout()
                         nav.navigate(Route.LOGIN) { popUpTo(Route.DASHBOARD) { inclusive = true } }
                     },
-                    onOpenMapGhost = { nav.navigate(Route.MAP) }
+                    onOpenMapGhost = { nav.navigate(Route.MAP) },
+                    onOpenPermissions = { nav.navigate(Route.PERMISSIONS) }
                 )
             }
         }
