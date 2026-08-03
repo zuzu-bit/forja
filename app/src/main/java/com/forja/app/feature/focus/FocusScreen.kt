@@ -41,7 +41,7 @@ import kotlinx.coroutines.launch
 /** Focus: respirație 4,6s, blocare onestă cu UsageStats, timp de ecran real. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FocusScreen() {
+fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
     val scope = rememberCoroutineScope()
@@ -422,6 +422,25 @@ fun FocusScreen() {
                 style = BodyTiny.copy(color = TextDim),
                 textAlign = TextAlign.Center
             )
+
+            Spacer(Modifier.height(24.dp))
+
+            // Curățenie de azi — detox digital
+            SectionLabel("Curățenie de azi", Modifier.align(Alignment.Start))
+            Spacer(Modifier.height(8.dp))
+            ForjaCard(
+                Modifier.fillMaxWidth().pressable(onOpenCleanup),
+                fill = Color(0xE6121214)
+            ) {
+                Text("Telefon mai ușor, minte mai limpede", style = BodyStrong.copy(fontSize = 15.sp))
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "Treci prin pozele și fișierele adunate — app-ul îți sugerează ce pare gunoi, tu decizi. Nimic nu se șterge singur, nimic nu pleacă de pe telefon.",
+                    style = BodyTiny.copy(color = TextSecondary)
+                )
+                Spacer(Modifier.height(10.dp))
+                Text("Fă curat →", style = BodySmall.copy(color = Accent2))
+            }
 
             Spacer(Modifier.height(24.dp))
             DetoxAddictionSection()

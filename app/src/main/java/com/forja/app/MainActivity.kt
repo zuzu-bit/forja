@@ -223,7 +223,12 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             composable(Route.MEAL_CAMERA) {
                 com.forja.app.feature.nutrition.MealCameraScreen(onClose = { nav.popBackStack() })
             }
-            composable(Route.FOCUS) { FocusScreen() }
+            composable(Route.FOCUS) {
+                FocusScreen(onOpenCleanup = { nav.navigate(Route.CLEANUP) })
+            }
+            composable(Route.CLEANUP) {
+                com.forja.app.feature.cleanup.CleanupScreen(onBack = { nav.popBackStack() })
+            }
             composable(Route.PROFILE) {
                 ProfileScreen(
                     onLogout = {
