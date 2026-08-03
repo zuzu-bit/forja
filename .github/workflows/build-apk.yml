@@ -155,6 +155,7 @@ jobs:
           snd_waves|calm ocean waves at dusk under a moody deep blue sky, soft foam, peaceful serene, no text
           snd_wind|wind moving through a dark misty pine forest at night, moody atmospheric calm, no text
           snd_noise|abstract calm starry night sky, deep blue with soft glow, minimal peaceful dreamy, no text
+          guide|a warm friendly approachable young female fitness coach smiling gently and welcoming, casual athletic hoodie, wholesome professional half-body portrait, cinematic warm lighting, graphite and amber tones, dark studio background, natural and tasteful, no text
           MEDIAEOF
           echo "Poze: generate=$GEN_OK existente=$GEN_SKIP erori=$GEN_ERR"
           echo "- Poze AI (FLUX): generate=$GEN_OK · existente=$GEN_SKIP · erori=$GEN_ERR" >> "$GITHUB_STEP_SUMMARY"

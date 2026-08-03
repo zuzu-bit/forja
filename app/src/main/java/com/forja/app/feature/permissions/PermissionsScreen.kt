@@ -14,6 +14,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -35,7 +36,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
 
-/** Un singur loc pentru toate permisiunile — pitch + activare, ca să nu mai bată la cap nicăieri. */
+/** „Pornire FORJA" — cald, cu ghid, un singur buton pentru esențial + panou cu bifare. */
 @Composable
 fun PermissionsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -49,12 +50,8 @@ fun PermissionsScreen(onBack: () -> Unit) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
 
-    val batchLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        refresh++
-    }
-    val bgLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
-
-    fun normalPerms(): Array<String> {
+    fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
+    fun essentials(): Array<String> {
         val l = mutableListOf(
             Manifest.permission.CAMERA,
             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -64,156 +61,159 @@ fun PermissionsScreen(onBack: () -> Unit) {
         if (Build.VERSION.SDK_INT >= 33) {
             l.add(Manifest.permission.POST_NOTIFICATIONS)
             l.add(Manifest.permission.READ_MEDIA_IMAGES)
-        } else {
-            l.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
+        } else l.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         return l.toTypedArray()
     }
 
-    fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
-    val normalAllOn = remember(refresh) { normalPerms().all { granted(it) } }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Surface0)
-            .verticalScroll(rememberScrollState())
-            .statusBarsPadding()
-            .padding(bottom = 40.dp)
-    ) {
-        // Pitch
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(listOf(Color(0x33FF7A00), Color.Transparent))
-                )
-                .padding(20.dp)
+    val bgLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
+    val batchLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        refresh++
+        // După esențial, cerem și locația în fundal (Android o cere separat).
+        if (Build.VERSION.SDK_INT >= 29 &&
+            granted(Manifest.permission.ACCESS_FINE_LOCATION) &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED
         ) {
-            Column {
+            bgLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+    }
+
+    val essentialsOn = remember(refresh) { essentials().all { granted(it) } }
+    val bgOn = remember(refresh) {
+        Build.VERSION.SDK_INT < 29 || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+    }
+    val usageOn = remember(refresh) { com.forja.app.core.focus.FocusMonitorService.hasUsageAccess(context) }
+    val overlayOn = remember(refresh) { Settings.canDrawOverlays(context) }
+    val guardOn = remember(refresh) { com.forja.app.core.detox.ForjaGuardService.isEnabled(context) }
+    val doneCount = listOf(essentialsOn, bgOn, usageOn, overlayOn, guardOn).count { it }
+
+    val guideVideo = remember { com.forja.app.core.media.Media.mediaUrl("guide.mp4") ?: "" }
+    val guidePoster = remember { com.forja.app.core.media.Media.mediaUrl("guide.jpg") }
+
+    Box(Modifier.fillMaxSize().background(Surface0)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 30.dp)
+        ) {
+            // Ghidul — te întâmpină
+            Box(Modifier.fillMaxWidth().height(360.dp)) {
+                VideoSurface(url = guideVideo, posterUrl = guidePoster, modifier = Modifier.fillMaxSize())
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(
+                            0f to Color(0x330A0A0B), 0.55f to Color(0xB30A0A0B), 1f to Color(0xFF0A0A0B)
+                        )
+                    )
+                )
+                SecondaryButton(
+                    "Închide", onClick = onBack, padV = 8.dp,
+                    modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(16.dp)
+                )
+                Column(Modifier.align(Alignment.BottomStart).padding(20.dp)) {
+                    Text("BINE AI VENIT LA FORJA", style = monoLabel(10, 0.16f).copy(color = Accent2))
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Obosit să juggling 5 aplicații ca să-ți ții viața la un loc?",
+                        style = TitleModule.copy(fontSize = 24.sp, lineHeight = 28.sp)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Antrenament, alergare, mese mai bune, somn mai bun — și motivația ta și-a prietenilor. FORJA le are pe toate. Hai să le pornim, o dată, aici.",
+                        style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(18.dp))
+
+            // Un singur panou, cu totul
+            Column(Modifier.padding(horizontal = 20.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Pornire FORJA", style = TitleModule)
-                    SecondaryButton("Înapoi", onClick = onBack, padV = 8.dp)
+                    SectionLabel("Pornește FORJA")
+                    Text("$doneCount din 5 gata", style = monoLabel(9, 0.12f).copy(color = if (doneCount == 5) Positive else Accent2))
                 }
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    "Obosit să juggling 5 aplicații ca să-ți ții viața la un loc?",
-                    style = TitleModule.copy(fontSize = 22.sp, lineHeight = 27.sp)
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Antrenament, alergare, mese mai bune, somn mai bun, motivația ta și a prietenilor, chiar și obiceiurile nesănătoase de telefon — FORJA le are pe toate, într-un singur loc. Pornește-le o dată, aici, și gata cu întrebările prin aplicație.",
-                    style = Body.copy(fontSize = 15.sp, lineHeight = 21.sp)
-                )
-            }
-        }
+                Spacer(Modifier.height(10.dp))
 
-        Spacer(Modifier.height(16.dp))
-
-        // Cele obișnuite — dintr-o singură apăsare
-        SectionLabel("Cele obișnuite · o singură apăsare", Modifier.padding(horizontal = 20.dp))
-        Spacer(Modifier.height(8.dp))
-        ForjaCard(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            Text(
-                "Cameră, locație, notificări, microfon, galerie — apar pe rând și le accepți din mers.",
-                style = BodySmall.copy(color = TextSecondary)
-            )
-            Spacer(Modifier.height(12.dp))
-            if (normalAllOn) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Check, null, tint = Positive, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Toate active ✓", style = BodyStrong.copy(color = Positive))
+                Column(
+                    Modifier.fillMaxWidth().clip(CardShape).background(Surface1).border(1.dp, StrokeCard, CardShape).padding(6.dp)
+                ) {
+                    // Butonul mare: tot esențialul dintr-o apăsare
+                    PermRow(
+                        icon = "✨", title = "Tot esențialul", sub = "cameră, locație, microfon, notificări, galerie",
+                        on = essentialsOn && bgOn,
+                        onActivate = { batchLauncher.launch(essentials()) }
+                    )
+                    Divider()
+                    PermRow("👁", "Acces la utilizare", "rapoartele de ecran + blocarea din Focus", usageOn) {
+                        openSafe(context, Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS), toast)
+                    }
+                    Divider()
+                    PermRow("🪟", "Afișare peste aplicații", "ecranul de blocare, ca la Forest", overlayOn) {
+                        openSafe(context, Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")), toast)
+                    }
+                    Divider()
+                    PermRow("🛡", "Paznicul Detox", "te ajută să reziști tentației alese", guardOn) {
+                        openSafe(context, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), toast)
+                    }
                 }
-            } else {
+
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Cele speciale (ultimele 3) se deschid în setările Android — nicio aplicație nu le poate porni singură, nici Forest. E protecția telefonului tău. Le poți lăsa și pe mai târziu.",
+                    style = BodyTiny.copy(color = TextDim)
+                )
+                Spacer(Modifier.height(20.dp))
                 PrimaryButton(
-                    "Activează-le pe toate",
-                    onClick = { batchLauncher.launch(normalPerms()) },
-                    modifier = Modifier.fillMaxWidth()
+                    if (doneCount == 5) "Gata — hai în FORJA" else "Continuă în FORJA",
+                    onClick = onBack, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Tot ce e sensibil rămâne pe telefonul tău. FORJA nu citește mesajele, parolele sau conținutul ecranului.",
+                    style = BodyTiny.copy(color = TextDim2),
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
             }
         }
+    }
+}
 
-        Spacer(Modifier.height(20.dp))
+@Composable
+private fun Divider() {
+    Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x0DFFFFFF)))
+}
 
-        // Cele speciale — fiecare prin setările Android (Android nu lasă altfel)
-        SectionLabel("Cele speciale · un tap fiecare", Modifier.padding(horizontal = 20.dp))
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Astea deschid setările Android — nicio aplicație nu le poate porni singură (nici Forest). E protecția telefonului tău.",
-            style = BodyTiny.copy(color = TextDim),
-            modifier = Modifier.padding(horizontal = 20.dp)
-        )
-        Spacer(Modifier.height(10.dp))
-
-        val bgOn = remember(refresh) {
-            Build.VERSION.SDK_INT < 29 || ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
+@Composable
+private fun PermRow(icon: String, title: String, sub: String, on: Boolean, onActivate: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(40.dp).clip(CircleShape).background(if (on) Color(0x1F2FBE71) else Surface2),
+            contentAlignment = Alignment.Center
+        ) { Text(icon, fontSize = 18.sp) }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = BodyStrong.copy(fontSize = 14.sp))
+            Text(sub, style = BodyTiny.copy(color = TextSecondary))
         }
-        val usageOn = remember(refresh) { com.forja.app.core.focus.FocusMonitorService.hasUsageAccess(context) }
-        val overlayOn = remember(refresh) { Settings.canDrawOverlays(context) }
-        val guardOn = remember(refresh) { com.forja.app.core.detox.ForjaGuardService.isEnabled(context) }
-
-        Column(Modifier.padding(horizontal = 20.dp)) {
-            SpecialRow("Locație în fundal", "Prietenii te văd pe hartă și când FORJA e închisă.", bgOn) {
-                if (Build.VERSION.SDK_INT >= 29) bgLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-                else toast.show("Nu e nevoie pe versiunea ta de Android.")
-            }
-            SpecialRow("Acces la utilizare", "Rapoartele de ecran și blocarea din Focus.", usageOn) {
-                openSafe(context, Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS), toast)
-            }
-            SpecialRow("Afișare peste alte aplicații", "Ecranul de blocare peste aplicația oprită (ca Forest).", overlayOn) {
-                openSafe(context, Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")), toast)
-            }
-            SpecialRow("Accesibilitate (Detox)", "Paznicul care te ajută să reziști tentației alese.", guardOn) {
-                openSafe(context, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), toast)
-            }
+        Spacer(Modifier.width(10.dp))
+        if (on) {
+            Box(
+                Modifier.size(28.dp).clip(CircleShape).background(Positive),
+                contentAlignment = Alignment.Center
+            ) { Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
+        } else {
+            Box(
+                Modifier.clip(RoundedCornerShape(10.dp)).background(AccentGradient).pressable(onActivate)
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) { Text("Permite", style = ButtonTextSmall) }
         }
-
-        Spacer(Modifier.height(16.dp))
-        Text(
-            "Tot ce e sensibil rămâne pe telefonul tău. FORJA nu citește mesajele, parolele sau conținutul ecranului.",
-            style = BodyTiny.copy(color = TextDim2),
-            modifier = Modifier.padding(horizontal = 20.dp)
-        )
-        Spacer(Modifier.height(20.dp))
-        PrimaryButton(
-            "Continuă în FORJA",
-            onClick = onBack,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
-        )
     }
 }
 
 private fun openSafe(context: Context, intent: Intent, toast: ToastState) {
     try { context.startActivity(intent) } catch (_: Exception) { toast.show("Deschide manual din Setări → Aplicații → FORJA.") }
-}
-
-@Composable
-private fun SpecialRow(title: String, subtitle: String, on: Boolean, onActivate: () -> Unit) {
-    ForjaCard(Modifier.fillMaxWidth().padding(bottom = 8.dp), padding = 14.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = BodyStrong.copy(fontSize = 14.sp))
-                Spacer(Modifier.height(2.dp))
-                Text(subtitle, style = BodyTiny.copy(color = TextSecondary))
-            }
-            Spacer(Modifier.width(12.dp))
-            if (on) {
-                Box(
-                    Modifier.size(26.dp).clip(CircleShape).background(Positive),
-                    contentAlignment = Alignment.Center
-                ) { Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(15.dp)) }
-            } else {
-                Text(
-                    "Activează",
-                    style = BodySmall.copy(color = Accent2),
-                    modifier = Modifier
-                        .clip(ChipShape)
-                        .background(TabPillActive)
-                        .pressable(onActivate)
-                        .padding(horizontal = 12.dp, vertical = 7.dp)
-                )
-            }
-        }
-    }
 }
