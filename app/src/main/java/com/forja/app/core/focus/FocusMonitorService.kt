@@ -79,7 +79,11 @@ class FocusMonitorService : Service() {
                     val detoxUntil = app.prefs.detoxUntil.first()
                     val detoxOn = System.currentTimeMillis() < detoxUntil
                     val rules = app.db.focusDao().enabledRules()
-                    if (!detoxOn && rules.isEmpty()) continue
+                    val calNow = Calendar.getInstance()
+                    val minNow = calNow.get(Calendar.HOUR_OF_DAY) * 60 + calNow.get(Calendar.MINUTE)
+                    val anyRuleActive = rules.any { minNow < it.untilHour * 60 + it.untilMinute }
+                    // Nimic activ (focus terminat, fără detox) → oprim serviciul; notificarea dispare.
+                    if (!detoxOn && !anyRuleActive) { stopSelf(); return@launch }
 
                     val fg = foregroundPackage() ?: continue
 
@@ -135,7 +139,7 @@ class FocusMonitorService : Service() {
         return NotificationCompat.Builder(this, "focus")
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
             .setContentTitle("Focus activ")
-            .setContentText("Aplicațiile alese sunt în pauză. Respiră.")
+            .setContentText("Ești concentrat — aplicațiile care te distrag sunt oprite.")
             .setOngoing(true)
             .setContentIntent(pi)
             .build()

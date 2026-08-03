@@ -71,6 +71,13 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
             try { com.forja.app.feature.nutrition.GalleryScan.cancelDaily(this@ForjaApp) } catch (_: Exception) { }
         }
         appScope.launch {
+            // Reminder-e blânde, la ore aleatoare — pornite implicit.
+            try {
+                if (prefs.nudgesOn.first()) com.forja.app.core.notify.ForjaNudge.schedule(this@ForjaApp)
+                else com.forja.app.core.notify.ForjaNudge.cancel(this@ForjaApp)
+            } catch (_: Exception) { }
+        }
+        appScope.launch {
             // Paznicul Focus/Detox repornește dacă era activ (ucis de sistem, update etc.).
             try {
                 val focusOn = prefs.focusActive.first()

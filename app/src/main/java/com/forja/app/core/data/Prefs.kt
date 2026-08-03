@@ -38,6 +38,7 @@ class Prefs(private val context: Context) {
         val detoxWords = stringPreferencesKey("detox_words")
         val detoxSlips = intPreferencesKey("detox_slips")
         val permsIntroSeen = booleanPreferencesKey("perms_intro_seen")
+        val nudgesOn = booleanPreferencesKey("nudges_on")
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }
@@ -96,6 +97,10 @@ class Prefs(private val context: Context) {
     /** Scanarea galeriei (à la Bixby Vision) — strict opt-in. */
     val galleryScanOn: Flow<Boolean> = context.dataStore.data.map { it[K.galleryScanOn] ?: false }
     suspend fun setGalleryScanOn(v: Boolean) = context.dataStore.edit { it[K.galleryScanOn] = v }
+
+    /** Reminder-e blânde, la ore aleatoare — pornit implicit, se poate opri. */
+    val nudgesOn: Flow<Boolean> = context.dataStore.data.map { it[K.nudgesOn] ?: true }
+    suspend fun setNudgesOn(v: Boolean) = context.dataStore.edit { it[K.nudgesOn] = v }
 
     // ── Detox de adicție — totul pe telefon, nimic pe server ──
     val detoxOn: Flow<Boolean> = context.dataStore.data.map { it[K.detoxOn] ?: false }

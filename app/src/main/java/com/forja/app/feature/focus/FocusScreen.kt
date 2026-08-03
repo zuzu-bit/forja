@@ -700,16 +700,17 @@ private fun DetoxAddictionSection() {
         GuardWizardSheet(
             step = guardStep,
             onOpenApps = {
-                val pkg = context.packageName
+                // Ne oprim în lista de Aplicații din Setări (nu direct în FORJA) — cauți tu FORJA acolo.
                 val tries = listOf(
-                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$pkg")),
-                    Intent(Settings.ACTION_APPLICATION_SETTINGS)
+                    Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS),
+                    Intent(Settings.ACTION_APPLICATION_SETTINGS),
+                    Intent(Settings.ACTION_SETTINGS)
                 )
                 var ok = false
                 for (i in tries) {
                     try { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(i); ok = true; break } catch (_: Exception) { }
                 }
-                if (!ok) toast.show("Deschide Setări → Aplicații → FORJA.")
+                if (!ok) toast.show("Deschide Setări → Aplicații și caută FORJA.")
             },
             onNext = { guardStep = 2 },
             onOpenAccess = {
@@ -732,15 +733,79 @@ private fun DetoxAddictionSection() {
         )
     }
     if (wordsOpen) {
-        DetoxTextSheet(
-            title = "Cuvinte de blocat",
-            hint = "Câte unul pe rând. Când le tastezi oriunde pe telefon, paznicul te oprește. Rămân DOAR pe telefonul tău.",
-            placeholder = "un cuvânt pe fiecare rând",
+        DetoxWordsSheet(
             initial = words,
-            singleLine = false,
             onSave = { scope.launch { app.prefs.setDetoxWords(it); wordsOpen = false; toast.show("Salvate — pe telefonul tău, nicăieri altundeva.") } },
             onClose = { wordsOpen = false }
         )
+    }
+}
+
+/** Cuvinte de blocat: pachete după tipul de adicție + cuvintele tale. Totul rămâne pe telefon. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DetoxWordsSheet(initial: String, onSave: (String) -> Unit, onClose: () -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    val packs = listOf(
+        Triple("🍸", "Club & băutură", listOf("shots", "hai la shots", "hai să ne îmbătăm", "ies la băut", "beau ceva", "tequila", "vodka", "whisky", "bere", "club", "chef", "mahmureală", "alcool")),
+        Triple("🎰", "Pariuri & jocuri", listOf("pariuri", "betting", "casino", "ruletă", "poker", "superbet", "betano", "unibet", "fortuna", "mostbet", "1xbet", "mize", "cotă", "bilet", "jackpot")),
+        Triple("🔞", "Conținut +18", listOf("porn", "porno", "xxx", "sex", "xvideos", "pornhub", "onlyfans", "nsfw", "hentai")),
+        Triple("🌀", "Anime & manga", listOf("anime", "manga", "crunchyroll", "mangadex", "9anime", "otaku", "webtoon", "naruto", "one piece"))
+    )
+    fun addPack(pack: List<String>) {
+        val cur = text.split("\n").map { it.trim() }.filter { it.isNotBlank() }
+        text = (cur + pack).distinctBy { it.lowercase() }.joinToString("\n")
+    }
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Surface1, shape = SheetShape
+    ) {
+        Column(
+            Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)
+                .fillMaxHeight(0.9f).verticalScroll(rememberScrollState()).imePadding()
+        ) {
+            Text("Cuvinte de blocat", style = TitleModule.copy(fontSize = 20.sp))
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Alege un pachet gata făcut sau scrie-ți cuvintele tale. Când le tastezi oriunde pe telefon, paznicul te oprește. Rămân DOAR pe telefonul tău.",
+                style = BodySmall.copy(color = TextSecondary)
+            )
+            Spacer(Modifier.height(14.dp))
+            SectionLabel("Pachete după tipul de adicție")
+            Spacer(Modifier.height(8.dp))
+            packs.forEach { (emoji, name, pack) ->
+                ForjaCard(Modifier.fillMaxWidth().padding(bottom = 8.dp), fill = Surface2, padding = 12.dp) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(emoji, fontSize = 22.sp)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(name, style = BodyStrong.copy(fontSize = 14.sp))
+                            Text("${pack.size} cuvinte · le poți edita după", style = BodyTiny.copy(color = TextDim))
+                        }
+                        SecondaryButton("Adaugă", padV = 8.dp, onClick = { addPack(pack) })
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            SectionLabel("Personalizat — cuvintele tale")
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.material3.TextField(
+                value = text,
+                onValueChange = { text = it },
+                placeholder = { Text("un cuvânt pe fiecare rând", style = BodySmall) },
+                textStyle = Body.copy(color = TextPrimary, fontSize = 15.sp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp).clip(SecondaryShape),
+                colors = androidx.compose.material3.TextFieldDefaults.colors(
+                    focusedContainerColor = Surface2, unfocusedContainerColor = Surface2,
+                    focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                    cursorColor = Accent2,
+                    focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
+                )
+            )
+            Spacer(Modifier.height(14.dp))
+            PrimaryButton("Salvează", onClick = { onSave(text.trim()) }, modifier = Modifier.fillMaxWidth())
+        }
     }
 }
 
