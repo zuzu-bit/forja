@@ -113,11 +113,12 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
         Route.MAP to ForjaTab.Harta,
         Route.NUTRITION to ForjaTab.Nutritie,
         Route.SLEEP to ForjaTab.Somn,
-        Route.FOCUS to ForjaTab.Focus
+        Route.FOCUS to ForjaTab.Focus,
+        Route.BREATH to ForjaTab.Respiro
     )
     val currentTab = tabFor[route ?: ""]
     val tabsVisible = route in setOf(
-        Route.DASHBOARD, Route.WORKOUT, Route.NUTRITION, Route.SLEEP, Route.MAP, Route.FOCUS, Route.PROFILE
+        Route.DASHBOARD, Route.WORKOUT, Route.NUTRITION, Route.SLEEP, Route.MAP, Route.FOCUS, Route.BREATH, Route.PROFILE
     )
 
     // Fantoma: oglinda locală mereu la zi, respectată de orice publicare.
@@ -153,6 +154,7 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             ForjaTab.Nutritie -> Route.NUTRITION
             ForjaTab.Somn -> Route.SLEEP
             ForjaTab.Focus -> Route.FOCUS
+            ForjaTab.Respiro -> Route.BREATH
         }
         nav.navigate(target) {
             popUpTo(Route.DASHBOARD) { saveState = true }
@@ -232,6 +234,9 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             }
             composable(Route.FOCUS) {
                 FocusScreen(onOpenCleanup = { nav.navigate(Route.CLEANUP) })
+            }
+            composable(Route.BREATH) {
+                com.forja.app.feature.breath.BreathScreen()
             }
             composable(Route.CLEANUP) {
                 com.forja.app.feature.cleanup.CleanupScreen(onBack = { nav.popBackStack() })

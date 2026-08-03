@@ -31,6 +31,7 @@ class FocusMonitorService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var lastBlockShown = 0L
+    private var focusAccumMs = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -85,11 +86,19 @@ class FocusMonitorService : Service() {
                     // Nimic activ (focus terminat, fără detox) → oprim serviciul; notificarea dispare.
                     if (!detoxOn && !anyRuleActive) { stopSelf(); return@launch }
 
+                    // Pădurea: copacul crește cât timp focus-ul e activ.
+                    focusAccumMs += 1200
+                    if (focusAccumMs >= 30_000) {
+                        app.prefs.addFocusProgress((focusAccumMs / 1000).toInt())
+                        focusAccumMs = 0
+                    }
+
                     val fg = foregroundPackage() ?: continue
 
                     // Detox: totul în pauză, în afară de esențiale.
                     if (detoxOn && fg !in essentials && System.currentTimeMillis() - lastBlockShown > 4000) {
                         lastBlockShown = System.currentTimeMillis()
+                        app.prefs.addFocusBreak()   // ai rupt focus-ul → un copac se ofilește
                         startActivity(
                             Intent(this@FocusMonitorService, FocusBlockActivity::class.java).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -107,6 +116,7 @@ class FocusMonitorService : Service() {
                     }
                     if (rule != null && System.currentTimeMillis() - lastBlockShown > 4000) {
                         lastBlockShown = System.currentTimeMillis()
+                        app.prefs.addFocusBreak()   // ai rupt focus-ul → un copac se ofilește
                         val i = Intent(this@FocusMonitorService, FocusBlockActivity::class.java).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             putExtra("label", rule.label)

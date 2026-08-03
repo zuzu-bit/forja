@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Home
@@ -31,7 +32,8 @@ enum class ForjaTab(val label: String, val icon: ImageVector) {
     Harta("Hartă", Icons.Outlined.Map),
     Nutritie("Nutriție", Icons.Outlined.PhotoCamera),
     Somn("Somn", Icons.Outlined.Bedtime),
-    Focus("Focus", Icons.Outlined.SelfImprovement)
+    Focus("Focus", Icons.Outlined.SelfImprovement),
+    Respiro("Respiră", Icons.Outlined.Air)
 }
 
 @Composable
@@ -65,6 +67,7 @@ fun ForjaTabBar(
             CenterMapTab(selected = current == ForjaTab.Harta) { onSelect(ForjaTab.Harta) }
             TabItem(ForjaTab.Nutritie, current, onSelect)
             TabItem(ForjaTab.Somn, current, onSelect)
+            TabItem(ForjaTab.Respiro, current, onSelect)
         }
     }
 }

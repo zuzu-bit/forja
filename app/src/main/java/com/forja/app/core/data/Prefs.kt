@@ -39,6 +39,10 @@ class Prefs(private val context: Context) {
         val detoxSlips = intPreferencesKey("detox_slips")
         val permsIntroSeen = booleanPreferencesKey("perms_intro_seen")
         val nudgesOn = booleanPreferencesKey("nudges_on")
+        val focusForestDay = longPreferencesKey("focus_forest_day")
+        val focusGrown = intPreferencesKey("focus_grown")
+        val focusWithered = intPreferencesKey("focus_withered")
+        val focusPartialSecs = intPreferencesKey("focus_partial_secs")
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }
@@ -101,6 +105,42 @@ class Prefs(private val context: Context) {
     /** Reminder-e blânde, la ore aleatoare — pornit implicit, se poate opri. */
     val nudgesOn: Flow<Boolean> = context.dataStore.data.map { it[K.nudgesOn] ?: true }
     suspend fun setNudgesOn(v: Boolean) = context.dataStore.edit { it[K.nudgesOn] = v }
+
+    // ── Pădurea de Focus: copaci care cresc pe durata focus-ului, se ofilesc la renunțare ──
+    /** (crescuți, ofiliți, secunde spre următorul) pentru ziua de azi. */
+    val focusForest: Flow<Triple<Int, Int, Int>> = context.dataStore.data.map { p ->
+        val today = java.time.LocalDate.now().toEpochDay()
+        if ((p[K.focusForestDay] ?: -1L) == today)
+            Triple(p[K.focusGrown] ?: 0, p[K.focusWithered] ?: 0, p[K.focusPartialSecs] ?: 0)
+        else Triple(0, 0, 0)
+    }
+    suspend fun addFocusProgress(secs: Int) {
+        val today = java.time.LocalDate.now().toEpochDay()
+        context.dataStore.edit { p ->
+            val same = (p[K.focusForestDay] ?: -1L) == today
+            var grown = if (same) (p[K.focusGrown] ?: 0) else 0
+            val withered = if (same) (p[K.focusWithered] ?: 0) else 0
+            var partial = (if (same) (p[K.focusPartialSecs] ?: 0) else 0) + secs
+            while (partial >= 900) { partial -= 900; grown++ }   // un copac la 15 min de focus
+            p[K.focusForestDay] = today
+            p[K.focusGrown] = grown
+            p[K.focusWithered] = withered
+            p[K.focusPartialSecs] = partial
+        }
+    }
+    suspend fun addFocusBreak() {
+        val today = java.time.LocalDate.now().toEpochDay()
+        context.dataStore.edit { p ->
+            val same = (p[K.focusForestDay] ?: -1L) == today
+            val grown = if (same) (p[K.focusGrown] ?: 0) else 0
+            val withered = (if (same) (p[K.focusWithered] ?: 0) else 0) + 1
+            val partial = if (same) (p[K.focusPartialSecs] ?: 0) else 0
+            p[K.focusForestDay] = today
+            p[K.focusGrown] = grown
+            p[K.focusWithered] = withered
+            p[K.focusPartialSecs] = partial
+        }
+    }
 
     // ── Detox de adicție — totul pe telefon, nimic pe server ──
     val detoxOn: Flow<Boolean> = context.dataStore.data.map { it[K.detoxOn] ?: false }

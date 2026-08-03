@@ -12,6 +12,7 @@ object Route {
     const val SLEEP = "sleep"
     const val MAP = "map"
     const val FOCUS = "focus"
+    const val BREATH = "breath"
     const val PROFILE = "profile"
     const val ACTIVITIES = "activities"
     const val ACTIVITY_DETAIL = "activity/{id}"

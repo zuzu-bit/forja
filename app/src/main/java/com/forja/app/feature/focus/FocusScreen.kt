@@ -166,25 +166,9 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             Text("Focus", style = TitleModule, modifier = Modifier.align(Alignment.Start))
             Spacer(Modifier.height(24.dp))
 
-            // Cerc de respirație — gentle, 4,6s, scale .82→1.12
-            val reduced = LocalReducedMotion.current
-            val infinite = rememberInfiniteTransition(label = "breath")
-            val breath by infinite.animateFloat(
-                initialValue = 0.82f, targetValue = 1.12f,
-                animationSpec = infiniteRepeatable(tween(4600), RepeatMode.Reverse),
-                label = "breathScale"
-            )
-            Box(
-                Modifier
-                    .size(190.dp)
-                    .scale(if (reduced) 1f else breath)
-                    .clip(CircleShape)
-                    .background(Color(0x14FF9E2D))
-                    .border(1.5.dp, Color(0x66FFB300), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("Respiră.", style = TitleModule.copy(fontSize = 24.sp))
-            }
+            // Pădurea de azi — copaci care cresc cât te ții de focus, se ofilesc la renunțare
+            val forest by app.prefs.focusForest.collectAsState(initial = Triple(0, 0, 0))
+            FocusForest(grown = forest.first, withered = forest.second, partialSecs = forest.third)
 
             Spacer(Modifier.height(22.dp))
             val activeRule = rules.firstOrNull { it.enabled }
@@ -663,7 +647,7 @@ private fun DetoxAddictionSection() {
                     Text("Mai e un pas", style = BodyStrong.copy(fontSize = 14.sp))
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "Pornește paznicul în 2 pași simpli — te ghidez eu, ecran cu ecran.",
+                        "Pornește paznicul în 3 pași simpli — te ghidez eu, ecran cu ecran.",
                         style = BodyTiny.copy(color = TextSecondary)
                     )
                     Spacer(Modifier.height(10.dp))
@@ -712,7 +696,7 @@ private fun DetoxAddictionSection() {
                 }
                 if (!ok) toast.show("Deschide Setări → Aplicații și caută FORJA.")
             },
-            onNext = { guardStep = 2 },
+            onNext = { guardStep = (guardStep + 1).coerceAtMost(3) },
             onOpenAccess = {
                 try { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
                 catch (_: Exception) { toast.show("Deschide Setări → Accesibilitate → FORJA.") }
@@ -737,6 +721,44 @@ private fun DetoxAddictionSection() {
             initial = words,
             onSave = { scope.launch { app.prefs.setDetoxWords(it); wordsOpen = false; toast.show("Salvate — pe telefonul tău, nicăieri altundeva.") } },
             onClose = { wordsOpen = false }
+        )
+    }
+}
+
+/** Pădurea de Focus: un copac crește în etape cât te ții de focus; se ofilește când renunți. */
+@Composable
+private fun FocusForest(grown: Int, withered: Int, partialSecs: Int) {
+    val stage = when {
+        partialSecs < 225 -> "🌱"
+        partialSecs < 450 -> "🌿"
+        partialSecs < 675 -> "🪴"
+        else -> "🌳"
+    }
+    val nextMin = ((900 - partialSecs) / 60).coerceAtLeast(0)
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.size(150.dp).clip(CircleShape)
+                .background(
+                    androidx.compose.ui.graphics.Brush.radialGradient(
+                        listOf(Color(0x2634C759), Color(0x14FFB300), Color(0x00000000))
+                    )
+                )
+                .border(1.dp, Color(0x3334C759), CircleShape),
+            contentAlignment = Alignment.Center
+        ) { Text(stage, fontSize = 66.sp) }
+        if (grown > 0 || withered > 0) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "🌳".repeat(grown.coerceAtMost(30)) + "🥀".repeat(withered.coerceAtMost(30)),
+                fontSize = 22.sp, lineHeight = 30.sp, textAlign = TextAlign.Center
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "$grown ${if (grown == 1) "copac crescut" else "copaci crescuți"} azi" +
+                (if (withered > 0) " · $withered ofiliți" else "") +
+                " · următorul în ~$nextMin min de focus",
+            style = BodyTiny.copy(color = TextSecondary), textAlign = TextAlign.Center
         )
     }
 }
@@ -809,7 +831,8 @@ private fun DetoxWordsSheet(initial: String, onSave: (String) -> Unit, onClose: 
     }
 }
 
-/** Pornirea paznicului în 2 pași: 1) deblochezi setările din Aplicații, 2) pornești din Accesibilitate. */
+/** Pornirea paznicului în 3 pași (ordinea reală Android): 1) încerci în Accesibilitate și Android blochează,
+ *  2) deblochezi din Aplicații, 3) pornești din Accesibilitate. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GuardWizardSheet(
@@ -825,36 +848,54 @@ private fun GuardWizardSheet(
         containerColor = Surface1, shape = SheetShape
     ) {
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-            Text("PASUL $step DIN 2", style = monoLabel(9, 0.14f).copy(color = Accent2))
+            Text("PASUL $step DIN 3", style = monoLabel(9, 0.14f).copy(color = Accent2))
             Spacer(Modifier.height(6.dp))
-            if (step == 1) {
-                Text("Deblochează setările", style = TitleModule.copy(fontSize = 20.sp))
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Fiindcă ai instalat FORJA dintr-un fișier (nu din Play Store), Android cere să deblochezi tu setarea — o singură dată.",
-                    style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
-                )
-                Spacer(Modifier.height(12.dp))
-                Text("1.  Apasă „Deschide Aplicații” mai jos — te duc la pagina FORJA. Dacă ajungi în listă, caută FORJA și deschide-l.", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
-                Spacer(Modifier.height(6.dp))
-                Text("2.  Sus în dreapta, apasă cele trei puncte  ⋮", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
-                Spacer(Modifier.height(6.dp))
-                Text("3.  Alege „Allow restricted settings” (Permite setările restricționate). Dacă cere codul telefonului, introdu-l.", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
-                Spacer(Modifier.height(18.dp))
-                PrimaryButton("Deschide Aplicații", onClick = onOpenApps, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(8.dp))
-                SecondaryButton("Am făcut asta → pasul 2", onClick = onNext, modifier = Modifier.fillMaxWidth())
-            } else {
-                Text("Pornește paznicul", style = TitleModule.copy(fontSize = 20.sp))
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Acum intră în Accesibilitate și pornește „FORJA · Detox de adicție”. Gata — paznicul e activ și te oprește la tentația aleasă de tine.",
-                    style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
-                )
-                Spacer(Modifier.height(18.dp))
-                PrimaryButton("Deschide Accesibilitatea", onClick = onOpenAccess, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(8.dp))
-                SecondaryButton("Am terminat", onClick = onClose, modifier = Modifier.fillMaxWidth())
+            when (step) {
+                1 -> {
+                    Text("Încearcă să pornești paznicul", style = TitleModule.copy(fontSize = 20.sp))
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Intră în Accesibilitate, apasă pe „FORJA · Detox de adicție” și încearcă să-l pornești. Android îl va bloca cu un mesaj „Setare restricționată / Restricted setting”.",
+                        style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "E normal — chiar acest blocaj deblochează opțiunea de care avem nevoie la pasul 2.",
+                        style = BodySmall.copy(color = Accent2, lineHeight = 19.sp)
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    PrimaryButton("Deschide Accesibilitatea", onClick = onOpenAccess, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    SecondaryButton("Am încercat → pasul 2", onClick = onNext, modifier = Modifier.fillMaxWidth())
+                }
+                2 -> {
+                    Text("Deblochează setările", style = TitleModule.copy(fontSize = 20.sp))
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Acum, în Setări → Aplicații, caută FORJA și deschide-l.",
+                        style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text("1.  Sus în dreapta, apasă cele trei puncte  ⋮", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
+                    Spacer(Modifier.height(6.dp))
+                    Text("2.  Alege „Allow restricted settings” (Permite setările restricționate). Dacă cere codul telefonului, introdu-l.", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
+                    Spacer(Modifier.height(16.dp))
+                    PrimaryButton("Deschide Aplicații", onClick = onOpenApps, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    SecondaryButton("Am făcut → pasul 3", onClick = onNext, modifier = Modifier.fillMaxWidth())
+                }
+                else -> {
+                    Text("Pornește paznicul", style = TitleModule.copy(fontSize = 20.sp))
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Revii în Accesibilitate și pornește „FORJA · Detox de adicție”. Acum comutatorul merge — paznicul e activ și te oprește la tentația aleasă de tine.",
+                        style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    PrimaryButton("Deschide Accesibilitatea", onClick = onOpenAccess, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    SecondaryButton("Am terminat", onClick = onClose, modifier = Modifier.fillMaxWidth())
+                }
             }
         }
     }
