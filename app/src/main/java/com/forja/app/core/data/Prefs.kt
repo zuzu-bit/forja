@@ -32,6 +32,11 @@ class Prefs(private val context: Context) {
         val alarmWindowMin = intPreferencesKey("alarm_window_min")
         val detoxUntil = longPreferencesKey("detox_until")
         val galleryScanOn = booleanPreferencesKey("gallery_scan_on")
+        val detoxOn = booleanPreferencesKey("detox_addiction_on")
+        val detoxStreakStart = longPreferencesKey("detox_streak_start")
+        val detoxLetter = stringPreferencesKey("detox_letter")
+        val detoxWords = stringPreferencesKey("detox_words")
+        val detoxSlips = intPreferencesKey("detox_slips")
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }
@@ -90,4 +95,27 @@ class Prefs(private val context: Context) {
     /** Scanarea galeriei (à la Bixby Vision) — strict opt-in. */
     val galleryScanOn: Flow<Boolean> = context.dataStore.data.map { it[K.galleryScanOn] ?: false }
     suspend fun setGalleryScanOn(v: Boolean) = context.dataStore.edit { it[K.galleryScanOn] = v }
+
+    // ── Detox de adicție — totul pe telefon, nimic pe server ──
+    val detoxOn: Flow<Boolean> = context.dataStore.data.map { it[K.detoxOn] ?: false }
+    suspend fun setDetoxOn(v: Boolean) = context.dataStore.edit {
+        it[K.detoxOn] = v
+        if (v && (it[K.detoxStreakStart] ?: 0L) == 0L) it[K.detoxStreakStart] = System.currentTimeMillis()
+    }
+
+    val detoxStreakStart: Flow<Long> = context.dataStore.data.map { it[K.detoxStreakStart] ?: 0L }
+    val detoxSlips: Flow<Int> = context.dataStore.data.map { it[K.detoxSlips] ?: 0 }
+    /** „Am alunecat” — resetează seria fără rușine, dar păstrează numărul de reveniri. */
+    suspend fun detoxSlip() = context.dataStore.edit {
+        it[K.detoxStreakStart] = System.currentTimeMillis()
+        it[K.detoxSlips] = (it[K.detoxSlips] ?: 0) + 1
+    }
+
+    /** Scrisoarea către mine — de ce vreau să scap. Rămâne pe telefon. */
+    val detoxLetter: Flow<String> = context.dataStore.data.map { it[K.detoxLetter] ?: "" }
+    suspend fun setDetoxLetter(v: String) = context.dataStore.edit { it[K.detoxLetter] = v }
+
+    /** Cuvintele-declanșator, setate de el. NU pleacă niciodată de pe telefon. */
+    val detoxWords: Flow<String> = context.dataStore.data.map { it[K.detoxWords] ?: "" }
+    suspend fun setDetoxWords(v: String) = context.dataStore.edit { it[K.detoxWords] = v }
 }

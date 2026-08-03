@@ -102,6 +102,28 @@
             android:screenOrientation="portrait"
             android:theme="@style/Theme.Forja" />
 
+        <activity
+            android:name=".core.detox.DetoxBlockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity="com.forja.app.detoxblock"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Forja" />
+
+        <service
+            android:name=".core.detox.ForjaGuardService"
+            android:exported="false"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:label="FORJA · Detox de adicție">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/forja_guard_config" />
+        </service>
+
         <service
             android:name=".core.focus.FocusMonitorService"
             android:exported="false"
