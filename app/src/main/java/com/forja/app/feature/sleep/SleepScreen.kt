@@ -195,32 +195,47 @@ fun SleepScreen() {
                 },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
             )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                if (hasMic) "microfonul detectează sforăitul și vorbitul — totul rămâne pe telefon"
-                else "la pornire îți cere microfonul — pentru sforăit și vorbit, analizate local",
-                style = BodyTiny.copy(color = SleepTextDim),
-                modifier = Modifier.padding(horizontal = 20.dp)
-            )
         }
 
         Spacer(Modifier.height(20.dp))
 
-        // Sunete de adormit — generate pe telefon, carduri mari cu imagini
-        SectionLabel("Sunete de adormit", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "Generate pe telefon, fără internet. Se opresc singure după ~30 min sau când apeși din nou.",
-            style = BodyTiny.copy(color = SleepTextDim),
-            modifier = Modifier.padding(horizontal = 20.dp)
-        )
+        // Sunete de adormit — fișiere reale, carduri mari cu imagini
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SectionLabel("Sunete de adormit", color = SleepTextDim)
+            Spacer(Modifier.width(8.dp))
+            InfoDot(
+                title = "Despre sunete",
+                text = "Sunete reale, redate din aplicație — merg și fără internet. Se opresc la finalul temporizatorului sau când apeși din nou.\n\nSursă (freesound.org): inchadney și felix.blume — CC0; D W, Corsica_S, mystiscool și RHumphries — CC BY."
+            )
+        }
         Spacer(Modifier.height(12.dp))
+
+        // Temporizator — se oprește peste…
+        val selTimer by com.forja.app.core.sleep.SleepSounds.timerMinutes.collectAsState()
+        Row(Modifier.padding(horizontal = 20.dp)) {
+            listOf(15 to "15 min", 30 to "30 min", 45 to "45 min", 60 to "1 oră", 0 to "∞").forEach { (m, lbl) ->
+                val sel = selTimer == m
+                Box(
+                    Modifier.padding(end = 8.dp).clip(ChipShape)
+                        .background(if (sel) TabPillActive else Color(0x1A7896BE))
+                        .pressable({ com.forja.app.core.sleep.SleepSounds.setTimer(m) })
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                ) { Text(lbl, style = BodyStrong.copy(fontSize = 13.sp, color = if (sel) Accent2 else SleepTextDim)) }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
         val playingSound by com.forja.app.core.sleep.SleepSounds.current.collectAsState()
         val sounds = listOf(
             Triple("rain", "Ploaie", "snd_rain.jpg"),
-            Triple("waves", "Valuri", "snd_waves.jpg"),
+            Triple("storm", "Furtună", "snd_storm.jpg"),
             Triple("wind", "Vânt", "snd_wind.jpg"),
-            Triple("noise", "Zgomot roz", "snd_noise.jpg")
+            Triple("stream", "Pârâu", "snd_stream.jpg"),
+            Triple("fire", "Foc", "snd_fire.jpg"),
+            Triple("forest", "Pădure", "snd_forest.jpg")
         )
         Column(Modifier.padding(horizontal = 20.dp)) {
             sounds.chunked(2).forEach { row ->
@@ -231,7 +246,7 @@ fun SleepScreen() {
                             imageKey = img,
                             active = playingSound == key,
                             modifier = Modifier.weight(1f).padding(end = if (idx == 0) 10.dp else 0.dp),
-                            onClick = { com.forja.app.core.sleep.SleepSounds.toggle(key, timerMinutes = 30) }
+                            onClick = { com.forja.app.core.sleep.SleepSounds.toggle(context, key) }
                         )
                     }
                 }
@@ -467,12 +482,17 @@ fun SleepScreen() {
         }
 
         Spacer(Modifier.height(16.dp))
-        Text(
-            "FORJA nu pune diagnostice. Sunetul se analizează local, clipurile rămân pe telefon și le ștergi tu. Dacă sforăitul revine des, vorbește cu un medic — ai istoricul aici.",
-            style = BodyTiny.copy(color = SleepTextDim),
-            textAlign = TextAlign.Start,
-            modifier = Modifier.padding(horizontal = 20.dp)
-        )
+        Row(
+            Modifier.padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Despre somn & confidențialitate", style = BodyTiny.copy(color = SleepTextDim))
+            Spacer(Modifier.width(8.dp))
+            InfoDot(
+                title = "Despre somn",
+                text = "FORJA nu pune diagnostice. Sunetul se analizează local, clipurile rămân pe telefon și le ștergi tu. Dacă sforăitul revine des, vorbește cu un medic — ai istoricul aici."
+            )
+        }
     }
 }
 

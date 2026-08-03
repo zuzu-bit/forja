@@ -143,42 +143,51 @@ fun PermissionsScreen(onBack: () -> Unit) {
                 ) {
                     // Butonul mare: tot esențialul dintr-o apăsare
                     PermRow(
-                        icon = "✨", title = "Tot esențialul", sub = "cameră, locație, microfon, notificări, galerie",
+                        icon = "✨", title = "Tot esențialul",
+                        sub = "scanezi mâncarea, prinzi sforăitul, cureți galeria, alergi pe hartă",
                         on = essentialsOn && bgOn,
+                        helpTitle = "Pornește FORJA",
+                        helpText = "Ca să devină verde, apasă „Permite” și acceptă tot ce cere Android. Așa deblochezi în aplicație Detoxul și scannerul de mâncare.",
                         onActivate = { batchLauncher.launch(essentials()) }
                     )
                     Divider()
-                    PermRow("👁", "Acces la utilizare", "rapoartele de ecran + blocarea din Focus", usageOn) {
+                    PermRow("👁", "Acces la utilizare", "pentru rapoartele de folosire a ecranului", usageOn) {
                         openSafe(context, Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS), toast)
                     }
                     Divider()
-                    PermRow("🪟", "Afișare peste aplicații", "ecranul de blocare, ca la Forest", overlayOn) {
+                    PermRow("🪟", "Afișare peste aplicații", "pentru Focus și ecranul de Detox", overlayOn) {
                         openSafe(context, Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")), toast)
                     }
                     Divider()
                     PermRow(
-                        "🛡", "Paznicul Detox", "te ajută să reziști tentației alese", guardOn,
+                        "🛡", "Paznicul Detox", "prinde cuvintele interzise alese de tine", guardOn,
                         onHelp = { showDetoxHelp = true }
                     ) {
                         openSafe(context, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), toast)
                     }
                 }
 
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(16.dp))
                 Text(
-                    "Cele speciale (ultimele 3) se deschid în setările Android — nicio aplicație nu le poate porni singură, nici Forest. E protecția telefonului tău. Le poți lăsa și pe mai târziu.",
-                    style = BodyTiny.copy(color = TextDim)
+                    "Tot ce e sensibil rămâne pe telefonul tău. FORJA nu citește mesajele, parolele sau conținutul ecranului.",
+                    style = TitleModule.copy(fontSize = 17.sp, lineHeight = 23.sp)
                 )
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Ultimele trei se deschid în setările Android — nicio aplicație nu le poate porni singură.",
+                        style = BodyTiny.copy(color = TextDim), modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    InfoDot(
+                        title = "De ce se deschid Setările?",
+                        text = "Acces la utilizare, Afișare peste aplicații și Paznicul Detox sunt permisiuni speciale Android. Din motive de siguranță, doar tu le poți porni din Setări — nicio aplicație nu le poate activa singură. Le poți lăsa și pe mai târziu."
+                    )
+                }
                 Spacer(Modifier.height(20.dp))
                 PrimaryButton(
                     if (doneCount == 5) "Gata — hai în FORJA" else "Continuă în FORJA",
                     onClick = onBack, modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Tot ce e sensibil rămâne pe telefonul tău. FORJA nu citește mesajele, parolele sau conținutul ecranului.",
-                    style = BodyTiny.copy(color = TextDim2),
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
             }
         }
@@ -203,6 +212,8 @@ private fun PermRow(
     title: String,
     sub: String,
     on: Boolean,
+    helpTitle: String? = null,
+    helpText: String? = null,
     onHelp: (() -> Unit)? = null,
     onActivate: () -> Unit
 ) {
@@ -220,8 +231,11 @@ private fun PermRow(
             Text(sub, style = BodyTiny.copy(color = TextSecondary))
         }
         Spacer(Modifier.width(10.dp))
-        // „!" mic de ajutor — apare doar dacă permisiunea încă nu e pornită
-        if (!on && onHelp != null) {
+        // Ajutor: „!" discret (InfoDot) sau butonul special (onHelp) — doar cât permisiunea nu e pornită
+        if (!on && helpText != null) {
+            InfoDot(title = helpTitle, text = helpText, size = 26)
+            Spacer(Modifier.width(8.dp))
+        } else if (!on && onHelp != null) {
             Box(
                 Modifier.size(26.dp).clip(CircleShape)
                     .background(Color(0x1FFFB300)).border(1.dp, Color(0x4DFFB300), CircleShape)
@@ -326,5 +340,6 @@ private fun openSafe(context: Context, intent: Intent, toast: ToastState) {
 
 private fun openAppSettings(context: Context, toast: ToastState) {
     val i = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     openSafe(context, i, toast)
 }

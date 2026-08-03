@@ -67,12 +67,8 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         appScope.launch { Seed.ensure(db) }
         appScope.launch { com.forja.app.core.media.Media.refresh() }
         appScope.launch {
-            // Scanarea galeriei rămâne programată dacă utilizatorul a activat-o.
-            try {
-                if (prefs.galleryScanOn.first()) {
-                    com.forja.app.feature.nutrition.GalleryScan.scheduleDaily(this@ForjaApp)
-                }
-            } catch (_: Exception) { }
+            // Scanarea galeriei a fost eliminată — anulăm orice programare rămasă.
+            try { com.forja.app.feature.nutrition.GalleryScan.cancelDaily(this@ForjaApp) } catch (_: Exception) { }
         }
         appScope.launch {
             // Paznicul Focus/Detox repornește dacă era activ (ucis de sistem, update etc.).

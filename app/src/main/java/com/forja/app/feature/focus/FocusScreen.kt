@@ -416,12 +416,19 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             Spacer(Modifier.height(6.dp))
             SecondaryButton("+ Adaugă o aplicație", onClick = { pickerOpen = true }, modifier = Modifier.fillMaxWidth())
 
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "FORJA nu citește mesajele, parolele sau conținutul ecranului.",
-                style = BodyTiny.copy(color = TextDim),
-                textAlign = TextAlign.Center
-            )
+            Spacer(Modifier.height(14.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Confidențialitate Focus", style = BodyTiny.copy(color = TextDim))
+                Spacer(Modifier.width(8.dp))
+                InfoDot(
+                    title = "Confidențialitate",
+                    text = "FORJA vede doar ce aplicație e deschisă — nu citește mesajele, parolele sau conținutul ecranului."
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
 
@@ -432,12 +439,19 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                 Modifier.fillMaxWidth().pressable(onOpenCleanup),
                 fill = Color(0xE6121214)
             ) {
-                Text("Telefon mai ușor, minte mai limpede", style = BodyStrong.copy(fontSize = 15.sp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Telefon mai ușor, minte mai limpede",
+                        style = BodyStrong.copy(fontSize = 15.sp),
+                        modifier = Modifier.weight(1f)
+                    )
+                    InfoDot(
+                        title = "Curățenie de azi",
+                        text = "Treci prin pozele și fișierele adunate — app-ul îți sugerează ce pare gunoi, tu decizi. Nimic nu se șterge singur, nimic nu pleacă de pe telefon."
+                    )
+                }
                 Spacer(Modifier.height(2.dp))
-                Text(
-                    "Treci prin pozele și fișierele adunate — app-ul îți sugerează ce pare gunoi, tu decizi. Nimic nu se șterge singur, nimic nu pleacă de pe telefon.",
-                    style = BodyTiny.copy(color = TextSecondary)
-                )
+                Text("Sugestii pentru azi — tu hotărăști ce pleacă.", style = BodyTiny.copy(color = TextSecondary))
                 Spacer(Modifier.height(10.dp))
                 Text("Fă curat →", style = BodySmall.copy(color = Accent2))
             }
