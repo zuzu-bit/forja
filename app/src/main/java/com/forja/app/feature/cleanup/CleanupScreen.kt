@@ -167,16 +167,24 @@ fun CleanupScreen(onBack: () -> Unit) {
     }
 
     Column(
-        Modifier.fillMaxSize().background(Surface0).statusBarsPadding()
+        Modifier.fillMaxSize().background(Surface0).statusBarsPadding().navigationBarsPadding()
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Text("Curățenie de azi", style = TitleModule)
-                Text("TELEFON MAI UȘOR, MINTE MAI LIMPEDE", style = monoLabel(9, 0.14f).copy(color = Accent2))
+            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                Text(
+                    "Curățenie de azi",
+                    style = TitleModule.copy(fontSize = 24.sp),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "TELEFON MAI UȘOR, MINTE MAI LIMPEDE",
+                    style = monoLabel(9, 0.14f).copy(color = Accent2),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
             }
             SecondaryButton("Înapoi", onClick = onBack, padV = 8.dp)
         }

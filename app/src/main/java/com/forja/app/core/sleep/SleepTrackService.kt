@@ -72,6 +72,10 @@ class SleepTrackService : Service(), SensorEventListener {
     private var burstStartAt = 0L
     private var burstCount = 0
     private var burstWindowStart = 0L
+    // Caracteristici pentru a separa sforăitul de vorbit
+    private var lpF = 0.0
+    private var recentZcr = 0.04
+    private var recentHigh = 0.30
 
     private var sessionId: Long = 0
     private var sessionStartAt: Long = 0
@@ -135,18 +139,23 @@ class SleepTrackService : Service(), SensorEventListener {
         )
         if (minBuf <= 0) return
         try {
-            val rec = AudioRecord(
-                MediaRecorder.AudioSource.MIC, sampleRate,
-                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
-                maxOf(minBuf, sampleRate)
-            )
-            if (rec.state != AudioRecord.STATE_INITIALIZED) return
-            audioRecord = rec
-            rec.startRecording()
+            val bufBytes = maxOf(minBuf, sampleRate)
+            // VOICE_RECOGNITION: reglat pentru voce, curat, fără procesări agresive de apel.
+            var rec: AudioRecord? = null
+            for (src in intArrayOf(MediaRecorder.AudioSource.VOICE_RECOGNITION, MediaRecorder.AudioSource.MIC)) {
+                try {
+                    val r = AudioRecord(src, sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufBytes)
+                    if (r.state == AudioRecord.STATE_INITIALIZED) { rec = r; break } else r.release()
+                } catch (_: Exception) { }
+            }
+            if (rec == null) return
+            val recorder = rec
+            audioRecord = recorder
+            recorder.startRecording()
             audioJob = scope.launch {
                 val chunk = ShortArray(sampleRate / 10) // 100ms
                 while (isActive) {
-                    val n = rec.read(chunk, 0, chunk.size)
+                    val n = recorder.read(chunk, 0, chunk.size)
                     if (n <= 0) { delay(50); continue }
                     // scrie în ring
                     for (i in 0 until n) {
@@ -162,11 +171,26 @@ class SleepTrackService : Service(), SensorEventListener {
         } catch (_: Exception) { }
     }
 
-    /** Heuristici locale: RMS + ritm → sforăit; rafale neregulate → vorbit. Estimare, nu diagnostic. */
+    /**
+     * Caracteristici locale: energie (RMS), ritm (vârfuri), rata de treceri prin zero (ZCR)
+     * și cât din energie e peste ~500 Hz. Sforăitul = jos, ritmic, ZCR mic; vorbirea = mai
+     * sus în frecvență, ZCR mai mare, neregulată. Estimare, nu diagnostic.
+     */
     private fun processChunk(chunk: ShortArray, n: Int) {
         var sum = 0.0
-        for (i in 0 until n) sum += chunk[i].toDouble() * chunk[i]
+        var lowSum = 0.0
+        var crossings = 0
+        for (i in 0 until n) {
+            val x = chunk[i].toDouble()
+            sum += x * x
+            lpF += 0.09 * (x - lpF)              // trece-jos ~500 Hz
+            lowSum += lpF * lpF
+            if (i > 0 && (chunk[i] >= 0) != (chunk[i - 1] >= 0)) crossings++
+        }
         val rms = sqrt(sum / n)
+        val zcr = crossings.toDouble() / n
+        val fullE = sum / n
+        val highRatio = if (fullE > 1.0) (1.0 - (lowSum / n) / fullE).coerceIn(0.0, 1.0) else 0.0
         val now = System.currentTimeMillis()
 
         // baseline: urmărește lent zgomotul de fond
@@ -174,12 +198,12 @@ class SleepTrackService : Service(), SensorEventListener {
         val threshold = maxOf(baseline * 2.5, 300.0)
 
         if (rms > threshold) {
-            // vârf — pentru ritmul sforăitului
+            recentZcr = recentZcr * 0.85 + zcr * 0.15
+            recentHigh = recentHigh * 0.85 + highRatio * 0.15
             if (peakTimes.isEmpty() || now - peakTimes.last() > 300) {
                 peakTimes.addLast(now)
                 while (peakTimes.size > 8) peakTimes.removeFirst()
             }
-            // rafale — pentru vorbit
             if (burstStartAt == 0L) burstStartAt = now
             if (now - burstWindowStart > 15000) { burstWindowStart = now; burstCount = 0 }
         } else {
@@ -190,25 +214,27 @@ class SleepTrackService : Service(), SensorEventListener {
             }
         }
 
-        // Sforăit: ≥4 vârfuri cu intervale ritmice 1,2–6s
-        if (peakTimes.size >= 4 && now - lastSnoreEventAt > 180_000) {
+        val soundsLikeSpeech = recentHigh > 0.34 && recentZcr > 0.05
+
+        // Vorbit: rafale neregulate ȘI semnătură de vorbire → cerem serverului transcrierea REALĂ
+        if (burstCount >= 3 && soundsLikeSpeech && now - lastTalkEventAt > 120_000 && now - lastSnoreEventAt > 20_000) {
+            lastTalkEventAt = now
+            burstCount = 0
+            peakTimes.clear()
+            saveTalk(now, intensityFor(rms / baseline))
+            return
+        }
+
+        // Sforăit: ≥4 vârfuri ritmice ȘI NU sună a vorbire → salvăm direct, fără transcriere inventată
+        if (peakTimes.size >= 4 && !soundsLikeSpeech && now - lastSnoreEventAt > 180_000) {
             val list = peakTimes.toList().takeLast(5)
             val intervals = list.zipWithNext { a, b -> b - a }
             val rhythmic = intervals.count { it in 1200..6000 }
             if (rhythmic >= 3) {
                 lastSnoreEventAt = now
-                val ratio = rms / baseline
-                saveEvent("snore", now, (intervals.sum() / 1000).toInt().coerceAtLeast(4), intensityFor(ratio))
+                saveSnore(now, (intervals.sum() / 1000).toInt().coerceAtLeast(4), intensityFor(rms / baseline))
                 peakTimes.clear()
             }
-        }
-
-        // Vorbit: ≥3 rafale scurte neregulate în 15s
-        if (burstCount >= 3 && now - lastTalkEventAt > 180_000 && now - lastSnoreEventAt > 30_000) {
-            lastTalkEventAt = now
-            val ratio = rms / baseline
-            saveEvent("talk", now, 5, intensityFor(ratio))
-            burstCount = 0
         }
     }
 
@@ -218,50 +244,62 @@ class SleepTrackService : Service(), SensorEventListener {
         else -> 1
     }
 
-    /**
-     * Salvează evenimentul + clipul de 5s (LOCAL), apoi cere serverului FORJA
-     * verdictul REAL (Whisper): vorbire → „Vorbire", altfel „Sforăit".
-     * Fără server, eticheta rămâne onestă: „Sunet" — nu ghicim.
-     */
-    private fun saveEvent(typeHint: String, at: Long, durationS: Int, intensity: Int) {
-        val app = ForjaApp.from(this)
-        // Ultimele 5 secunde REAL scrise (fără ecouri, fără zone goale),
-        // reduse la 16 kHz pentru Whisper.
+    /** Ultimele 5 s reale, la 16 kHz, normalizate ca volum — salvate LOCAL. Întoarce (bytes, cale). */
+    private fun snapshotClip(): Pair<ByteArray?, String?> {
         val wantedFull = sampleRate * 5
         val copyLen = minOf(totalWritten, wantedFull.toLong()).toInt()
-        if (copyLen < sampleRate) return
+        if (copyLen < sampleRate) return null to null
         val full = ShortArray(copyLen)
         val start = ((ringPos - copyLen) % ring.size + ring.size) % ring.size
         for (i in 0 until copyLen) full[i] = ring[(start + i) % ring.size]
-        val snapshot = ShortArray(copyLen / 2)
-        for (i in snapshot.indices) snapshot[i] = full[i * 2]
-        scope.launch {
-            var path: String? = null
-            var wavBytes: ByteArray? = null
-            try {
-                val dir = File(filesDir, "sleep_clips").apply { mkdirs() }
-                val f = File(dir, "${sessionId}_${typeHint}_$at.wav")
-                writeWav(f, snapshot, 16000)
-                path = f.absolutePath
-                wavBytes = f.readBytes()
-            } catch (_: Exception) { }
+        val snap = ShortArray(copyLen / 2)                       // /2 → 16 kHz
+        for (i in snap.indices) snap[i] = full[i * 2]
+        var peak = 1
+        for (s in snap) { val a = abs(s.toInt()); if (a > peak) peak = a }
+        if (peak in 1 until 29000) {                             // ridică vorbirea slabă spre ~-1 dBFS
+            val g = 29000.0 / peak
+            for (i in snap.indices) snap[i] = (snap[i] * g).toInt().coerceIn(-32767, 32767).toShort()
+        }
+        return try {
+            val dir = File(filesDir, "sleep_clips").apply { mkdirs() }
+            val f = File(dir, "clip_${sessionId}_${System.currentTimeMillis()}.wav")
+            writeWav(f, snap, 16000)
+            f.readBytes() to f.absolutePath
+        } catch (_: Exception) { null to null }
+    }
 
-            var finalType = "sound"
+    /** Sforăit — sigur pe telefon, fără server, fără transcriere. */
+    private fun saveSnore(at: Long, durationS: Int, intensity: Int) {
+        val app = ForjaApp.from(this)
+        val (_, path) = snapshotClip()
+        scope.launch {
+            app.db.sleepDao().insertEvent(
+                SleepEventEntity(
+                    sessionId = sessionId, type = "snore", at = at,
+                    durationS = durationS, intensity = intensity, clipPath = path, transcript = null
+                )
+            )
+        }
+    }
+
+    /** Vorbit — serverul (Whisper) confirmă vorbirea REALĂ; altfel rămâne „Sunet", nu inventăm. */
+    private fun saveTalk(at: Long, intensity: Int) {
+        val app = ForjaApp.from(this)
+        val (wavBytes, path) = snapshotClip()
+        scope.launch {
+            var type = "sound"
             var transcript: String? = null
             if (app.forjaApi.available && wavBytes != null) {
                 val verdict = try { app.forjaApi.classifySleepAudio(wavBytes) } catch (_: Exception) { null }
-                if (verdict != null) {
-                    finalType = verdict.type
-                    if (verdict.type == "talk" && verdict.transcript.isNotBlank()) {
-                        transcript = verdict.transcript
-                    }
+                if (verdict != null && verdict.speech) {
+                    type = "talk"
+                    if (verdict.transcript.isNotBlank()) transcript = verdict.transcript
                 }
             }
             app.db.sleepDao().insertEvent(
                 SleepEventEntity(
-                    sessionId = sessionId, type = finalType, at = at,
-                    durationS = durationS, intensity = intensity, clipPath = path,
-                    transcript = transcript
+                    sessionId = sessionId, type = type, at = at,
+                    durationS = 5, intensity = intensity, clipPath = path, transcript = transcript
                 )
             )
         }

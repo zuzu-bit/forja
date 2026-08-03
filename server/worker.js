@@ -269,10 +269,43 @@ async function handleMeal(request, env) {
 
 // ── Sunetele de somn: clip 5s → Whisper Large (bun pe română) → vorbit vs sforăit,
 //    CU transcriere — utilizatorul vede exact ce s-a auzit. ─────────────────────
+// Fraze cu care Whisper „halucinează" pe zgomot/sforăit/tăcere — nu sunt vorbire.
 const WHISPER_HALLUCINATIONS = new Set([
   "you", "thank you.", "thank you", "thanks for watching!", "thanks for watching",
-  "mulțumesc.", "mulțumesc", "subtitrare", "bye.", ".",
+  "thanks for watching.", "please subscribe", "subscribe", "bye.", "bye", ".", "...",
+  "mulțumesc.", "mulțumesc", "mulțumesc pentru vizionare", "mulțumesc pentru vizionare.",
+  "abonați-vă", "abonează-te", "subtitrare", "subtitrări", "subtitrarea", "subtitrare refuz",
+  "amara", "amara.", "da.", "da", "nu.", "nu", "așa", "aha", "mhm", "hmm", "îhî", "ok", "oke",
+  "www.", "the", "so", "și", "eu", "a", "e",
 ]);
+
+// Curăță ieșirea Whisper: întoarce vorbire REALĂ sau nimic (fără invenții pe sforăit/zgomot).
+function cleanTranscript(raw) {
+  const text = (raw || "").trim();
+  if (!text) return { speech: false, transcript: "", words: 0 };
+  const lower = text.toLowerCase().replace(/\s+/g, " ").trim();
+  if (WHISPER_HALLUCINATIONS.has(lower)) return { speech: false, transcript: "", words: 0 };
+  const toks = lower.split(/\s+/).map((w) => w.replace(/[^\p{L}\p{N}]/gu, "")).filter((w) => w.length >= 2);
+  if (toks.length === 0) return { speech: false, transcript: "", words: 0 };
+  // Repetiție: prea puține cuvinte unice → Whisper a intrat în buclă (halucinație).
+  const uniq = new Set(toks).size;
+  if (toks.length >= 4 && uniq / toks.length < 0.4) return { speech: false, transcript: "", words: 0 };
+  // O bigramă repetată de multe ori → tot buclă.
+  if (toks.length >= 6) {
+    const big = {};
+    let maxBig = 0;
+    for (let i = 0; i + 1 < toks.length; i++) {
+      const k = toks[i] + " " + toks[i + 1];
+      big[k] = (big[k] || 0) + 1;
+      if (big[k] > maxBig) maxBig = big[k];
+    }
+    if (maxBig >= 3) return { speech: false, transcript: "", words: 0 };
+  }
+  // Vorbire reală: ≥2 cuvinte, sau un singur cuvânt clar (≥4 litere).
+  const ok = toks.length >= 2 || (toks.length === 1 && toks[0].length >= 4);
+  if (!ok) return { speech: false, transcript: "", words: toks.length };
+  return { speech: true, transcript: text.slice(0, 300), words: toks.length };
+}
 
 async function handleSleepAudio(request, env) {
   const buf = await request.arrayBuffer();
@@ -302,16 +335,33 @@ async function handleSleepAudio(request, env) {
     } catch (_) { }
   }
 
-  const lower = text.toLowerCase().trim();
-  const hallucinated = WHISPER_HALLUCINATIONS.has(lower);
-  const words = text.split(/\s+/).filter((w) => w.replace(/[^\p{L}\p{N}]/gu, "").length >= 2);
-  const isTalk = !hallucinated && (words.length >= 2 || (words.length >= 1 && lower.length >= 8));
+  const clean = cleanTranscript(text);
   return json({
-    type: isTalk ? "talk" : "snore",
-    words: words.length,
-    transcript: isTalk ? text.slice(0, 300) : "",
-    confidence: isTalk ? (words.length >= 4 ? "ridicată" : "medie") : "medie",
+    type: clean.speech ? "talk" : "sound",
+    speech: clean.speech,
+    words: clean.words,
+    transcript: clean.transcript,
+    confidence: clean.words >= 4 ? "ridicată" : (clean.speech ? "medie" : "scăzută"),
   });
+}
+
+// ── Rezumatul cald al vorbelor din somn (din frazele reale, nu inventat) ──
+async function handleSleepTalkSummary(request, env) {
+  let s;
+  try { s = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
+  const phrases = Array.isArray(s.phrases)
+    ? s.phrases.filter((p) => typeof p === "string" && p.trim()).slice(0, 20)
+    : [];
+  if (!phrases.length) return json({ summary: "" });
+  const joined = phrases.map((p, i) => `(${i + 1}) ${p}`).join(" ");
+  const prompt =
+    "Ești un ghid cald și onest care scrie în română. Cineva a vorbit în somn; frazele auzite: " +
+    joined + ". " +
+    "Scrie EXACT două propoziții scurte și blânde: prima rezumă despre ce pare să fi vorbit (NU inventa nimic în plus), " +
+    "a doua e o încurajare caldă (vorbitul în somn e frecvent și normal, nu e un diagnostic). " +
+    "Fără emoji, fără listă, fără introducere.";
+  const out = (await runText(env, prompt, 160)).trim();
+  return json({ summary: out.slice(0, 400) });
 }
 
 // ── Înregistrarea completă a nopții → R2 (contul companiei), ștearsă la 24h ──
@@ -443,6 +493,7 @@ export default {
     if (url.pathname === "/v1/meal") return handleMeal(request, env);
     if (url.pathname === "/v1/sleep-audio") return handleSleepAudio(request, env);
     if (url.pathname === "/v1/sleep-summary") return handleSleepSummary(request, env);
+    if (url.pathname === "/v1/sleep-talk-summary") return handleSleepTalkSummary(request, env);
     if (url.pathname === "/v1/sleep-recording") {
       if (!session) return json({ error: "Lipsește sesiunea." }, 400);
       return handleRecordingUpload(request, env, uid, session);

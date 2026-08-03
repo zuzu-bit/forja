@@ -413,6 +413,14 @@ fun SleepScreen() {
             } else {
                 Column(Modifier.padding(horizontal = 20.dp)) {
                     events.forEach { ev -> SleepEventCard(ev, app) }
+                    val talkPhrases = events
+                        .filter { it.type == "talk" && !it.transcript.isNullOrBlank() }
+                        .mapNotNull { it.transcript }
+                    val snoreCount = events.count { it.type == "snore" }
+                    if (talkPhrases.isNotEmpty() || snoreCount > 0) {
+                        Spacer(Modifier.height(12.dp))
+                        SleepTalkSummary(talkPhrases, snoreCount, app)
+                    }
                 }
             }
         } else {
@@ -742,6 +750,45 @@ private fun Hypnogram(phases: String, modifier: Modifier = Modifier) {
             drawLine(colorFor(t), Offset(x1, y), Offset(x2, y), strokeWidth = 5f, cap = StrokeCap.Round)
             prevX = x2
             prevY = y
+        }
+    }
+}
+
+@Composable
+private fun SleepTalkSummary(phrases: List<String>, snoreCount: Int, app: ForjaApp) {
+    var summary by remember(phrases) { mutableStateOf<String?>(null) }
+    LaunchedEffect(phrases) {
+        if (phrases.isNotEmpty() && app.forjaApi.available) {
+            summary = try { app.forjaApi.sleepTalkSummary(phrases) } catch (_: Exception) { null }
+        }
+    }
+    ForjaCard(
+        Modifier.fillMaxWidth(),
+        fill = SleepCard, stroke = SleepStroke
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Vorbe din somn", style = BodyStrong.copy(fontSize = 15.sp), modifier = Modifier.weight(1f))
+            InfoDot(
+                title = "Despre vorbitul în somn",
+                text = "Vorbitul în somn e frecvent și, de obicei, inofensiv — sunt frânturi ale subconștientului, nu un diagnostic. Privește-le cu blândețe; dacă apar des și te obosesc, un somn mai odihnitor și mai puțin stres ajută cel mai mult."
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        if (phrases.isEmpty()) {
+            Text(
+                if (snoreCount > 0) "Azi-noapte n-ai vorbit — doar ai sforăit." else "Azi-noapte n-ai vorbit.",
+                style = BodySmall.copy(color = SleepTextDim)
+            )
+        } else {
+            summary?.let {
+                Text(it, style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
+                Spacer(Modifier.height(8.dp))
+            }
+            Text("CE S-A AUZIT", style = monoLabel(8, 0.14f).copy(color = SleepTextDim))
+            Spacer(Modifier.height(4.dp))
+            phrases.take(8).forEach { p ->
+                Text("• „$p”", style = BodySmall.copy(color = SleepRem))
+            }
         }
     }
 }
