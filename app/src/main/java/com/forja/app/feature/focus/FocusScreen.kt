@@ -571,15 +571,22 @@ private fun DetoxAddictionSection() {
     val toast = LocalToast.current
 
     val detoxOn by app.prefs.detoxOn.collectAsState(initial = false)
-    val streakStart by app.prefs.detoxStreakStart.collectAsState(initial = 0L)
-    val slips by app.prefs.detoxSlips.collectAsState(initial = 0)
     val letter by app.prefs.detoxLetter.collectAsState(initial = "")
     val words by app.prefs.detoxWords.collectAsState(initial = "")
 
     var guardOn by remember { mutableStateOf(com.forja.app.core.detox.ForjaGuardService.isEnabled(context)) }
     var letterOpen by remember { mutableStateOf(false) }
     var wordsOpen by remember { mutableStateOf(false) }
-    var permOpen by remember { mutableStateOf(false) }
+    var guardStep by remember { mutableStateOf(0) }        // 0 închis · 1 pasul 1 · 2 pasul 2
+    var mascotLine by remember { mutableStateOf<String?>(null) }
+    val guardianLines = listOf(
+        "Sunt aici cu tine. Respiră — momentul trece.",
+        "Ți-ai scris de ce vrei asta. Vrei să recitim împreună?",
+        "Ești mai puternic decât impulsul de acum.",
+        "Un pas mic acum, mândrie mare mâine.",
+        "Nu ești singur în asta — eu țin de baston, tu ții de tine."
+    )
+    val mascotUrl = remember { com.forja.app.core.media.Media.mediaUrl("paznic.jpg") }
 
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -592,32 +599,43 @@ private fun DetoxAddictionSection() {
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
 
-    val streakDays = if (streakStart > 0) ((System.currentTimeMillis() - streakStart) / 86_400_000L).toInt() else 0
-
     Column(Modifier.fillMaxWidth()) {
-        SectionLabel("Detox de adicție", Modifier.align(Alignment.Start))
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Un paznic blând care te ajută să reziști. Totul rămâne pe telefonul tău — nimic, dar absolut nimic, nu pleacă la vreun server.",
-            style = BodyTiny.copy(color = TextSecondary),
-            modifier = Modifier.align(Alignment.Start)
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            SectionLabel("Detox de adicție", Modifier.weight(1f))
+            InfoDot(
+                title = "Paznicul tău",
+                text = "Un paznic blând care te ajută să reziști. Totul rămâne pe telefonul tău — nimic, dar absolut nimic, nu pleacă la vreun server. E instrumentul tău, nu al nostru."
+            )
+        }
         Spacer(Modifier.height(12.dp))
 
         if (detoxOn) {
-            // Seria de zile curate
+            // Paznicul — mascota, status și o vorbă bună la atingere
             ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), fill = Color(0xE6121214)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(64.dp).clip(CircleShape)
+                            .background(Color(0x1FFFB300)).border(1.dp, Color(0x4DFFB300), CircleShape)
+                            .pressable({ mascotLine = guardianLines.random() }),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (mascotUrl != null) {
+                            coil.compose.AsyncImage(
+                                model = mascotUrl, contentDescription = "Paznicul",
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                            )
+                        } else Text("👮", fontSize = 30.sp)
+                    }
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
+                        Text("Paznicul e cu tine", style = BodyStrong.copy(fontSize = 15.sp))
                         Text(
-                            if (streakDays == 0) "prima ta zi curată" else "$streakDays ${if (streakDays == 1) "zi curată" else "zile curate"}",
-                            style = heroNumeral(28)
+                            if (guardOn) "activ — te oprește la tentația aleasă de tine"
+                            else "mai e un pas ca să te poată opri",
+                            style = BodyTiny.copy(color = if (guardOn) Positive else Accent2)
                         )
-                        Text(
-                            if (slips > 0) "$slips ${if (slips == 1) "revenire" else "reveniri"} — fiecare e curaj, nu eșec"
-                            else "ai început. asta contează cel mai mult.",
-                            style = BodyTiny.copy(color = TextSecondary)
-                        )
+                        Text("atinge-l pentru o vorbă bună", style = BodyTiny.copy(color = TextDim))
                     }
                     ForjaSwitch(checked = detoxOn, onCheckedChange = { on ->
                         scope.launch {
@@ -626,6 +644,18 @@ private fun DetoxAddictionSection() {
                         }
                     })
                 }
+                if (mascotLine != null) {
+                    Spacer(Modifier.height(12.dp))
+                    Column(Modifier.fillMaxWidth().clip(CardShape).background(Surface2).padding(12.dp)) {
+                        Text("„$mascotLine”", style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp))
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            if (letter.isBlank()) "→ scrie-ți scrisoarea" else "→ recitește / schimbă scrisoarea",
+                            style = BodySmall.copy(color = Accent2),
+                            modifier = Modifier.pressable({ letterOpen = true })
+                        )
+                    }
+                }
             }
 
             if (!guardOn) {
@@ -633,11 +663,11 @@ private fun DetoxAddictionSection() {
                     Text("Mai e un pas", style = BodyStrong.copy(fontSize = 14.sp))
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "Ca paznicul să poată apărea peste tentație, pornește serviciul FORJA din Accesibilitate. Acolo rămâne — nu citește nimic în afara cuvintelor și site-urilor pe care le-ai ales.",
+                        "Pornește paznicul în 2 pași simpli — te ghidez eu, ecran cu ecran.",
                         style = BodyTiny.copy(color = TextSecondary)
                     )
                     Spacer(Modifier.height(10.dp))
-                    PrimaryButton("Pornește paznicul", small = true, onClick = { permOpen = true }, modifier = Modifier.fillMaxWidth())
+                    PrimaryButton("Pornește paznicul", small = true, onClick = { guardStep = 1 }, modifier = Modifier.fillMaxWidth())
                 }
             }
 
@@ -652,27 +682,12 @@ private fun DetoxAddictionSection() {
                 onClick = { wordsOpen = true },
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Recunosc, am alunecat",
-                style = BodySmall.copy(color = TextDim),
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .pressable({
-                        scope.launch {
-                            app.prefs.detoxSlip()
-                            toast.show("Am notat. Te ridici și mergi mai departe — asta contează.")
-                        }
-                    })
-                    .padding(8.dp)
-            )
         } else {
             PrimaryButton(
                 "Pornește Detox de adicție",
                 onClick = {
                     scope.launch {
                         app.prefs.setDetoxOn(true)
-                        if (!com.forja.app.core.detox.ForjaGuardService.isEnabled(context)) permOpen = true
                         toast.show("Ești pe drum. Îți scrii scrisoarea și alegi cuvintele mai jos.")
                     }
                 },
@@ -681,39 +696,28 @@ private fun DetoxAddictionSection() {
         }
     }
 
-    if (permOpen) {
-        ModalBottomSheet(
-            onDismissRequest = { permOpen = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = Surface1, shape = SheetShape
-        ) {
-            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-                Text("Pornește paznicul", style = TitleModule.copy(fontSize = 20.sp))
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "În ecranul care se deschide: găsește „FORJA · Detox de adicție” în lista de servicii și pornește-l.",
-                    style = Body
+    if (guardStep > 0) {
+        GuardWizardSheet(
+            step = guardStep,
+            onOpenApps = {
+                val pkg = context.packageName
+                val tries = listOf(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$pkg")),
+                    Intent(Settings.ACTION_APPLICATION_SETTINGS)
                 )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Onest: FORJA vede doar ce e nevoie ca să te oprească la tentația aleasă de tine — și nimic nu pleacă de pe telefon. E instrumentul tău, nu al nostru.",
-                    style = BodySmall.copy(color = TextSecondary)
-                )
-                Spacer(Modifier.height(18.dp))
-                Row {
-                    SecondaryButton("Nu acum", onClick = { permOpen = false }, modifier = Modifier.weight(1f))
-                    Spacer(Modifier.width(10.dp))
-                    PrimaryButton("Deschide setarea", onClick = {
-                        permOpen = false
-                        try {
-                            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                        } catch (_: Exception) {
-                            toast.show("Deschide Setări → Accesibilitate → FORJA.")
-                        }
-                    }, modifier = Modifier.weight(1f))
+                var ok = false
+                for (i in tries) {
+                    try { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(i); ok = true; break } catch (_: Exception) { }
                 }
-            }
-        }
+                if (!ok) toast.show("Deschide Setări → Aplicații → FORJA.")
+            },
+            onNext = { guardStep = 2 },
+            onOpenAccess = {
+                try { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                catch (_: Exception) { toast.show("Deschide Setări → Accesibilitate → FORJA.") }
+            },
+            onClose = { guardStep = 0 }
+        )
     }
 
     if (letterOpen) {
@@ -737,6 +741,57 @@ private fun DetoxAddictionSection() {
             onSave = { scope.launch { app.prefs.setDetoxWords(it); wordsOpen = false; toast.show("Salvate — pe telefonul tău, nicăieri altundeva.") } },
             onClose = { wordsOpen = false }
         )
+    }
+}
+
+/** Pornirea paznicului în 2 pași: 1) deblochezi setările din Aplicații, 2) pornești din Accesibilitate. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GuardWizardSheet(
+    step: Int,
+    onOpenApps: () -> Unit,
+    onNext: () -> Unit,
+    onOpenAccess: () -> Unit,
+    onClose: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Surface1, shape = SheetShape
+    ) {
+        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text("PASUL $step DIN 2", style = monoLabel(9, 0.14f).copy(color = Accent2))
+            Spacer(Modifier.height(6.dp))
+            if (step == 1) {
+                Text("Deblochează setările", style = TitleModule.copy(fontSize = 20.sp))
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Fiindcă ai instalat FORJA dintr-un fișier (nu din Play Store), Android cere să deblochezi tu setarea — o singură dată.",
+                    style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("1.  Apasă „Deschide Aplicații” mai jos — te duc la pagina FORJA. Dacă ajungi în listă, caută FORJA și deschide-l.", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
+                Spacer(Modifier.height(6.dp))
+                Text("2.  Sus în dreapta, apasă cele trei puncte  ⋮", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
+                Spacer(Modifier.height(6.dp))
+                Text("3.  Alege „Allow restricted settings” (Permite setările restricționate). Dacă cere codul telefonului, introdu-l.", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
+                Spacer(Modifier.height(18.dp))
+                PrimaryButton("Deschide Aplicații", onClick = onOpenApps, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                SecondaryButton("Am făcut asta → pasul 2", onClick = onNext, modifier = Modifier.fillMaxWidth())
+            } else {
+                Text("Pornește paznicul", style = TitleModule.copy(fontSize = 20.sp))
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Acum intră în Accesibilitate și pornește „FORJA · Detox de adicție”. Gata — paznicul e activ și te oprește la tentația aleasă de tine.",
+                    style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
+                )
+                Spacer(Modifier.height(18.dp))
+                PrimaryButton("Deschide Accesibilitatea", onClick = onOpenAccess, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                SecondaryButton("Am terminat", onClick = onClose, modifier = Modifier.fillMaxWidth())
+            }
+        }
     }
 }
 

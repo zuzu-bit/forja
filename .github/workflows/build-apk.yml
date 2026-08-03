@@ -160,6 +160,7 @@ jobs:
           snd_fire|a cozy fireplace with warm glowing embers in the dark, soft orange light, intimate and calming, no text
           snd_forest|soft rain falling in a misty dark green forest at dusk, wet leaves, calm moody peaceful atmosphere, no text
           guide|a warm friendly approachable young female fitness coach smiling gently and welcoming, casual athletic hoodie, wholesome professional half-body portrait, cinematic warm lighting, graphite and amber tones, dark studio background, natural and tasteful, no text
+          paznic|a cute friendly cartoon police officer guardian mascot smiling warmly, holding a small rounded baton, chubby wholesome character design, navy uniform with a soft badge, big kind eyes, graphite and amber tones, soft studio lighting, approachable and reassuring, no text
           MEDIAEOF
           echo "Poze: generate=$GEN_OK existente=$GEN_SKIP erori=$GEN_ERR"
           echo "- Poze AI (FLUX): generate=$GEN_OK · existente=$GEN_SKIP · erori=$GEN_ERR" >> "$GITHUB_STEP_SUMMARY"

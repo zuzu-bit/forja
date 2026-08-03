@@ -45,7 +45,6 @@ fun PermissionsScreen(onBack: () -> Unit) {
     val toast = LocalToast.current
 
     var refresh by remember { mutableStateOf(0) }
-    var showDetoxHelp by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) refresh++ }
@@ -86,8 +85,7 @@ fun PermissionsScreen(onBack: () -> Unit) {
     }
     val usageOn = remember(refresh) { com.forja.app.core.focus.FocusMonitorService.hasUsageAccess(context) }
     val overlayOn = remember(refresh) { Settings.canDrawOverlays(context) }
-    val guardOn = remember(refresh) { com.forja.app.core.detox.ForjaGuardService.isEnabled(context) }
-    val doneCount = listOf(essentialsOn, bgOn, usageOn, overlayOn, guardOn).count { it }
+    val doneCount = listOf(essentialsOn && bgOn, usageOn, overlayOn).count { it }
 
     val guideVideo = remember { com.forja.app.core.media.Media.mediaUrl("guide.mp4") ?: "" }
     val guidePoster = remember { com.forja.app.core.media.Media.mediaUrl("guide.jpg") }
@@ -134,7 +132,7 @@ fun PermissionsScreen(onBack: () -> Unit) {
             Column(Modifier.padding(horizontal = 20.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     SectionLabel("Pornește FORJA")
-                    Text("$doneCount din 5 gata", style = monoLabel(9, 0.12f).copy(color = if (doneCount == 5) Positive else Accent2))
+                    Text("$doneCount din 3 gata", style = monoLabel(9, 0.12f).copy(color = if (doneCount == 3) Positive else Accent2))
                 }
                 Spacer(Modifier.height(10.dp))
 
@@ -158,13 +156,6 @@ fun PermissionsScreen(onBack: () -> Unit) {
                     PermRow("🪟", "Afișare peste aplicații", "pentru Focus și ecranul de Detox", overlayOn) {
                         openSafe(context, Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")), toast)
                     }
-                    Divider()
-                    PermRow(
-                        "🛡", "Paznicul Detox", "prinde cuvintele interzise alese de tine", guardOn,
-                        onHelp = { showDetoxHelp = true }
-                    ) {
-                        openSafe(context, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), toast)
-                    }
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -175,29 +166,23 @@ fun PermissionsScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Ultimele trei se deschid în setările Android — nicio aplicație nu le poate porni singură.",
+                        "Ultimele două se deschid în setările Android — nicio aplicație nu le poate porni singură.",
                         style = BodyTiny.copy(color = TextDim), modifier = Modifier.weight(1f)
                     )
                     Spacer(Modifier.width(8.dp))
                     InfoDot(
                         title = "De ce se deschid Setările?",
-                        text = "Acces la utilizare, Afișare peste aplicații și Paznicul Detox sunt permisiuni speciale Android. Din motive de siguranță, doar tu le poți porni din Setări — nicio aplicație nu le poate activa singură. Le poți lăsa și pe mai târziu."
+                        text = "Acces la utilizare și Afișare peste aplicații sunt permisiuni speciale Android. Din motive de siguranță, doar tu le poți porni din Setări — nicio aplicație nu le poate activa singură. Le poți lăsa și pe mai târziu."
                     )
                 }
                 Spacer(Modifier.height(20.dp))
                 PrimaryButton(
-                    if (doneCount == 5) "Gata — hai în FORJA" else "Continuă în FORJA",
+                    if (doneCount == 3) "Gata — hai în FORJA" else "Continuă în FORJA",
                     onClick = onBack, modifier = Modifier.fillMaxWidth()
                 )
             }
         }
 
-        if (showDetoxHelp) {
-            DetoxHelpDialog(
-                onClose = { showDetoxHelp = false },
-                onOpenSettings = { openAppSettings(context, toast) }
-            )
-        }
     }
 }
 
@@ -258,88 +243,6 @@ private fun PermRow(
     }
 }
 
-/** Panou cald care explică cei 2 pași de deblocare a Paznicului (setare restricționată Android). */
-@Composable
-private fun DetoxHelpDialog(onClose: () -> Unit, onOpenSettings: () -> Unit) {
-    Box(
-        Modifier.fillMaxSize().background(Color(0xCC060607))
-            .clickable(remember { MutableInteractionSource() }, null) { onClose() },
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            Modifier
-                .padding(24.dp)
-                .widthIn(max = 420.dp)
-                .fillMaxWidth()
-                .clip(CardShape)
-                .background(Surface1)
-                .border(1.dp, StrokeCardStrong, CardShape)
-                .clickable(remember { MutableInteractionSource() }, null) {}
-                .verticalScroll(rememberScrollState())
-                .padding(22.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(44.dp).clip(CircleShape)
-                        .background(Color(0x1FFFB300)).border(1.dp, Color(0x4DFFB300), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) { Text("!", style = TitleModule.copy(color = Accent2, fontSize = 24.sp)) }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("PAZNICUL DETOX", style = monoLabel(9, 0.14f).copy(color = Accent2))
-                    Spacer(Modifier.height(2.dp))
-                    Text("Nu merge comutatorul?", style = TitleModule.copy(fontSize = 20.sp, lineHeight = 24.sp))
-                }
-            }
-            Spacer(Modifier.height(14.dp))
-            Text(
-                "Fiindcă ai instalat FORJA dintr-un fișier (nu din Play Store), Android blochează la început această permisiune, ca măsură de siguranță. E normal — o deblochezi în 2 pași:",
-                style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
-            )
-            Spacer(Modifier.height(6.dp))
-            StepRow(
-                "1", "Deblochează setările restricționate",
-                "În Setări → Aplicații → FORJA, apasă meniul ⋮ din dreapta sus și alege „Allow restricted settings”. Dacă îți cere codul telefonului, introdu-l."
-            ) {
-                SecondaryButton("Deschide setările FORJA", onClick = onOpenSettings, modifier = Modifier.fillMaxWidth())
-            }
-            Divider()
-            StepRow(
-                "2", "Pornește Paznicul",
-                "Revii aici, în Accesibilitate → „FORJA · Detox de adicție”, iar acum comutatorul se activează normal."
-            )
-            Spacer(Modifier.height(18.dp))
-            PrimaryButton("Am înțeles", onClick = onClose, modifier = Modifier.fillMaxWidth())
-        }
-    }
-}
-
-@Composable
-private fun StepRow(n: String, title: String, body: String, content: (@Composable () -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-        Box(
-            Modifier.size(28.dp).clip(CircleShape).background(AccentGradient),
-            contentAlignment = Alignment.Center
-        ) { Text(n, style = BodyStrong.copy(color = Color(0xFF141008), fontSize = 14.sp)) }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = BodyStrong.copy(fontSize = 14.sp))
-            Spacer(Modifier.height(3.dp))
-            Text(body, style = BodyTiny.copy(color = TextSecondary, lineHeight = 18.sp))
-            if (content != null) {
-                Spacer(Modifier.height(10.dp))
-                content()
-            }
-        }
-    }
-}
-
 private fun openSafe(context: Context, intent: Intent, toast: ToastState) {
     try { context.startActivity(intent) } catch (_: Exception) { toast.show("Deschide manual din Setări → Aplicații → FORJA.") }
-}
-
-private fun openAppSettings(context: Context, toast: ToastState) {
-    val i = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    openSafe(context, i, toast)
 }

@@ -46,12 +46,8 @@ private fun DetoxBlockScreen(onDone: () -> Unit) {
     val app = remember { ForjaApp.from(context) }
 
     var letter by remember { mutableStateOf("") }
-    var streakDays by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) {
-        letter = app.prefs.detoxLetter.first()
-        val start = app.prefs.detoxStreakStart.first()
-        streakDays = if (start > 0) ((System.currentTimeMillis() - start) / 86_400_000L).toInt() else 0
-    }
+    val mascotUrl = remember { com.forja.app.core.media.Media.mediaUrl("paznic.jpg") }
+    LaunchedEffect(Unit) { letter = app.prefs.detoxLetter.first() }
 
     Box(
         Modifier
@@ -83,7 +79,19 @@ private fun DetoxBlockScreen(onDone: () -> Unit) {
                     .border(1.5.dp, Color(0x66FFB300), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text("Respiră.", style = TitleModule.copy(fontSize = 24.sp))
+                if (mascotUrl != null) {
+                    coil.compose.AsyncImage(
+                        model = mascotUrl, contentDescription = "Paznicul",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                    )
+                } else {
+                    Text("Respiră.", style = TitleModule.copy(fontSize = 24.sp))
+                }
+            }
+            if (mascotUrl != null) {
+                Spacer(Modifier.height(14.dp))
+                Text("Respiră.", style = TitleModule.copy(fontSize = 22.sp))
             }
 
             Spacer(Modifier.height(28.dp))
@@ -98,23 +106,6 @@ private fun DetoxBlockScreen(onDone: () -> Unit) {
                 style = Body.copy(fontSize = 15.sp),
                 textAlign = TextAlign.Center
             )
-
-            if (streakDays >= 0) {
-                Spacer(Modifier.height(20.dp))
-                Box(
-                    Modifier
-                        .clip(CircleShape)
-                        .background(Color(0x1FFFB300))
-                        .padding(horizontal = 18.dp, vertical = 10.dp)
-                ) {
-                    Text(
-                        if (streakDays == 0) "prima ta zi curată — chiar acum o clădești"
-                        else "$streakDays ${if (streakDays == 1) "zi curată" else "zile curate"} · prea valoroase ca să le rupi",
-                        style = BodyStrong.copy(color = Accent2, fontSize = 14.sp),
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
 
             if (letter.isNotBlank()) {
                 Spacer(Modifier.height(20.dp))
