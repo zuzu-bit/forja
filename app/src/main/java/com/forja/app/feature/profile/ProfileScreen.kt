@@ -241,7 +241,7 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit) {
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            "FORJA v1.0 · construită după prototipul REAL & VIU",
+            "FORJA v${com.forja.app.BuildConfig.VERSION_NAME} · build ${com.forja.app.BuildConfig.VERSION_CODE} · REAL & VIU",
             style = BodyTiny.copy(color = TextDim2),
             modifier = Modifier.align(Alignment.CenterHorizontally)
         )
