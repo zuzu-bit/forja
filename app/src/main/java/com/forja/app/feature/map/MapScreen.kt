@@ -485,23 +485,6 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                             toast.show("Aștept semnalul GPS — ieși sub cer liber dacă ești în casă.")
                         }
                     }
-                    Spacer(Modifier.height(10.dp))
-                    Box(
-                        Modifier
-                            .size(58.dp)
-                            .clip(CircleShape)
-                            .background(AccentGradient)
-                            .pressable({
-                                if (hasLocation) {
-                                    sportOpen = true
-                                } else {
-                                    permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                                }
-                            }),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Filled.PlayArrow, "GO", tint = OnAccent, modifier = Modifier.size(28.dp))
-                    }
                 }
             }
         }

@@ -157,9 +157,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             ForjaTab.Respiro -> Route.BREATH
         }
         nav.navigate(target) {
-            popUpTo(Route.DASHBOARD) { saveState = true }
+            popUpTo(Route.DASHBOARD) { inclusive = false }
             launchSingleTop = true
-            restoreState = true
         }
     }
 

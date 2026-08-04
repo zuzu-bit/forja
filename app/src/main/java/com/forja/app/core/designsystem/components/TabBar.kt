@@ -85,8 +85,10 @@ private fun TabItem(tab: ForjaTab, current: ForjaTab?, onSelect: (ForjaTab) -> U
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(tab.icon, contentDescription = tab.label, tint = tint, modifier = Modifier.size(21.dp))
-        Spacer(Modifier.height(2.dp))
-        Text(tab.label, style = monoLabel(8, 0.08f).copy(color = tint))
+        if (selected) {
+            Spacer(Modifier.height(2.dp))
+            Text(tab.label, style = monoLabel(8, 0.08f).copy(color = tint), maxLines = 1, softWrap = false)
+        }
     }
 }
 
