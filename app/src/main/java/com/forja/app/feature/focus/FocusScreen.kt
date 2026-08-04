@@ -696,11 +696,19 @@ private fun DetoxAddictionSection() {
             },
             onNext = { guardStep = (guardStep + 1).coerceAtMost(3) },
             onOpenAccess = {
-                // Deschide direct pagina serviciului FORJA din Accesibilitate (dacă telefonul suportă), altfel lista.
-                val cn = android.content.ComponentName(context, com.forja.app.core.detox.ForjaGuardService::class.java).flattenToString()
+                // Încearcă să deschidă DIRECT pagina serviciului FORJA din Accesibilitate; altfel, lista.
+                val cn = android.content.ComponentName(context, com.forja.app.core.detox.ForjaGuardService::class.java)
+                val flat = cn.flattenToString()
+                fun args() = android.os.Bundle().apply { putString(":settings:fragment_args_key", flat) }
                 val tries = listOf(
                     Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
-                        putExtra(":settings:show_fragment_args", android.os.Bundle().apply { putString(":settings:fragment_args_key", cn) })
+                        putExtra(":settings:fragment_args_key", flat)
+                        putExtra(":settings:show_fragment_args", args())
+                        putExtra(Intent.EXTRA_COMPONENT_NAME, cn)
+                    },
+                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                        putExtra(":settings:fragment_args_key", flat)
+                        putExtra(":settings:show_fragment_args", args())
                     },
                     Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                 )
@@ -708,7 +716,7 @@ private fun DetoxAddictionSection() {
                 for (i in tries) {
                     try { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(i); ok = true; break } catch (_: Exception) { }
                 }
-                if (!ok) toast.show("Deschide Setări → Accesibilitate → FORJA.")
+                if (!ok) toast.show("Deschide Setări → Accesibilitate → Aplicații instalate → FORJA.")
             },
             onClose = { guardStep = 0 }
         )
