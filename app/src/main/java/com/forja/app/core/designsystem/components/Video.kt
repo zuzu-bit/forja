@@ -19,9 +19,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.forja.app.core.designsystem.LocalReducedMotion
 import com.forja.app.core.designsystem.Surface1
@@ -89,23 +88,49 @@ fun VideoSurface(
                 lifecycleOwner.lifecycle.addObserver(observer)
                 onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
+            // TextureView (nu SurfaceView): respectă decuparea Compose — videoul NU se mai
+            // revarsă sub header („video rupt în 2"). Umplerea cadrului (center-crop) o facem
+            // noi, cu o matrice — fără layout XML, fără atribute de resurse.
             AndroidView(
                 factory = { ctx ->
-                    // TextureView (nu SurfaceView): respectă decuparea Compose —
-                    // videoul NU se mai revarsă sub header („video rupt în 2").
-                    val pv = android.view.LayoutInflater.from(ctx)
-                        .inflate(com.forja.app.R.layout.player_texture, null) as PlayerView
-                    pv.useController = false
-                    pv.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    pv
+                    val tv = android.view.TextureView(ctx)
+                    tv.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                        val p = v.tag as? Player ?: return@addOnLayoutChangeListener
+                        cropToFill(v as android.view.TextureView, p)
+                    }
+                    tv
                 },
-                update = { it.player = player },
+                update = { tv ->
+                    if (tv.tag !== player) {
+                        tv.tag = player
+                        player.setVideoTextureView(tv)
+                        player.addListener(object : Player.Listener {
+                            override fun onVideoSizeChanged(videoSize: VideoSize) { cropToFill(tv, player) }
+                        })
+                        cropToFill(tv, player)
+                    }
+                },
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer { this.alpha = alpha }
             )
         }
     }
+}
+
+/** Center-crop pe TextureView: video-ul umple cadrul păstrând proporțiile, ca RESIZE_MODE_ZOOM. */
+private fun cropToFill(tv: android.view.TextureView, player: Player) {
+    val vs = player.videoSize
+    val vw = tv.width
+    val vh = tv.height
+    if (vs.width == 0 || vs.height == 0 || vw == 0 || vh == 0) return
+    val ratio = if (vs.pixelWidthHeightRatio > 0f) vs.pixelWidthHeightRatio else 1f
+    val videoW = vs.width * ratio
+    val videoH = vs.height.toFloat()
+    val scale = maxOf(vw / videoW, vh / videoH)
+    val m = android.graphics.Matrix()
+    m.setScale(scale * videoW / vw, scale * videoH / vh, vw / 2f, vh / 2f)
+    tv.setTransform(m)
 }
 
 // Scrim erou/jos: transparent 30% → .55 la 64% → .94 la 100%
