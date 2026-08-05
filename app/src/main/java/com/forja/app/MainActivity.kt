@@ -104,6 +104,7 @@ private fun ForjaRoot() {
 @Composable
 private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
     val nav: NavHostController = rememberNavController()
+    val navScope = rememberCoroutineScope()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
 
@@ -247,7 +248,11 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 ProfileScreen(
                     onLogout = {
                         app.auth.logout()
-                        nav.navigate(Route.LOGIN) { popUpTo(Route.DASHBOARD) { inclusive = true } }
+                        // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni.
+                        navScope.launch {
+                            app.prefs.resetFirstRun()
+                            nav.navigate(Route.ONBOARDING) { popUpTo(Route.DASHBOARD) { inclusive = true } }
+                        }
                     },
                     onOpenMapGhost = { nav.navigate(Route.MAP) },
                     onOpenPermissions = { nav.navigate(Route.PERMISSIONS) }

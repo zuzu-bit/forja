@@ -183,4 +183,10 @@ class Prefs(private val context: Context) {
     /** Ecranul de pornire cu permisiuni a fost arătat o dată. */
     val permsIntroSeen: Flow<Boolean> = context.dataStore.data.map { it[K.permsIntroSeen] ?: false }
     suspend fun setPermsIntroSeen() = context.dataStore.edit { it[K.permsIntroSeen] = true }
+
+    /** „De la capăt": la ieșirea din cont, prezentarea și permisiunile inițiale se văd din nou. */
+    suspend fun resetFirstRun() = context.dataStore.edit {
+        it.remove(K.onboardingDone)
+        it.remove(K.permsIntroSeen)
+    }
 }

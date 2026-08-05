@@ -14,10 +14,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material.icons.outlined.QrCodeScanner
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -31,7 +27,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -101,21 +96,10 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
         }
     }
 
-    // Fundal cu poftă de viață: legume proaspete generate în banca media, sub un văl întunecat —
-    // culoarea răzbate, textul rămâne rege.
-    val nutriBg = remember { com.forja.app.core.media.Media.mediaUrl("nutri_bg.jpg") }
-    Box(Modifier.fillMaxSize().background(Surface0)) {
-        if (nutriBg != null) {
-            AsyncImage(
-                model = nutriBg, contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-        Box(Modifier.fillMaxSize().background(Color(0xC20A0A0B)))
     Column(
         Modifier
             .fillMaxSize()
+            .background(Surface0)
             .verticalScroll(rememberScrollState())
             .padding(bottom = 120.dp)
     ) {
@@ -181,8 +165,11 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 val entries = meals.filter { it.mealType == type }
                 if (entries.isEmpty() && type == 3) continue
                 if (entries.isEmpty()) {
-                    // Carduri calme — culoarea o dă fundalul, nu fiecare card.
-                    ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), padding = 12.dp) {
+                    // Cardurile meselor — aceeași sticlă verde ca butoanele de mai jos.
+                    ForjaCard(
+                        Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                        fill = Color(0x249DB77E), stroke = Color(0x619DB77E), padding = 12.dp
+                    ) {
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -264,12 +251,11 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
         )
         Spacer(Modifier.height(10.dp))
-        // Patru drumuri către jurnal — fiecare cu culoarea și iconița lui, nu patru pietre negre.
+        // Patru drumuri către jurnal — toate în verdele casei, fără iconițe.
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
             ActionTile(
-                icon = Icons.Outlined.PhotoLibrary,
                 label = if (galleryAnalyzing) "se analizează…" else "Din galerie",
-                tint = Color(0xFFD9A24C),
+                tint = Color(0xFF9DB77E),
                 onClick = {
                     if (!galleryAnalyzing) pickLauncher.launch(
                         androidx.activity.result.PickVisualMediaRequest(
@@ -281,9 +267,8 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
             )
             Spacer(Modifier.width(10.dp))
             ActionTile(
-                icon = Icons.Outlined.QrCodeScanner,
                 label = "Cod de bare",
-                tint = Color(0xFF6FA8A0),
+                tint = Color(0xFF9DB77E),
                 onClick = onScan,
                 modifier = Modifier.weight(1f)
             )
@@ -291,7 +276,6 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
             ActionTile(
-                icon = Icons.Outlined.Search,
                 label = "Caută",
                 tint = Color(0xFF9DB77E),
                 onClick = { searchOpen = true },
@@ -299,9 +283,8 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
             )
             Spacer(Modifier.width(10.dp))
             ActionTile(
-                icon = Icons.Outlined.Edit,
                 label = "Manual",
-                tint = Color(0xFFC98A63),
+                tint = Color(0xFF9DB77E),
                 onClick = { manualOpen = true },
                 modifier = Modifier.weight(1f)
             )
@@ -318,7 +301,6 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 text = "Analiza rulează pe serverul FORJA — fără nicio cheie la tine. AI-ul estimează din poză; codul de bare dă valori exacte din OpenFoodFacts. Totul rămâne editabil înainte de salvare."
             )
         }
-    }
     }
 
     if (keyOpen) {
@@ -371,10 +353,9 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
 
 }
 
-/** Buton de acțiune cu personalitate: iconiță + tenta lui de culoare, pe sticlă colorată. */
+/** Buton de acțiune pe sticlă verde: doar text, curat, în culoarea casei. */
 @Composable
 private fun ActionTile(
-    icon: ImageVector,
     label: String,
     tint: Color,
     onClick: () -> Unit,
@@ -390,8 +371,6 @@ private fun ActionTile(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(17.dp))
-        Spacer(Modifier.width(8.dp))
         Text(label, style = BodyStrong.copy(fontSize = 14.sp))
     }
 }
