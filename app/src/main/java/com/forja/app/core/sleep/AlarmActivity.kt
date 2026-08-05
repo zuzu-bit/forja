@@ -88,8 +88,8 @@ class AlarmActivity : ComponentActivity() {
                                 .size(170.dp)
                                 .scale(breath)
                                 .clip(CircleShape)
-                                .background(Color(0x22FFB300))
-                                .border(2.dp, Color(0x99FFB300), CircleShape),
+                                .background(Color(0x226F855A))
+                                .border(2.dp, Color(0x996F855A), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(Fmt.clock(System.currentTimeMillis()), style = heroNumeral(40))

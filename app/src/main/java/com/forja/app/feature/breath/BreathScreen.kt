@@ -55,7 +55,7 @@ fun BreathScreen() {
     )
 
     Column(
-        Modifier.fillMaxSize().background(Surface0).statusBarsPadding()
+        Modifier.fillMaxSize().topoBackground(decor = true).statusBarsPadding()
             .padding(horizontal = 24.dp).padding(bottom = 120.dp),   // lasă loc barei de jos
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -74,10 +74,10 @@ fun BreathScreen() {
             Modifier.size(200.dp).scale(scale).clip(CircleShape)
                 .background(
                     Brush.radialGradient(
-                        listOf(Color(0x333B6FB0), Color(0x1FFFB300), Color(0x00000000))
+                        listOf(Color(0x333B6FB0), Color(0x1F6F855A), Color(0x00000000))
                     )
                 )
-                .border(1.5.dp, Color(0x66FFB300), CircleShape),
+                .border(1.5.dp, Color(0x666F855A), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Text(

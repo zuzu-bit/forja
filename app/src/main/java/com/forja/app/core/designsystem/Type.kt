@@ -15,7 +15,17 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.forja.app.R
 
-// Display: Archivo Expanded (font variabil, axa wdth 114–125)
+// Display: Barlow Condensed — rețeta „Condensat" din Design Studio
+// (500/600/700 statice, latin + latin-ext, deci cu diacritice românești)
+val BarlowCondensed = FontFamily(
+    Font(R.font.barlowc_500, weight = FontWeight.Medium),
+    Font(R.font.barlowc_600, weight = FontWeight.SemiBold),
+    Font(R.font.barlowc_600, weight = FontWeight.Bold),
+    Font(R.font.barlowc_700, weight = FontWeight.ExtraBold),
+    Font(R.font.barlowc_700, weight = FontWeight.Black)
+)
+
+// Archivo rămâne disponibil (variabil, axa wdth) pentru accente rare
 val ArchivoExpanded = FontFamily(
     Font(
         R.font.archivo_var, weight = FontWeight.ExtraBold,
@@ -52,8 +62,9 @@ private val NoPad = PlatformTextStyle(includeFontPadding = false)
 
 // Titluri module 26–28
 val TitleModule = TextStyle(
-    fontFamily = ArchivoExpanded, fontWeight = FontWeight.ExtraBold,
-    fontSize = 27.sp, lineHeight = 30.sp, color = TextPrimary,
+    fontFamily = BarlowCondensed, fontWeight = FontWeight.SemiBold,
+    fontSize = 28.sp, lineHeight = 31.sp, color = TextPrimary,
+    letterSpacing = 0.01.em,
     platformStyle = NoPad, lineHeightStyle = Flat
 )
 
@@ -63,9 +74,9 @@ val TitleOnboarding = TitleModule.copy(fontSize = 40.sp, lineHeight = 43.sp, fon
 // Splash 56
 val TitleSplash = TitleModule.copy(fontSize = 56.sp, lineHeight = 58.sp, fontWeight = FontWeight.Black)
 
-// Numerale-erou (tabular)
+// Numerale-erou (tabular) — condensate, à la cronometru militar
 fun heroNumeral(size: Int) = TextStyle(
-    fontFamily = ArchivoExpanded, fontWeight = FontWeight.Black,
+    fontFamily = BarlowCondensed, fontWeight = FontWeight.ExtraBold,
     fontSize = size.sp, lineHeight = (size + 2).sp, color = TextPrimary,
     fontFeatureSettings = "tnum",
     platformStyle = NoPad, lineHeightStyle = Flat
@@ -83,9 +94,9 @@ fun monoLabel(size: Int = 10, tracking: Float = 0.14f) = TextStyle(
     platformStyle = NoPad
 )
 
-// Text butoane primare: Archivo 800 16
+// Text butoane primare: Barlow Condensed 700, ușor mai mare (condensat)
 val ButtonText = TextStyle(
-    fontFamily = ArchivoExpanded, fontWeight = FontWeight.ExtraBold,
-    fontSize = 16.sp, color = OnAccent, platformStyle = NoPad
+    fontFamily = BarlowCondensed, fontWeight = FontWeight.ExtraBold,
+    fontSize = 17.sp, letterSpacing = 0.02.em, color = OnAccent, platformStyle = NoPad
 )
-val ButtonTextSmall = ButtonText.copy(fontSize = 14.sp)
+val ButtonTextSmall = ButtonText.copy(fontSize = 15.sp)

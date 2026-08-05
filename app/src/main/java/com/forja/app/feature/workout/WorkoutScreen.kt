@@ -70,7 +70,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
             itemsIndexed(plans, key = { _, p -> p.id }) { i, p ->
                 val selected = i == planIdx
                 val stroke by animateColorAsState(
-                    if (selected) Color(0xA6FFB300) else Color(0x12FFFFFF),
+                    if (selected) Color(0xA66F855A) else Color(0x12FFFFFF),
                     Springs.natural(), label = "stroke"
                 )
                 val shape = RoundedCornerShape(Radii.card)

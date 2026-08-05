@@ -90,7 +90,7 @@ fun PermissionsScreen(onBack: () -> Unit) {
     val guideVideo = remember { com.forja.app.core.media.Media.mediaUrl("guide.mp4") ?: "" }
     val guidePoster = remember { com.forja.app.core.media.Media.mediaUrl("guide.jpg") }
 
-    Box(Modifier.fillMaxSize().background(Surface0)) {
+    Box(Modifier.fillMaxSize().topoBackground(decor = false)) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -223,7 +223,7 @@ private fun PermRow(
         } else if (!on && onHelp != null) {
             Box(
                 Modifier.size(26.dp).clip(CircleShape)
-                    .background(Color(0x1FFFB300)).border(1.dp, Color(0x4DFFB300), CircleShape)
+                    .background(Color(0x1F6F855A)).border(1.dp, Color(0x4D6F855A), CircleShape)
                     .pressable(onHelp),
                 contentAlignment = Alignment.Center
             ) { Text("!", style = BodyStrong.copy(color = Accent2, fontSize = 15.sp)) }

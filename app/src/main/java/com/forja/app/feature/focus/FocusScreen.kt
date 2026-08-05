@@ -597,7 +597,7 @@ private fun DetoxAddictionSection() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         Modifier.size(64.dp).clip(CircleShape)
-                            .background(Color(0x1FFFB300)).border(1.dp, Color(0x4DFFB300), CircleShape)
+                            .background(Color(0x1F6F855A)).border(1.dp, Color(0x4D6F855A), CircleShape)
                             .pressable({ mascotLine = guardianLines.random() }),
                         contentAlignment = Alignment.Center
                     ) {
@@ -641,7 +641,7 @@ private fun DetoxAddictionSection() {
             }
 
             if (!guardOn) {
-                ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), fill = Color(0xE6121214), stroke = Color(0x66FFB300)) {
+                ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), fill = Color(0xE6121214), stroke = Color(0x666F855A)) {
                     Text("Mai e un pas", style = BodyStrong.copy(fontSize = 14.sp))
                     Spacer(Modifier.height(2.dp))
                     Text(
@@ -757,7 +757,7 @@ private fun FocusForest(grown: Int, withered: Int, partialSecs: Int) {
             Modifier.size(150.dp).clip(CircleShape)
                 .background(
                     androidx.compose.ui.graphics.Brush.radialGradient(
-                        listOf(Color(0x2634C759), Color(0x14FFB300), Color(0x00000000))
+                        listOf(Color(0x2634C759), Color(0x146F855A), Color(0x00000000))
                     )
                 )
                 .border(1.dp, Color(0x3334C759), CircleShape),

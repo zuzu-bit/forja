@@ -101,7 +101,7 @@ private fun CenterHomeTab(selected: Boolean, onClick: () -> Unit) {
             .clip(CircleShape)
             .background(if (selected) Color.Transparent else Color(0xFF16161A))
             .then(if (selected) Modifier.background(Brush.linearGradient(listOf(Accent, Accent2))) else Modifier)
-            .border(1.dp, if (selected) Color(0x99FFB300) else StrokeOnVideoStrong, CircleShape)
+            .border(1.dp, if (selected) Color(0x996F855A) else StrokeOnVideoStrong, CircleShape)
             .pressable(onClick),
         contentAlignment = Alignment.Center
     ) {

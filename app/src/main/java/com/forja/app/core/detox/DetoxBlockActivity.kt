@@ -75,8 +75,8 @@ private fun DetoxBlockScreen(onDone: () -> Unit) {
                     .size(190.dp)
                     .scale(breath)
                     .clip(CircleShape)
-                    .background(Color(0x14FF9E2D))
-                    .border(1.5.dp, Color(0x66FFB300), CircleShape),
+                    .background(Color(0x146F855A))
+                    .border(1.5.dp, Color(0x666F855A), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 if (mascotUrl != null) {

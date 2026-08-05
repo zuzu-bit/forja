@@ -25,6 +25,10 @@ import com.forja.app.ForjaApp
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.PrimaryButton
 import com.forja.app.core.designsystem.components.pressable
+import com.forja.app.core.designsystem.components.topoBackground
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material3.Icon
 import kotlinx.coroutines.launch
 
 @Composable
@@ -104,10 +108,10 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Surface0)
+            .topoBackground(decor = true)
             .background(
                 Brush.radialGradient(
-                    listOf(Color(0x26FFB300), Color.Transparent),
+                    listOf(Color(0x266F855A), Color.Transparent),
                     center = androidx.compose.ui.geometry.Offset(180f, 300f),
                     radius = 800f
                 )
@@ -124,10 +128,14 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
             horizontalAlignment = Alignment.Start
         ) {
             Spacer(Modifier.height(64.dp))
-            Text("FORJA", style = TitleModule.copy(fontSize = 34.sp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.LocalFireDepartment, contentDescription = null, tint = Accent2, modifier = Modifier.size(30.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("FORJA", style = TitleModule.copy(fontSize = 34.sp))
+            }
             Spacer(Modifier.height(6.dp))
             Text(
-                if (isLogin) "CONTUL TĂU · REAL & VIU" else "CONT NOU · REAL & VIU",
+                if (isLogin) "CONTUL TĂU · LIVE IT" else "CONT NOU · LIVE IT",
                 style = monoLabel(10, 0.16f).copy(color = Accent2)
             )
             Spacer(Modifier.height(36.dp))

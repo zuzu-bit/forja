@@ -671,7 +671,7 @@ private fun SoundCard(
             .height(104.dp)
             .clip(shape)
             .background(SleepCard)
-            .border(1.5.dp, if (active) Color(0xB3FFB300) else SleepStroke, shape)
+            .border(1.5.dp, if (active) Color(0xB36F855A) else SleepStroke, shape)
             .pressable(onClick)
     ) {
         if (imgUrl != null) {
@@ -734,7 +734,7 @@ private fun Hypnogram(phases: String, modifier: Modifier = Modifier) {
             else -> 0.90f          // deep
         }
         fun colorFor(t: String) = when (t) {
-            "awake" -> Color(0xFFFFB300)
+            "awake" -> Color(0xFF6F855A)
             "rem" -> SleepRem
             "light" -> SleepLight
             else -> SleepDeep
@@ -814,7 +814,7 @@ private fun SleepEventCard(ev: SleepEventEntity, app: ForjaApp) {
             .fillMaxWidth()
             .padding(bottom = 8.dp)
             .pressable({ expanded = !expanded }),
-        fill = SleepCard, stroke = if (expanded) Color(0x8CFFB300) else SleepStroke,
+        fill = SleepCard, stroke = if (expanded) Color(0x8C6F855A) else SleepStroke,
         padding = 12.dp
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

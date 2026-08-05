@@ -121,13 +121,13 @@ fun ActivityDetailScreen(activityId: Long, onBack: () -> Unit) {
                             )
                             overlayManager.tilesOverlay.setColorFilter(ColorMatrixColorFilter(warm))
                             val glow = Polyline().apply {
-                                outlinePaint.color = android.graphics.Color.parseColor("#29FF9E2D")
+                                outlinePaint.color = android.graphics.Color.parseColor("#296F855A")
                                 outlinePaint.strokeWidth = 13 * ctx.resources.displayMetrics.density
                                 outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
                                 setPoints(points)
                             }
                             val line = Polyline().apply {
-                                outlinePaint.color = android.graphics.Color.parseColor("#FFB300")
+                                outlinePaint.color = android.graphics.Color.parseColor("#6F855A")
                                 outlinePaint.strokeWidth = 4.5f * ctx.resources.displayMetrics.density
                                 outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
                                 setPoints(points)

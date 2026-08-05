@@ -124,7 +124,7 @@ fun DashboardScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Surface0)
+            .topoBackground(decor = false)
             .verticalScroll(rememberScrollState())
             .padding(bottom = 120.dp)
     ) {
@@ -314,7 +314,7 @@ private fun MotivationCard(name: String) {
         Box(
             Modifier.align(Alignment.TopEnd).padding(12.dp).size(46.dp)
                 .graphicsLayer { rotationZ = rot; scaleX = sc; scaleY = sc }
-                .clip(CircleShape).background(Color(0x1FFFB300)).border(1.dp, Color(0x4DFFB300), CircleShape),
+                .clip(CircleShape).background(Color(0x1F6F855A)).border(1.dp, Color(0x4D6F855A), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             if (mascot != null) {

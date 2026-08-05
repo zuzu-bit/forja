@@ -267,12 +267,12 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                 val pts = go.points.map { GeoPoint(it.first, it.second) }
                 if (goLine.value == null) {
                     val glow = Polyline().apply {
-                        outlinePaint.color = android.graphics.Color.parseColor("#29FF9E2D")
+                        outlinePaint.color = android.graphics.Color.parseColor("#296F855A")
                         outlinePaint.strokeWidth = 13 * context.resources.displayMetrics.density
                         outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
                     }
                     val line = Polyline().apply {
-                        outlinePaint.color = android.graphics.Color.parseColor("#FFB300")
+                        outlinePaint.color = android.graphics.Color.parseColor("#6F855A")
                         outlinePaint.strokeWidth = 4.5f * context.resources.displayMetrics.density
                         outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
                     }
@@ -356,7 +356,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                     .padding(horizontal = 16.dp)
                     .fillMaxWidth(),
                 fill = Color(0xF0121214),
-                stroke = Color(0x66FFB300)
+                stroke = Color(0x666F855A)
             ) {
                 Text("Prietenii să te vadă mereu?", style = BodyStrong.copy(fontSize = 14.sp))
                 Spacer(Modifier.height(3.dp))

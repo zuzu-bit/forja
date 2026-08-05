@@ -8,9 +8,9 @@ val Surface0 = Color(0xFF0A0A0B)
 val Surface1 = Color(0xFF121214)
 val Surface2 = Color(0xFF1A1A1E)
 
-val Accent = Color(0xFFFF7A00)
-val Accent2 = Color(0xFFFFB300)
-val OnAccent = Color(0xFF141008)
+val Accent = Color(0xFF4A5D3A)
+val Accent2 = Color(0xFF6F855A)
+val OnAccent = Color(0xFFEDF3E4)
 
 val TextPrimary = Color(0xFFF4F2EE)
 val TextSecondary = Color(0xFFA7A9AE)
@@ -36,7 +36,7 @@ val Error = Color(0xFFFF6B57)               // oklch(0.72 0.17 25)
 val LogoutText = Color(0xFFFF8A75)
 val LiveDot = Color(0xFFFF4D3A)
 
-val TabPillActive = Color(0x24FF7A00)       // rgba(255,122,0,.14)
+val TabPillActive = Color(0x244A5D3A)       // rgba(255,122,0,.14)
 
 val AccentGradient = Brush.linearGradient(listOf(Accent, Accent2))
 val AccentGradientVertical = Brush.verticalGradient(listOf(Accent, Accent2))

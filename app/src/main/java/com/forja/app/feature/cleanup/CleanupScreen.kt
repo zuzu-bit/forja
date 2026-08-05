@@ -167,7 +167,7 @@ fun CleanupScreen(onBack: () -> Unit) {
     }
 
     Column(
-        Modifier.fillMaxSize().background(Surface0).statusBarsPadding().navigationBarsPadding()
+        Modifier.fillMaxSize().topoBackground(decor = false).statusBarsPadding().navigationBarsPadding()
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),

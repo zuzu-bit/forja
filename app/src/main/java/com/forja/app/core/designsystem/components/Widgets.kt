@@ -40,7 +40,7 @@ import kotlin.math.roundToInt
 fun ForjaCard(
     modifier: Modifier = Modifier,
     fill: Color = Surface1,
-    stroke: Color = StrokeCard,
+    stroke: Color = StrokeCardStrong,
     radius: Dp = Radii.card,
     padding: Dp = 14.dp,
     content: @Composable ColumnScope.() -> Unit

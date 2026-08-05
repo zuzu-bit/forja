@@ -8,19 +8,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.unit.dp
 
-// Radiusuri din handoff
+// Radiusuri — rețeta „Ascuțite" din Design Studio (carduri 5, butoane 8)
 object Radii {
-    val card = 13.dp          // carduri 12–14
-    val buttonPrimary = 14.dp
-    val buttonSecondary = 11.dp
-    val thumb = 10.dp         // thumbs 9–10
-    val sheet = 20.dp         // sheets 20 sus
-    val chip = 7.dp           // chips 6–8
+    val card = 5.dp
+    val buttonPrimary = 8.dp
+    val buttonSecondary = 7.dp
+    val thumb = 4.dp
+    val sheet = 14.dp         // sheets păstrează o rotunjire mică sus
+    val chip = 4.dp
 }
 
 val CardShape = RoundedCornerShape(Radii.card)
 val ButtonShape = RoundedCornerShape(Radii.buttonPrimary)
-val ButtonSmallShape = RoundedCornerShape(12.dp)
+val ButtonSmallShape = RoundedCornerShape(7.dp)
 val SecondaryShape = RoundedCornerShape(Radii.buttonSecondary)
 val ThumbShape = RoundedCornerShape(Radii.thumb)
 val SheetShape = RoundedCornerShape(topStart = Radii.sheet, topEnd = Radii.sheet)

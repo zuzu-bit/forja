@@ -36,7 +36,7 @@ object MapMarkers {
 
         // Vârf-pin
         val tipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (me) Color.parseColor("#FF7A00") else Color.parseColor("#FFB300")
+            color = if (me) Color.parseColor("#4A5D3A") else Color.parseColor("#6F855A")
             this.alpha = alpha
         }
         val path = Path().apply {
@@ -54,8 +54,8 @@ object MapMarkers {
             color = when {
                 ghost -> Color.parseColor("#9DBFE8")
                 state == "sleep" -> Color.parseColor("#9DBFE8")
-                me -> Color.parseColor("#FF7A00")
-                else -> Color.parseColor("#FFB300")
+                me -> Color.parseColor("#4A5D3A")
+                else -> Color.parseColor("#6F855A")
             }
             this.alpha = alpha
         }
