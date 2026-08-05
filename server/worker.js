@@ -406,9 +406,361 @@ async function handleSleepSummary(request, env) {
   return json({ summary: out.slice(0, 400) });
 }
 
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
+// ═══════════════ ADMINISTRARE — jurnal, comenzi, panou web ═══════════════
+// Jurnalul de evenimente trăiește în R2 (forja-media) sub prefixul _admin/,
+// care e invizibil public: exclus din /media/_list, iar GET /media/ nu acceptă „/".
+const LOG_KEY = "_admin/log.json";
+
+async function readLog(env) {
+  if (!env.MEDIA) return [];
+  try {
+    const obj = await env.MEDIA.get(LOG_KEY);
+    if (!obj) return [];
+    const data = JSON.parse(await obj.text());
+    return Array.isArray(data) ? data : [];
+  } catch (_) { return []; }
+}
+
+async function logEvent(env, what, status, ms) {
+  if (!env.MEDIA) return;
+  try {
+    const events = await readLog(env);
+    events.push({ at: Date.now(), what, status, ms });
+    while (events.length > 300) events.shift();
+    await env.MEDIA.put(LOG_KEY, JSON.stringify(events), {
+      httpMetadata: { contentType: "application/json" },
+    });
+  } catch (_) { }
+}
+
+function fmtSize(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(".", ",") + " MB";
+  if (n >= 1000) return Math.round(n / 1000) + " KB";
+  return n + " B";
+}
+
+async function generateMedia(env, key, prompt) {
+  if (!env.MEDIA || !env.AI) return { error: "Media/AI neconfigurate." };
+  const r = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", { prompt, steps: 8 });
+  const b64 = r && r.image;
+  if (!b64) return { error: "FLUX n-a întors imagine." };
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  await env.MEDIA.put(key, bytes, { httpMetadata: { contentType: "image/jpeg" } });
+  return { ok: true, key, size: bytes.length };
+}
+
+async function purgeExpired(env) {
+  if (!env.RECORDS) return 0;
+  let n = 0;
+  let cursor;
+  do {
+    const page = await env.RECORDS.list({ cursor, limit: 500, include: ["customMetadata"] });
+    for (const obj of page.objects) {
+      const at = Number(obj.customMetadata && obj.customMetadata.at) || obj.uploaded?.getTime?.() || 0;
+      if (at > 0 && Date.now() - at > 24 * 3600_000) {
+        await env.RECORDS.delete(obj.key);
+        n++;
+      }
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return n;
+}
+
+async function listBucket(bucket, skipAdmin) {
+  const rows = [];
+  let cursor;
+  do {
+    const page = await bucket.list({ cursor, limit: 1000, include: ["customMetadata"] });
+    for (const o of page.objects) {
+      if (skipAdmin && o.key.startsWith("_admin/")) continue;
+      rows.push(o);
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return rows;
+}
+
+/** Dispecerul de comenzi al terminalului de admin (merge și din curl). */
+async function runCmd(env, line, host) {
+  const raw = String(line || "").trim();
+  const parts = raw.split(/\s+/);
+  const c0 = (parts[0] || "").toLowerCase();
+  const c1 = (parts[1] || "").toLowerCase();
+
+  if (!c0 || c0 === "help") {
+    return [
+      "Comenzi FORJA admin:",
+      "  status                       starea serviciului",
+      "  diag                         diagnoza modelelor AI (durează ~30s)",
+      "  media ls                     fișierele media din R2",
+      "  media rm <fișier>            șterge un fișier media",
+      "  media gen <fișier> | <prompt>  generează imagine cu FLUX",
+      "  rec ls                       înregistrările de somn din R2",
+      "  rec rm <cheie>               șterge o înregistrare",
+      "  rec purge                    șterge acum înregistrările expirate (>24h)",
+      "  log [n]                      ultimele n evenimente (implicit 30)",
+      "  log clear                    golește jurnalul",
+      "",
+      "Din terminalul tău: curl -H \"X-Admin: CHEIA\" -d \"media ls\" https://" + host + "/admin/api/cmd",
+      "Conturile de utilizatori se administrează în Firebase Console (proiect " + FIREBASE_PROJECT + ").",
+    ].join("\n");
+  }
+
+  if (c0 === "status") {
+    return [
+      "serviciu:      forja-api · online",
+      "adresă:        https://" + host,
+      "analiza mese:  " + (env.GEMINI_API_KEY ? "gemini" : "banca de modele Cloudflare"),
+      "audio (somn):  " + (env.AI ? "whisper activ" : "indisponibil"),
+      "media R2:      " + (env.MEDIA ? "configurată" : "LIPSĂ"),
+      "înregistrări:  " + (env.RECORDS ? "configurate (ștergere la 24h)" : "LIPSĂ"),
+      "cont Firebase: " + FIREBASE_PROJECT,
+    ].join("\n");
+  }
+
+  if (c0 === "diag") {
+    try {
+      const r = await handleDiag(env);
+      const t = await r.text();
+      try { return JSON.stringify(JSON.parse(t), null, 2); } catch (_) { return t; }
+    } catch (e) {
+      return "Diagnoza a eșuat: " + String(e && e.message ? e.message : e).slice(0, 200);
+    }
+  }
+
+  if (c0 === "media" && c1 === "ls") {
+    if (!env.MEDIA) return "Media R2 neconfigurată.";
+    const rows = await listBucket(env.MEDIA, true);
+    if (rows.length === 0) return "Niciun fișier media.";
+    let total = 0;
+    const lines = rows.map((o) => { total += o.size; return "  " + o.key.padEnd(34) + fmtSize(o.size); });
+    lines.push("  ──");
+    lines.push("  " + rows.length + " fișiere · " + fmtSize(total));
+    return lines.join("\n");
+  }
+
+  if (c0 === "media" && c1 === "rm") {
+    if (!env.MEDIA) return "Media R2 neconfigurată.";
+    const key = String(parts[2] || "").replace(/[^0-9a-zA-Z._-]/g, "");
+    if (!key) return "Folosire: media rm <fișier>";
+    if (key.startsWith("_admin")) return "Refuzat.";
+    const head = await env.MEDIA.head(key);
+    if (!head) return "Nu există: " + key;
+    await env.MEDIA.delete(key);
+    await logEvent(env, "ADMIN: media rm " + key, 200, 0);
+    return "Șters: " + key + " (" + fmtSize(head.size) + ")";
+  }
+
+  if (c0 === "media" && c1 === "gen") {
+    const rest = raw.replace(/^\s*media\s+gen\s+/i, "");
+    const bar = rest.indexOf("|");
+    if (bar < 1) return "Folosire: media gen <fișier> | <prompt în engleză>";
+    const key = rest.slice(0, bar).trim().replace(/[^0-9a-zA-Z._-]/g, "");
+    const prompt = rest.slice(bar + 1).trim().slice(0, 1200);
+    if (!key || !prompt) return "Folosire: media gen <fișier> | <prompt în engleză>";
+    if (key.startsWith("_admin")) return "Refuzat.";
+    try {
+      const out = await generateMedia(env, key, prompt);
+      if (out.ok) {
+        await logEvent(env, "ADMIN: media gen " + key, 200, 0);
+        return "Generat: " + key + " (" + fmtSize(out.size) + ")";
+      }
+      return "Eroare: " + (out.error || "necunoscută");
+    } catch (e) {
+      return "Generarea a eșuat: " + String(e && e.message ? e.message : e).slice(0, 200);
+    }
+  }
+
+  if (c0 === "rec" && c1 === "ls") {
+    if (!env.RECORDS) return "Stocarea înregistrărilor neconfigurată.";
+    const rows = await listBucket(env.RECORDS, false);
+    if (rows.length === 0) return "Nicio înregistrare (se șterg automat la 24h).";
+    let total = 0;
+    const lines = rows.map((o) => {
+      total += o.size;
+      const at = Number(o.customMetadata && o.customMetadata.at) || o.uploaded?.getTime?.() || 0;
+      const ageH = at > 0 ? ((Date.now() - at) / 3600_000).toFixed(1) : "?";
+      return "  " + o.key.padEnd(46) + fmtSize(o.size).padEnd(9) + ageH + "h";
+    });
+    lines.push("  ──");
+    lines.push("  " + rows.length + " înregistrări · " + fmtSize(total));
+    return lines.join("\n");
+  }
+
+  if (c0 === "rec" && c1 === "rm") {
+    if (!env.RECORDS) return "Stocarea înregistrărilor neconfigurată.";
+    const key = String(parts[2] || "").replace(/[^0-9a-zA-Z._/-]/g, "");
+    if (!key) return "Folosire: rec rm <cheie>";
+    const head = await env.RECORDS.head(key);
+    if (!head) return "Nu există: " + key;
+    await env.RECORDS.delete(key);
+    await logEvent(env, "ADMIN: rec rm " + key, 200, 0);
+    return "Șters: " + key;
+  }
+
+  if (c0 === "rec" && c1 === "purge") {
+    const n = await purgeExpired(env);
+    await logEvent(env, "ADMIN: rec purge (" + n + ")", 200, 0);
+    return n === 0 ? "Nimic expirat de șters." : "Șterse: " + n + " înregistrări expirate.";
+  }
+
+  if (c0 === "log" && c1 === "clear") {
+    if (!env.MEDIA) return "Jurnal indisponibil (media R2 neconfigurată).";
+    await env.MEDIA.put(LOG_KEY, "[]", { httpMetadata: { contentType: "application/json" } });
+    return "Jurnal golit.";
+  }
+
+  if (c0 === "log") {
+    const n = Math.min(Math.max(parseInt(c1 || "30", 10) || 30, 1), 300);
+    const events = (await readLog(env)).slice(-n);
+    if (events.length === 0) return "Jurnal gol — folosește aplicația și revino.";
+    return events.map((e) => {
+      const d = new Date(e.at);
+      const hh = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0") + ":" + String(d.getSeconds()).padStart(2, "0");
+      return "  " + hh + "  " + String(e.status).padEnd(4) + String(e.ms + "ms").padEnd(8) + e.what;
+    }).join("\n");
+  }
+
+  return "Comandă necunoscută: „" + raw.slice(0, 60) + "”. Scrie «help».";
+}
+
+async function handleAdminApi(request, env, url) {
+  if (!env.ADMIN_KEY || request.headers.get("X-Admin") !== env.ADMIN_KEY) {
+    return json({ error: "Cheie de admin greșită." }, 403);
+  }
+  if (request.method === "GET" && url.pathname === "/admin/api/overview") {
+    let mediaCount = 0, mediaBytes = 0, recCount = 0, recBytes = 0;
+    try {
+      if (env.MEDIA) for (const o of await listBucket(env.MEDIA, true)) { mediaCount++; mediaBytes += o.size; }
+    } catch (_) { }
+    try {
+      if (env.RECORDS) for (const o of await listBucket(env.RECORDS, false)) { recCount++; recBytes += o.size; }
+    } catch (_) { }
+    const log = (await readLog(env)).slice(-30);
+    return json({
+      host: url.host,
+      colo: (request.cf && request.cf.colo) || "",
+      meals: env.GEMINI_API_KEY ? "gemini" : "banca de modele",
+      audio: env.AI ? "whisper activ" : "indisponibil",
+      mediaCount, mediaBytes, recCount, recBytes, log,
+    });
+  }
+  if (request.method === "POST" && url.pathname === "/admin/api/cmd") {
+    const line = (await request.text()).slice(0, 2000);
+    const out = await runCmd(env, line, url.host);
+    return json({ ok: true, out });
+  }
+  return json({ error: "Rută necunoscută." }, 404);
+}
+
+const ADMIN_HTML = String.raw`<!doctype html>
+<html lang="ro"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FORJA · Admin</title>
+<style>
+:root{--bg:#0A0A0B;--panel:#121214;--panel2:#1A1A1E;--line:rgba(255,255,255,.08);--txt:#F4F2EE;--dim:#A7A9AE;--dim2:#7A7D83;--amber:#FFB300;--orange:#FF7A00;--green:#2FBE71;--red:#FF4D3A}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.45 system-ui,'Segoe UI',Roboto,sans-serif}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+header{position:sticky;top:0;background:rgba(10,10,11,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;align-items:center;gap:12px;z-index:5}
+header h1{font-size:15px;margin:0;letter-spacing:.12em}
+header h1 b{color:var(--amber)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--dim2)}
+.dot.on{background:var(--green);box-shadow:0 0 8px rgba(47,190,113,.8)}
+.spacer{flex:1}
+button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font:600 12px system-ui;cursor:pointer}
+button:hover{border-color:rgba(255,179,0,.5)}
+button.primary{background:linear-gradient(92deg,var(--orange),var(--amber));color:#141008;border:none}
+main{max-width:1080px;margin:0 auto;padding:20px 20px 40px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+.card h3{margin:0 0 8px;font-size:10px;letter-spacing:.14em;color:var(--dim2);font-weight:700}
+.big{font-size:21px;font-weight:800}
+.sub{color:var(--dim);font-size:12px;margin-top:2px}
+.ok{color:var(--green)}.warn{color:var(--amber)}.err{color:var(--red)}
+section{margin-top:22px}
+section>h2{font-size:10px;letter-spacing:.14em;color:var(--dim2);margin:0 0 10px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+td,th{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--dim2);font-size:10px;letter-spacing:.1em}
+td.num{text-align:right}
+#term{background:#0D0D0F;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+#out{margin:0;padding:14px;height:300px;overflow:auto;font-size:12.5px;white-space:pre-wrap;color:#D9D7D2}
+#out .in{color:var(--amber)}
+.tline{display:flex;border-top:1px solid var(--line);margin:0}
+.tline span{padding:12px 0 12px 14px;color:var(--amber);font-weight:700}
+#cmd{flex:1;background:transparent;border:0;outline:0;color:var(--txt);padding:12px 14px;font:inherit}
+#login{position:fixed;inset:0;background:rgba(6,6,7,.95);display:flex;align-items:center;justify-content:center;z-index:20}
+#login .card{width:min(400px,92vw)}
+#login input{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--txt);padding:11px 12px;margin:12px 0;font:inherit}
+</style></head>
+<body>
+<header><h1>FORJA <b>ADMIN</b></h1><span class="dot" id="dot"></span><span class="sub" id="stat">se conectează…</span><span class="spacer"></span>
+<button onclick="loadAll()">Reîmprospătează</button>
+<button onclick="logout()">Ieșire</button></header>
+<main>
+<div class="grid" id="cards"></div>
+<section><h2>JURNAL DE EVENIMENTE · ultimele 30 · se actualizează singur</h2>
+<div class="card" style="padding:0;overflow:auto"><table id="logt"><thead><tr><th>ORA</th><th>EVENIMENT</th><th>STATUS</th><th class="num">DURATĂ</th></tr></thead><tbody></tbody></table></div></section>
+<section><h2>TERMINAL — scrie «help» pentru comenzi</h2>
+<div id="term" class="mono"><pre id="out">FORJA admin. Scrie «help» și apasă Enter.
+</pre><form class="tline" onsubmit="return go(event)"><span>&gt;</span><input id="cmd" class="mono" autocomplete="off" spellcheck="false" placeholder="help"></form></div>
+</section>
+</main>
+<div id="login" style="display:none"><div class="card"><h3>AUTENTIFICARE ADMIN</h3><div class="sub">Introdu cheia de administrare a serverului FORJA.</div><input id="key" type="password" placeholder="cheia de admin" onkeydown="if(event.key==='Enter')saveKey()"><button class="primary" style="width:100%" onclick="saveKey()">Intră</button></div></div>
+<script>
+var KEY = sessionStorage.getItem('forjaAdmin') || '';
+var hist = []; var hi = 0;
+function logout(){ sessionStorage.removeItem('forjaAdmin'); location.reload(); }
+function needKey(){ document.getElementById('login').style.display='flex'; document.getElementById('key').focus(); }
+function saveKey(){ var v = document.getElementById('key').value.trim(); if(!v) return; KEY=v; sessionStorage.setItem('forjaAdmin', v); document.getElementById('login').style.display='none'; loadAll(); }
+function api(p, opt){ opt = opt || {}; opt.headers = Object.assign({'X-Admin': KEY}, opt.headers||{}); return fetch(p, opt).then(function(r){ if(r.status===403){ needKey(); throw new Error('cheie'); } return r.json(); }); }
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function fmtB(n){ if(n>=1000000) return (n/1000000).toFixed(1).replace('.',',')+' MB'; if(n>=1000) return Math.round(n/1000)+' KB'; return n+' B'; }
+function card(t, big, sub, cls){ return '<div class="card"><h3>'+t+'</h3><div class="big '+(cls||'')+'">'+big+'</div><div class="sub">'+sub+'</div></div>'; }
+function loadAll(){
+  if(!KEY) return;
+  api('/admin/api/overview').then(function(d){
+    document.getElementById('dot').className = 'dot on';
+    document.getElementById('stat').textContent = 'server activ' + (d.colo ? ' · ' + d.colo : '');
+    var c = '';
+    c += card('SERVER', 'online', esc(d.host), 'ok');
+    c += card('ANALIZA MESELOR', esc(d.meals), 'audio somn: ' + esc(d.audio));
+    c += card('MEDIA (R2)', d.mediaCount + ' fișiere', fmtB(d.mediaBytes));
+    c += card('ÎNREGISTRĂRI SOMN', d.recCount + ' fișiere', fmtB(d.recBytes) + ' · dispar la 24h');
+    document.getElementById('cards').innerHTML = c;
+    var tb = '';
+    (d.log||[]).slice().reverse().forEach(function(e){
+      var t = new Date(e.at);
+      var hh = ('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+':'+('0'+t.getSeconds()).slice(-2);
+      var cls = e.status>=500?'err':(e.status>=400?'warn':'ok');
+      tb += '<tr><td class="mono">'+hh+'</td><td class="mono">'+esc(e.what)+'</td><td class="mono '+cls+'">'+e.status+'</td><td class="num mono">'+e.ms+' ms</td></tr>';
+    });
+    document.querySelector('#logt tbody').innerHTML = tb || '<tr><td colspan="4" class="sub">încă niciun eveniment — folosește aplicația și revino</td></tr>';
+  }).catch(function(){});
+}
+function print(s, cls){ var o = document.getElementById('out'); o.innerHTML += (cls ? '<span class="'+cls+'">'+esc(s)+'</span>' : esc(s)) + '\n'; o.scrollTop = o.scrollHeight; }
+function go(ev){ ev.preventDefault(); var i = document.getElementById('cmd'); var c = i.value.trim(); if(!c) return false;
+  i.value=''; hist.push(c); hi = hist.length; print('> '+c, 'in');
+  api('/admin/api/cmd', {method:'POST', body:c}).then(function(d){ print(d.out||''); setTimeout(loadAll, 600); }).catch(function(){ print('eroare: cheie greșită sau server indisponibil'); });
+  return false; }
+document.getElementById('cmd').addEventListener('keydown', function(e){
+  if(e.key==='ArrowUp'){ if(hi>0){ hi--; this.value=hist[hi]; e.preventDefault(); } }
+  else if(e.key==='ArrowDown'){ if(hi<hist.length-1){ hi++; this.value=hist[hi]; } else { hi=hist.length; this.value=''; } }
+});
+if(!KEY) needKey(); else loadAll();
+setInterval(loadAll, 30000);
+</script>
+</body></html>`;
+
+function adminPage() {
+  return new Response(ADMIN_HTML, {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+async function route(request, env, url) {
     if (request.method === "GET" && url.pathname === "/") {
       return json({
         ok: true,
@@ -422,6 +774,10 @@ export default {
       return handleDiag(env);
     }
 
+    // ── Panoul de administrare (web) + API-ul lui — protejat cu cheia de admin ──
+    if (request.method === "GET" && url.pathname === "/admin") return adminPage();
+    if (url.pathname.startsWith("/admin/api/")) return handleAdminApi(request, env, url);
+
     // ── Media licențiată (Adobe Stock FREE, fără watermark) — publică, cache lung ──
     if (request.method === "GET" && url.pathname === "/media/_list") {
       if (!env.MEDIA) return json([]);
@@ -430,7 +786,7 @@ export default {
         let cursor;
         do {
           const page = await env.MEDIA.list({ cursor, limit: 1000 });
-          for (const o of page.objects) keys.push(o.key);
+          for (const o of page.objects) if (!o.key.startsWith("_admin/")) keys.push(o.key);
           cursor = page.truncated ? page.cursor : undefined;
         } while (cursor);
         return new Response(JSON.stringify(keys), {
@@ -452,12 +808,8 @@ export default {
       const prompt = String(body.prompt || "").slice(0, 1200);
       if (!key || !prompt) return json({ error: "Lipsește key/prompt." }, 400);
       try {
-        const r = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", { prompt, steps: 8 });
-        const b64 = r && r.image;
-        if (!b64) return json({ error: "FLUX n-a întors imagine." }, 502);
-        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        await env.MEDIA.put(key, bytes, { httpMetadata: { contentType: "image/jpeg" } });
-        return json({ ok: true, key, size: bytes.length });
+        const out = await generateMedia(env, key, prompt);
+        return json(out, out.ok ? 200 : 502);
       } catch (e) {
         return json({ error: "Generarea a eșuat: " + String(e && e.message ? e.message : e).slice(0, 200) }, 502);
       }
@@ -499,23 +851,32 @@ export default {
       return handleRecordingUpload(request, env, uid, session);
     }
     return json({ error: "Rută necunoscută." }, 404);
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const t0 = Date.now();
+    let resp;
+    try {
+      resp = await route(request, env, url);
+    } catch (e) {
+      resp = json({ error: "Eroare internă: " + String(e && e.message ? e.message : e).slice(0, 200) }, 500);
+    }
+    // Jurnal de evenimente pentru panoul de admin — doar API-ul, nu media publică.
+    if (url.pathname.startsWith("/v1/") || url.pathname === "/media/_generate") {
+      try {
+        ctx.waitUntil(logEvent(env, request.method + " " + url.pathname, resp.status, Date.now() - t0));
+      } catch (_) { }
+    }
+    return resp;
   },
 
   // Curățenie orară: orice înregistrare mai veche de 24h dispare.
   async scheduled(event, env) {
-    if (!env.RECORDS) return;
     try {
-      let cursor;
-      do {
-        const page = await env.RECORDS.list({ cursor, limit: 500 });
-        for (const obj of page.objects) {
-          const at = Number(obj.customMetadata && obj.customMetadata.at) || obj.uploaded?.getTime?.() || 0;
-          if (at > 0 && Date.now() - at > 24 * 3600_000) {
-            await env.RECORDS.delete(obj.key);
-          }
-        }
-        cursor = page.truncated ? page.cursor : undefined;
-      } while (cursor);
+      const n = await purgeExpired(env);
+      if (n > 0) await logEvent(env, "CRON: înregistrări expirate șterse (" + n + ")", 200, 0);
     } catch (_) { }
   },
 };
