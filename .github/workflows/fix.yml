@@ -1,0 +1,36 @@
+name: Reparatie v3.3
+on:
+  push:
+    paths: [".github/workflows/fix.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Muta fisierele la locul lor si curata resturile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "zuzu-bit"
+          git config user.email "zuzububu36@gmail.com"
+          git mv -f app/FocusScreen.kt app/src/main/java/com/forja/app/feature/focus/FocusScreen.kt
+          git mv -f app/ic_launcher_foreground.xml app/src/main/res/drawable/ic_launcher_foreground.xml
+          git mv -f app/ic_launcher_background.xml app/src/main/res/drawable/ic_launcher_background.xml
+          git mv -f app/ic_launcher_monochrome.xml app/src/main/res/drawable/ic_launcher_monochrome.xml
+          git mv -f app/ic_launcher.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          git mv -f app/ic_launcher_round.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          git rm -q -f "FocusScreen.kt" || true
+          git rm -q -f "ic_launcher.xml" || true
+          git rm -q -f "ic_launcher_background.xml" || true
+          git rm -q -f "ic_launcher_foreground.xml" || true
+          git rm -q -f "ic_launcher_monochrome.xml" || true
+          git rm -q -f "ic_launcher_round.xml" || true
+          git rm -q -f "build.gradle (1).kts" || true
+          git rm -r -q -f forjatemacamuflaj || true
+          git commit -m "v3.3 - fisierele mutate la locul lor + curatenie dupa upload-uri"
+          git push
+          gh workflow run build-apk.yml --ref main
