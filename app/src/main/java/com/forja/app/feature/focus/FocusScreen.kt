@@ -12,9 +12,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -745,38 +747,140 @@ private fun DetoxAddictionSection() {
 /** Pădurea de Focus: un copac crește în etape cât te ții de focus; se ofilește când renunți. */
 @Composable
 private fun FocusForest(grown: Int, withered: Int, partialSecs: Int) {
-    val stage = when {
-        partialSecs < 225 -> "🌱"
-        partialSecs < 450 -> "🌿"
-        partialSecs < 675 -> "🪴"
-        else -> "🌳"
-    }
-    val nextMin = ((900 - partialSecs) / 60).coerceAtLeast(0)
+    // Progresul spre următorul copac (15 min) — inelul ESTE timpul: jumătate de timp = jumătate de cerc.
+    val progress = (partialSecs / 900f).coerceIn(0f, 1f)
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier.size(150.dp).clip(CircleShape)
-                .background(
-                    androidx.compose.ui.graphics.Brush.radialGradient(
-                        listOf(Color(0x2634C759), Color(0x146F855A), Color(0x00000000))
-                    )
+        Box(Modifier.size(190.dp), contentAlignment = Alignment.Center) {
+            androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                val sw = 7.dp.toPx()
+                val inset = sw / 2 + 2.dp.toPx()
+                val d = size.minDimension - inset * 2
+                drawArc(
+                    color = Color(0x1FFFFFFF), startAngle = -90f, sweepAngle = 360f, useCenter = false,
+                    topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
+                    size = androidx.compose.ui.geometry.Size(d, d),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(sw, cap = androidx.compose.ui.graphics.StrokeCap.Round)
                 )
-                .border(1.dp, Color(0x3334C759), CircleShape),
-            contentAlignment = Alignment.Center
-        ) { Text(stage, fontSize = 66.sp) }
+                if (progress > 0.008f) drawArc(
+                    brush = AccentGradient, startAngle = -90f, sweepAngle = 360f * progress, useCenter = false,
+                    topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
+                    size = androidx.compose.ui.geometry.Size(d, d),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(sw, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                )
+            }
+            // Bradul — crește CONTINUU cu timpul, desenat de mână (două tonuri, umbră, asimetrii mici)
+            androidx.compose.foundation.Canvas(Modifier.size(126.dp)) { drawPine(progress, alive = true) }
+        }
         if (grown > 0 || withered > 0) {
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "🌳".repeat(grown.coerceAtMost(30)) + "🥀".repeat(withered.coerceAtMost(30)),
-                fontSize = 22.sp, lineHeight = 30.sp, textAlign = TextAlign.Center
-            )
+            Spacer(Modifier.height(10.dp))
+            // Pădurea de azi — brazi mici desenați, cei ofiliți în gri, aplecați
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                repeat(grown.coerceAtMost(18)) {
+                    androidx.compose.foundation.Canvas(Modifier.size(26.dp).padding(horizontal = 2.dp)) {
+                        drawPine(1f, alive = true)
+                    }
+                }
+                repeat(withered.coerceAtMost(18)) {
+                    androidx.compose.foundation.Canvas(Modifier.size(26.dp).padding(horizontal = 2.dp)) {
+                        rotate(12f) { drawPine(0.8f, alive = false) }
+                    }
+                }
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text(
             "$grown ${if (grown == 1) "copac crescut" else "copaci crescuți"} azi" +
-                (if (withered > 0) " · $withered ofiliți" else "") +
-                " · următorul în ~$nextMin min de focus",
+                (if (withered > 0) " · $withered ofiliți" else ""),
             style = BodyTiny.copy(color = TextSecondary), textAlign = TextAlign.Center
         )
+    }
+}
+
+/**
+ * Brad „militar", desenat de mână: trunchi, 4 rânduri de coroană cu două tonuri
+ * (umbră + lumină), contururi ușor asimetrice. Crește continuu cu [p] (0..1):
+ * întâi vlăstar cu două frunze, apoi rândurile coroanei apar unul câte unul.
+ */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPine(p: Float, alive: Boolean) {
+    val w = size.width
+    val h = size.height
+    val cx = w / 2f
+    val baseY = h * 0.90f
+    val dark = if (alive) Color(0xFF3E4F31) else Color(0xFF4A4A44)
+    val mid = if (alive) Color(0xFF55693F) else Color(0xFF5C5C54)
+    val light = if (alive) Color(0xFF83a066) else Color(0xFF73736A)
+    val trunk = if (alive) Color(0xFF6A5940) else Color(0xFF5C5248)
+
+    // umbra de la sol — crește cu copacul
+    drawOval(
+        Color(0x33000000),
+        topLeft = androidx.compose.ui.geometry.Offset(cx - w * 0.20f * (0.4f + 0.6f * p), baseY - h * 0.018f),
+        size = androidx.compose.ui.geometry.Size(w * 0.40f * (0.4f + 0.6f * p), h * 0.05f)
+    )
+
+    if (p < 0.16f) {
+        // vlăstar: tulpină + două frunze
+        val g = (p / 0.16f).coerceIn(0.25f, 1f)
+        val stemH = h * 0.22f * g
+        drawLine(mid, androidx.compose.ui.geometry.Offset(cx, baseY), androidx.compose.ui.geometry.Offset(cx, baseY - stemH), strokeWidth = w * 0.028f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        val leaf = androidx.compose.ui.graphics.Path()
+        leaf.moveTo(cx, baseY - stemH)
+        leaf.cubicTo(cx - w * 0.16f * g, baseY - stemH - h * 0.10f * g, cx - w * 0.05f, baseY - stemH - h * 0.16f * g, cx, baseY - stemH - h * 0.02f)
+        drawPath(leaf, light)
+        val leaf2 = androidx.compose.ui.graphics.Path()
+        leaf2.moveTo(cx, baseY - stemH * 0.7f)
+        leaf2.cubicTo(cx + w * 0.15f * g, baseY - stemH * 0.7f - h * 0.09f * g, cx + w * 0.05f, baseY - stemH * 0.7f - h * 0.14f * g, cx, baseY - stemH * 0.7f - h * 0.015f)
+        drawPath(leaf2, mid)
+        return
+    }
+
+    // creșterea de la vlăstar la brad matur
+    val g = ((p - 0.16f) / 0.84f).coerceIn(0f, 1f)
+    val treeH = h * (0.36f + 0.50f * g)
+    val topY = baseY - treeH
+
+    // trunchiul
+    drawRoundRect(
+        trunk,
+        topLeft = androidx.compose.ui.geometry.Offset(cx - w * 0.035f, baseY - treeH * 0.22f),
+        size = androidx.compose.ui.geometry.Size(w * 0.07f, treeH * 0.24f),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.02f)
+    )
+
+    // rândurile coroanei, de jos în sus; fiecare apare pe măsură ce g crește
+    val tiers = 4
+    for (i in 0 until tiers) {
+        val show = ((g - i * 0.22f) / 0.22f).coerceIn(0f, 1f)
+        if (show <= 0f) continue
+        val f0 = i / tiers.toFloat()
+        val f1 = (i + 1.15f) / tiers
+        val yBot = baseY - treeH * (0.16f + 0.70f * f0)
+        val yTop = baseY - treeH * (0.16f + 0.74f * f1.coerceAtMost(1f))
+        val half = w * (0.34f - 0.066f * i) * show
+        val wob = w * 0.014f * (if (i % 2 == 0) 1 else -1)   // asimetrie „de mână"
+        // tonul închis — toată pana
+        val body = androidx.compose.ui.graphics.Path()
+        body.moveTo(cx + wob, yTop)
+        body.lineTo(cx - half, yBot)
+        body.quadraticBezierTo(cx - half * 0.35f, yBot + h * 0.012f, cx, yBot - h * 0.004f)
+        body.quadraticBezierTo(cx + half * 0.4f, yBot + h * 0.010f, cx + half * 0.96f, yBot - h * 0.002f)
+        body.close()
+        drawPath(body, if (i == 0) dark else mid)
+        // lumina — jumătatea stângă, ușor mai mică (efect 3D fără plastic)
+        val lit = androidx.compose.ui.graphics.Path()
+        lit.moveTo(cx + wob * 0.4f, yTop + (yBot - yTop) * 0.10f)
+        lit.lineTo(cx - half * 0.82f, yBot - (yBot - yTop) * 0.03f)
+        lit.quadraticBezierTo(cx - half * 0.3f, yBot + h * 0.006f, cx - w * 0.006f, yBot - h * 0.006f)
+        lit.close()
+        drawPath(lit, light.copy(alpha = 0.85f))
+    }
+    // vârful — o mică flamă verde
+    if (g > 0.9f) {
+        drawCircle(light, radius = w * 0.022f, center = androidx.compose.ui.geometry.Offset(cx, topY - h * 0.012f))
     }
 }
 
