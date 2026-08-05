@@ -40,6 +40,10 @@ import com.forja.app.core.util.Fmt
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+// Carduri „sticlă verde": lasă fundalul natural să respire, dar textul rămâne lizibil.
+private val FocusCardFill = Color(0xE60E130B)
+private val FocusCardStroke = Color(0x2E90A873)
+
 /** Focus: respirație 4,6s, blocare onestă cu UsageStats, timp de ecran real. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -195,7 +199,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
 
             // Detox digital: totul în pauză, în afară de esențiale (telefon, mesaje, FORJA).
             val detoxOn = detoxUntil > System.currentTimeMillis()
-            ForjaCard(Modifier.fillMaxWidth(), fill = Color(0xE6121214)) {
+            ForjaCard(Modifier.fillMaxWidth(), fill = FocusCardFill, stroke = FocusCardStroke) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Detox digital", style = BodyStrong.copy(fontSize = 15.sp))
@@ -242,9 +246,9 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
 
             // Raportul de azi — pe aplicații
             if (hasUsage && topApps.isNotEmpty()) {
-                SectionLabel("Raportul de azi", Modifier.align(Alignment.Start))
+                NatureSectionHeader("Raportul de azi")
                 Spacer(Modifier.height(8.dp))
-                ForjaCard(Modifier.fillMaxWidth(), fill = Color(0xE6121214)) {
+                ForjaCard(Modifier.fillMaxWidth(), fill = FocusCardFill, stroke = FocusCardStroke) {
                     topApps.forEachIndexed { i, (label, min, frac) ->
                         Column(Modifier.padding(bottom = if (i < topApps.size - 1) 10.dp else 0.dp)) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -273,9 +277,9 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                 Spacer(Modifier.height(20.dp))
                 // Săptămâna ta de ecran
                 if (weekMinutes.size == 7) {
-                    SectionLabel("Săptămâna ta de ecran", Modifier.align(Alignment.Start))
+                    NatureSectionHeader("Săptămâna ta de ecran")
                     Spacer(Modifier.height(8.dp))
-                    ForjaCard(Modifier.fillMaxWidth(), fill = Color(0xE6121214)) {
+                    ForjaCard(Modifier.fillMaxWidth(), fill = FocusCardFill, stroke = FocusCardStroke) {
                         val maxW = (weekMinutes.maxOrNull() ?: 0).coerceAtLeast(60)
                         Row(
                             Modifier.fillMaxWidth().height(70.dp),
@@ -353,7 +357,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             Spacer(Modifier.height(20.dp))
 
             // Lista de aplicații blocate
-            SectionLabel("Aplicații în pauză", Modifier.align(Alignment.Start))
+            NatureSectionHeader("Aplicații în pauză")
             Spacer(Modifier.height(8.dp))
             if (rules.isEmpty()) {
                 Text(
@@ -365,7 +369,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             rules.forEach { r ->
                 ForjaCard(
                     Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    fill = Color(0xE6121214), padding = 12.dp
+                    fill = FocusCardFill, stroke = FocusCardStroke, padding = 12.dp
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -409,11 +413,11 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             Spacer(Modifier.height(24.dp))
 
             // Curățenie de azi — detox digital
-            SectionLabel("Curățenie de azi", Modifier.align(Alignment.Start))
+            NatureSectionHeader("Curățenie de azi")
             Spacer(Modifier.height(8.dp))
             ForjaCard(
                 Modifier.fillMaxWidth().pressable(onOpenCleanup),
-                fill = Color(0xE6121214)
+                fill = FocusCardFill, stroke = FocusCardStroke
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -576,18 +580,17 @@ private fun DetoxAddictionSection() {
     }
 
     Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            SectionLabel("Detox de adicție", Modifier.weight(1f))
+        NatureSectionHeader("Detox de adicție", trailing = {
             InfoDot(
                 title = "Paznicul tău",
                 text = "Un paznic blând care te ajută să reziști. Totul rămâne pe telefonul tău — nimic, dar absolut nimic, nu pleacă la vreun server. E instrumentul tău, nu al nostru."
             )
-        }
+        })
         Spacer(Modifier.height(12.dp))
 
         if (detoxOn) {
             // Paznicul — mascota, status și o vorbă bună la atingere
-            ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), fill = Color(0xE6121214)) {
+            ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), fill = FocusCardFill, stroke = FocusCardStroke) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         Modifier.size(64.dp).clip(CircleShape)
@@ -635,7 +638,7 @@ private fun DetoxAddictionSection() {
             }
 
             if (!guardOn) {
-                ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), fill = Color(0xE6121214), stroke = Color(0x666F855A)) {
+                ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), fill = FocusCardFill, stroke = Color(0x666F855A)) {
                     Text("Mai e un pas", style = BodyStrong.copy(fontSize = 14.sp))
                     Spacer(Modifier.height(2.dp))
                     Text(
@@ -874,6 +877,95 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPine(p: Float, 
     if (g > 0.9f) {
         drawCircle(light, radius = w * 0.022f, center = androidx.compose.ui.geometry.Offset(cx, topY - h * 0.012f))
     }
+}
+
+/**
+ * Titlu de secțiune „din natură": o crenguță desenată de mână, eticheta pe o plăcuță
+ * discretă de sticlă verde (lizibilă pe orice fundal) și o liană subțire care se
+ * stinge spre dreapta. Separă secțiunile cu gust, fără linii reci.
+ */
+@Composable
+private fun NatureSectionHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null
+) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier
+                .clip(ChipShape)
+                .background(Color(0xB80D1207))
+                .border(1.dp, Color(0x4D90A873), ChipShape)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            androidx.compose.foundation.Canvas(Modifier.size(11.dp)) { drawSprig(Color(0xFF9DB77E)) }
+            Spacer(Modifier.width(7.dp))
+            Text(title.uppercase(), style = monoLabel(9, 0.14f).copy(color = Color(0xFFE2EBD3)))
+        }
+        Spacer(Modifier.width(10.dp))
+        androidx.compose.foundation.Canvas(Modifier.weight(1f).height(16.dp)) { drawVine(seed = title.length) }
+        if (trailing != null) {
+            Spacer(Modifier.width(8.dp))
+            trailing()
+        }
+    }
+}
+
+/** Crenguță cu două frunze — mică, desenată de mână, ușor asimetrică. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSprig(color: Color) {
+    val w = size.width
+    val h = size.height
+    drawLine(
+        color.copy(alpha = 0.9f),
+        androidx.compose.ui.geometry.Offset(w * 0.5f, h),
+        androidx.compose.ui.geometry.Offset(w * 0.5f, h * 0.25f),
+        strokeWidth = w * 0.09f,
+        cap = androidx.compose.ui.graphics.StrokeCap.Round
+    )
+    val l = androidx.compose.ui.graphics.Path()
+    l.moveTo(w * 0.5f, h * 0.62f)
+    l.quadraticBezierTo(w * 0.05f, h * 0.52f, w * 0.08f, h * 0.16f)
+    l.quadraticBezierTo(w * 0.42f, h * 0.30f, w * 0.5f, h * 0.62f)
+    drawPath(l, color.copy(alpha = 0.95f))
+    val r = androidx.compose.ui.graphics.Path()
+    r.moveTo(w * 0.5f, h * 0.45f)
+    r.quadraticBezierTo(w * 0.95f, h * 0.38f, w * 0.90f, h * 0.04f)
+    r.quadraticBezierTo(w * 0.56f, h * 0.16f, w * 0.5f, h * 0.45f)
+    drawPath(r, color)
+}
+
+/** Liană subțire, ușor unduită, cu două frunzulițe — se stinge spre dreapta. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawVine(seed: Int) {
+    val w = size.width
+    val h = size.height
+    if (w <= 0f) return
+    val midY = h * 0.5f
+    val amp = h * 0.22f * (if (seed % 2 == 0) 1f else -1f)
+    val p = androidx.compose.ui.graphics.Path()
+    p.moveTo(0f, midY)
+    p.quadraticBezierTo(w * 0.20f, midY - amp, w * 0.42f, midY)
+    p.quadraticBezierTo(w * 0.66f, midY + amp, w * 0.90f, midY - amp * 0.4f)
+    drawPath(
+        p,
+        brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+            0f to Color(0xB395AF78), 0.75f to Color(0x4D95AF78), 1f to Color(0x0095AF78)
+        ),
+        style = androidx.compose.ui.graphics.drawscope.Stroke(
+            width = h * 0.10f,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round
+        )
+    )
+    fun leaf(cx: Float, up: Boolean, s: Float) {
+        val dir = if (up) -1f else 1f
+        val lp = androidx.compose.ui.graphics.Path()
+        lp.moveTo(cx, midY)
+        lp.quadraticBezierTo(cx + s * 0.35f, midY + dir * s * 0.9f, cx + s, midY + dir * s * 0.28f)
+        lp.quadraticBezierTo(cx + s * 0.5f, midY + dir * s * 0.18f, cx, midY)
+        drawPath(lp, Color(0x9995AF78))
+    }
+    leaf(w * 0.30f, up = amp > 0, s = h * 0.55f)
+    leaf(w * 0.62f, up = amp < 0, s = h * 0.48f)
 }
 
 /** Cuvinte de blocat: pachete după tipul de adicție + cuvintele tale. Totul rămâne pe telefon. */

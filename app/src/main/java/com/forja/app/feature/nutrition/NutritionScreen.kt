@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -13,6 +14,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -25,7 +30,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -95,10 +102,21 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
         }
     }
 
+    // Fundal cu poftă de viață: legume proaspete generate în banca media, sub un văl întunecat —
+    // culoarea răzbate, textul rămâne rege.
+    val nutriBg = remember { com.forja.app.core.media.Media.mediaUrl("nutri_bg.jpg") }
+    Box(Modifier.fillMaxSize().background(Surface0)) {
+        if (nutriBg != null) {
+            AsyncImage(
+                model = nutriBg, contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Box(Modifier.fillMaxSize().background(Color(0xC20A0A0B)))
     Column(
         Modifier
             .fillMaxSize()
-            .background(Surface0)
             .verticalScroll(rememberScrollState())
             .padding(bottom = 120.dp)
     ) {
@@ -164,22 +182,54 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 val entries = meals.filter { it.mealType == type }
                 if (entries.isEmpty() && type == 3) continue
                 if (entries.isEmpty()) {
-                    ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), padding = 12.dp) {
+                    // Card cu poftă: poza mesei pe fundal, nu doar text pe negru.
+                    val artUrl = remember(type) {
+                        com.forja.app.core.media.Media.mediaUrl(
+                            when (type) {
+                                0 -> "471644726.jpg"          // iaurt cu granola, lumină de dimineață
+                                1 -> "330198627.jpg"          // bol cu orez și legume, prânz
+                                else -> "meal_dinner.jpg"     // cină caldă, lumânare
+                            }
+                        )
+                    }
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp)
+                            .height(78.dp)
+                            .clip(CardShape)
+                            .background(Surface1)
+                            .border(1.dp, StrokeCard, CardShape)
+                    ) {
+                        if (artUrl != null) {
+                            AsyncImage(
+                                model = artUrl, contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                        Box(
+                            Modifier.fillMaxSize().background(
+                                Brush.horizontalGradient(
+                                    0f to Color(0xF20C0D0B), 0.5f to Color(0xB80C0D0B), 1f to Color(0x330C0D0B)
+                                )
+                            )
+                        )
                         Row(
-                            Modifier.fillMaxWidth(),
+                            Modifier.fillMaxSize().padding(horizontal = 14.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
                                 Text(
                                     when (type) {
-                                        0 -> "Micul dejun — încă nimic"
-                                        1 -> "Prânzul — încă nimic"
-                                        else -> "Cina — încă nimic"
+                                        0 -> "Micul dejun"
+                                        1 -> "Prânzul"
+                                        else -> "Cina"
                                     },
-                                    style = BodyStrong.copy(color = TextSecondary)
+                                    style = BodyStrong
                                 )
-                                Text(mealTypeNames[type], style = monoLabel(8, 0.12f))
+                                Text("încă nimic — ce-ai zice de ceva bun?", style = BodyTiny.copy(color = TextSecondary))
                             }
                             SecondaryButton("Adaugă", onClick = { searchOpen = true }, padV = 8.dp)
                         }
@@ -246,9 +296,12 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
         )
         Spacer(Modifier.height(10.dp))
+        // Patru drumuri către jurnal — fiecare cu culoarea și iconița lui, nu patru pietre negre.
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            SecondaryButton(
-                if (galleryAnalyzing) "se analizează…" else "Din galerie",
+            ActionTile(
+                icon = Icons.Outlined.PhotoLibrary,
+                label = if (galleryAnalyzing) "se analizează…" else "Din galerie",
+                tint = Color(0xFFD9A24C),
                 onClick = {
                     if (!galleryAnalyzing) pickLauncher.launch(
                         androidx.activity.result.PickVisualMediaRequest(
@@ -259,13 +312,31 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 modifier = Modifier.weight(1f)
             )
             Spacer(Modifier.width(10.dp))
-            SecondaryButton("Cod de bare", onClick = onScan, modifier = Modifier.weight(1f))
+            ActionTile(
+                icon = Icons.Outlined.QrCodeScanner,
+                label = "Cod de bare",
+                tint = Color(0xFF6FA8A0),
+                onClick = onScan,
+                modifier = Modifier.weight(1f)
+            )
         }
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            SecondaryButton("Caută", onClick = { searchOpen = true }, modifier = Modifier.weight(1f))
+            ActionTile(
+                icon = Icons.Outlined.Search,
+                label = "Caută",
+                tint = Color(0xFF9DB77E),
+                onClick = { searchOpen = true },
+                modifier = Modifier.weight(1f)
+            )
             Spacer(Modifier.width(10.dp))
-            SecondaryButton("Manual", onClick = { manualOpen = true }, modifier = Modifier.weight(1f))
+            ActionTile(
+                icon = Icons.Outlined.Edit,
+                label = "Manual",
+                tint = Color(0xFFC98A63),
+                onClick = { manualOpen = true },
+                modifier = Modifier.weight(1f)
+            )
         }
         Spacer(Modifier.height(6.dp))
         Row(
@@ -279,6 +350,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 text = "Analiza rulează pe serverul FORJA — fără nicio cheie la tine. AI-ul estimează din poză; codul de bare dă valori exacte din OpenFoodFacts. Totul rămâne editabil înainte de salvare."
             )
         }
+    }
     }
 
     if (keyOpen) {
@@ -329,6 +401,31 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
         )
     }
 
+}
+
+/** Buton de acțiune cu personalitate: iconiță + tenta lui de culoare, pe sticlă colorată. */
+@Composable
+private fun ActionTile(
+    icon: ImageVector,
+    label: String,
+    tint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier
+            .clip(SecondaryShape)
+            .background(tint.copy(alpha = 0.14f))
+            .border(1.dp, tint.copy(alpha = 0.38f), SecondaryShape)
+            .pressable(onClick)
+            .padding(vertical = 13.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(17.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(label, style = BodyStrong.copy(fontSize = 14.sp))
+    }
 }
 
 /** Porția: Tot / ½ / ⅓ / ¼ din pachet sau grame — fracțiile sunt UI, nu AI. */

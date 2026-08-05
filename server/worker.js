@@ -439,6 +439,19 @@ function fmtSize(n) {
   return n + " B";
 }
 
+// ── Banca media se vindecă singură ──────────────────────────────────────────
+// Pozele de aici au voie să fie generate DE SERVER, la prima cerere, dacă
+// lipsesc din R2. Fără chei, fără pași manuali: aplicația cere /media/<key>,
+// serverul desenează cu FLUX, păstrează în R2 și servește.
+const SELF_MEDIA_STYLE =
+  "vertical candid documentary photograph, cinematic color grade, deep graphite shadows, warm amber highlights, subtle film grain, shallow depth of field, natural imperfect real moment, no studio look, no text, no watermark, no logo";
+const SELF_MEDIA = {
+  "nutri_bg.jpg":
+    "fresh green vegetables, herbs, lemons and cherry tomatoes scattered on dark rustic wood, top-down flat lay, deep greens with warm amber highlights, moody appetizing food photography",
+  "meal_dinner.jpg":
+    "a warm home dinner plate with grilled fish, green vegetables and lemon on dark ceramic, evening candlelight on a dark wooden table, appetizing food photography",
+};
+
 async function generateMedia(env, key, prompt) {
   if (!env.MEDIA || !env.AI) return { error: "Media/AI neconfigurate." };
   const r = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", { prompt, steps: 8 });
@@ -819,7 +832,11 @@ async function route(request, env, url) {
       if (!env.MEDIA) return json({ error: "Media neconfigurată." }, 404);
       const key = decodeURIComponent(url.pathname.slice("/media/".length)).replace(/[^0-9a-zA-Z._-]/g, "");
       if (!key) return json({ error: "Lipsește fișierul." }, 400);
-      const obj = await env.MEDIA.get(key);
+      let obj = await env.MEDIA.get(key);
+      if (!obj && SELF_MEDIA[key] && env.AI) {
+        try { await generateMedia(env, key, SELF_MEDIA[key] + ", " + SELF_MEDIA_STYLE); } catch (_) {}
+        obj = await env.MEDIA.get(key);
+      }
       if (!obj) return json({ error: "Nu există." }, 404);
       const type = key.endsWith(".mp4") ? "video/mp4" : key.endsWith(".png") ? "image/png" : "image/jpeg";
       return new Response(obj.body, {
