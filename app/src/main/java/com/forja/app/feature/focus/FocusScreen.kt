@@ -145,14 +145,15 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
 
     Box(Modifier.fillMaxSize().background(Surface0)) {
         VideoSurface(
-            url = "https://v.ftcdn.net/04/99/13/67/700_F_499136769_X4Pfv9UFpmLtXcXu0JLdSo80FTPH2BGx_ST.mp4",
-            posterUrl = "https://t3.ftcdn.net/jpg/10/16/02/48/500_F_1016024842_sVPfKb4a4gZkZ7XjEjnGtdkeYz1eF2Gz.jpg",
+            url = "",
+            posterUrl = com.forja.app.core.media.Media.mediaUrl("snd_stream.jpg")
+                ?: "https://t3.ftcdn.net/jpg/10/16/02/48/500_F_1016024842_sVPfKb4a4gZkZ7XjEjnGtdkeYz1eF2Gz.jpg",
             modifier = Modifier.fillMaxSize()
         )
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color(0xB80A0A0B))
+                .background(Color(0x8C0A0A0B))
         )
 
         Column(
@@ -212,6 +213,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                     SecondaryButton("Oprește detoxul", onClick = {
                         scope.launch {
                             app.prefs.setDetoxUntil(0L)
+                            app.prefs.witherFocusTree()
                             toast.show("Detox oprit. Ai rezistat — contează.")
                         }
                     }, modifier = Modifier.fillMaxWidth())
@@ -333,29 +335,19 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                     modifier = Modifier.fillMaxWidth()
                 )
             } else {
-                Row(Modifier.fillMaxWidth()) {
-                    SecondaryButton(
-                        "Deblochează 5 min",
-                        onClick = {
-                            scope.launch {
-                                app.prefs.setFocusUnlockUntil(System.currentTimeMillis() + 5 * 60_000)
-                                toast.show("5 minute. Se reblochează la ${Fmt.clock(System.currentTimeMillis() + 5 * 60_000)}.")
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    SecondaryButton(
-                        "Oprește Focus",
-                        onClick = {
-                            FocusMonitorService.stop(context)
-                            focusActive = false
-                            scope.launch { app.prefs.setFocusActive(false) }
-                            toast.show("Focus oprit.")
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                SecondaryButton(
+                    "Oprește Focus",
+                    onClick = {
+                        FocusMonitorService.stop(context)
+                        focusActive = false
+                        scope.launch {
+                            app.prefs.setFocusActive(false)
+                            app.prefs.witherFocusTree()
+                        }
+                        toast.show("Focus oprit. Copacul început s-a ofilit — cronometrul pleacă de la zero.")
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
             Spacer(Modifier.height(20.dp))

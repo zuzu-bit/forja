@@ -89,13 +89,25 @@ fun SleepScreen() {
             .verticalScroll(rememberScrollState())
             .padding(bottom = 120.dp)
     ) {
-        // Header video dimineață + scor
+        // Header conștient de oră: dimineața (6–11) video luminos + raport;
+        // seara (19–6) video închis + „Pregătește-te de somn"; în rest, neutru.
+        val hour = remember { java.time.LocalTime.now().hour }
+        val morning = hour in 6..10
+        val eveningSleep = hour >= 19 || hour < 6
         Box(Modifier.fillMaxWidth().height(252.dp)) {
-            VideoSurface(
-                url = "https://v.ftcdn.net/11/26/44/56/700_F_1126445619_bJBEc25rOq3b1ofF41h2oJgHrEOy7kVy_ST.mp4",
-                posterUrl = "https://t3.ftcdn.net/jpg/04/70/98/78/500_F_470987805_jsREzUZZZNUDZ56fG4J9Cpz4UquN6zJg.jpg",
-                modifier = Modifier.fillMaxSize()
-            )
+            if (morning) {
+                VideoSurface(
+                    url = "https://v.ftcdn.net/11/26/44/56/700_F_1126445619_bJBEc25rOq3b1ofF41h2oJgHrEOy7kVy_ST.mp4",
+                    posterUrl = "https://t3.ftcdn.net/jpg/04/70/98/78/500_F_470987805_jsREzUZZZNUDZ56fG4J9Cpz4UquN6zJg.jpg",
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                VideoSurface(
+                    url = "",
+                    posterUrl = "https://t3.ftcdn.net/jpg/05/62/79/66/500_F_562796663_NJKtdLr9EatSHwup53J47QNnYOCr0ZZ8.jpg",
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
             Box(
                 Modifier
                     .fillMaxSize()
@@ -114,9 +126,24 @@ fun SleepScreen() {
                     .padding(20.dp)
             ) {
                 Text("Somn", style = TitleModule)
-                Text("RAPORT DE DIMINEAȚĂ", style = monoLabel(9, 0.16f).copy(color = SleepRem))
+                Text(
+                    when {
+                        morning -> "RAPORT DE DIMINEAȚĂ"
+                        eveningSleep -> "PREGĂTEȘTE-TE DE SOMN"
+                        else -> "SOMNUL TĂU"
+                    },
+                    style = monoLabel(9, 0.16f).copy(color = SleepRem)
+                )
             }
-            Row(
+            if (!morning) {
+                Text(
+                    if (eveningSleep) "Lasă ziua jos. Pornește somnul când te bagi în pat."
+                    else "Raportul nopții te așteaptă mâine dimineață.",
+                    style = Body.copy(color = SleepRem),
+                    modifier = Modifier.align(Alignment.BottomStart).padding(20.dp)
+                )
+            }
+            if (morning) Row(
                 Modifier
                     .align(Alignment.BottomStart)
                     .padding(20.dp),
@@ -220,10 +247,13 @@ fun SleepScreen() {
                 val sel = selTimer == m
                 Box(
                     Modifier.padding(end = 8.dp).clip(ChipShape)
-                        .background(if (sel) TabPillActive else Color(0x1A7896BE))
+                        .then(
+                            if (sel) Modifier.background(AccentGradient)
+                            else Modifier.background(Color(0xFF152233)).border(1.dp, SleepStroke, ChipShape)
+                        )
                         .pressable({ com.forja.app.core.sleep.SleepSounds.setTimer(m) })
                         .padding(horizontal = 12.dp, vertical = 7.dp)
-                ) { Text(lbl, style = BodyStrong.copy(fontSize = 13.sp, color = if (sel) Accent2 else SleepTextDim)) }
+                ) { Text(lbl, style = BodyStrong.copy(fontSize = 13.sp, color = if (sel) OnAccent else SleepRem)) }
             }
         }
         Spacer(Modifier.height(12.dp))

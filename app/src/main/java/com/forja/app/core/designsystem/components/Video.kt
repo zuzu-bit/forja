@@ -91,10 +91,13 @@ fun VideoSurface(
             }
             AndroidView(
                 factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = false
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    }
+                    // TextureView (nu SurfaceView): respectă decuparea Compose —
+                    // videoul NU se mai revarsă sub header („video rupt în 2").
+                    val pv = android.view.LayoutInflater.from(ctx)
+                        .inflate(com.forja.app.R.layout.player_texture, null) as PlayerView
+                    pv.useController = false
+                    pv.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    pv
                 },
                 update = { it.player = player },
                 modifier = Modifier

@@ -128,6 +128,21 @@ class Prefs(private val context: Context) {
             p[K.focusPartialSecs] = partial
         }
     }
+    /** Oprire manuală: copacul început (≥1 min) se ofilește, cronometrul pleacă de la zero. */
+    suspend fun witherFocusTree() {
+        val today = java.time.LocalDate.now().toEpochDay()
+        context.dataStore.edit { p ->
+            val same = (p[K.focusForestDay] ?: -1L) == today
+            val grown = if (same) (p[K.focusGrown] ?: 0) else 0
+            val partial = if (same) (p[K.focusPartialSecs] ?: 0) else 0
+            val withered = (if (same) (p[K.focusWithered] ?: 0) else 0) + (if (partial >= 60) 1 else 0)
+            p[K.focusForestDay] = today
+            p[K.focusGrown] = grown
+            p[K.focusWithered] = withered
+            p[K.focusPartialSecs] = 0
+        }
+    }
+
     suspend fun addFocusBreak() {
         val today = java.time.LocalDate.now().toEpochDay()
         context.dataStore.edit { p ->

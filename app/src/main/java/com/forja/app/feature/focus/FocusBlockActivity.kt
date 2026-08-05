@@ -22,13 +22,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.forja.app.ForjaApp
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.PrimaryButton
-import com.forja.app.core.designsystem.components.SecondaryButton
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 /** Ecranul care apare peste aplicația blocată: un moment uman — respiră. */
 class FocusBlockActivity : ComponentActivity() {
@@ -78,21 +73,10 @@ class FocusBlockActivity : ComponentActivity() {
                             textAlign = TextAlign.Center
                         )
                         Spacer(Modifier.height(30.dp))
+                        // O singură cale, cea aleasă de tine: înapoi la copacul care crește.
                         PrimaryButton(
-                            text = "Înapoi la ale mele",
+                            text = "Mă întorc la copac",
                             onClick = { moveTaskToBack(true); finish() },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        SecondaryButton(
-                            "Deblochează 5 min",
-                            onClick = {
-                                val app = ForjaApp.from(this@FocusBlockActivity)
-                                CoroutineScope(Dispatchers.Default).launch {
-                                    app.prefs.setFocusUnlockUntil(System.currentTimeMillis() + 5 * 60_000)
-                                }
-                                finish()
-                            },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }

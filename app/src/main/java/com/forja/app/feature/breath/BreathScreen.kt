@@ -54,8 +54,15 @@ fun BreathScreen() {
         label = "breath"
     )
 
+    Box(Modifier.fillMaxSize()) {
+        com.forja.app.core.designsystem.components.VideoSurface(
+            url = "https://v.ftcdn.net/04/99/13/67/700_F_499136769_X4Pfv9UFpmLtXcXu0JLdSo80FTPH2BGx_ST.mp4",
+            posterUrl = "https://t3.ftcdn.net/jpg/10/16/02/48/500_F_1016024842_sVPfKb4a4gZkZ7XjEjnGtdkeYz1eF2Gz.jpg",
+            modifier = Modifier.fillMaxSize()
+        )
+        Box(Modifier.fillMaxSize().background(Color(0xA60A0A0B)))
     Column(
-        Modifier.fillMaxSize().topoBackground(decor = true).statusBarsPadding()
+        Modifier.fillMaxSize().statusBarsPadding()
             .padding(horizontal = 24.dp).padding(bottom = 120.dp),   // lasă loc barei de jos
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -108,5 +115,6 @@ fun BreathScreen() {
             textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(24.dp))
+    }
     }
 }

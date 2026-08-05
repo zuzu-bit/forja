@@ -80,6 +80,7 @@ class SleepTrackService : Service(), SensorEventListener {
     private var sessionId: Long = 0
     private var sessionStartAt: Long = 0
     private var alarmFired = false
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -96,6 +97,15 @@ class SleepTrackService : Service(), SensorEventListener {
 
     private fun startSession() {
         startForeground(NOTIF_ID, buildNotification())
+        // WakeLock parțial: fără el, Doze amână bucla de veghe și alarma inteligentă
+        // ar dormi odată cu tine. Limită de 12h ca plasă de siguranță pentru baterie.
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "forja:sleep").apply {
+                setReferenceCounted(false)
+                acquire(12 * 3600_000L)
+            }
+        } catch (_: Exception) { }
         val app = ForjaApp.from(this)
         app.presence.manualState = "sleep"
         app.auth.currentUid?.let { app.presence.publishState(it, "sleep") }
@@ -356,7 +366,7 @@ class SleepTrackService : Service(), SensorEventListener {
         }
         try {
             val pi = PendingIntent.getActivity(this, 7, i, PendingIntent.FLAG_IMMUTABLE)
-            val notif = NotificationCompat.Builder(this, "sleep")
+            val notif = NotificationCompat.Builder(this, "alarm")
                 .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
                 .setContentTitle("Bună dimineața")
                 .setContentText("E fereastra ta de trezire.")
@@ -374,6 +384,7 @@ class SleepTrackService : Service(), SensorEventListener {
     }
 
     private fun finishSession() {
+        try { wakeLock?.release() } catch (_: Exception) { }
         sensorManager?.unregisterListener(this)
         audioJob?.cancel()
         try {
@@ -520,6 +531,7 @@ class SleepTrackService : Service(), SensorEventListener {
     }
 
     override fun onDestroy() {
+        try { wakeLock?.release() } catch (_: Exception) { }
         sensorManager?.unregisterListener(this)
         audioJob?.cancel()
         try {

@@ -82,15 +82,6 @@ fun DashboardScreen(
 
     val todayKm = activitiesToday.sumOf { it.distanceM } / 1000.0
 
-    val headerVideo = if (evening)
-        "https://v.ftcdn.net/04/99/13/67/700_F_499136769_X4Pfv9UFpmLtXcXu0JLdSo80FTPH2BGx_ST.mp4"
-    else
-        "https://v.ftcdn.net/10/70/20/79/700_F_1070207993_vIfgD2rf5RWK9Sz68WonFo6D78QWfBWy_ST.mp4"
-    val headerPoster = if (evening)
-        "https://t3.ftcdn.net/jpg/10/16/02/48/500_F_1016024842_sVPfKb4a4gZkZ7XjEjnGtdkeYz1eF2Gz.jpg"
-    else
-        "https://t4.ftcdn.net/jpg/04/30/39/81/500_F_430398119_8X2LMR6p3pWYrpsvH3DYgYUz32PfnxXl.jpg"
-
     val modules = listOf(
         ModuleCard(
             "Antrenament",
@@ -128,60 +119,68 @@ fun DashboardScreen(
             .verticalScroll(rememberScrollState())
             .padding(bottom = 120.dp)
     ) {
-        // Header video 328dp după momentul zilei
+        // Antet compact pe fundal topografic — fără hero-video
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("${Fmt.greeting()}, ${name.split(' ').firstOrNull() ?: ""}".trim(), style = BodyStrong.copy(fontSize = 16.sp))
+                Text(
+                    if (evening) "SEARA TA" else "ZIUA TA",
+                    style = monoLabel(9, 0.16f).copy(color = Accent2)
+                )
+            }
+            Box(Modifier.pressable(onOpenProfile)) {
+                Avatar(name = name, size = 40.dp, ring = true)
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        // Motivația zilei — imagine + salut + citat, cu ghidul care „dansează"
+        MotivationCard(name = name)
+        Spacer(Modifier.height(12.dp))
+
+        // Mișcarea — video cu alergarea, într-un card, cu km-ii de azi peste el
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(328.dp)
+                .padding(horizontal = 20.dp)
+                .height(190.dp)
+                .clip(RoundedCornerShape(Radii.card))
+                .border(1.dp, StrokeCard, RoundedCornerShape(Radii.card))
         ) {
-            VideoSurface(url = headerVideo, posterUrl = headerPoster, modifier = Modifier.fillMaxSize())
-            BoxScopeBottomScrim()
-            TopScrim()
-
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 20.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("${Fmt.greeting()}, ${name.split(' ').firstOrNull() ?: ""}".trim(), style = BodyStrong.copy(fontSize = 15.sp))
-                    Text(
-                        if (evening) "SEARA TA" else "ZIUA TA",
-                        style = monoLabel(9, 0.16f).copy(color = Accent2)
+            VideoSurface(
+                url = "https://v.ftcdn.net/10/70/20/79/700_F_1070207993_vIfgD2rf5RWK9Sz68WonFo6D78QWfBWy_ST.mp4",
+                posterUrl = "https://t4.ftcdn.net/jpg/04/30/39/81/500_F_430398119_8X2LMR6p3pWYrpsvH3DYgYUz32PfnxXl.jpg",
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(
+                Modifier.fillMaxSize().background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to Color(0x1A0A0A0B), 0.55f to Color(0x8C0A0A0B), 1f to Color(0xF20A0A0B)
                     )
-                }
-                Box(Modifier.pressable(onOpenProfile)) {
-                    Avatar(name = name, size = 40.dp, ring = true)
-                }
-            }
-
-            Column(
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(20.dp)
-            ) {
+                )
+            )
+            Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
                 Row(verticalAlignment = Alignment.Bottom) {
-                    CountUpNumeral(target = todayKm.toFloat(), size = 66, decimals = 1)
-                    Spacer(Modifier.width(10.dp))
-                    Text("km azi", style = Body.copy(color = TextSecondary), modifier = Modifier.padding(bottom = 10.dp))
+                    CountUpNumeral(target = todayKm.toFloat(), size = 40, decimals = 1)
+                    Spacer(Modifier.width(8.dp))
+                    Text("km azi", style = Body.copy(color = TextSecondary), modifier = Modifier.padding(bottom = 6.dp))
                 }
-                Spacer(Modifier.height(4.dp))
                 Text(
                     if (todayKm > 0 || weekDistance > 0) "săptămâna asta: ${Fmt.km(weekDistance)} km · vezi tot →"
-                    else "deschide harta și apasă GO pentru prima tură →",
+                    else "deschide harta pentru prima tură →",
                     style = BodySmall.copy(color = TextSecondary),
                     modifier = Modifier.pressable(if (todayKm > 0 || weekDistance > 0) onOpenActivities else onOpenMap)
                 )
             }
         }
-
-        Spacer(Modifier.height(18.dp))
-
-        // Motivația zilei — imagine + salut + citat, cu ghidul care „dansează"
-        MotivationCard(name = name)
         Spacer(Modifier.height(18.dp))
         SectionLabel("Progresul de azi", Modifier.padding(horizontal = 20.dp))
         Spacer(Modifier.height(10.dp))

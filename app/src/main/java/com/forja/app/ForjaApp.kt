@@ -96,6 +96,15 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         nm.createNotificationChannel(NotificationChannel("sleep", getString(R.string.notif_channel_sleep), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("focus", getString(R.string.notif_channel_focus), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("social", getString(R.string.notif_channel_social), NotificationManager.IMPORTANCE_DEFAULT))
+        // Alarma deșteaptă: IMPORTANCE_HIGH e obligatoriu ca full-screen intent-ul să pornească
+        // AlarmActivity cu ecranul stins. Sunetul îl pune AlarmActivity, nu notificarea.
+        nm.createNotificationChannel(
+            NotificationChannel("alarm", getString(R.string.notif_channel_alarm), NotificationManager.IMPORTANCE_HIGH).apply {
+                setSound(null, null)
+                enableVibration(false)
+                setBypassDnd(true)
+            }
+        )
     }
 
     companion object {

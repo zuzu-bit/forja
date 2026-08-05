@@ -98,7 +98,6 @@ class FocusMonitorService : Service() {
                     // Detox: totul în pauză, în afară de esențiale.
                     if (detoxOn && fg !in essentials && System.currentTimeMillis() - lastBlockShown > 4000) {
                         lastBlockShown = System.currentTimeMillis()
-                        app.prefs.addFocusBreak()   // ai rupt focus-ul → un copac se ofilește
                         startActivity(
                             Intent(this@FocusMonitorService, FocusBlockActivity::class.java).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -116,7 +115,6 @@ class FocusMonitorService : Service() {
                     }
                     if (rule != null && System.currentTimeMillis() - lastBlockShown > 4000) {
                         lastBlockShown = System.currentTimeMillis()
-                        app.prefs.addFocusBreak()   // ai rupt focus-ul → un copac se ofilește
                         val i = Intent(this@FocusMonitorService, FocusBlockActivity::class.java).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             putExtra("label", rule.label)
