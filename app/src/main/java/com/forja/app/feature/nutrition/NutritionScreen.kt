@@ -30,7 +30,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -182,54 +181,23 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 val entries = meals.filter { it.mealType == type }
                 if (entries.isEmpty() && type == 3) continue
                 if (entries.isEmpty()) {
-                    // Card cu poftă: poza mesei pe fundal, nu doar text pe negru.
-                    val artUrl = remember(type) {
-                        com.forja.app.core.media.Media.mediaUrl(
-                            when (type) {
-                                0 -> "471644726.jpg"          // iaurt cu granola, lumină de dimineață
-                                1 -> "330198627.jpg"          // bol cu orez și legume, prânz
-                                else -> "meal_dinner.jpg"     // cină caldă, lumânare
-                            }
-                        )
-                    }
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 10.dp)
-                            .height(78.dp)
-                            .clip(CardShape)
-                            .background(Surface1)
-                            .border(1.dp, StrokeCard, CardShape)
-                    ) {
-                        if (artUrl != null) {
-                            AsyncImage(
-                                model = artUrl, contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                        Box(
-                            Modifier.fillMaxSize().background(
-                                Brush.horizontalGradient(
-                                    0f to Color(0xF20C0D0B), 0.5f to Color(0xB80C0D0B), 1f to Color(0x330C0D0B)
-                                )
-                            )
-                        )
+                    // Carduri calme — culoarea o dă fundalul, nu fiecare card.
+                    ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), padding = 12.dp) {
                         Row(
-                            Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                            Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
                                 Text(
                                     when (type) {
-                                        0 -> "Micul dejun"
-                                        1 -> "Prânzul"
-                                        else -> "Cina"
+                                        0 -> "Micul dejun — încă nimic"
+                                        1 -> "Prânzul — încă nimic"
+                                        else -> "Cina — încă nimic"
                                     },
-                                    style = BodyStrong
+                                    style = BodyStrong.copy(color = TextSecondary)
                                 )
-                                Text("încă nimic — ce-ai zice de ceva bun?", style = BodyTiny.copy(color = TextSecondary))
+                                Text(mealTypeNames[type], style = monoLabel(8, 0.12f))
                             }
                             SecondaryButton("Adaugă", onClick = { searchOpen = true }, padV = 8.dp)
                         }
