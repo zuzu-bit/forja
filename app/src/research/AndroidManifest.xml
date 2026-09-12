@@ -14,6 +14,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".feature.research.HealthExportActivity" android:exported="false" />
         <receiver android:name=".core.location.BootReceiver" android:enabled="false" />
         <activity android:name=".feature.focus.FocusBlockActivity"
             android:taskAffinity="${applicationId}.focusblock" tools:replace="android:taskAffinity" />

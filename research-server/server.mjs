@@ -3,6 +3,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, writeFile, readFile, readdir, unlink } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { sessionReceiver } from './sessions.mjs';
 
 export const MAX_BYTES = 128 * 1024;
 export const RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -73,9 +74,11 @@ export async function createResearchServer({ token, dataDir, now = Date.now }) {
     throw new Error('Set FORJA_RESEARCH_TOKEN to a random 32–256 character URL-safe token');
   if (!dataDir) throw new Error('dataDir is required');
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
+  const sessions = await sessionReceiver({ dataDir, now });
   const expected = createHash('sha256').update(`Bearer ${token}`).digest();
   const fileFor = id => join(dataDir, `${id}.json`);
   async function purge() {
+    await sessions.purge();
     for (const name of await readdir(dataDir)) {
       if (!name.endsWith('.json') || !uuid.test(name.slice(0, -5))) continue;
       try {
@@ -95,9 +98,15 @@ export async function createResearchServer({ token, dataDir, now = Date.now }) {
       res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value));
     };
     try {
+      if (req.method === 'GET' && req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8',
+          'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; frame-src 'none'; base-uri 'none'" });
+        return res.end(await readFile(new URL('./viewer.html', import.meta.url)));
+      }
       if (req.method === 'GET' && req.url === '/health') return json(200, { status: 'ok', schema_version: 1 });
       const supplied = createHash('sha256').update(req.headers.authorization || '').digest();
       if (!timingSafeEqual(expected, supplied)) return json(401, { error: 'Pairing token required' });
+      if (req.url?.startsWith('/v2/')) return await sessions.handle(req, res, json);
       if (req.method === 'POST' && req.url === '/v1/research-export') {
         if (req.headers['content-type']?.split(';')[0].trim() !== 'application/json')
           fail('Content-Type must be application/json', 415);

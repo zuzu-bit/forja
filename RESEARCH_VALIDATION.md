@@ -1,66 +1,70 @@
-# Research copy validation
+# FORJA Research 2 validation
 
-Base source: `e22f5c89913248aa9bf0719cf62c40cd5de2bbc5`.
-Original downloaded release APK SHA-256:
-`6485e34bdceba5dfde40131d63282401ebfb90a9a84b0ad48bddbd19004ef0d7`.
+Base Android release: `e22f5c89913248aa9bf0719cf62c40cd5de2bbc5`.
+Previous research revision: `8f8543c3a8e7de85c452cf67ac11f464b6eaba35`.
 
-## Receiver integration tests
+## Completed checks
 
-`node --test research-server/server.test.mjs`: **9 passed, 0 failed**.
-The tests run a real local HTTP server and temporary filesystem, using synthetic
-records and random lab tokens. No original FORJA service is contacted.
-
-- Exact upload bytes, SHA-256 and counts match the receipt and subsequent GET.
-- Stored files are owner-readable/writable only; explicit deletion removes them.
-- Missing or wrong authentication blocks uploads, reads and deletion.
-- Unselected data, missing selected categories and empty selection are rejected.
-- A single selected category is accepted.
-- Extra contacts, transcript, route, photo-path and permission fields are rejected.
-- Invalid numeric bounds, types, row limits, intervals, package and run ID are rejected.
-- Malformed, oversized and non-JSON bodies are rejected without storage.
-- Expired exports are unavailable and removed; the health route exposes no records.
-
-## Android build isolation checks
-
-Inspected Gradle-generated BuildConfig, merged manifest and Firebase resources:
-
-| Property | Observed value |
+| Check | Result |
 | --- | --- |
-| Application ID | `com.forja.app.research` |
-| Version | `3.7-research` |
-| Research mode | `true` |
-| Original Worker API URL | Empty |
-| Firebase project | `demo-forja-research` |
-| Launcher | `com.forja.app.feature.research.ResearchExportActivity` only |
-| Boot receiver | Disabled |
-
-## Build result
-
-`assembleResearch`: **BUILD SUCCESSFUL** with Gradle 8.10.2, JDK 17,
-Android platform 35 and the repository's existing dependency versions.
-Kotlin and Java compilation, DEX assembly and APK packaging completed.
-`apksigner verify` passed. Packaged APK metadata confirms the research package,
-version, minimum API 26 and target API 35.
+| `assembleResearch` | Passed; Kotlin, Java, DEX and APK packaging completed |
+| `testResearchUnitTest` | 6 passed, 0 failed, 0 skipped |
+| Receiver integration tests | 16 passed, 0 failed |
+| APK signature verification | Passed |
+| Packaged identity | `com.forja.app.research`, version `3.7-research.2` |
+| Android compatibility declared | Minimum API 26, target API 35 |
+| Launcher | Redesigned `ResearchExportActivity` |
 
 APK SHA-256:
-`de7e9f926168bff59497be8d22cebfd6c6f237144d432dcfd77e552a4d18c52d`.
+`e7d3ba67c2c8538ce529b15ffd755b0e8c459ccd934ee05ac4146ce742cdded4`.
 
-The environment initially lacked a JDK and required proxy configuration for
-Gradle downloads. The first compilation also encountered duplicated generated
-Room Java files under `app/build/generated/ksp/research/java/byRounds`.
-Removing that temporary generated directory and rerunning `assembleResearch`
-completed the build. No compiler task was excluded and no application source
-was changed to suppress the error. A similar incremental-generation problem
-is tracked in [KSP issue 1678](https://github.com/google/ksp/issues/1678).
+Build tools: Gradle 8.10.2, JDK 17, Android platform 35 and the existing Android
+dependencies. KSP incremental processing is disabled in this research branch
+after reproducible shadow/generated-source collisions with the existing KSP
+version. This uses the documented [KSP troubleshooting option](https://kotlinlang.org/docs/ksp-incremental.html).
+No compilation or test task was excluded.
 
-## Device limitation
+## What the tests establish
 
-An Android 35 emulator was started without hardware acceleration. ADB became
-reachable, but Android's package-manager service was still unavailable during
-the validation attempt. APK installation and the on-device preview, consent,
-upload and deletion flow have therefore **not been verified**. No physical
-phone was connected. Local-database export and Firebase emulator account/sync
-flows also remain untested on Android.
+The receiver tests use a real local HTTP server, temporary storage, random lab
+tokens and synthetic records/bytes. They cover the original health export plus:
 
-These checks establish a compiled research copy and a tested receiver, not
-observed permission abuse on a phone or a prevalence result for other apps.
+- Location/app-usage metrics stored and retrieved byte-for-byte, with matching
+  SHA-256 receipts.
+- Rejection of unselected categories, unexpected fields, invalid coordinates,
+  impossible durations and oversized items.
+- Selected binary-file round trips, authorization checks and complete session
+  deletion.
+- Microphone consent enforcement, valid mono 16 kHz PCM16 WAV structure,
+  unique/bounded clip sequences and closing audio uploads after the allowed
+  server window.
+- Session expiry and authenticated listing; the public viewer returns its UI
+  without including private session contents.
+
+The JVM calculation tests cover overlapping activity intervals, clipping to the
+usage window, a single location fix contributing zero dwell time, long gaps,
+movement, poor accuracy and stopping/restarting collection. They do not validate
+Android's history completeness or real-world GPS accuracy.
+
+## Device and deployment limits
+
+The final APK was built and an earlier build of the same redesigned UI was
+installed successfully on an Android 28 software emulator (`adb install` returned
+Success). Android's System UI then displayed an unresponsive-system dialog.
+The visual check could not be completed reliably. The final build additionally
+adds a hard audio timeout; final-build installation was not confirmed.
+
+Runtime permission prompts, location callbacks, Usage Access, system file/photo
+pickers, actual microphone capture, live browser playback and phone-to-server
+delivery remain **unverified end to end**. No physical phone is connected.
+The blank Android crash buffer collected during this attempt is not proof of
+successful app execution. No emulator image is presented as an app screenshot.
+
+The receiver has been tested locally with synthetic data. No public receiver
+has been deployed and no original FORJA cloud service has been modified. The
+research Firebase configuration still points to a dummy emulator project and
+the original Worker upload URL remains empty.
+
+More uploaded data is a declared treatment in this modified app. These tests do
+not establish permission abuse in the original FORJA APK or a prevalence rate
+across other apps.

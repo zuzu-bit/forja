@@ -1,13 +1,86 @@
-# FORJA controlled data-export copy
+# FORJA Research · phone-data sessions
 
-This copy adds a manual export path for measuring exactly which selected app data
-reaches a server. It starts from release commit
+This copy adds visible phone-data sessions and reviewed uploads for measuring
+exactly which selected data reaches a server. It starts from release commit
 `e22f5c89913248aa9bf0719cf62c40cd5de2bbc5` (`apk-latest` at inspection).
 The build installs as **FORJA Research**, package `com.forja.app.research`, version
-`3.7-research`, alongside the original app with a separate Android data sandbox.
+`3.7-research.2`, alongside the original app with a separate Android data sandbox.
 It uses the repository's existing debug signing key and is a lab build.
 
-## What can be sent
+## The new home screen
+
+The opening screen now has four cards, a connection shortcut and a **Review &
+send** button when data is ready. Server setup is on its own Settings page.
+Raw metric JSON is optional on the review page. The original health-metric
+export remains available from **Health summaries · advanced export**.
+
+| Card | What it does | Collection boundary |
+| --- | --- | --- |
+| Location & places | Records timestamped coordinates and accuracy; estimates observed time around stops | Explicit start; screen stays open; up to 15 minutes/300 samples |
+| App activity | Reads available foreground activity events for the preceding 24 hours and estimates per-app duration | Android Usage Access plus explicit Read action; at most 100 apps |
+| Files & photos | Uploads original contents of items chosen with Android's document/photo pickers | Up to five items total, 5 MiB each; reviewed before upload |
+| Live audio | Sends microphone WAV clips to the selected receiver | Explicit confirmation and microphone permission; about five seconds per clip, up to two minutes; visible Stop control |
+
+Location and microphone collection stop in `onPause`, including when leaving
+the app or locking the phone. No remote command can start these collectors.
+No research background service is added. Location/app metrics and selected
+files remain in memory until an explicit reviewed upload or until cleared.
+Microphone clips are sent during the explicitly started live session.
+
+Observed stops group consecutive fixes within 75 metres. Samples worse than
+100 metres accuracy, gaps exceeding two minutes, and stopping/restarting
+collection break dwell estimates. A single fix contributes zero observed time.
+This does not retrieve historical Google Maps/location history. App durations
+are unions of available resumed/paused activity intervals within the selected
+window. Missing boundary events, multiple instances of the same activity class,
+and Android history retention can cause undercounts; split-screen apps can
+have overlapping foreground time. Activity-start counts are resume events,
+not a claim about distinct human app launches. No screen text or keystrokes are
+read.
+
+Photo/file contents are sent exactly as selected, including embedded metadata
+such as EXIF location tags. There is no automatic file or photo scan. Android
+permissions do not grant access to another app's private file sandbox.
+
+Live audio is microphone input only, not call interception or other apps'
+internal playback. It is near-live delivery of short clips, not a continuous
+low-latency audio protocol. The current capture/upload loop can have gaps under
+network congestion. A failed/interrupted upload can leave some verified clips
+on the server. The phone's Uploads page and server viewer can delete the entire
+session. The phone keeps session references/tokens only during that Activity's
+lifetime; older sessions remain accessible in the authenticated server viewer.
+
+## Inspect data and listen on the server
+
+Run the receiver as described below, then open **http://127.0.0.1:8787/** on the
+computer hosting it. Enter the same pairing token and click **Connect & refresh**.
+The viewer lists sessions, readable stop/app-usage tables, selected-file
+Downloads, and audio clip playback. **Listen to arriving clips** plays clips
+received after listening starts. It cannot activate the phone microphone.
+The page does not persist its pairing token in browser storage.
+
+The `/v2/sessions` routes require the pairing token. Session creation carries
+separate consent flags for location, app usage, files, photos and audio. The
+receiver validates metric fields, coordinates, durations, WAV headers, item
+sizes and sequence numbers; it rejects unselected categories. JSON metrics and
+binary items each return SHA-256 and byte-count receipts. Limits are 32 MiB per
+server session, 5 MiB per selected file/photo, and 24 bounded audio chunks.
+Audio uploads close after three minutes server time. All session data expires
+after 24 hours; cleanup runs while the receiver runs and again on startup.
+The receiver is a single-operator lab tool, not a production multi-user service.
+
+Build and test both sides:
+
+```sh
+node --test research-server/server.test.mjs
+./gradlew assembleResearch testResearchUnitTest
+```
+
+This research branch disables KSP incremental processing after reproducible
+shadow/generated-source collisions in the existing compiler plugin. All
+compiler tasks still run; no test or compilation gate is skipped.
+
+## Advanced health export
 
 All categories start unchecked. Synthetic example data is enabled by default.
 Local mode reads only the research copy's own database; it cannot read the
@@ -28,7 +101,7 @@ requests one. Raw audio, transcripts, photos, GPS routes, food names/free text,
 contacts, messages, installed-app lists, credentials and device identifiers are
 not part of the export schema.
 
-The screen previews the exact JSON body. A separate, unchecked consent box is
+The advanced health screen previews the exact JSON body. A separate, unchecked consent box is
 required for each upload. Changing the categories, mode, destination or pairing
 token invalidates the preview and consent. There is no automatic retry or
 scheduled research export. A successful response is checked against the exact
@@ -101,7 +174,7 @@ disk while the server is stopped. If a network response is lost, an upload may
 have arrived even though the app cannot confirm it; inspect the stored run ID
 before deliberately retrying.
 
-## Receiver contract
+## Advanced health receiver contract
 
 `GET /health` returns only status and schema version. All other supported routes
 require `Authorization: Bearer <pairing token>`.
@@ -122,7 +195,7 @@ Request payloads and tokens are not written to server logs.
 
 ## Isolation from the original backend
 
-The research variant forces the original `FORJA_API_URL` to an empty string,
+The research variant continues to force the original `FORJA_API_URL` to an empty string,
 disabling its Worker audio-upload paths even if CI supplies that environment
 variable. Its Firebase configuration is the dummy project `demo-forja-research`.
 Authentication and Firestore route to local emulator ports 9099 and 8080 on
@@ -130,7 +203,7 @@ Authentication and Firestore route to local emulator ports 9099 and 8080 on
 variant. Startup location registration, media refresh, nudges and focus restart
 are skipped; the boot receiver is disabled.
 
-The manual synthetic export screen does not need Firebase emulators. To use
+The four phone-data cards and the manual synthetic health export do not need Firebase emulators. To use
 the original FORJA account and sync features inside an Android emulator, start
 the Firebase CLI's local suite from the repository root:
 

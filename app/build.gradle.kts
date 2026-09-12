@@ -39,7 +39,7 @@ android {
         create("research") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".research"
-            versionNameSuffix = "-research"
+            versionNameSuffix = "-research.2"
             matchingFallbacks += listOf("debug")
             buildConfigField("boolean", "RESEARCH_MODE", "true")
             // Research uploads are manual and use the endpoint shown in the preview screen.
@@ -70,6 +70,7 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
 

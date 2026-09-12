@@ -22,7 +22,7 @@ jobs:
       - name: Test receiver
         run: node --test research-server/server.test.mjs
       - name: Build isolated research APK
-        run: bash ./gradlew assembleResearch --console=plain
+        run: bash ./gradlew assembleResearch testResearchUnitTest --console=plain
       - uses: actions/upload-artifact@v4
         with:
           name: FORJA-Research-APK
