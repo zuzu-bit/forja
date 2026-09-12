@@ -46,6 +46,7 @@ class ResearchExportActivity : ComponentActivity() {
     private var pending: String? = null
     private var waitingUsage = false
     private var first = false
+    private val selectedUris = mutableMapOf<String, String>()
     private val changes = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "status") status = Config.prefs(this).getString("status", "").orEmpty()
     }
@@ -64,10 +65,19 @@ class ResearchExportActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         first = !Config.seen(this)
-        selected = Config.enabled(this)
+        selected = savedInstanceState?.getStringArrayList("selected")?.toSet() ?: Config.enabled(this)
+        for (key in listOf("photos", "files")) selectedUris[key] = savedInstanceState?.getString(key) ?: Config.prefs(this).getString(key, "[]").orEmpty()
+        pending = savedInstanceState?.getString("pending")
+        waitingUsage = savedInstanceState?.getBoolean("waitingUsage") ?: false
         status = Config.prefs(this).getString("status", "").orEmpty()
         Config.prefs(this).registerOnSharedPreferenceChangeListener(changes)
         setContent { MaterialTheme(colorScheme = darkColorScheme(primary = Mint, onPrimary = Ink, background = Ink, surface = Panel, onSurface = Color(0xFFF1F5F0), onSurfaceVariant = Muted)) { Screen() } }
+    }
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putStringArrayList("selected", ArrayList(selected))
+        selectedUris.forEach { (k, v) -> outState.putString(k, v) }
+        outState.putString("pending", pending); outState.putBoolean("waitingUsage", waitingUsage)
+        super.onSaveInstanceState(outState)
     }
     override fun onDestroy() { Config.prefs(this).unregisterOnSharedPreferenceChangeListener(changes); super.onDestroy() }
     override fun onResume() {
@@ -116,7 +126,7 @@ class ResearchExportActivity : ComponentActivity() {
     private fun picked(uris: List<Uri>, kind: String) {
         if (uris.isEmpty()) return
         val other = if (kind == "photos") "files" else "photos"
-        val otherCount = if (other in selected) JSONArray(Config.prefs(this).getString(other, "[]")).length() else 0
+        val otherCount = if (other in selected) JSONArray(selectedUris[other] ?: "[]").length() else 0
         val keep = uris.take(5 - otherCount)
         if (keep.isEmpty()) { notice = "Poți sincroniza maximum 5 fotografii și fișiere în total."; return }
         val persisted = keep.filter { uri ->
@@ -124,11 +134,12 @@ class ResearchExportActivity : ComponentActivity() {
             catch (_: SecurityException) { false }
         }
         if (persisted.isEmpty()) { notice = "Selecția nu permite acces persistent. Alege fișiere din memoria telefonului."; return }
-        Config.prefs(this).edit().putString(kind, JSONArray(persisted.map { it.toString() }).toString()).apply()
+        selectedUris[kind] = JSONArray(persisted.map { it.toString() }).toString()
         enable(kind)
     }
     private fun applyChoices() {
         Config.save(this, selected.filter { granted(it) }.toSet())
+        Config.prefs(this).edit().apply { selectedUris.forEach { (key, value) -> putString(key, value) } }.apply()
         Config.resume(this)
         finish()
     }

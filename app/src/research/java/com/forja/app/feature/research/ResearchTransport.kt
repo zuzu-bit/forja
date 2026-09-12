@@ -30,9 +30,11 @@ data class ResearchConnection(val origin: String, val token: String, val account
 
 class ResearchTransport(private val connection: ResearchConnection, private val authorized: () -> Boolean = { true }) {
     @Volatile private var cancelled = false
+    private val callLock = Any()
+    private val activeCalls = mutableSetOf<okhttp3.Call>()
     private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).callTimeout(15, TimeUnit.SECONDS).build()
-    fun cancel() { cancelled = true; client.dispatcher.cancelAll() }
+    fun cancel() { synchronized(callLock) { cancelled = true; activeCalls.forEach { it.cancel() } } }
     private fun request(path: String, bytes: ByteArray? = null, type: String = "application/json", extra: Map<String, String> = emptyMap(), delete: Boolean = false): JSONObject {
         check(!cancelled && authorized()) { "Colectarea a fost oprită." }
         val token = if (connection.accountUid != null) {
@@ -45,12 +47,17 @@ class ResearchTransport(private val connection: ResearchConnection, private val 
         val builder = Request.Builder().url(connection.origin + path).header("Authorization", "Bearer $token")
         extra.forEach { (k, v) -> builder.header(k, v) }
         if (delete) builder.delete() else if (bytes != null) builder.post(bytes.toRequestBody(type.toMediaType()))
-        return client.newCall(builder.build()).execute().use { response ->
+        val call = client.newCall(builder.build())
+        synchronized(callLock) {
+            check(!cancelled && authorized()) { "Colectarea a fost oprită." }
+            activeCalls += call
+        }
+        try { return call.execute().use { response ->
             if (delete && response.code == 404) return@use JSONObject().put("deleted", true)
             val result = JSONObject(response.body?.string() ?: error("The server returned no receipt."))
             require(response.isSuccessful) { result.optString("error", "Server returned HTTP ${response.code}.") }
             result
-        }
+        } } finally { synchronized(callLock) { activeCalls -= call } }
     }
     fun test() { request("/v2/sessions") }
     fun open(consent: Set<String>, id: String = UUID.randomUUID().toString(), automatic: Boolean = false): String {

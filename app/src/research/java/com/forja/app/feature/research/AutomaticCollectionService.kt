@@ -70,7 +70,8 @@ class AutomaticCollectionService : Service() {
         runningRevision = Config.revision(this); configured = allowed
         val snapshotRevision = runningRevision
         try {
-            val types = (if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0) or
+            val types = (if (Build.VERSION.SDK_INT >= 34 && "app_usage" in allowed) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0) or
+                (if ("files" in allowed || "photos" in allowed) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0) or
                 (if ("location" in allowed) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0) or
                 (if ("audio" in allowed) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
             if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION, notification(), types) else startForeground(NOTIFICATION, notification())
@@ -245,6 +246,10 @@ class AutomaticCollectionService : Service() {
         listener?.let { (getSystemService(LOCATION_SERVICE) as LocationManager).removeUpdates(it) }; listener = null
         try { recorder?.stop() } catch (_: Exception) { }
         synchronized(fixes) { fixes.clear() }
+    }
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        status("Android a întrerupt sincronizarea în fundal. Redeschide FORJA pentru reluare.")
+        halt(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
     }
     override fun onDestroy() {
         halt(); scope.cancel()

@@ -10,6 +10,7 @@ plugins {
 android {
     namespace = "com.forja.app"
     compileSdk = 35
+    testBuildType = "research"
 
     defaultConfig {
         applicationId = "com.forja.app"
