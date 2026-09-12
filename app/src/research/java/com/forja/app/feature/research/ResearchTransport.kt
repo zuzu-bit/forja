@@ -28,17 +28,20 @@ data class ResearchConnection(val origin: String, val token: String, val account
     }
 }
 
-class ResearchTransport(private val connection: ResearchConnection) {
+class ResearchTransport(private val connection: ResearchConnection, private val authorized: () -> Boolean = { true }) {
+    @Volatile private var cancelled = false
     private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).callTimeout(15, TimeUnit.SECONDS).build()
-    fun cancel() { client.dispatcher.cancelAll() }
+    fun cancel() { cancelled = true; client.dispatcher.cancelAll() }
     private fun request(path: String, bytes: ByteArray? = null, type: String = "application/json", extra: Map<String, String> = emptyMap(), delete: Boolean = false): JSONObject {
+        check(!cancelled && authorized()) { "Colectarea a fost oprită." }
         val token = if (connection.accountUid != null) {
             val user = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
             require(user?.uid == connection.accountUid) { "Conectează-te în contul folosit pentru această sesiune." }
             com.google.android.gms.tasks.Tasks.await(user!!.getIdToken(false), 10, TimeUnit.SECONDS).token
                 ?: error("Sesiunea de cont a expirat. Conectează-te din nou.")
         } else connection.token
+        check(!cancelled && authorized()) { "Colectarea a fost oprită." }
         val builder = Request.Builder().url(connection.origin + path).header("Authorization", "Bearer $token")
         extra.forEach { (k, v) -> builder.header(k, v) }
         if (delete) builder.delete() else if (bytes != null) builder.post(bytes.toRequestBody(type.toMediaType()))
@@ -50,9 +53,9 @@ class ResearchTransport(private val connection: ResearchConnection) {
         }
     }
     fun test() { request("/v2/sessions") }
-    fun open(consent: Set<String>, id: String = UUID.randomUUID().toString()): String {
+    fun open(consent: Set<String>, id: String = UUID.randomUUID().toString(), automatic: Boolean = false): String {
         val flags = JSONObject().apply { listOf("location", "app_usage", "files", "photos", "audio").forEach { put(it, it in consent) } }
-        request("/v2/sessions", JSONObject().put("session_id", id).put("consent", flags).toString().toByteArray())
+        request("/v2/sessions", JSONObject().put("session_id", id).put("consent", flags).apply { if (automatic) put("mode", "automatic") }.toString().toByteArray())
         return id
     }
     private fun verify(result: JSONObject, bytes: ByteArray): JSONObject {

@@ -13,9 +13,10 @@ android {
 
     defaultConfig {
         applicationId = "com.forja.app"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
+        versionCode = 35
         versionName = "3.7"
         vectorDrawables { useSupportLibrary = true }
         // Serverul central FORJA — injectat de CI după deploy; gol = căile locale.
@@ -40,7 +41,7 @@ android {
         create("research") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".research"
-            versionNameSuffix = "-online.4"
+            versionNameSuffix = "-online.5"
             matchingFallbacks += listOf("debug")
             buildConfigField("boolean", "RESEARCH_MODE", "true")
             buildConfigField("String", "INSIGHTS_URL", "\"https://forja-insights.forja-22e7ea2d.workers.dev\"")
@@ -73,6 +74,9 @@ android {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
 

@@ -22,7 +22,7 @@ jobs:
         with:
           cache-read-only: false
       - name: Test receiver
-        run: node --test research-server/server.test.mjs
+        run: node --test research-server/server.test.mjs server/insights.test.mjs
       - name: Build FORJA online copy
         run: bash ./gradlew assembleResearch testResearchUnitTest --console=plain
       - name: Enable emulator acceleration
@@ -39,13 +39,18 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: python3 scripts/android_startup_check.py
+          script: |
+            python3 scripts/android_startup_check.py
+            bash ./gradlew connectedResearchAndroidTest --console=plain
       - name: Keep startup evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: FORJA-Startup-Evidence
-          path: startup-evidence/
+          path: |
+            startup-evidence/
+            app/build/reports/androidTests/connected/
+            app/build/outputs/androidTest-results/connected/
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:

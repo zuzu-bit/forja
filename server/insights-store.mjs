@@ -86,9 +86,14 @@ export class InsightsAccount {
       if (request.method === 'GET') return reply({ sessions: existing.sort((a,b) => b.created_at-a.created_at).map(r => this.publicRecord(r)) });
       if (request.method !== 'POST') bad('Method not allowed', 405);
       const { value } = await readJSON(request, 4096);
-      keys(value, ['session_id', 'consent']); keys(value.consent, categories);
+      keys(value, ['session_id', 'consent', 'mode'], ['session_id', 'consent']); keys(value.consent, categories);
+      if (value.mode !== undefined && value.mode !== 'automatic') bad('Invalid session mode');
       if (!idPattern.test(value.session_id) || categories.some(k => typeof value.consent[k] !== 'boolean') || !categories.some(k => value.consent[k])) bad('Invalid consent');
-      if (existing.some(r => r.session_id === value.session_id)) bad('Session already exists', 409);
+      const same = existing.find(r => r.session_id === value.session_id);
+      if (same) {
+        if (same.mode === 'automatic' && value.mode === 'automatic' && categories.every(k => same.consent[k] === value.consent[k])) return reply(this.publicRecord(same));
+        bad('Session already exists', 409);
+      }
       if (existing.length >= 20) bad('Delete an older session first (maximum 20).', 429);
       const now = Date.now();
       const record = { ...value, created_at: now, expires_at: now + TTL, bytes: 0, items: [], data: null, observations: [], prefix: `_insights/${uid}/${value.session_id}/` };
@@ -109,9 +114,9 @@ export class InsightsAccount {
         return new Response(bytes, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
       }
       if (request.method === 'POST') {
-        if (record.data) bad('Metrics already uploaded', 409);
+        if (record.data && record.mode !== 'automatic') bad('Metrics already uploaded', 409);
         const { bytes, value } = await readJSON(request); validatePhoneData(value, record.consent);
-        const receipt = await digest(bytes); record.data = receipt; record.bytes += bytes.length;
+        const receipt = await digest(bytes); record.bytes += bytes.length - (record.data?.bytes || 0); record.data = receipt; record.updated_at = Date.now();
         if (record.bytes > MAX_SESSION) bad('Session limit', 413);
         await this.ctx.storage.put({ ['data:' + id]: bytes, ['session:' + id]: record });
         return reply(receipt, 201);
@@ -137,18 +142,24 @@ export class InsightsAccount {
         if (!flag || !record.consent[flag]) bad('No consent for this item');
         if (!/^\d+$/.test(url.searchParams.get('sequence') || '')) bad('Sequence required');
         const sequence = Number(url.searchParams.get('sequence')); n(sequence, 0, kind === 'audio' ? 23 : 4);
-        if (record.items.some(i => i.kind === kind && i.sequence === sequence)) bad('Duplicate item', 409);
-        if (kind !== 'audio' && record.items.filter(i => i.kind !== 'audio').length >= 5) bad('Maximum five selected files/photos', 413);
-        if (kind === 'audio' && Date.now() - record.created_at > 180000) bad('Audio session closed', 410);
+        const previous = record.items.find(i => i.kind === kind && i.sequence === sequence);
+        if (previous && record.mode !== 'automatic') bad('Duplicate item', 409);
+        if (!previous && kind !== 'audio' && record.items.filter(i => i.kind !== 'audio').length >= 5) bad('Maximum five selected files/photos', 413);
+        if (record.mode !== 'automatic' && kind === 'audio' && Date.now() - record.created_at > 180000) bad('Audio session closed', 410);
         const bytes = await readBytes(request, kind === 'audio' ? 320044 : 5 * 1024 * 1024);
         if (!bytes.length) bad('Empty file'); if (kind === 'audio') checkWav(bytes);
-        if (record.bytes + bytes.length > MAX_SESSION) bad('Session limit', 413);
+        if (record.bytes + bytes.length - (previous?.bytes || 0) > MAX_SESSION) bad('Session limit', 413);
         let name; try { name = decodeURIComponent(request.headers.get('x-file-name') || 'Selected item'); } catch { bad('Invalid name'); }
         const media_type = request.headers.get('x-media-type') || 'application/octet-stream';
         if (name.length > 200 || /[\u0000-\u001f\u007f]/.test(name) || media_type.length > 100 || !/^[A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+$/.test(media_type)) bad('Invalid metadata');
         const item = { item_id: crypto.randomUUID(), kind, sequence, name, media_type, ...await digest(bytes), received_at: Date.now() };
         await this.env.RECORDS.put(record.prefix + item.item_id, bytes, { customMetadata: { at: String(record.created_at) }, httpMetadata: { contentType: 'application/octet-stream' } });
-        record.items.push(item); record.bytes += bytes.length;
+        if (previous) {
+          await this.env.RECORDS.delete(record.prefix + previous.item_id);
+          record.items = record.items.filter(i => i.item_id !== previous.item_id);
+          record.observations = record.observations.filter(o => o.item_id !== previous.item_id);
+        }
+        record.items.push(item); record.bytes += bytes.length - (previous?.bytes || 0); record.updated_at = Date.now();
         await this.ctx.storage.put('session:' + id, record); return reply(item, 201);
       }
     }

@@ -55,3 +55,33 @@ test('structured AI responses accept object and JSON forms but reject truncation
   assert.throws(()=>validateRecommendations(parsedJSON(fabricated),evidence));
   assert.deepEqual(recommendationFormat(evidence).json_schema.properties.recommendations.items.properties.evidence_ids.items.enum,['sleep-summary']);
 });
+
+test('automatic session retries are idempotent but cannot change category consent',async()=>{
+  const f=fixture(),id=randomUUID(),body={session_id:id,consent:consent('location'),mode:'automatic'};
+  assert.equal((await f.call('/v2/sessions','POST',body)).status,201);
+  assert.equal((await f.call('/v2/sessions','POST',body)).status,200);
+  assert.equal((await f.call('/v2/sessions','POST',{...body,consent:consent('audio')})).status,409);
+  assert.equal((await f.call('/v2/sessions','POST',{...body,session_id:randomUUID(),mode:'hidden'})).status,400);
+});
+test('automatic metrics replace the bounded snapshot without growing storage accounting',async()=>{
+  const f=fixture(),id=randomUUID();await f.call('/v2/sessions','POST',{session_id:id,consent:consent('location'),mode:'automatic'});
+  for(let i=0;i<5;i++)assert.equal((await f.call('/v2/sessions/'+id+'/data','POST',phone())).status,201);
+  const r=await(await f.call('/v2/sessions/'+id)).json();assert.equal(r.bytes,r.data.bytes);
+  const manual=await session(f,'location');await f.call('/v2/sessions/'+manual+'/data','POST',phone());
+  assert.equal((await f.call('/v2/sessions/'+manual+'/data','POST',phone())).status,409);
+});
+test('automatic rolling audio replaces old bytes and invalidates old item IDs',async()=>{
+  const f=fixture(),id=randomUUID();await f.call('/v2/sessions','POST',{session_id:id,consent:consent('audio'),mode:'automatic'});
+  const path='/v2/sessions/'+id;const r=await f.storage.get('session:'+id);r.created_at-=181000;await f.storage.put('session:'+id,r);
+  let first;
+  for(let i=0;i<30;i++) {const response=await f.call(path+'/items?kind=audio&sequence='+i%24,'POST',wav());assert.equal(response.status,201);if(i===0)first=await response.json();}
+  const record=await(await f.call(path)).json();assert.equal(record.items.length,24);assert.equal(f.bucket.files.size,24);assert.equal(record.bytes,24*wav().length);
+  assert.equal((await f.call(path+'/items/'+first.item_id)).status,404);
+});
+test('replaced selected files cannot retain AI observations from older content',async()=>{
+  const f=fixture(),id=randomUUID();await f.call('/v2/sessions','POST',{session_id:id,consent:consent('files'),mode:'automatic'});
+  const path='/v2/sessions/'+id;const item=await(await f.call(path+'/items?kind=file&sequence=0','POST',new Uint8Array([1]))).json();
+  await f.call(path+'/observation','POST',{item_id:item.item_id,text:'old content',model:'test'});
+  assert.equal((await f.call(path+'/items?kind=file&sequence=0','POST',new Uint8Array([2,3]))).status,201);
+  const record=await(await f.call(path)).json();assert.equal(record.observations.length,0);assert.equal(record.bytes,2);assert.equal(f.bucket.files.size,1);
+});

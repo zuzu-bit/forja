@@ -2,6 +2,8 @@
 import json
 import subprocess
 import time
+import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from verify_apk import verify_apk
 
@@ -43,7 +45,27 @@ try:
     resumed = [line for line in activities.splitlines() if 'ResumedActivity' in line or 'topResumedActivity' in line]
     if not any(PACKAGE in line for line in resumed):
         raise AssertionError('FORJA did not retain the foreground activity')
-    (OUT / 'result.json').write_text(json.dumps({'startup_alive': True, 'foreground': True, 'observed_seconds': 15}))
+    # First launch must show the shared settings screen, all choices off.
+    raw = adb('exec-out', 'uiautomator', 'dump', '/dev/tty').stdout.decode()
+    xml = raw[raw.index('<?xml'):raw.rindex('</hierarchy>') + len('</hierarchy>')]
+    root = ET.fromstring(xml)
+    (OUT / 'setup-ui.xml').write_text(xml)
+    capture('setup.png', 'exec-out', 'screencap', '-p')
+    assert 'Configurează FORJA' in xml, 'Missing first-launch setup'
+    assert not any(n.get('checked') == 'true' for n in root.iter('node')), 'Collection must default to off'
+    target = next(n for n in root.iter('node') if n.get('text') == 'Continuă în FORJA')
+    x1, y1, x2, y2 = map(int, re.findall(r'\d+', target.get('bounds')))
+    adb('shell', 'input', 'tap', str((x1+x2)//2), str((y1+y2)//2))
+    time.sleep(3)
+    login = adb('exec-out', 'uiautomator', 'dump', '/dev/tty').stdout.decode()
+    assert 'Intră în cont' in login, 'Continue without optional collection must reach login'
+    assert 'AutomaticCollectionService' not in adb('shell', 'dumpsys', 'activity', 'services', PACKAGE).stdout.decode(), 'No collection without consent/account'
+    adb('shell', 'am', 'force-stop', PACKAGE)
+    adb('shell', 'am', 'start', '-W', '-n', COMPONENT)
+    time.sleep(3)
+    again = adb('exec-out', 'uiautomator', 'dump', '/dev/tty').stdout.decode()
+    assert 'Configurează FORJA' not in again and 'Intră în cont' in again, 'Onboarding must not repeat'
+    (OUT / 'result.json').write_text(json.dumps({'startup_alive': True, 'foreground': True, 'observed_seconds': 15, 'setup_defaults_off': True, 'skip_reaches_login': True, 'no_service_without_consent': True, 'setup_not_repeated': True}))
     print('FORJA stayed alive and in the foreground for 15 seconds.')
 finally:
     capture('crash.txt', 'logcat', '-d', '-b', 'crash')
