@@ -12,11 +12,12 @@ is required for these online uploads.
   accounts and private fitness journals.
 - Fitness analysis Worker: existing `forja-api` service, unchanged by this work.
 - New portal / receiver: `forja-insights`, configured in
-  `server/wrangler.insights.toml`; intended address
+  `server/wrangler.insights.toml`; public address
   `https://forja-insights.forja-22e7ea2d.workers.dev/insights`.
 - Account metadata: SQLite-backed Durable Object `InsightsAccount` per verified
-  Firebase UID. Selected binaries: existing private `forja-sleep` R2 bucket,
-  inside a new `_insights/{uid}/{session}/` prefix.
+  Firebase UID. Selected binaries: dedicated private `forja-insights-data` R2 bucket,
+  inside an `_insights/{uid}/{session}/` prefix. This bucket is not bound to the
+  legacy admin Worker.
 
 The web panel is account-scoped: signing in shows that account's data. It is
 not a global list of every FORJA user's private data, and the old system admin
@@ -62,7 +63,9 @@ summaries, meal names, observed stop counts, app-use summaries and previously
 requested file interpretations. It does not send the raw coordinate list or
 audio clips to the recommendation model. The model proposes comfort, movement,
 food, outings, movies, games or activities, with confidence and evidence IDs.
-Server validation rejects unsupported citations and malformed outputs. UI text
+Generation uses JSON mode with a schema that enumerates the supplied evidence
+IDs. Independent server validation rejects unsupported citations and malformed
+outputs; both object and string model responses are supported. UI text
 uses textContent; AI output is not executable markup or a URL. Search links are
 constructed by the application and are labeled as exploration, not verified
 products, stock, prices or venue availability.
@@ -90,8 +93,8 @@ compatible with `node --test research-server/server.test.mjs`.
 `.github/workflows/insights-deploy.yml` tests and deploys **only `forja-insights`**
 on server changes pushed to `research/consented-data-export`. It uses the
 repository's existing `CLOUDFLARE_API_TOKEN` and optional `CLOUDFLARE_ACCOUNT_ID`.
-It binds the existing private R2 bucket and adds a SQLite Durable Object
-migration. It does not deploy the old fitness Worker, publish APK releases or
+It creates the dedicated private R2 bucket if absent and adds a SQLite Durable
+Object migration. It does not deploy the old fitness Worker, publish APK releases or
 merge main. Keep this workflow/branch for future portal updates; the old main
 branch's fitness build is independent.
 
@@ -103,6 +106,7 @@ public deployment results.
 Primary platform references:
 - [Durable Object concurrency](https://developers.cloudflare.com/durable-objects/api/state/)
 - [R2 Worker API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
+- [Structured model output](https://developers.cloudflare.com/workers-ai/features/json-mode/)
 - [Text model](https://developers.cloudflare.com/workers-ai/models/llama-3.3-70b-instruct-fp8-fast/)
 - [Vision model](https://developers.cloudflare.com/workers-ai/models/llama-3.2-11b-vision-instruct/)
 - [Firestore queries](https://firebase.google.com/docs/firestore/reference/rest/v1/projects.databases.documents/runQuery)

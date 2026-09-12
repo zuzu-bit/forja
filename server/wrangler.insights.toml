@@ -7,7 +7,7 @@ binding = "AI"
 
 [[r2_buckets]]
 binding = "RECORDS"
-bucket_name = "forja-sleep"
+bucket_name = "forja-insights-data"
 
 [[durable_objects.bindings]]
 name = "INSIGHTS"

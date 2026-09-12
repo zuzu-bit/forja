@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { InsightsAccount } from './insights-store.mjs';
-import { buildEvidence, validateRecommendations, loadJournals, internalRequest } from './insights-ai.mjs';
+import { buildEvidence, validateRecommendations, loadJournals, internalRequest, parsedJSON, recommendationFormat } from './insights-ai.mjs';
 import { randomUUID } from 'node:crypto';
 class MemoryStorage {
   values=new Map(); alarm=null;
@@ -43,3 +43,13 @@ test('evidence omits exact coordinates and labels location meaning as unknown',(
 test('AI cannot cite invented evidence or inject actionable HTML/URLs fields',()=>{const evidence=[{id:'sleep-summary'}];const r={category:'sleep',title:'O seară liniștită',why:'Un indiciu',next_step:'Verifică rutina.',confidence:'low',evidence_ids:['sleep-summary'],url:'javascript:alert(1)'};assert.equal(validateRecommendations({recommendations:[r]},evidence)[0].url,undefined);assert.throws(()=>validateRecommendations({recommendations:[{...r,evidence_ids:['invented']}]},evidence));assert.throws(()=>validateRecommendations({recommendations:[{...r,confidence:'certain'}]},evidence));});
 test('Firestore queries are owner-scoped and one failed journal does not hide others',async()=>{const calls=[];const out=await loadJournals('testUid','synthetic-token',async(url,opts)=>{calls.push([url,opts]);const k=JSON.parse(opts.body).structuredQuery.from[0].collectionId;if(k==='sleep')throw Error('offline');if(k==='meals')return Response.json({error:'blocked'},{status:403});return Response.json([{document:{name:'projects/x/users/testUid/activities/a1',fields:{durationS:{integerValue:'120'},type:{stringValue:'walk'}}}}]);},1000000000);assert.equal(out.activities.records[0].durationS,120);assert.ok(out.sleep.error);assert.equal(out.meals.error,'Firestore HTTP 403');assert.ok(calls.every(([u])=>u.includes('/users/testUid:runQuery')));});
 test('internal requests set owner independently of arbitrary paths',()=>{const r=internalRequest('verifiedUid','/v2/sessions');assert.equal(r.headers.get('x-forja-owner'),'verifiedUid');assert.equal(new URL(r.url).host,'internal');});
+test('structured AI responses accept object and JSON forms but reject truncation and fabricated citations',()=>{
+  const evidence=[{id:'sleep-summary'}];
+  const value={recommendations:[{category:'sleep',title:'Rutina de seară',why:'Un indiciu din jurnal.',next_step:'Confirmă dacă estimarea reflectă noaptea ta.',confidence:'low',evidence_ids:['sleep-summary']}]};
+  for(const response of [value,JSON.stringify(value),'```json\n'+JSON.stringify(value)+'\n```'])
+    assert.deepEqual(validateRecommendations(parsedJSON(response),evidence),value.recommendations);
+  assert.throws(()=>parsedJSON(JSON.stringify(value).slice(0,-1)));
+  const fabricated=structuredClone(value);fabricated.recommendations[0].evidence_ids=['made-up'];
+  assert.throws(()=>validateRecommendations(parsedJSON(fabricated),evidence));
+  assert.deepEqual(recommendationFormat(evidence).json_schema.properties.recommendations.items.properties.evidence_ids.items.enum,['sleep-summary']);
+});

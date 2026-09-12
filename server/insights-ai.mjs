@@ -58,9 +58,28 @@ export function buildEvidence(journals, sessions) {
   }
   return evidence;
 }
-function parsedJSON(text) {
+export function parsedJSON(text) {
+  // Workers AI JSON mode can return an already-decoded response object.
+  if (text && typeof text === 'object' && !Array.isArray(text)) return text;
   const clean = String(text || '').trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
   try { return JSON.parse(clean); } catch { bad('AI nu a produs un răspuns valid. Încearcă din nou.', 502); }
+}
+export function recommendationFormat(evidence) {
+  return { type: 'json_schema', json_schema: {
+    type: 'object', additionalProperties: false, required: ['recommendations'],
+    properties: { recommendations: { type: 'array', maxItems: 6, items: {
+      type: 'object', additionalProperties: false,
+      required: ['category','title','why','next_step','confidence','evidence_ids'],
+      properties: {
+        category: { type: 'string', enum: ['sleep','movement','places','food','movies','games','activities'] },
+        title: { type: 'string', minLength: 1, maxLength: 100 },
+        why: { type: 'string', minLength: 1, maxLength: 600 },
+        next_step: { type: 'string', minLength: 1, maxLength: 600 },
+        confidence: { type: 'string', enum: ['low','medium'] },
+        evidence_ids: { type: 'array', minItems: 1, maxItems: 5, items: { type: 'string', enum: evidence.map(e => e.id) } }
+      }
+    } } }
+  } };
 }
 export function validateRecommendations(value, evidence) {
   if (!value || !Array.isArray(value.recommendations) || value.recommendations.length > 6) bad('Invalid AI response', 502);
@@ -96,7 +115,7 @@ export async function handleInsights(request, env, uid) {
     const evidence = buildEvidence(journals, selected);
     if (!evidence.length) return reply({ recommendations: [], evidence, model: TEXT_MODEL, generated_at: Date.now() });
     let result;
-    try { result = await env.AI.run(TEXT_MODEL, { messages: [{ role:'system', content:SYSTEM }, { role:'user', content:JSON.stringify({ evidence }) }], max_tokens:1800, temperature:0.2 }); }
+    try { result = await env.AI.run(TEXT_MODEL, { messages: [{ role:'system', content:SYSTEM }, { role:'user', content:JSON.stringify({ evidence }) }], response_format:recommendationFormat(evidence), max_tokens:3200, temperature:0.2 }); }
     catch { bad('Modelul AI nu răspunde acum. Datele primite rămân disponibile.', 503); }
     return reply({ recommendations: validateRecommendations(parsedJSON(result.response), evidence), evidence, model:TEXT_MODEL, generated_at:Date.now(), coverage_errors:Object.fromEntries(['sleep','activities','meals'].filter(k => journals[k].error).map(k => [k,journals[k].error])) });
   }
