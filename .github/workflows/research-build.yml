@@ -19,6 +19,8 @@ jobs:
         with:
           node-version: '22'
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
       - name: Test receiver
         run: node --test research-server/server.test.mjs
       - name: Build FORJA online copy

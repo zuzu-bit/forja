@@ -3,6 +3,7 @@ import json
 import subprocess
 import time
 from pathlib import Path
+from verify_apk import verify_apk
 
 PACKAGE = 'com.forja.app.research'
 COMPONENT = PACKAGE + '/com.forja.app.MainActivity'
@@ -23,6 +24,8 @@ def capture(name, *args, timeout=20):
 
 
 try:
+    integrity = verify_apk('app/build/outputs/apk/research/app-research.apk')
+    (OUT / 'apk-integrity.json').write_text(json.dumps(integrity))
     result = adb('install', '-r', 'app/build/outputs/apk/research/app-research.apk', timeout=120)
     (OUT / 'install.txt').write_bytes(result.stdout + result.stderr)
     adb('shell', 'input', 'keyevent', '82')

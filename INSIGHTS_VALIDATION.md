@@ -1,5 +1,10 @@
 # FORJA Insights validation
 
+**Startup correction:** the earlier delivered APK had an invalid primary DEX.
+It has been replaced by the exact APK built and launched on Android 15 in
+GitHub run 34705977933. See `STARTUP_FIX.md` for the defect and verification.
+
+
 ## Completed before deployment
 
 - `node --test server/insights.test.mjs research-server/server.test.mjs`:
@@ -18,10 +23,12 @@
   AI, private R2 and SQLite Durable Object bindings. Wrangler pinned to 4.131.1.
 - Android `clean assembleResearch testResearchUnitTest`: passed; 9 JVM tests.
   GitHub Research build run 34702135485 also succeeded for the same Android code.
-- APK signature and packaged identity/launcher: passed. Package
+- Packaged identity/launcher checked; the original archive check did not detect
+  internal DEX corruption. The replacement APK passes DEX integrity checks and
+  Android installation/startup. Package
   `com.forja.app.research`, version `3.7-online.4`, label FORJA, MainActivity.
 - APK SHA-256:
-  `35b9af4372d1c9589f2b43b02702baabf722e0bb5cd00b4a7182b0d1d8030e24`.
+  `2aad947e2fce655411c9d5fc828b99651155070277169088307509b98f8635bf`.
 
 ## Public checks
 
