@@ -82,7 +82,12 @@ class ResearchExportActivity : ComponentActivity() {
     override fun onDestroy() { Config.prefs(this).unregisterOnSharedPreferenceChangeListener(changes); super.onDestroy() }
     override fun onResume() {
         super.onResume()
-        if (!waitingUsage) selected = selected.filter { granted(it) }.toSet()
+        if (!waitingUsage) {
+            selected = selected.filter { granted(it) }.toSet()
+            val saved = Config.enabled(this)
+            val stillAllowed = saved.filter { granted(it) }.toSet()
+            if (saved != stillAllowed) { Config.save(this, stillAllowed); Config.resume(this) }
+        }
     }
     private fun has(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
     private fun notifications() = NotificationManagerCompat.from(this).areNotificationsEnabled()
@@ -150,11 +155,11 @@ class ResearchExportActivity : ComponentActivity() {
                 Text(if (first) "Continuă în FORJA" else "Salvează setările", modifier = Modifier.padding(8.dp), fontSize = 16.sp)
             } }
         }) { padding ->
-            Column(Modifier.fillMaxSize().padding(padding).statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp).padding(top = 18.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 22.dp).padding(top = 18.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("FORJA", color = Mint, letterSpacing = 4.sp, fontWeight = FontWeight.Bold)
                 Text(if (first) "Configurează FORJA" else "Permisiuni și sincronizare", fontSize = 28.sp, lineHeight = 33.sp, fontWeight = FontWeight.Bold)
                 Text("Alege ce sincronizezi", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                Text("După salvare și conectare, categoriile activate sunt colectate automat și trimise în contul tău pe serverul FORJA, inclusiv când aplicația este în fundal. Colectarea continuă până le dezactivezi. Nu trebuie să confirmi fiecare trimitere.", color = Muted, lineHeight = 22.sp)
+                Text("După salvare și conectare, FORJA colectează categoriile activate și le trimite automat în contul tău online, inclusiv în fundal, până le oprești. Nu confirmi fiecare trimitere.", color = Muted, lineHeight = 22.sp)
                 Choice("location", "Locație și opriri", "Pozițiile și timpul observat în locuri. Serverul afișează ultimele 300 de poziții; golurile nu sunt considerate timp petrecut acolo.", Icons.Outlined.LocationOn)
                 Choice("app_usage", "Activitate în aplicații", "Numele aplicațiilor, timpul în prim-plan și deschiderile, începând cu activarea. Actualizare automată la aproximativ un minut.", Icons.Outlined.Schedule)
                 Choice("photos", "Fotografii selectate", "Se trimit automat imaginile pe care le alegi aici. Galeria întreagă nu este accesată.", Icons.Outlined.PhotoLibrary)

@@ -63,10 +63,11 @@ class AutomaticCollectionService : Service() {
         val selected = Config.enabled(this)
         val granted = grants()
         val allowed = CollectionPolicy.allowed(owner, auth.currentUser?.uid, selected, granted, rev, Config.revision(this))
+        if (allowed != selected) Config.save(this, allowed)
         if (allowed.isEmpty() || !NotificationManagerCompat.from(this).areNotificationsEnabled()) {
+            if (Config.enabled(this).isNotEmpty()) Config.save(this, emptySet())
             status("Colectarea este oprită sau lipsesc permisiunile Android."); stopSelf(); return START_NOT_STICKY
         }
-        if (allowed != selected) Config.save(this, allowed)
         runningRevision = Config.revision(this); configured = allowed
         val snapshotRevision = runningRevision
         try {
@@ -126,6 +127,8 @@ class AutomaticCollectionService : Service() {
                 }
             } finally {
                 if (runningRevision == snapshotRevision) {
+                    val remaining = allowed.intersect(grants())
+                    if (remaining != allowed) Config.save(this@AutomaticCollectionService, remaining)
                     halt()
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
