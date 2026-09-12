@@ -1,3 +1,5 @@
+> Current revision: see [INSIGHTS.md](INSIGHTS.md). Version 3.7-online.4 adds the online account-based receiver and AI panel. The older pairing-token receiver below remains a local lab tool.
+
 # FORJA · online accounts and optional phone-data sessions
 
 This copy adds visible phone-data sessions and reviewed uploads for measuring

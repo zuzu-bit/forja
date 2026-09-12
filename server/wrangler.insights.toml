@@ -1,0 +1,26 @@
+name = "forja-insights"
+main = "insights-worker.mjs"
+compatibility_date = "2025-06-01"
+
+[ai]
+binding = "AI"
+
+[[r2_buckets]]
+binding = "RECORDS"
+bucket_name = "forja-sleep"
+
+[[durable_objects.bindings]]
+name = "INSIGHTS"
+class_name = "InsightsAccount"
+
+[[migrations]]
+tag = "insights-v1"
+new_sqlite_classes = ["InsightsAccount"]
+
+[[rules]]
+type = "Text"
+globs = ["**/*.html", "**/*.js.txt"]
+fallthrough = true
+
+[observability]
+enabled = false

@@ -9,3 +9,6 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+
+node_modules/
+.wrangler/

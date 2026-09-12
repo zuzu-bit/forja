@@ -68,8 +68,7 @@ class ResearchExportActivity : ComponentActivity() {
     private var page by mutableStateOf("home")
     private var notice by mutableStateOf("")
     private var busy by mutableStateOf(false)
-    private var origin by mutableStateOf("http://10.0.2.2:8787")
-    private var token by mutableStateOf("")
+    private val origin = com.forja.app.BuildConfig.INSIGHTS_URL.trimEnd('/')
     private var connected by mutableStateOf(false)
     private var locationOn by mutableStateOf(false)
     private var audioOn by mutableStateOf(false)
@@ -103,7 +102,6 @@ class ResearchExportActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        origin = getSharedPreferences("research_connection", MODE_PRIVATE).getString("origin", origin) ?: origin
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Mint, onPrimary = Ink, background = Ink, surface = Panel, onSurface = Color(0xFFF1F5F0), onSurfaceVariant = Muted)) {
                 ResearchScreen()
@@ -112,7 +110,7 @@ class ResearchExportActivity : ComponentActivity() {
     }
     override fun onPause() { stopLocation(); stopAudio(); super.onPause() }
     private fun protect() { window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) }
-    private fun connection(): ResearchConnection = ResearchConnection.parse(origin, token)
+    private fun connection(): ResearchConnection = ResearchConnection.online()
     private fun has(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
     private fun task(block: suspend () -> Unit) {
         if (busy) return
@@ -334,11 +332,11 @@ class ResearchExportActivity : ComponentActivity() {
     @Composable private fun Home() {
         Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF314D3D), Color(0xFF1A2D26))), RoundedCornerShape(26.dp)).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(7.dp).background(Mint, CircleShape)); Text(if (locationOn || audioOn) "SESSION ACTIVE" else "YOU CONTROL COLLECTION", Modifier.padding(start = 8.dp), fontSize = 10.sp, letterSpacing = 1.sp, color = Mint) }
-            Text("Explore your\nphone data.", fontSize = 34.sp, lineHeight = 38.sp, fontWeight = FontWeight.SemiBold)
-            Text("Start a measurement. See what it contains. Choose what reaches your test server.", color = Color(0xFFCFDCD2), fontSize = 14.sp, lineHeight = 21.sp)
+            Text("Datele mele", fontSize = 34.sp, lineHeight = 38.sp, fontWeight = FontWeight.SemiBold)
+            Text("Alege ce trimiți. Datele ajung în contul tău FORJA și le poți vedea în panoul online.", color = Color(0xFFCFDCD2), fontSize = 14.sp, lineHeight = 21.sp)
         }
         Row(Modifier.fillMaxWidth().clickable(enabled = !busy) { protect(); page = "settings" }, verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Dns, null, tint = Mint, modifier = Modifier.size(20.dp)); Text(if (connected) "Test server connected" else "Connect your test server", Modifier.weight(1f).padding(start = 10.dp), color = Muted, fontSize = 13.sp); Icon(Icons.Outlined.ChevronRight, null, tint = Muted)
+            Icon(Icons.Outlined.Dns, null, tint = Mint, modifier = Modifier.size(20.dp)); Text(if (connected) "Server FORJA conectat" else "Cont și panou online", Modifier.weight(1f).padding(start = 10.dp), color = Muted, fontSize = 13.sp); Icon(Icons.Outlined.ChevronRight, null, tint = Muted)
         }
         Text("What do you want to explore?", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -414,11 +412,12 @@ class ResearchExportActivity : ComponentActivity() {
         TextButton(onClick = { page = "uploads" }, enabled = !busy) { Text("View or delete uploaded sessions") }
     }
     @Composable private fun SettingsPage() {
-        Heading("Your test server", "Connect the research copy to the receiver you control. Data is kept there for up to 24 hours and can be deleted from Uploads.")
-        OutlinedTextField(value = origin, onValueChange = { origin = it; connected = false; agree = false }, label = { Text("Server address") }, placeholder = { Text("https://your-test-server.example") }, singleLine = true, enabled = !busy && !audioOn, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = token, onValueChange = { token = it; connected = false; agree = false }, label = { Text("Pairing token") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, enabled = !busy && !audioOn, modifier = Modifier.fillMaxWidth())
-        Action("Test connection", { task { val c = connection(); withContext(Dispatchers.IO) { ResearchTransport(c).test() }; connected = true; getSharedPreferences("research_connection", MODE_PRIVATE).edit().putString("origin", c.origin).apply(); notice = "Connected. No new data was uploaded." } })
-        Text("The token is kept only while this app screen remains alive. The receiver and connection guide are included with the research source code.", color = Muted, fontSize = 12.sp)
+        Heading("Cont și panou online", "Sesiunile trimise sunt legate de contul tău. Le poți vedea și șterge din browser, timp de 24 de ore.")
+        Line("Cont", com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.email ?: "Neconectat")
+        Line("Server FORJA", origin)
+        Action("Verifică conexiunea", { task { val c = connection(); withContext(Dispatchers.IO) { ResearchTransport(c).test() }; connected = true; notice = "Conectat. Nu au fost trimise date noi." } })
+        Action("Deschide panoul online", { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("$origin/insights"))) })
+        Text("În panou folosești același email și aceeași parolă ca în FORJA. Recomandările AI se generează când pornești analiza din panou.", color = Muted, fontSize = 12.sp)
     }
     @Composable private fun ReviewPage() {
         Heading("Review before sending", "Collection is stopped. This is the data in your current selection.")

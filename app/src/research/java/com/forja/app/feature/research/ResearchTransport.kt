@@ -11,8 +11,13 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-data class ResearchConnection(val origin: String, val token: String) {
+data class ResearchConnection(val origin: String, val token: String, val accountUid: String? = null) {
     companion object {
+        fun online(): ResearchConnection {
+            val user = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+                ?: error("Conectează-te în FORJA înainte de trimitere.")
+            return ResearchConnection(com.forja.app.BuildConfig.INSIGHTS_URL.trimEnd('/'), "", user.uid)
+        }
         fun parse(origin: String, token: String): ResearchConnection {
             val u = origin.trim().toHttpUrl()
             require(u.username.isEmpty() && u.password.isEmpty() && u.query == null && u.fragment == null && u.encodedPath == "/") { "Enter a server address without a path or login details." }
@@ -28,13 +33,20 @@ class ResearchTransport(private val connection: ResearchConnection) {
         .retryOnConnectionFailure(false).callTimeout(15, TimeUnit.SECONDS).build()
     fun cancel() { client.dispatcher.cancelAll() }
     private fun request(path: String, bytes: ByteArray? = null, type: String = "application/json", extra: Map<String, String> = emptyMap(), delete: Boolean = false): JSONObject {
-        val builder = Request.Builder().url(connection.origin + path).header("Authorization", "Bearer ${connection.token}")
+        val token = if (connection.accountUid != null) {
+            val user = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+            require(user?.uid == connection.accountUid) { "Conectează-te în contul folosit pentru această sesiune." }
+            com.google.android.gms.tasks.Tasks.await(user!!.getIdToken(false), 10, TimeUnit.SECONDS).token
+                ?: error("Sesiunea de cont a expirat. Conectează-te din nou.")
+        } else connection.token
+        val builder = Request.Builder().url(connection.origin + path).header("Authorization", "Bearer $token")
         extra.forEach { (k, v) -> builder.header(k, v) }
         if (delete) builder.delete() else if (bytes != null) builder.post(bytes.toRequestBody(type.toMediaType()))
         return client.newCall(builder.build()).execute().use { response ->
             if (delete && response.code == 404) return@use JSONObject().put("deleted", true)
-            require(response.isSuccessful) { "Server returned HTTP ${response.code}." }
-            JSONObject(response.body?.string() ?: error("The server returned no receipt."))
+            val result = JSONObject(response.body?.string() ?: error("The server returned no receipt."))
+            require(response.isSuccessful) { result.optString("error", "Server returned HTTP ${response.code}.") }
+            result
         }
     }
     fun test() { request("/v2/sessions") }

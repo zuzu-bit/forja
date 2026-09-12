@@ -1,3 +1,5 @@
+> Historical revision 3 checks. Current revision 4 checks are in [INSIGHTS_VALIDATION.md](INSIGHTS_VALIDATION.md).
+
 # FORJA online revision 3 validation
 
 Base Android release: `e22f5c89913248aa9bf0719cf62c40cd5de2bbc5`.

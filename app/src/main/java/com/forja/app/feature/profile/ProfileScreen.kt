@@ -146,6 +146,11 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermis
 
         onOpenData?.let { open ->
             SettingRow(
+                "Panoul meu online",
+                "Date primite pe server și recomandări AI, cu același cont FORJA.",
+                onClick = { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(com.forja.app.BuildConfig.INSIGHTS_URL.trimEnd('/') + "/insights"))) }
+            ) { Text("deschide ↗", style = BodySmall.copy(color = Accent2)) }
+            SettingRow(
                 "Datele mele",
                 "Locație, activitate în aplicații, fișiere și înregistrări alese de tine.",
                 onClick = open

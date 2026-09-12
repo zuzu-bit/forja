@@ -21,6 +21,7 @@ android {
         // Serverul central FORJA — injectat de CI după deploy; gol = căile locale.
         buildConfigField("String", "FORJA_API_URL", "\"${System.getenv("FORJA_API_URL") ?: ""}\"")
         buildConfigField("boolean", "RESEARCH_MODE", "false")
+        buildConfigField("String", "INSIGHTS_URL", "\"\"")
     }
 
     signingConfigs {
@@ -39,9 +40,10 @@ android {
         create("research") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".research"
-            versionNameSuffix = "-online.3"
+            versionNameSuffix = "-online.4"
             matchingFallbacks += listOf("debug")
             buildConfigField("boolean", "RESEARCH_MODE", "true")
+            buildConfigField("String", "INSIGHTS_URL", "\"https://forja-insights.forja-22e7ea2d.workers.dev\"")
             // Same online service as the published FORJA app; account auth uses Firebase.
             buildConfigField("String", "FORJA_API_URL", "\"https://forja-api.forja-22e7ea2d.workers.dev\"")
         }
