@@ -26,7 +26,7 @@ import java.time.format.DateTimeFormatter
 
 /** Profil: identitate + controale oneste, nimic îngropat. Statistici reale din Room. */
 @Composable
-fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermissions: () -> Unit = {}) {
+fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermissions: () -> Unit = {}, onOpenData: (() -> Unit)? = null) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
     val scope = rememberCoroutineScope()
@@ -144,6 +144,14 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermis
         SectionLabel("Setări")
         Spacer(Modifier.height(10.dp))
 
+        onOpenData?.let { open ->
+            SettingRow(
+                "Datele mele",
+                "Locație, activitate în aplicații, fișiere și înregistrări alese de tine.",
+                onClick = open
+            ) { Text("deschide →", style = BodySmall.copy(color = Accent2)) }
+        }
+
         SettingRow(
             "Permisiuni & pornire",
             "Toate într-un singur loc — activează ce ai nevoie, ca aplicația să nu te mai întrebe prin ecrane.",
@@ -232,8 +240,8 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermis
 
         SettingRow(
             "Date & confidențialitate",
-            "Jurnalele (mese, somn, activități) se sincronizează în contul tău FORJA. Pozele și clipurile audio NU se stochează — se analizează și dispar. Locația: doar prietenii, doar când nu ești fantomă.",
-            onClick = { toast.show("Pozele și sunetele nu se stochează nicăieri — se analizează și dispar.") }
+            "Mesele, somnul și activitățile salvate se trimit în contul tău online FORJA. Înregistrările de somn trimise serverului se păstrează până la 24 de ore. Exporturile din Datele mele folosesc destinația afișată înainte de trimitere.",
+            onClick = { toast.show("Cont online FORJA · jurnale în Firebase, analiză și înregistrări prin serverul FORJA.") }
         ) { }
 
         Spacer(Modifier.height(18.dp))

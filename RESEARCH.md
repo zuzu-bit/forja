@@ -1,18 +1,24 @@
-# FORJA Research · phone-data sessions
+# FORJA · online accounts and optional phone-data sessions
 
 This copy adds visible phone-data sessions and reviewed uploads for measuring
 exactly which selected data reaches a server. It starts from release commit
 `e22f5c89913248aa9bf0719cf62c40cd5de2bbc5` (`apk-latest` at inspection).
-The build installs as **FORJA Research**, package `com.forja.app.research`, version
-`3.7-research.2`, alongside the original app with a separate Android data sandbox.
+The build installs as **FORJA**, package `com.forja.app.research`, version
+`3.7-online.3`, and updates the previous research copy while retaining its separate
+Android data sandbox. It now uses the real FORJA online account and journal services.
 It uses the repository's existing debug signing key and is a lab build.
 
-## The new home screen
+## Normal app entry
 
-The opening screen now has four cards, a connection shortcut and a **Review &
-send** button when data is ready. Server setup is on its own Settings page.
-Raw metric JSON is optional on the review page. The original health-metric
-export remains available from **Health summaries · advanced export**.
+The launcher is the original `MainActivity`. Signed-out users see the normal
+FORJA login/registration screen; signed-in users open the existing fitness
+Dashboard. This copy skips the onboarding film and automatic permission-intro
+page, including after logout. Android permissions are still requested by the
+features that need them.
+
+The phone-data panel is optional, under **Profil → Datele mele**. Its four
+collectors, reviewed uploads and server settings remain there. The older
+health-metric export is available inside that panel.
 
 | Card | What it does | Collection boundary |
 | --- | --- | --- |
@@ -193,29 +199,42 @@ Consent flags are client assertions, not cryptographic proof of human consent.
 The pairing token is for one controlled lab; there is no multi-user access model.
 Request payloads and tokens are not written to server logs.
 
-## Isolation from the original backend
+## Online accounts and backend connections
 
-The research variant continues to force the original `FORJA_API_URL` to an empty string,
-disabling its Worker audio-upload paths even if CI supplies that environment
-variable. Its Firebase configuration is the dummy project `demo-forja-research`.
-Authentication and Firestore route to local emulator ports 9099 and 8080 on
-`10.0.2.2`. Production Firebase credentials and accounts are not used by this
-variant. Startup location registration, media refresh, nudges and focus restart
-are skipped; the boot receiver is disabled.
+Revision 3 deliberately replaces the emulator-only account configuration at the
+user's request. Firebase Authentication and Firestore now use the existing
+`forja-65093` project. There are no `useEmulator` calls in app startup. The copy
+uses the project's existing public client configuration; this does not provision
+another Firebase Android app registration or change API-key restrictions.
 
-The four phone-data cards and the manual synthetic health export do not need Firebase emulators. To use
-the original FORJA account and sync features inside an Android emulator, start
-the Firebase CLI's local suite from the repository root:
+`FORJA_API_URL` is the already-published service:
+`https://forja-api.forja-22e7ea2d.workers.dev`.
+Real FORJA email/password accounts work in this copy. Newly saved meal, sleep
+and activity journal entries use the existing Firestore upload/cache path.
+The original app does not implement a full cloud-to-Room restore; this revision
+does not claim cross-device restoration of old local journals. Copy records and
+sleep-recording keys have a persisted installation prefix so local row IDs cannot
+overwrite records from the original app or a different copy installation.
 
-```sh
-firebase emulators:start --project demo-forja-research --config firebase.research.json --only auth,firestore
-```
+These are two distinct integrations:
 
-Create a synthetic test account. Firebase routing in this first version is
-specifically configured for an Android emulator, not a physical phone. Opening
-the original FORJA features may still call public providers such as map tiles
-and food lookup APIs. Existing sync to the local Firebase emulator is separate
-from the new manually selected export. This is not an app-wide network firewall.
+| Feature | Destination |
+| --- | --- |
+| Account and private fitness journals | Existing FORJA Firebase project |
+| Meal/sleep analysis and sleep recordings | Existing FORJA Cloudflare Worker |
+| Optional location/app-usage/files/photos/live-audio sessions in Datele mele | Separately configured research receiver, whose destination is shown before sending |
+
+The existing Worker does **not** implement `/v2/sessions`. The optional receiver
+has not been deployed publicly; its setup instructions below/above remain
+necessary for those exports. An online FORJA login is not a pairing token for
+that receiver. No Cloudflare service or Firebase rules were redeployed here.
+
+Automatic startup sensor registration remains disabled for this copy. Presence
+and background-location publishers are also disabled so signing in does not
+start location sharing. The optional measurement sessions retain their visible
+Start/Stop controls. The original user-started fitness services are separate:
+for example, sleep recording can run as a foreground service and upload to FORJA;
+the sleep screen now describes that online behavior before Start.
 
 ## How to use this in the study
 

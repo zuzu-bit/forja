@@ -39,11 +39,11 @@ android {
         create("research") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".research"
-            versionNameSuffix = "-research.2"
+            versionNameSuffix = "-online.3"
             matchingFallbacks += listOf("debug")
             buildConfigField("boolean", "RESEARCH_MODE", "true")
-            // Research uploads are manual and use the endpoint shown in the preview screen.
-            buildConfigField("String", "FORJA_API_URL", "\"\"")
+            // Same online service as the published FORJA app; account auth uses Firebase.
+            buildConfigField("String", "FORJA_API_URL", "\"https://forja-api.forja-22e7ea2d.workers.dev\"")
         }
         release {
             isMinifyEnabled = false

@@ -13,7 +13,6 @@ import com.forja.app.core.network.ForjaApi
 import com.forja.app.core.network.GeminiFood
 import com.forja.app.core.network.OpenFoodFacts
 import com.google.firebase.FirebaseApp
-import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.firestoreSettings
 import com.google.firebase.firestore.persistentCacheSettings
@@ -48,18 +47,21 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         FirebaseFirestore.getInstance().firestoreSettings = firestoreSettings {
             setLocalCacheSettings(persistentCacheSettings { })
         }
-        if (BuildConfig.RESEARCH_MODE) {
-            FirebaseAuth.getInstance().useEmulator("10.0.2.2", 9099)
-            FirebaseFirestore.getInstance().useEmulator("10.0.2.2", 8080)
-        }
         db = ForjaDatabase.get(this)
         prefs = Prefs(this)
+        if (BuildConfig.RESEARCH_MODE) {
+            com.forja.app.core.data.CloudSync.configureCopy(this)
+        }
         auth = AuthRepository()
         friends = FriendsRepository()
         presence = PresenceRepository(this)
         foodApi = OpenFoodFacts()
         geminiFood = GeminiFood()
         forjaApi = ForjaApi()
+
+        Configuration.getInstance().userAgentValue = packageName
+        Configuration.getInstance().osmdroidBasePath = getDir("osmdroid", MODE_PRIVATE)
+        Configuration.getInstance().osmdroidTileCache = getDir("osmdroid_tiles", MODE_PRIVATE)
 
         if (BuildConfig.RESEARCH_MODE) {
             createChannels()
@@ -70,11 +72,6 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
 
         // Locația în fundal (dacă utilizatorul a activat-o și permisiunea există).
         com.forja.app.core.location.BgLocation.registerIfReady(this)
-
-        // osmdroid: user agent + cache intern (fără permisiuni de stocare).
-        Configuration.getInstance().userAgentValue = packageName
-        Configuration.getInstance().osmdroidBasePath = getDir("osmdroid", MODE_PRIVATE)
-        Configuration.getInstance().osmdroidTileCache = getDir("osmdroid_tiles", MODE_PRIVATE)
 
         appScope.launch { Seed.ensure(db) }
         appScope.launch { com.forja.app.core.media.Media.refresh() }

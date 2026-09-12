@@ -300,8 +300,8 @@ class ResearchExportActivity : ComponentActivity() {
         }) { inset ->
             Column(Modifier.fillMaxSize().padding(inset).statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (page != "home") IconButton(onClick = { if (!busy) page = "home" }) { Icon(Icons.Outlined.ArrowBack, "Back") }
-                    Column(Modifier.weight(1f)) { Text("FORJA", letterSpacing = 4.sp, fontWeight = FontWeight.Bold, color = Mint); Text("RESEARCH", color = Muted, fontSize = 10.sp, letterSpacing = 2.sp) }
+                    IconButton(onClick = { if (!busy) { if (page == "home") finish() else page = "home" } }) { Icon(Icons.Outlined.ArrowBack, "Înapoi") }
+                    Column(Modifier.weight(1f)) { Text("FORJA", letterSpacing = 4.sp, fontWeight = FontWeight.Bold, color = Mint); Text("DATELE MELE", color = Muted, fontSize = 10.sp, letterSpacing = 2.sp) }
                     IconButton(onClick = { if (!busy) page = "uploads" }) { Icon(Icons.Outlined.CloudDone, "Uploads") }
                     IconButton(onClick = { if (!busy) { protect(); page = "settings" } }) { Icon(Icons.Outlined.Settings, "Server settings") }
                 }
@@ -350,7 +350,6 @@ class ResearchExportActivity : ComponentActivity() {
             Feature("Live\naudio", "Microphone clips to your server", Icons.Outlined.GraphicEq, "audio", Modifier.weight(1f), if (audioOn) "Live now" else "Start / stop")
         }
         Text("Location and microphone stop when you leave this screen or lock the phone.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
-        OutlinedButton(onClick = { startActivity(Intent(this@ResearchExportActivity, MainActivity::class.java)) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Open FORJA fitness app") }
         TextButton(onClick = { startActivity(Intent(this@ResearchExportActivity, HealthExportActivity::class.java)) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Health summaries · advanced export", color = Muted, fontSize = 12.sp) }
     }
     @Composable private fun Feature(title: String, subtitle: String, icon: ImageVector, destination: String, modifier: Modifier, footer: String) {

@@ -21,7 +21,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Test receiver
         run: node --test research-server/server.test.mjs
-      - name: Build isolated research APK
+      - name: Build FORJA online copy
         run: bash ./gradlew assembleResearch testResearchUnitTest --console=plain
       - uses: actions/upload-artifact@v4
         with:

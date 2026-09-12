@@ -1,27 +1,28 @@
-# FORJA Research 2 validation
+# FORJA online revision 3 validation
 
 Base Android release: `e22f5c89913248aa9bf0719cf62c40cd5de2bbc5`.
-Previous research revision: `8f8543c3a8e7de85c452cf67ac11f464b6eaba35`.
+Previous research revision: `7b4ca57c294b600267fdc04e7d32223cb473096e`.
 
 ## Completed checks
 
 | Check | Result |
 | --- | --- |
 | `assembleResearch` | Passed; Kotlin, Java, DEX and APK packaging completed |
-| `testResearchUnitTest` | 6 passed, 0 failed, 0 skipped |
+| `testResearchUnitTest` | 9 passed, 0 failed, 0 skipped |
 | Receiver integration tests | 16 passed, 0 failed |
 | APK signature verification | Passed |
-| Packaged identity | `com.forja.app.research`, version `3.7-research.2` |
+| Packaged identity | `com.forja.app.research`, version `3.7-online.3` |
 | Android compatibility declared | Minimum API 26, target API 35 |
-| Launcher | Redesigned `ResearchExportActivity` |
+| Launcher | Original `MainActivity`; login → Dashboard, optional data panel in Profile |
 
 APK SHA-256:
-`e7d3ba67c2c8538ce529b15ffd755b0e8c459ccd934ee05ac4146ce742cdded4`.
+`6c24ecd8e872282a01b9cf6d8c4b07179d5525a7afbcba0ceb0e60fdf47b1a40`.
 
 Build tools: Gradle 8.10.2, JDK 17, Android platform 35 and the existing Android
 dependencies. KSP incremental processing is disabled in this research branch
 after reproducible shadow/generated-source collisions with the existing KSP
-version. This uses the documented [KSP troubleshooting option](https://kotlinlang.org/docs/ksp-incremental.html).
+version. This revision required a clean build to clear stale generated Room files;
+`clean assembleResearch testResearchUnitTest` then passed. This uses the documented [KSP troubleshooting option](https://kotlinlang.org/docs/ksp-incremental.html).
 No compilation or test task was excluded.
 
 ## What the tests establish
@@ -46,24 +47,48 @@ usage window, a single location fix contributing zero dwell time, long gaps,
 movement, poor accuracy and stopping/restarting collection. They do not validate
 Android's history completeness or real-world GPS accuracy.
 
+## Online integration check (2026-09-12)
+
+A randomly named temporary email/password account was created through the live
+Firebase REST API with the copy's Android package header. The following live
+checks completed:
+
+- Registration and password login: HTTP 200.
+- A synthetic private meal document: write/read HTTP 200; exact fields matched.
+- Anonymous read of that document: HTTP 403.
+- Worker public health using the app's OkHttp user agent: HTTP 200.
+- A cheap authenticated Worker request, with no audio payload: reached route
+  validation and returned the expected HTTP 400 for a missing session (not 401).
+- Synthetic journal deletion and temporary account deletion: HTTP 200.
+
+No user-supplied email, password, photo, location or audio was used in these
+checks. No root profile/invitation documents were created, because the existing
+rules do not permit client deletion of those documents. Tokens were not logged.
+The initial Python-default user agent received Cloudflare 1010; the actual
+OkHttp agent and a browser agent both returned 200.
+
+The additional JVM tests cover stable per-installation cloud record IDs, avoiding
+collisions with original/copy records, and the existing Worker's 40-character
+recording-key limit. The packaged manifest and Firebase/Worker configuration
+are checked independently of the source changes.
+
 ## Device and deployment limits
 
-The final APK was built and an earlier build of the same redesigned UI was
-installed successfully on an Android 28 software emulator (`adb install` returned
-Success). Android's System UI then displayed an unresponsive-system dialog.
-The visual check could not be completed reliably. The final build additionally
-adds a hard audio timeout; final-build installation was not confirmed.
+No physical phone is connected. Previous software-emulator attempts stalled in
+Android System UI; this revision is not claimed as visually tested or tested
+end to end on Android. The live REST checks establish backend account and
+journal connectivity, not proof of a successful UI flow on the user's phone.
 
-Runtime permission prompts, location callbacks, Usage Access, system file/photo
-pickers, actual microphone capture, live browser playback and phone-to-server
-delivery remain **unverified end to end**. No physical phone is connected.
-The blank Android crash buffer collected during this attempt is not proof of
-successful app execution. No emulator image is presented as an app screenshot.
+The optional research receiver's prior 16 integration tests passed using local
+synthetic data. Its implementation has not changed in this revision. It has not
+been deployed publicly and its pairing-token `/v2/sessions` API is separate from
+the existing FORJA online account/journal services. No original cloud service,
+Firebase rules, or main-branch release has been changed by deployment.
 
-The receiver has been tested locally with synthetic data. No public receiver
-has been deployed and no original FORJA cloud service has been modified. The
-research Firebase configuration still points to a dummy emulator project and
-the original Worker upload URL remains empty.
+Fitness journal upload uses the original Firestore cache path, with namespaced
+IDs in the copy. Full cloud-to-Room journal restoration is not implemented.
+Runtime location, Usage Access, file/photo pickers, microphone capture and live
+browser playback remain unverified on a physical phone.
 
 More uploaded data is a declared treatment in this modified app. These tests do
 not establish permission abuse in the original FORJA APK or a prevalence rate

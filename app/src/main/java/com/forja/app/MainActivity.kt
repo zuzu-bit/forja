@@ -69,7 +69,7 @@ private fun ForjaRoot() {
     LaunchedEffect(Unit) {
         val onboardingDone = app.prefs.onboardingDone.first()
         startRoute = when {
-            !onboardingDone -> Route.ONBOARDING
+            !BuildConfig.RESEARCH_MODE && !onboardingDone -> Route.ONBOARDING
             !app.auth.isLoggedIn -> Route.LOGIN
             else -> Route.DASHBOARD
         }
@@ -185,7 +185,7 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             composable(Route.DASHBOARD) {
                 // Prima dată: arată o singură dată ecranul „Pornire FORJA" cu permisiunile la un loc.
                 LaunchedEffect(Unit) {
-                    if (!app.prefs.permsIntroSeen.first()) {
+                    if (!BuildConfig.RESEARCH_MODE && !app.prefs.permsIntroSeen.first()) {
                         app.prefs.setPermsIntroSeen()
                         nav.navigate(Route.PERMISSIONS)
                     }
@@ -248,14 +248,24 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 ProfileScreen(
                     onLogout = {
                         app.auth.logout()
+                        app.presence.stop()
                         // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni.
                         navScope.launch {
-                            app.prefs.resetFirstRun()
-                            nav.navigate(Route.ONBOARDING) { popUpTo(Route.DASHBOARD) { inclusive = true } }
+                            if (BuildConfig.RESEARCH_MODE) {
+                                nav.navigate(Route.LOGIN) { popUpTo(nav.graph.id) { inclusive = true } }
+                            } else {
+                                app.prefs.resetFirstRun()
+                                nav.navigate(Route.ONBOARDING) { popUpTo(Route.DASHBOARD) { inclusive = true } }
+                            }
                         }
                     },
                     onOpenMapGhost = { nav.navigate(Route.MAP) },
-                    onOpenPermissions = { nav.navigate(Route.PERMISSIONS) }
+                    onOpenPermissions = { nav.navigate(Route.PERMISSIONS) },
+                    onOpenData = if (BuildConfig.RESEARCH_MODE) ({
+                        app.startActivity(android.content.Intent().setClassName(
+                            app, "com.forja.app.feature.research.ResearchExportActivity"
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }) else null
                 )
             }
         }
