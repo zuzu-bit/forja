@@ -20,6 +20,7 @@ android {
         vectorDrawables { useSupportLibrary = true }
         // Serverul central FORJA — injectat de CI după deploy; gol = căile locale.
         buildConfigField("String", "FORJA_API_URL", "\"${System.getenv("FORJA_API_URL") ?: ""}\"")
+        buildConfigField("boolean", "RESEARCH_MODE", "false")
     }
 
     signingConfigs {
@@ -34,6 +35,15 @@ android {
     buildTypes {
         debug {
             signingConfig = signingConfigs.getByName("debug")
+        }
+        create("research") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".research"
+            versionNameSuffix = "-research"
+            matchingFallbacks += listOf("debug")
+            buildConfigField("boolean", "RESEARCH_MODE", "true")
+            // Research uploads are manual and use the endpoint shown in the preview screen.
+            buildConfigField("String", "FORJA_API_URL", "\"\"")
         }
         release {
             isMinifyEnabled = false

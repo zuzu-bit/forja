@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application android:label="FORJA Research"
+        android:networkSecurityConfig="@xml/research_network_security"
+        tools:replace="android:label">
+        <activity android:name=".MainActivity" android:exported="false" tools:replace="android:exported">
+            <intent-filter tools:node="removeAll" />
+        </activity>
+        <activity android:name=".feature.research.ResearchExportActivity"
+            android:exported="true" android:label="FORJA Research">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <receiver android:name=".core.location.BootReceiver" android:enabled="false" />
+        <activity android:name=".feature.focus.FocusBlockActivity"
+            android:taskAffinity="${applicationId}.focusblock" tools:replace="android:taskAffinity" />
+        <activity android:name=".core.detox.DetoxBlockActivity"
+            android:taskAffinity="${applicationId}.detoxblock" tools:replace="android:taskAffinity" />
+    </application>
+</manifest>

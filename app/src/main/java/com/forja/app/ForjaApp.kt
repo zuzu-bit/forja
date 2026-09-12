@@ -13,6 +13,7 @@ import com.forja.app.core.network.ForjaApi
 import com.forja.app.core.network.GeminiFood
 import com.forja.app.core.network.OpenFoodFacts
 import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.firestoreSettings
 import com.google.firebase.firestore.persistentCacheSettings
@@ -47,6 +48,10 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         FirebaseFirestore.getInstance().firestoreSettings = firestoreSettings {
             setLocalCacheSettings(persistentCacheSettings { })
         }
+        if (BuildConfig.RESEARCH_MODE) {
+            FirebaseAuth.getInstance().useEmulator("10.0.2.2", 9099)
+            FirebaseFirestore.getInstance().useEmulator("10.0.2.2", 8080)
+        }
         db = ForjaDatabase.get(this)
         prefs = Prefs(this)
         auth = AuthRepository()
@@ -55,6 +60,13 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         foodApi = OpenFoodFacts()
         geminiFood = GeminiFood()
         forjaApi = ForjaApi()
+
+        if (BuildConfig.RESEARCH_MODE) {
+            createChannels()
+            appScope.launch { Seed.ensure(db) }
+            // Start no location, gallery, media-refresh or reminder tasks in the lab build.
+            return
+        }
 
         // Locația în fundal (dacă utilizatorul a activat-o și permisiunea există).
         com.forja.app.core.location.BgLocation.registerIfReady(this)
