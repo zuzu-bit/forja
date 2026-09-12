@@ -23,6 +23,28 @@ jobs:
         run: node --test research-server/server.test.mjs
       - name: Build FORJA online copy
         run: bash ./gradlew assembleResearch testResearchUnitTest --console=plain
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Verify Android startup
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: python3 scripts/android_startup_check.py
+      - name: Keep startup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FORJA-Startup-Evidence
+          path: startup-evidence/
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: FORJA-Research-APK
