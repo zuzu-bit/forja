@@ -34,6 +34,23 @@ account and recording epoch. There are at most five local recording files. Faile
 copies can be retried or deleted in the pairing settings. Deleting the local copy
 does not delete a previously received server copy.
 
+Version 3.7-online.12 preserves an upload as pending when WorkManager stops it
+because of connectivity or scheduling constraints. This is distinct from account
+revocation. Transient errors retry within the seven-day upload acceptance window;
+HTTP failures are explained in both phone settings and the own-account web status.
+Completed uploads use expedited work on Android 12+ with ordinary-work fallback.
+Opening FORJA resumes pending uploads and retries eligible failed uploads once
+after an app update, without starting the microphone. The v41 OS-stop cancellation
+bug is recovered only with the same owner, unchanged recording epoch, active web
+authorization and the exact old uploading message; revoked/deleted copies stay off.
+
+The web duration selector offers 5, 10 (default), 15, 30 and 60 minutes, plus X–Y
+scheduling. **Date primite → Înregistrări audio** lists received complete files
+with their actual start/end/duration, playback and download. Refreshes insert new
+cards without moving or recreating playing audio elements. Open session details
+no longer prevent newly uploaded sessions/items from appearing. The displayed
+24-hour expiry is server retention after receipt, never an audio capture duration.
+
 `POST /v2/sessions` with `mode: recording` requires audio-only consent.
 `POST /v2/sessions/{id}/recording` accepts `audio/mp4` and millisecond headers
 `X-Recorded-From` / `X-Recorded-To`. The server validates the container, audio-only

@@ -230,3 +230,27 @@ test('scheduled windows keep exact X/Y times and a new local grant invalidates o
   const renewed=await(await f.call('/internal/phone-sync','POST',{...p,grant:randomUUID()})).json();
   assert.equal(renewed.command,null);assert.equal(renewed.collection_enabled,false);assert.equal(renewed.revision,2);
 });
+
+test('phone upload status is bounded, account-scoped and remains compatible with v41 phones',async()=>{
+  const f=fixture(),p=phoneStatus();
+  const recording_transfer={id:randomUUID(),state:'pending',from:Date.now()-600000,duration_ms:600000,pending_count:1,message:'Salvată pe telefon. Trimiterea se reia automat.'};
+  const body={...p,recording_transfer,audio_status:'Înregistrare încheiată.'};
+  assert.equal((await f.call('/internal/phone-sync','POST',body)).status,200);
+  const out=(await(await f.call('/internal/phones')).json()).phones[0];assert.deepEqual(out.recording_transfer,recording_transfer);
+  assert.equal((await f.call('/internal/phone-sync','POST',body,'userB')).status,403);
+  for(const changes of [{pending_count:6},{duration_ms:86400000},{message:'x'.repeat(257)},{state:'hidden'},{extra:'private'}])
+    assert.equal((await f.call('/internal/phone-sync','POST',{...body,recording_transfer:{...recording_transfer,...changes}})).status,400);
+  assert.equal((await f.call('/internal/phone-sync','POST',{...body,audio_status:'x'.repeat(257)})).status,400);
+  const old=await(await f.call('/internal/phone-sync','POST',p)).json();assert.equal(old.recording_transfer,null);assert.equal(old.audio_status,'');
+});
+
+test('a recording held during intake pause can be uploaded and played after intake resumes',async()=>{
+  const f=fixture(),id=await recordingSession(f),headers=interval(),path='/v2/sessions/'+id;
+  await f.call('/internal/intake','POST',{accepting:false,revision:0});
+  assert.equal((await f.call(path+'/recording','POST',m4a,'userA',headers)).status,423);assert.equal(f.bucket.files.size,0);
+  await f.call('/internal/intake','POST',{accepting:true,revision:1});
+  const response=await f.call(path+'/recording','POST',m4a,'userA',headers);assert.equal(response.status,201);
+  const item=await response.json();const received=(await(await f.call('/v2/sessions')).json()).sessions[0];
+  assert.equal(received.items.length,1);assert.equal(received.items[0].item_id,item.item_id);
+  assert.deepEqual(Buffer.from(await(await f.call(path+'/items/'+item.item_id)).arrayBuffer()),m4a);
+});

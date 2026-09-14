@@ -11,15 +11,24 @@ export async function handlePhoneControl(request, storage, readJSON) {
   }
   if (path === '/internal/phone-sync' && request.method === 'POST') {
     const { value: v } = await readJSON(request, 4096);
-    keys(v, ['id', 'grant', 'name', 'foreground', 'audio_allowed', 'state', 'handled_command']);
+    const required = ['id', 'grant', 'name', 'foreground', 'audio_allowed', 'state', 'handled_command'];
+    keys(v, [...required, 'recording_transfer', 'audio_status'], required);
     if (!idPattern.test(v.id) || !idPattern.test(v.grant) || typeof v.name !== 'string' || v.name.length > 80 || typeof v.foreground !== 'boolean' || typeof v.audio_allowed !== 'boolean' || !states.includes(v.state) || (v.handled_command !== null && !idPattern.test(v.handled_command))) bad('Invalid phone status');
+    if (v.audio_status !== undefined && (typeof v.audio_status !== 'string' || v.audio_status.length > 256)) bad('Invalid audio status');
+    const transfer = v.recording_transfer ?? null;
+    if (transfer !== null) {
+      keys(transfer, ['id', 'state', 'from', 'duration_ms', 'pending_count', 'message']);
+      if (!idPattern.test(transfer.id) || !['recording','pending','uploading','uploaded','failed','cancelled','interrupted'].includes(transfer.state) || typeof transfer.message !== 'string' || transfer.message.length > 256) bad('Invalid recording transfer');
+      n(transfer.from); n(transfer.duration_ms, 0, 3602000); n(transfer.pending_count, 0, 5);
+    }
     const old = await storage.get('phone:' + v.id);
     if (!old && (await storage.list({ prefix: 'phone:' })).size >= 5) bad('Maximum five paired phones', 429);
     // The phone reports execution; a web click alone never means the microphone started.
     const sameGrant = old?.grant === v.grant;
     const phone = { id: v.id, grant: v.grant, name: v.name, foreground: v.foreground, audio_allowed: v.audio_allowed, state: v.state,
       handled_command: v.handled_command, seen_at: Date.now(), collection_enabled: sameGrant && old.collection_enabled,
-      revision: (old?.revision || 0) + (old && !sameGrant ? 1 : 0), command: sameGrant ? old.command : null };
+      revision: (old?.revision || 0) + (old && !sameGrant ? 1 : 0), command: sameGrant ? old.command : null,
+      recording_transfer: transfer, audio_status: v.audio_status || '' };
     await storage.put('phone:' + phone.id, phone);
     return reply({ ...phone, server_at: Date.now() });
   }

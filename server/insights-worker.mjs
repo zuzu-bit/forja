@@ -18,7 +18,7 @@ export default {
       } });
     }
     if (request.method === 'GET' && path === '/insights/app.js') return new Response(client, { headers: { 'content-type':'text/javascript; charset=utf-8', 'cache-control':'no-cache', 'x-content-type-options':'nosniff' } });
-    if (request.method === 'GET' && path === '/health') return reply({ ok:true, service:'forja-insights', version:3 });
+    if (request.method === 'GET' && path === '/health') return reply({ ok:true, service:'forja-insights', version:4 });
     if (!path.startsWith('/v2/') && !path.startsWith('/insights/api/')) return reply({error:'Not found'},404);
     const auth = request.headers.get('Authorization') || ''; let uid;
     try {
