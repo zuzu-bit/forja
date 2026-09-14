@@ -1,3 +1,6 @@
+import { checkRecording, RECORDING_MAX_BYTES } from './recording-schema.mjs';
+import { handlePhoneControl } from './phone-control.mjs';
+import { handleAppContent, defaultIntake } from './app-content.mjs';
 import { TTL, idPattern, categories, bad, keys, n, validatePhoneData } from './phone-schema.mjs';
 
 const MAX_SESSION = 32 * 1024 * 1024;
@@ -39,12 +42,15 @@ function checkWav(b) {
 /** One Durable Object per verified Firebase UID. The Worker replaces the internal owner header. */
 export class InsightsAccount {
   constructor(ctx, env) { this.ctx = ctx; this.env = env; }
-  fetch(request) {
-    // External R2 I/O must finish before another mutation may change the metadata.
-    return this.ctx.blockConcurrencyWhile(async () => {
-      try { return await this.handle(request); }
-      catch (e) { return reply({ error: e.status ? e.message : 'Storage operation failed' }, e.status || 500); }
-    });
+  async fetch(request) {
+    let upload = false;
+    try {
+      const isRecording = request.method === 'POST' && /^\/v2\/sessions\/[^/]+\/recording$/.test(new URL(request.url).pathname);
+      if (isRecording) { if (this.uploadingRecording) bad('Retry shortly',429); this.uploadingRecording = true; upload = true; }
+      const bytes = isRecording ? await readBytes(request, RECORDING_MAX_BYTES) : null;
+      return await this.ctx.blockConcurrencyWhile(() => this.handle(request, bytes));
+    } catch(e) { return reply({ error:e.status?e.message:'Storage operation failed' },e.status||500); }
+    finally { if(upload) this.uploadingRecording=false; }
   }
   async remove(record) {
     let cursor;
@@ -56,6 +62,9 @@ export class InsightsAccount {
     await this.ctx.storage.delete(['session:' + record.session_id, 'data:' + record.session_id]);
   }
   async sweep() {
+    for (const [key, until] of await this.ctx.storage.list({ prefix: 'deleted:' })) {
+      if (until <= Date.now()) await this.ctx.storage.delete(key);
+    }
     const records = await this.ctx.storage.list({ prefix: 'session:' });
     let next = Infinity;
     for (const r of records.values()) {
@@ -65,15 +74,24 @@ export class InsightsAccount {
   }
   async alarm() { await this.ctx.blockConcurrencyWhile(() => this.sweep()); }
   publicRecord(r) { const { prefix, ...rest } = r; return rest; }
-  async handle(request) {
+  async handle(request, recordingBytes = null) {
     const uid = request.headers.get('x-forja-owner');
     if (!uid || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) bad('Invalid owner', 403);
     const owner = await this.ctx.storage.get('owner');
     if (owner && owner !== uid) bad('Wrong owner', 403);
     if (!owner) await this.ctx.storage.put('owner', uid);
+    const contentResponse = await handleAppContent(request, this.ctx.storage, readJSON);
+    if (contentResponse) return contentResponse;
+    const phoneResponse = await handlePhoneControl(request, this.ctx.storage, readJSON);
+    if (phoneResponse) return phoneResponse;
     if (!this.env.RECORDS) bad('Storage unavailable', 503);
     await this.sweep();
     const url = new URL(request.url); const path = url.pathname;
+    // Server intake is independent of phone permissions and cannot start a sensor.
+    if (request.method === 'POST' && (path === '/v2/sessions' || /^\/v2\/sessions\/[^/]+\/(data|items|recording)$/.test(path))) {
+      const intake = await this.ctx.storage.get('intake') || defaultIntake();
+      if (!intake.accepting) return reply({ error: 'Primirea datelor este oprită din panoul web.', code: 'intake_paused' }, 423);
+    }
     if (path === '/internal/ai-budget' && request.method === 'POST') {
       const day = Math.floor(Date.now() / TTL); const old = await this.ctx.storage.get('ai-budget');
       const budget = old?.day === day ? old : { day, used: 0, last: 0 };
@@ -87,11 +105,13 @@ export class InsightsAccount {
       if (request.method !== 'POST') bad('Method not allowed', 405);
       const { value } = await readJSON(request, 4096);
       keys(value, ['session_id', 'consent', 'mode'], ['session_id', 'consent']); keys(value.consent, categories);
-      if (value.mode !== undefined && value.mode !== 'automatic') bad('Invalid session mode');
+      if (value.mode !== undefined && !['automatic','recording'].includes(value.mode)) bad('Invalid session mode');
       if (!idPattern.test(value.session_id) || categories.some(k => typeof value.consent[k] !== 'boolean') || !categories.some(k => value.consent[k])) bad('Invalid consent');
+      if (await this.ctx.storage.get('deleted:' + value.session_id)) bad('Session was deleted', 410);
+      if (value.mode === 'recording' && categories.some(k => value.consent[k] !== (k === 'audio'))) bad('Audio-only recording consent required');
       const same = existing.find(r => r.session_id === value.session_id);
       if (same) {
-        if (same.mode === 'automatic' && value.mode === 'automatic' && categories.every(k => same.consent[k] === value.consent[k])) return reply(this.publicRecord(same));
+        if (['automatic','recording'].includes(same.mode) && same.mode === value.mode && categories.every(k => same.consent[k] === value.consent[k])) return reply(this.publicRecord(same));
         bad('Session already exists', 409);
       }
       if (existing.length >= 20) bad('Delete an older session first (maximum 20).', 429);
@@ -100,13 +120,16 @@ export class InsightsAccount {
       await this.ctx.storage.put('session:' + record.session_id, record); await this.sweep();
       return reply(this.publicRecord(record), 201);
     }
-    const match = /^\/v2\/sessions\/([^/]+)(?:\/(data|items|observation)(?:\/([^/]+))?)?$/.exec(path);
+    const match = /^\/v2\/sessions\/([^/]+)(?:\/(data|items|observation|recording)(?:\/([^/]+))?)?$/.exec(path);
     if (!match || !idPattern.test(match[1])) bad('Not found', 404);
     const id = match[1]; const record = await this.ctx.storage.get('session:' + id);
     if (!record) bad('Session not found', 404);
     if (!match[2]) {
       if (request.method === 'GET') return reply(this.publicRecord(record));
-      if (request.method === 'DELETE') { await this.remove(record); return reply({ deleted: true }); }
+      if (request.method === 'DELETE') {
+        await this.ctx.storage.put('deleted:' + id, Date.now() + 7 * TTL);
+        await this.remove(record); return reply({ deleted: true });
+      }
     }
     if (match[2] === 'data' && !match[3]) {
       if (request.method === 'GET') {
@@ -114,6 +137,7 @@ export class InsightsAccount {
         return new Response(bytes, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
       }
       if (request.method === 'POST') {
+        if (record.mode === 'recording') bad('Complete recording endpoint required');
         if (record.data && record.mode !== 'automatic') bad('Metrics already uploaded', 409);
         const { bytes, value } = await readJSON(request); validatePhoneData(value, record.consent);
         const receipt = await digest(bytes); record.bytes += bytes.length - (record.data?.bytes || 0); record.data = receipt; record.updated_at = Date.now();
@@ -121,6 +145,16 @@ export class InsightsAccount {
         await this.ctx.storage.put({ ['data:' + id]: bytes, ['session:' + id]: record });
         return reply(receipt, 201);
       }
+    }
+    if(match[2]==='recording' && !match[3] && request.method==='POST') {
+      if(record.mode!=='recording' || !record.consent.audio) bad('Recording session required',403);
+      if(request.headers.get('content-type')?.split(';')[0]!=='audio/mp4') bad('M4A required',415);
+      const from=Number(request.headers.get('x-recorded-from')),to=Number(request.headers.get('x-recorded-to'));
+      const bytes=recordingBytes ?? await readBytes(request,RECORDING_MAX_BYTES),duration_ms=checkRecording(bytes,from,to),receipt=await digest(bytes);
+      if(record.items.length) { const old=record.items[0];if(old.sha256===receipt.sha256 && old.recorded_from===from && old.recorded_to===to)return reply(old);bad('Recording already uploaded',409); }
+      const item={item_id:crypto.randomUUID(),kind:'audio',sequence:0,name:'FORJA-'+new Date(from).toISOString().replace(/[:.]/g,'-')+'.m4a',media_type:'audio/mp4',recorded_from:from,recorded_to:to,duration_ms,...receipt,received_at:Date.now()};
+      await this.env.RECORDS.put(record.prefix+item.item_id,bytes,{httpMetadata:{contentType:'application/octet-stream'}});
+      record.items.push(item);record.bytes=bytes.length;record.updated_at=Date.now();await this.ctx.storage.put('session:'+id,record);return reply(item,201);
     }
     // This path is only forwarded by the Worker's authenticated AI handler.
     if (match[2] === 'observation' && request.method === 'POST' && !match[3]) {
@@ -138,6 +172,7 @@ export class InsightsAccount {
         return new Response(object.body, { headers: { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${item.item_id}.bin"`, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
       }
       if (request.method === 'POST' && !match[3]) {
+        if(record.mode==='recording')bad('Complete recording endpoint required');
         const kind = url.searchParams.get('kind'); const flag = { file: 'files', photo: 'photos', audio: 'audio' }[kind];
         if (!flag || !record.consent[flag]) bad('No consent for this item');
         if (!/^\d+$/.test(url.searchParams.get('sequence') || '')) bad('Sequence required');

@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { InsightsAccount } from './insights-store.mjs';
 import { buildEvidence, validateRecommendations, loadJournals, internalRequest, parsedJSON, recommendationFormat } from './insights-ai.mjs';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { handleInsights } from './insights-ai.mjs';
+import { checkRecording } from './recording-schema.mjs';
+import { campaignFields } from './app-content.mjs';
 class MemoryStorage {
   values=new Map(); alarm=null;
   async get(k){return structuredClone(this.values.get(k));}
@@ -84,4 +88,145 @@ test('replaced selected files cannot retain AI observations from older content',
   await f.call(path+'/observation','POST',{item_id:item.item_id,text:'old content',model:'test'});
   assert.equal((await f.call(path+'/items?kind=file&sequence=0','POST',new Uint8Array([2,3]))).status,201);
   const record=await(await f.call(path)).json();assert.equal(record.observations.length,0);assert.equal(record.bytes,2);assert.equal(f.bucket.files.size,1);
+});
+
+const ad = { title: 'O idee pentru weekend', body: 'Descoperă oferta atelierului.', sponsor: 'Atelier', cta: '', url: '', published: false };
+test('campaign drafts, publication and withdrawal are isolated to the owner', async () => {
+  const f=fixture(), other=fixture(), id=randomUUID();
+  let r=await f.call('/internal/campaigns','POST',{id,revision:0,content:ad});
+  assert.equal(r.status,201); assert.equal((await r.json()).label,'Publicitate');
+  assert.equal((await(await f.call('/internal/app-feed')).json()).campaigns.length,0);
+  assert.equal((await f.call('/internal/campaigns','POST',{id,revision:0,content:{...ad,published:true}})).status,409);
+  assert.equal((await f.call('/internal/campaigns','POST',{id,revision:1,content:{...ad,published:true}})).status,200);
+  assert.equal((await(await f.call('/internal/app-feed')).json()).campaigns[0].id,id);
+  assert.equal((await f.call('/internal/app-feed','GET',undefined,'userB')).status,403);
+  assert.equal((await(await other.call('/internal/app-feed','GET',undefined,'userB')).json()).campaigns.length,0);
+  assert.equal((await f.call('/internal/campaigns/'+id+'?revision=1','DELETE')).status,409);
+  await f.call('/internal/campaigns','POST',{id,revision:2,content:ad});
+  assert.equal((await(await f.call('/internal/app-feed')).json()).campaigns.length,0);
+  assert.equal((await f.call('/internal/campaigns/'+id+'?revision=3','DELETE')).status,200);
+});
+test('campaigns reject unsafe links, unknown targeting and missing sponsorship',()=>{
+  for(const url of ['javascript:alert(1)','http://example.com','https://user:pass@example.com','https://localhost']) assert.throws(()=>campaignFields({...ad,url,cta:'Vezi'}));
+  assert.throws(()=>campaignFields({...ad,sponsor:''}));
+  assert.throws(()=>campaignFields({...ad,health_target:'sleep'}));
+  assert.throws(()=>campaignFields({...ad,cta:'Vezi'}));
+  assert.equal(campaignFields({...ad,url:'https://example.com/offer',cta:'Vezi'}).url,'https://example.com/offer');
+});
+test('AI ad drafts use only the creator brief and never auto-publish or read journals',async()=>{
+  const requests=[], runs=[];
+  const env={ INSIGHTS:{idFromName:name=>name,get:name=>({fetch:async request=>{requests.push([name,new URL(request.url).pathname,request.headers.get('x-forja-owner')]);return Response.json({ok:true});}})},
+    AI:{run:async(model,input)=>{runs.push(input);return {response:{title:'Atelier de desen',body:'Descoperă atelierul de desen.'}};}} };
+  const body={brief:'Atelier de desen în weekend.',sponsor:'Atelier'};
+  const r=await handleInsights(new Request('https://test/insights/api/campaign-draft',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),env,'userA');
+  assert.deepEqual(await r.json(),{draft:{title:'Atelier de desen',body:'Descoperă atelierul de desen.'},published:false});
+  assert.deepEqual(requests,[['account:userA','/internal/ai-budget','userA']]);
+  assert.deepEqual(JSON.parse(runs[0].messages[1].content),body);
+});
+test('server intake pause blocks all new data while reads, deletion and app content remain usable',async()=>{
+  const f=fixture(),id=await session(f,'files');
+  assert.equal((await f.call('/internal/intake','POST',{accepting:false,revision:0})).status,200);
+  assert.equal((await f.call('/internal/intake','POST',{accepting:true,revision:0})).status,409);
+  assert.equal((await f.call('/v2/sessions','POST',{session_id:randomUUID(),consent:consent('location')})).status,423);
+  for(const suffix of ['data','items?kind=file&sequence=0','recording']) assert.equal((await f.call('/v2/sessions/'+id+'/'+suffix,'POST',new Uint8Array([1]))).status,423);
+  assert.equal((await f.call('/v2/sessions')).status,200);
+  assert.equal((await f.call('/internal/app-feed')).status,200);
+  assert.equal((await f.call('/v2/sessions/'+id,'DELETE')).status,200);
+  assert.equal((await f.call('/internal/intake','POST',{accepting:true,revision:1})).status,200);
+  await session(f,'location');
+});
+const phoneStatus=(id=randomUUID())=>({id,grant:randomUUID(),name:'Telefon propriu',foreground:true,audio_allowed:true,state:'idle',handled_command:null});
+const command=(revision=0)=>({id:randomUUID(),action:'start',minutes:30,revision});
+test('web recording commands are owner-scoped, bounded, replay-safe and await phone acknowledgement',async()=>{
+  const f=fixture(),p=phoneStatus(),c=command();
+  assert.equal((await f.call('/internal/phones/'+p.id+'/command','POST',c)).status,404);
+  assert.equal((await f.call('/internal/phone-sync','POST',p)).status,200);
+  const path='/internal/phones/'+p.id+'/command';
+  let r=await f.call(path,'POST',c);assert.equal(r.status,200);let out=await r.json();
+  assert.equal(out.state,'idle');assert.equal(out.handled_command,null);assert.equal(out.command.stop_at-out.command.requested_at,30*60000);
+  assert.equal(out.command.start_before-out.command.requested_at,30000);
+  assert.equal((await f.call(path,'POST',c)).status,200);
+  assert.equal((await f.call(path,'POST',{...c,minutes:60})).status,409);
+  assert.equal((await f.call(path,'POST',command(1))).status,409);
+  assert.equal((await f.call(path,'POST',c,'userB')).status,403);
+  await f.call('/internal/phone-sync','POST',{...p,handled_command:c.id,state:'recording'});
+  out=(await(await f.call('/internal/phones')).json()).phones[0];assert.equal(out.state,'recording');assert.equal(out.handled_command,c.id);
+  const stale=await f.storage.get('phone:'+p.id);stale.seen_at=Date.now()-60000;await f.storage.put('phone:'+p.id,stale);
+  const stop=await f.call(path,'POST',{...command(1),action:'stop'});assert.equal(stop.status,200);assert.equal((await stop.json()).state,'recording');
+});
+test('a microphone start is rejected without recent visible-phone consent and valid duration',async()=>{
+  for(const changes of [{audio_allowed:false},{foreground:false},{state:'recording'}]) {
+    const f=fixture(),p={...phoneStatus(),...changes};await f.call('/internal/phone-sync','POST',p);
+    assert.ok([403,409].includes((await f.call('/internal/phones/'+p.id+'/command','POST',command())).status));
+  }
+  const f=fixture(),p=phoneStatus();await f.call('/internal/phone-sync','POST',p);
+  for(const minutes of [0,61,2.5,'30']) assert.equal((await f.call('/internal/phones/'+p.id+'/command','POST',{...command(),minutes})).status,400);
+  const old=await f.storage.get('phone:'+p.id);old.seen_at-=26000;await f.storage.put('phone:'+p.id,old);
+  assert.equal((await f.call('/internal/phones/'+p.id+'/command','POST',command())).status,409);
+  const other=fixture();assert.equal((await other.call('/internal/phones/'+p.id+'/command','POST',command(),'userB')).status,404);
+});
+test('phone collection grants remain separate from Android consent and resist stale web updates',async()=>{
+  const f=fixture(),p=phoneStatus();await f.call('/internal/phone-sync','POST',p);
+  const path='/internal/phones/'+p.id+'/collection';
+  assert.equal((await f.call(path,'POST',{enabled:true,revision:0})).status,200);
+  const synced=await(await f.call('/internal/phone-sync','POST',p)).json();assert.equal(synced.collection_enabled,true);assert.equal(synced.revision,1);
+  assert.equal((await f.call(path,'POST',{enabled:false,revision:0})).status,409);
+  assert.equal((await f.call(path,'POST',{enabled:false,revision:1})).status,200);
+  assert.equal((await f.call('/internal/phone-sync','POST',{...p,collection_enabled:true})).status,400);
+});
+test('Worker forwarding replaces an untrusted account header on phone/content routes',async()=>{
+  const f=fixture();const env={INSIGHTS:{idFromName:name=>{assert.equal(name,'account:userA');return name;},get:()=>f.object}};
+  const r=await handleInsights(new Request('https://test/insights/api/phone-sync',{method:'POST',headers:{'content-type':'application/json','x-forja-owner':'userB'},body:JSON.stringify(phoneStatus())}),env,'userA');
+  assert.equal(r.status,200);assert.equal(await f.storage.get('owner'),'userA');
+});
+const m4a=readFileSync(new URL('./fixtures/two-minutes-silence.m4a',import.meta.url));
+async function recordingSession(f){const id=randomUUID();assert.equal((await f.call('/v2/sessions','POST',{session_id:id,consent:consent('audio'),mode:'recording'})).status,201);return id;}
+const interval=()=>{const to=Date.now()-1000;return {'content-type':'audio/mp4','x-recorded-from':String(to-120000),'x-recorded-to':String(to)};};
+test('one complete two-minute AAC recording survives byte-for-byte retrieval and idempotent retry',async()=>{
+  const f=fixture(),id=await recordingSession(f),headers=interval(),path='/v2/sessions/'+id;
+  let r=await f.call(path+'/recording','POST',m4a,'userA',headers);assert.equal(r.status,201);const receipt=await r.json();
+  assert.ok(Math.abs(receipt.duration_ms-120000)<1000);assert.equal(receipt.media_type,'audio/mp4');assert.equal(receipt.bytes,m4a.length);
+  r=await f.call(path+'/recording','POST',m4a,'userA',headers);assert.equal(r.status,200);assert.equal((await r.json()).item_id,receipt.item_id);
+  const download=await f.call(path+'/items/'+receipt.item_id);assert.deepEqual(Buffer.from(await download.arrayBuffer()),m4a);
+  assert.equal((await(await f.call(path)).json()).items.length,1);
+  assert.equal((await f.call(path+'/recording','POST',m4a,'userA',{...headers,'x-recorded-to':String(Number(headers['x-recorded-to'])+1)})).status,409);
+  assert.equal((await f.call(path+'/items?kind=audio&sequence=0','POST',wav())).status,400);
+  assert.equal((await f.call(path+'/data','POST',{})).status,400);
+});
+test('M4A validation rejects false time ranges, video and external data references',()=>{
+  const to=Date.now(),from=to-120000;
+  assert.throws(()=>checkRecording(m4a,from,to-60000));assert.throws(()=>checkRecording(m4a,to-3603000,to));
+  assert.throws(()=>checkRecording(m4a.subarray(0,m4a.length-20),from,to));
+  const video=Buffer.from(m4a);video.write('vide',video.indexOf('soun'));assert.throws(()=>checkRecording(video,from,to));
+  const external=Buffer.from(m4a);external.writeUInt32BE(0,external.indexOf('url ')+4);assert.throws(()=>checkRecording(external,from,to));
+});
+test('a slow recording upload does not lock phone controls or override intake pause',async()=>{
+  const f=fixture(),id=await recordingSession(f);let release;
+  const stream=new ReadableStream({start(controller){release=()=>{controller.enqueue(m4a);controller.close();};}});
+  const pending=f.object.fetch(new Request('https://test/v2/sessions/'+id+'/recording',{method:'POST',headers:{'x-forja-owner':'userA',...interval()},body:stream,duplex:'half'}));
+  assert.equal((await f.call('/internal/intake','POST',{accepting:false,revision:0})).status,200);
+  assert.equal((await f.call('/v2/sessions/'+id+'/recording','POST',m4a,'userA',interval())).status,429);
+  release();assert.equal((await pending).status,423);assert.equal(f.bucket.files.size,0);
+});
+test('deleting a session while recording bytes arrive cannot recreate its record',async()=>{
+  const f=fixture(),id=await recordingSession(f);let release;
+  const stream=new ReadableStream({start(controller){release=()=>{controller.enqueue(m4a);controller.close();};}});
+  const pending=f.object.fetch(new Request('https://test/v2/sessions/'+id+'/recording',{method:'POST',headers:{'x-forja-owner':'userA',...interval()},body:stream,duplex:'half'}));
+  assert.equal((await f.call('/v2/sessions/'+id,'DELETE')).status,200);release();assert.equal((await pending).status,404);assert.equal(f.bucket.files.size,0);
+});
+
+test('an automatic retry cannot recreate a recording explicitly deleted from the web',async()=>{
+  const f=fixture(),id=await recordingSession(f);await f.call('/v2/sessions/'+id,'DELETE');
+  assert.equal((await f.call('/v2/sessions','POST',{session_id:id,consent:consent('audio'),mode:'recording'})).status,410);
+});
+
+test('scheduled windows keep exact X/Y times and a new local grant invalidates old commands',async()=>{
+  const f=fixture(),p=phoneStatus();await f.call('/internal/phone-sync','POST',p);
+  const start_at=Date.now()+60000,stop_at=start_at+15*60000,body={...command(),minutes:15,start_at,stop_at};
+  const path='/internal/phones/'+p.id+'/command';const response=await f.call(path,'POST',body);assert.equal(response.status,200);
+  const saved=await response.json();assert.equal(saved.command.start_at,start_at);assert.equal(saved.command.stop_at,stop_at);
+  assert.equal((await f.call(path,'POST',body)).status,200);
+  assert.equal((await f.call(path,'POST',{...body,stop_at:stop_at+60000})).status,409);
+  const renewed=await(await f.call('/internal/phone-sync','POST',{...p,grant:randomUUID()})).json();
+  assert.equal(renewed.command,null);assert.equal(renewed.collection_enabled,false);assert.equal(renewed.revision,2);
 });

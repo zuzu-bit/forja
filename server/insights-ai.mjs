@@ -1,3 +1,4 @@
+import { campaignBrief, validateCampaignDraft, CAMPAIGN_SYSTEM } from './app-content.mjs';
 import { reply, readJSON } from './insights-store.mjs';
 import { bad, idPattern } from './phone-schema.mjs';
 
@@ -102,6 +103,26 @@ const SYSTEM = `Ești FORJA, un asistent de recomandări pentru timp liber și c
 export async function handleInsights(request, env, uid) {
   if (!env.INSIGHTS) bad('Panoul online nu este configurat încă.', 503);
   const url = new URL(request.url); const stub = accountStub(env, uid);
+  if (url.pathname === '/insights/api/capabilities' && request.method === 'GET') return reply({ recording: {version:1,media_type:'audio/mp4',max_duration_ms:3600000,max_bytes:30*1024*1024} });
+  const contentPaths = { '/insights/api/campaigns': '/internal/campaigns', '/insights/api/app-feed': '/internal/app-feed', '/insights/api/intake': '/internal/intake', '/insights/api/phones': '/internal/phones', '/insights/api/phone-sync': '/internal/phone-sync' };
+  let internalPath = contentPaths[url.pathname];
+  if (/^\/insights\/api\/campaigns\/[0-9a-f-]+$/.test(url.pathname) && request.method === 'DELETE') internalPath = url.pathname.replace('/insights/api/', '/internal/') + url.search;
+  if (/^\/insights\/api\/phones\/[0-9a-f-]+\/(command|collection)$/.test(url.pathname) && request.method === 'POST') internalPath = url.pathname.replace('/insights/api/', '/internal/');
+  if (internalPath) {
+    const headers = new Headers(request.headers); headers.set('x-forja-owner', uid);
+    return await stub.fetch(new Request('https://internal' + internalPath, { method: request.method, headers, ...(request.body ? { body: request.body, duplex: 'half' } : {}) }));
+  }
+  if (url.pathname === '/insights/api/campaign-draft' && request.method === 'POST') {
+    const { value } = await readJSON(request, 8192);
+    const brief = campaignBrief(value);
+    if (!env.AI) bad('Serviciul AI nu este disponibil.', 503);
+    await internalJSON(stub, uid, '/internal/ai-budget', 'POST', {});
+    let result;
+    try { result = await env.AI.run(TEXT_MODEL, { messages: [{ role: 'system', content: CAMPAIGN_SYSTEM }, { role: 'user', content: JSON.stringify(brief) }],
+      response_format: { type: 'json_schema', json_schema: { type: 'object', additionalProperties: false, required: ['title','body'], properties: { title: { type: 'string', maxLength: 100 }, body: { type: 'string', maxLength: 500 } } } }, max_tokens: 500, temperature: 0.3 }); }
+    catch { bad('AI nu răspunde acum. Poți scrie reclama direct în editor.', 503); }
+    return reply({ draft: validateCampaignDraft(parsedJSON(result.response)), published: false });
+  }
   if (url.pathname === '/insights/api/state' && request.method === 'GET') {
     const [sessions, journals] = await Promise.all([
       internalJSON(stub, uid, '/v2/sessions'), loadJournals(uid, request.headers.get('Authorization').slice(7))

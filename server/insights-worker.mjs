@@ -18,7 +18,7 @@ export default {
       } });
     }
     if (request.method === 'GET' && path === '/insights/app.js') return new Response(client, { headers: { 'content-type':'text/javascript; charset=utf-8', 'cache-control':'no-cache', 'x-content-type-options':'nosniff' } });
-    if (request.method === 'GET' && path === '/health') return reply({ ok:true, service:'forja-insights', version:1 });
+    if (request.method === 'GET' && path === '/health') return reply({ ok:true, service:'forja-insights', version:3 });
     if (!path.startsWith('/v2/') && !path.startsWith('/insights/api/')) return reply({error:'Not found'},404);
     const auth = request.headers.get('Authorization') || ''; let uid;
     try {
@@ -29,7 +29,7 @@ export default {
     } catch { return reply({error:'Conectează-te cu contul FORJA.'},401); }
     try {
       if (path.startsWith('/insights/api/')) return await handleInsights(request, env, uid);
-      if (!/^\/v2\/sessions(?:\/[0-9a-f-]+(?:\/(?:data|items)(?:\/[0-9a-f-]+)?)?)?$/.test(path)) return reply({error:'Not found'},404);
+      if (!/^\/v2\/sessions(?:\/[0-9a-f-]+(?:\/(?:data|items|recording)(?:\/[0-9a-f-]+)?)?)?$/.test(path)) return reply({error:'Not found'},404);
       const headers = new Headers(request.headers); headers.set('x-forja-owner',uid);
       return await accountStub(env,uid).fetch(new Request(request,{headers}));
     } catch(e) { return reply({error:e.status?e.message:'Datele nu sunt disponibile acum.'},e.status||500); }
