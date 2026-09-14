@@ -1,0 +1,40 @@
+name: Deploy FORJA Insights
+on:
+  push:
+    branches: ['research/consented-data-export']
+    paths: ['server/**', '.github/workflows/insights-deploy.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: forja-insights-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npx wrangler deploy --dry-run -c wrangler.insights.toml
+      - name: Publish the account-scoped Insights service
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo 'CLOUDFLARE_API_TOKEN is unavailable to this workflow.'
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then unset CLOUDFLARE_ACCOUNT_ID; fi
+          if ! npx wrangler r2 bucket info forja-insights-data -c wrangler.insights.toml > /dev/null 2>&1; then
+            npx wrangler r2 bucket create forja-insights-data -c wrangler.insights.toml
+          fi
+          npx wrangler deploy -c wrangler.insights.toml

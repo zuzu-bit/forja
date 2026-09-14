@@ -49,6 +49,9 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         }
         db = ForjaDatabase.get(this)
         prefs = Prefs(this)
+        if (BuildConfig.RESEARCH_MODE) {
+            com.forja.app.core.data.CloudSync.configureCopy(this)
+        }
         auth = AuthRepository()
         friends = FriendsRepository()
         presence = PresenceRepository(this)
@@ -56,13 +59,19 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         geminiFood = GeminiFood()
         forjaApi = ForjaApi()
 
-        // Locația în fundal (dacă utilizatorul a activat-o și permisiunea există).
-        com.forja.app.core.location.BgLocation.registerIfReady(this)
-
-        // osmdroid: user agent + cache intern (fără permisiuni de stocare).
         Configuration.getInstance().userAgentValue = packageName
         Configuration.getInstance().osmdroidBasePath = getDir("osmdroid", MODE_PRIVATE)
         Configuration.getInstance().osmdroidTileCache = getDir("osmdroid_tiles", MODE_PRIVATE)
+
+        if (BuildConfig.RESEARCH_MODE) {
+            createChannels()
+            appScope.launch { Seed.ensure(db) }
+            // Start no location, gallery, media-refresh or reminder tasks in the lab build.
+            return
+        }
+
+        // Locația în fundal (dacă utilizatorul a activat-o și permisiunea există).
+        com.forja.app.core.location.BgLocation.registerIfReady(this)
 
         appScope.launch { Seed.ensure(db) }
         appScope.launch { com.forja.app.core.media.Media.refresh() }

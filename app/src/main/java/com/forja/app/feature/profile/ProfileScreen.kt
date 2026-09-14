@@ -26,7 +26,7 @@ import java.time.format.DateTimeFormatter
 
 /** Profil: identitate + controale oneste, nimic îngropat. Statistici reale din Room. */
 @Composable
-fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermissions: () -> Unit = {}) {
+fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermissions: () -> Unit = {}, onOpenData: (() -> Unit)? = null) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
     val scope = rememberCoroutineScope()
@@ -144,9 +144,18 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermis
         SectionLabel("Setări")
         Spacer(Modifier.height(10.dp))
 
+        onOpenData?.let { open ->
+            SettingRow(
+                "Panoul meu online",
+                "Date primite pe server și recomandări AI, cu același cont FORJA.",
+                onClick = { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(com.forja.app.BuildConfig.INSIGHTS_URL.trimEnd('/') + "/insights"))) }
+            ) { Text("deschide ↗", style = BodySmall.copy(color = Accent2)) }
+
+        }
+
         SettingRow(
-            "Permisiuni & pornire",
-            "Toate într-un singur loc — activează ce ai nevoie, ca aplicația să nu te mai întrebe prin ecrane.",
+            if (com.forja.app.BuildConfig.RESEARCH_MODE) "Permisiuni și sincronizare" else "Permisiuni & pornire",
+            if (com.forja.app.BuildConfig.RESEARCH_MODE) "Activează sau oprește colectarea automată și trimiterea în contul tău online." else "Toate permisiunile într-un singur loc.",
             onClick = onOpenPermissions
         ) { Text("deschide →", style = BodySmall.copy(color = Accent2)) }
 
@@ -180,7 +189,7 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermis
 
         // Locația în fundal — harta VIU trăiește și cu aplicația închisă.
         val bgShareOn by app.prefs.bgShareOn.collectAsState(initial = false)
-        SettingRow(
+        if (!com.forja.app.BuildConfig.RESEARCH_MODE) SettingRow(
             "Locație în fundal",
             if (com.forja.app.core.location.BgLocation.hasBackground(context))
                 "prietenii te văd mereu — fantoma e singura excepție"
@@ -232,8 +241,8 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermis
 
         SettingRow(
             "Date & confidențialitate",
-            "Jurnalele (mese, somn, activități) se sincronizează în contul tău FORJA. Pozele și clipurile audio NU se stochează — se analizează și dispar. Locația: doar prietenii, doar când nu ești fantomă.",
-            onClick = { toast.show("Pozele și sunetele nu se stochează nicăieri — se analizează și dispar.") }
+            "Mesele, somnul și activitățile salvate se trimit în contul tău online FORJA. Înregistrările de somn trimise serverului se păstrează până la 24 de ore. Categoriile activate în Permisiuni și sincronizare sunt colectate automat și trimise în contul tău online până la dezactivare.",
+            onClick = { toast.show("Cont online FORJA · jurnale în Firebase, analiză și înregistrări prin serverul FORJA.") }
         ) { }
 
         Spacer(Modifier.height(18.dp))

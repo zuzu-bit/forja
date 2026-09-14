@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <application android:label="FORJA"
+        android:networkSecurityConfig="@xml/research_network_security"
+        tools:replace="android:label">
+        <activity android:name=".feature.research.ResearchExportActivity"
+            android:exported="false" android:label="Permisiuni și sincronizare" />
+        <activity android:name=".feature.research.HealthExportActivity" android:exported="false" />
+        <service android:name=".feature.research.AutomaticCollectionService" android:exported="false"
+            android:foregroundServiceType="location|microphone|specialUse|dataSync">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled ongoing personal app-usage monitoring with selected-file sync, visible status and stop control" />
+        </service>
+        <receiver android:name=".core.location.BootReceiver" android:enabled="false" />
+        <activity android:name=".feature.focus.FocusBlockActivity"
+            android:taskAffinity="${applicationId}.focusblock" tools:replace="android:taskAffinity" />
+        <activity android:name=".core.detox.DetoxBlockActivity"
+            android:taskAffinity="${applicationId}.detoxblock" tools:replace="android:taskAffinity" />
+    </application>
+</manifest>

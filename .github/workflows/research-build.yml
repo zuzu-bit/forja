@@ -1,0 +1,59 @@
+name: Research build
+on:
+  push:
+    branches: ['research/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+      - name: Test receiver
+        run: node --test research-server/server.test.mjs server/insights.test.mjs
+      - name: Build FORJA online copy
+        run: bash ./gradlew assembleResearch testResearchUnitTest --console=plain
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Verify Android startup
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: |
+            python3 scripts/android_startup_check.py
+            bash ./gradlew connectedResearchAndroidTest --console=plain
+      - name: Keep startup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FORJA-Startup-Evidence
+          path: |
+            startup-evidence/
+            app/build/reports/androidTests/connected/
+            app/build/outputs/androidTest-results/connected/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FORJA-Research-APK
+          path: app/build/outputs/apk/research/app-research.apk
+          if-no-files-found: error
