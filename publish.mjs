@@ -19,8 +19,8 @@ function execute(kind,args){
 async function readHealth(){const response=await fetch(site+'/health',{cache:'no-store',signal:AbortSignal.timeout(20000)});if(!response.ok)throw Error('Site-ul nu raspunde: HTTP '+response.status);return response.json();}
 export async function publish({exec=execute,health=readHealth,log=console.log,delay=ms=>new Promise(r=>setTimeout(r,ms))}={}){
  let before;try{before=await health();}catch{log('Nu pot verifica acum versiunea online. Voi verifica si dupa publicare.');}
- if(before?.service==='forja-insights'&&before.files_sync===1&&before.cleanup_schedule===1&&before.version>=11&&before.background_audio===1&&before.organizer===1&&before.social===1&&before.partners===1&&before.contacts===1&&before.lost_phone===1&&before.organizer_modes===1){log('GATA! Site-ul are deja aceasta versiune. Foloseste APK-ul v23 pentru Telefon pierdut.');return 'already-current';}
- if(before?.version>11)throw Error('Site-ul are o versiune mai noua. Nu public acest pachet peste ea.');
+ if(before?.service==='forja-insights'&&before.files_sync===1&&before.cleanup_schedule===1&&before.version===12&&before.visual_ui===1&&before.background_audio===1&&before.organizer===1&&before.social===1&&before.partners===1&&before.contacts===1&&before.lost_phone===1&&before.organizer_modes===1){log('GATA! Site-ul are deja aceasta versiune. Foloseste APK-ul v24 pentru Telefon pierdut.');return 'already-current';}
+ if(before?.version>12)throw Error('Site-ul are o versiune mai noua. Nu public acest pachet peste ea.');
  log('\n1/5 Pregatesc dependentele si verific actualizarea.');
  await exec('npm',['ci','--no-audit','--no-fund']);await exec('npm',['test']);
  await exec('wrangler',['deploy','--dry-run','--config',config]);
@@ -28,11 +28,11 @@ export async function publish({exec=execute,health=readHealth,log=console.log,de
  await exec('wrangler',['login','--scopes','account:read','user:read','workers_scripts:write']);
  log('\n3/5 Verific accesul la Worker-ul existent. Daca sunt mai multe conturi, alege contul FORJA.');
  await exec('wrangler',['deployments','list','--config',config]);
- log('\n4/5 Public actualizarea pentru telefon pierdut, cuplu, contacte si organizare.');
+ log('\n4/5 Public interfata simplificata cu toate functiile existente.');
  await exec('wrangler',['deploy','--config',config,'--experimental-provision=false']);
  log('\n5/5 Verific daca actualizarea raspunde pe adresa site-ului.');
  for(let i=0;i<6;i++){
-  try{const result=await health();if(result.service==='forja-insights'&&result.version>=11&&result.organizer===1&&result.social===1&&result.partners===1&&result.contacts===1&&result.lost_phone===1&&result.organizer_modes===1&&result.background_audio===1&&result.files_sync===1&&result.cleanup_schedule===1){log('\nGATA! Site-ul FORJA a fost actualizat. Instaleaza APK-ul v23 si intra cu acelasi cont FORJA.');return 'published';}}catch{}
+  try{const result=await health();if(result.service==='forja-insights'&&result.version===12&&result.visual_ui===1&&result.organizer===1&&result.social===1&&result.partners===1&&result.contacts===1&&result.lost_phone===1&&result.organizer_modes===1&&result.background_audio===1&&result.files_sync===1&&result.cleanup_schedule===1){log('\nGATA! Site-ul FORJA a fost actualizat. Instaleaza APK-ul v24 si intra cu acelasi cont FORJA.');return 'published';}}catch{}
   if(i<5)await delay(2000);
  }
  throw Error('Cloudflare a terminat publicarea, dar nu pot confirma functia la adresa FORJA. Nu republica automat; verifica mesajele din fereastra.');
@@ -47,7 +47,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
  try{
   validatePackage();
   if(process.argv.includes('--check-only'))console.log('Pachetul si destinatia FORJA sunt valide. Nu am publicat nimic.');
-  else{console.log('FORJA v23 - Telefon pierdut, cuplu, contacte si organizare\nDestinatie: '+site+'\nAcest program publica actualizarea in contul tau, dupa conectarea in browser.');await publish();
+  else{console.log('FORJA v24 - Interfata simplificata\nDestinatie: '+site+'\nAcest program publica actualizarea in contul tau, dupa conectarea in browser.');await publish();
    if(process.platform==='win32')spawn('rundll32.exe',['url.dll,FileProtocolHandler',site],{stdio:'ignore',detached:true}).on('error',()=>console.log('Deschide manual '+site)).unref();
   }
  }catch(error){console.error('\nOPRIT: '+error.message+'\nTrimite o captura a mesajului de eroare, fara parole sau coduri de acces.');process.exitCode=1;}

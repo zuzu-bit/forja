@@ -1,0 +1,38 @@
+{
+  "version": "3.7-online.17",
+  "version_code": 47,
+  "sha256": "2e95b91c19cbb07f2854f6ba1945975fd554bcf453c84ea89bb327ceb579b0fa",
+  "bytes": 285125735,
+  "unit_tests": {
+    "passed": 31,
+    "failed": 0
+  },
+  "dex_files": 22,
+  "unique_classes": 57805,
+  "duplicate_classes": 0,
+  "unrelated_dex_preserved_byte_for_byte": 18,
+  "metadata_only_dex_changes": [
+    4,
+    16
+  ],
+  "original_assets_and_resources_preserved": true,
+  "signer_sha256": "6fc56c1ff164d46b4994fdbfa3e38c786e804c191897ccad581d278aa8feed74",
+  "android_device_tested": false,
+  "server_tests": {
+    "passed": 61,
+    "failed": 0
+  },
+  "windows_publisher_tests": {
+    "passed": 7,
+    "failed": 0
+  },
+  "web_dom_checks_passed": true,
+  "server_contract": "v6 health; cleanup_schedule:1; existing manual /v2/files contract preserved",
+  "cloudflare_live_deployment_verified": false,
+  "limitations": [
+    "Android may defer jobs; starts over two hours late are skipped",
+    "25 MiB per file; 500 live copies / 512 MiB per account; per-file failures visible",
+    "Phone Gallery/SAF and authenticated live upload not exercised on a device"
+  ],
+  "bundled_static_calls_verified": 3042
+}
