@@ -12,4 +12,4 @@ One early APK installation attempt was rejected by Android's PackageInstaller be
 
 **Not runtime verified:** first-launch permission hub and reflection calls, Continue without grants, Back persistence, privacy navigation, and unauthenticated audio/file tabs. No app screenshots or successful device-test claim are provided. Source/build/unit checks are reported separately and do not replace these checks.
 
-Re-run the included `tools/android_ux_qa.py` harness on an accelerated emulator or physical test device before treating runtime QA as passed. Transient boot and system logs are intentionally excluded from the repository. No device permissions were granted, accounts created, or recording/collection enabled.
+Re-run the included `tools/android_ux_qa.py` harness on an accelerated emulator, or perform the same adb flows on a physical test device, before treating runtime QA as passed. Transient boot and system logs are intentionally excluded from the repository. No device permissions were granted, accounts created, or recording/collection enabled.

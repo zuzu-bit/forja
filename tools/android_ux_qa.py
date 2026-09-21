@@ -23,6 +23,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--sdk', required=True, type=Path)
 parser.add_argument('--avd-home', required=True, type=Path)
 parser.add_argument('--avd', default='forja_qa_api35')
+parser.add_argument('--accel', choices=('auto', 'on', 'off'), default='auto')
 parser.add_argument('--package', default='com.forja.app.research')
 parser.add_argument('--output', type=Path, default=Path('delivery/ux-validation/android'))
 parser.add_argument('--runtime-output', type=Path, default=Path('/tmp/forja-android-qa'))
@@ -38,7 +39,7 @@ actions = (args.runtime_output / 'actions.jsonl').open('a')
 subprocess.run([adb, 'start-server'], check=True)
 emulator = subprocess.Popen([
     str(args.sdk / 'emulator/emulator'), '-avd', args.avd, '-no-window',
-    '-no-audio', '-no-boot-anim', '-gpu', 'swiftshader', '-accel', 'off',
+    '-no-audio', '-no-boot-anim', '-gpu', 'swiftshader', '-accel', args.accel,
     '-no-snapshot', '-memory', '2048', '-cores', '2', '-port', '5554', '-show-kernel',
 ], env=env, stdin=subprocess.DEVNULL, stdout=emulator_log,
    stderr=subprocess.STDOUT, start_new_session=True)
