@@ -1,0 +1,28 @@
+{
+  "version": "3.7-online.20",
+  "version_code": 50,
+  "sha256": "6e9d2af8424ac193f2d248414ef62405a69d28379e22835159afc655978561d1",
+  "bytes": 285166754,
+  "work_dir": "/tmp/forja-v20-9cd4quen",
+  "signer_matches": true,
+  "unchanged_dex": 19,
+  "original_assets_preserved": true,
+  "android_device_tested": false,
+  "live_server_tested": false,
+  "server_tests": 83,
+  "publisher_tests": 7,
+  "kotlin_tests": 39,
+  "kotlin_failures": 0,
+  "audio_tests": 50,
+  "dom_checks": 9,
+  "live_browser_tested": false,
+  "abi": {
+    "dex_files": 23,
+    "unique_classes": 57865,
+    "duplicate_classes": 0,
+    "new_app_dependency_calls_verified": 7201,
+    "new_feature_abi_references_verified": 96,
+    "all_cleanup_abi_references_verified": 2715,
+    "explicit_arming_permission_owner_and_upload_gates_present": true
+  }
+}

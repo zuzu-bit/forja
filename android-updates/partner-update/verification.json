@@ -1,0 +1,31 @@
+{
+  "version": "3.7-online.22",
+  "version_code": 52,
+  "sha256": "244e0e9bf98be9203df119819765c0d5d1775917fb5c647df521c543722ea6e3",
+  "bytes": 285293730,
+  "work_dir": "/tmp/forja-partner-v22-build-ke1nb28w",
+  "signer_matches": true,
+  "unchanged_dex": 20,
+  "original_assets_preserved": true,
+  "new_permissions": [
+    "android.permission.READ_CONTACTS"
+  ],
+  "android_device_tested": false,
+  "live_server_tested": false,
+  "server_tests": 112,
+  "social_and_contact_tests": 28,
+  "android_unit_tests": 39,
+  "web_dom_checks": 12,
+  "publisher_tests": 7,
+  "worker_auth_checks": 7,
+  "worker_version": 10,
+  "worker_dry_run": true,
+  "manifest_verified": true,
+  "source_equality_files": 32,
+  "new_app_dependency_calls_verified": 11241,
+  "duplicate_dex_classes": 0,
+  "firebase_sms_configured": false,
+  "firebase_sms_tested": false,
+  "continuous_gps_device_tested": false,
+  "cloudflare_deployed": false
+}
