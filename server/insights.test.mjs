@@ -254,3 +254,122 @@ test('a recording held during intake pause can be uploaded and played after inta
   assert.equal(received.items.length,1);assert.equal(received.items[0].item_id,item.item_id);
   assert.deepEqual(Buffer.from(await(await f.call(path+'/items/'+item.item_id)).arrayBuffer()),m4a);
 });
+
+// Temporary photo/document copies: separate from microphone sessions.
+const fileBytes=new TextEncoder().encode('Document pentru organizare, numai în contul propriu.');
+const fileHash=async b=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',b))].map(v=>v.toString(16).padStart(2,'0')).join('');
+async function fileDevice(f,selection={enabled:true,photos:true,files:true}){const id=randomUUID();assert.equal((await f.call('/v2/files/settings/'+id,'POST',selection)).status,200);return id;}
+async function putFile(f,device,id=randomUUID(),bytes=fileBytes,extra={}){
+ return f.call('/v2/files/'+id,'PUT',bytes,'userA',{'content-type':'application/octet-stream','x-device-id':device,'x-file-kind':'file','x-file-name':'Material%20didactic.txt','x-media-type':'text/plain','x-file-sha256':await fileHash(bytes),...extra});
+}
+test('file sync is off until explicitly activated and sources are enforced',async()=>{
+ const f=fixture(),device=randomUUID();assert.equal((await putFile(f,device)).status,403);
+ assert.equal((await f.call('/v2/files/settings/'+device,'GET')).status,200);
+ await f.call('/v2/files/settings/'+device,'POST',{enabled:true,photos:true,files:false});
+ assert.equal((await putFile(f,device)).status,403);
+ assert.equal((await putFile(f,device,randomUUID(),new Uint8Array([255,216,255,217]),{'x-file-kind':'photo','x-media-type':'image/jpeg'})).status,201);
+});
+test('files preserve exact bytes and retries or online folder edits never extend expiry',async()=>{
+ const f=fixture(),device=await fileDevice(f),id=randomUUID();
+ const first=await(await putFile(f,device,id)).json();assert.equal(first.expires_at-first.received_at,86400000);
+ assert.equal(first.preview,'text');assert.equal(first.name,'Material didactic.txt');assert.equal(first.key,undefined);
+ const body=await f.call('/v2/files/'+id);assert.equal(body.headers.get('cache-control'),'private, no-store, max-age=0');assert.equal(body.headers.get('content-type'),'application/octet-stream');assert.deepEqual(new Uint8Array(await body.arrayBuffer()),fileBytes);
+ const edit=await(await f.call('/v2/files/'+id,'PATCH',{folder:'Educație/Grupa mare'})).json();assert.equal(edit.expires_at,first.expires_at);
+ const retry=await putFile(f,device,id);assert.equal(retry.status,200);const again=await retry.json();assert.equal(again.expires_at,first.expires_at);assert.equal(again.folder,'Educație/Grupa mare');
+});
+test('expired file copies and thumbnails are denied and removed without a client request',async()=>{
+ const f=fixture(),device=await fileDevice(f),id=randomUUID(),bytes=new Uint8Array([255,216,255,217]);
+ await putFile(f,device,id,bytes,{'x-file-kind':'photo','x-media-type':'image/jpeg'});
+ assert.equal((await f.call('/v2/files/'+id+'/thumbnail','PUT',bytes,'userA',{'x-device-id':device})).status,200);
+ const r=await f.storage.get('cloud-file:'+id);r.expires_at=Date.now()-1;await f.storage.put('cloud-file:'+id,r);await f.object.alarm();
+ assert.equal(f.bucket.files.size,0);assert.equal((await f.call('/v2/files/'+id)).status,404);assert.equal((await f.call('/v2/files/'+id+'/thumbnail')).status,404);
+ assert.equal((await putFile(f,device,id,bytes,{'x-file-kind':'photo','x-media-type':'image/jpeg'})).status,410);
+});
+test('web deletion blocks delayed retry and affects only the online copy',async()=>{
+ const f=fixture(),device=await fileDevice(f),id=randomUUID();await putFile(f,device,id);
+ assert.equal((await(await f.call('/v2/files/'+id,'DELETE')).json()).phone_original_unchanged,true);
+ assert.equal((await putFile(f,device,id)).status,410);assert.equal(f.bucket.files.size,0);
+});
+test('account isolation also covers thumbnails, consent settings and file metadata',async()=>{
+ const bucket=new Bucket(),a=fixture(bucket),b=fixture(bucket),device=await fileDevice(a),id=randomUUID();await putFile(a,device,id);
+ for(const path of ['/v2/files/'+id,'/v2/files/'+id+'/thumbnail'])assert.equal((await b.call(path,'GET',undefined,'userB')).status,404);
+ assert.equal((await a.call('/v2/files','GET',undefined,'userB')).status,403);
+ assert.equal((await(await b.call('/v2/files/settings/'+device,'GET',undefined,'userB')).json()).enabled,false);
+});
+test('checksum, size, metadata and intake gates reject unsafe or incomplete transfers',async()=>{
+ const f=fixture(),device=await fileDevice(f);
+ assert.equal((await putFile(f,device,randomUUID(),fileBytes,{'x-file-sha256':'0'.repeat(64)})).status,422);
+ assert.equal((await putFile(f,device,randomUUID(),fileBytes,{'x-file-name':'a%0Ab'})).status,400);
+ assert.equal((await putFile(f,device,randomUUID(),fileBytes,{'content-length':String(25*1024*1024+1)})).status,413);
+ await f.call('/internal/intake','POST',{accepting:false,revision:0});assert.equal((await putFile(f,device)).status,423);
+ assert.equal(f.bucket.files.size,0);
+});
+test('listing supports search and pagination without exposing storage paths',async()=>{
+ const f=fixture(),device=await fileDevice(f);
+ for(let i=0;i<26;i++)assert.equal((await putFile(f,device,randomUUID(),fileBytes,{'x-file-name':`Plan-${i}.txt`})).status,201);
+ const first=await(await f.call('/v2/files')).json();assert.equal(first.items.length,24);assert.equal(first.total,26);assert.ok(first.next_cursor);assert.equal(first.items[0].key,undefined);
+ const second=await(await f.call('/v2/files?after='+first.next_cursor)).json();assert.equal(second.items.length,2);assert.equal(second.next_cursor,null);
+ const search=await(await f.call('/v2/files?q=Plan-25')).json();assert.equal(search.total,1);
+});
+test('an interrupted R2 write can retry the same ID and orphan staging is expired',async()=>{
+ const f=fixture(),device=await fileDevice(f),id=randomUUID();const put=f.bucket.put.bind(f.bucket);let once=true;
+ f.bucket.put=async(...args)=>{if(once){once=false;throw Error('temporary R2 outage');}return put(...args);};
+ assert.equal((await putFile(f,device,id)).status,500);assert.ok(await f.storage.get('file-staging:'+id));
+ assert.equal((await putFile(f,device,id)).status,201);assert.equal(await f.storage.get('file-staging:'+id),undefined);
+ const orphan=randomUUID(),key='_insights/userA/files/'+orphan;await put(key,fileBytes);await f.storage.put('file-staging:'+orphan,{key,expires_at:Date.now()-1});
+ await f.object.alarm();assert.equal(f.bucket.files.has(key),false);assert.ok(await f.storage.get('file-gone:'+orphan));
+});
+test('retention alarm schedules another attempt after storage deletion failure',async()=>{
+ const f=fixture(),device=await fileDevice(f),id=randomUUID();await putFile(f,device,id);const r=await f.storage.get('cloud-file:'+id);r.expires_at=Date.now()-1;await f.storage.put('cloud-file:'+id,r);
+ const remove=f.bucket.delete.bind(f.bucket);f.bucket.delete=async()=>{throw Error('unavailable');};await assert.rejects(f.object.alarm());assert.ok(f.storage.alarm>Date.now());
+ f.bucket.delete=remove;await f.object.alarm();assert.equal(f.bucket.files.size,0);
+});
+
+test('an explicitly armed background phone accepts Start without pretending to be foreground',async()=>{
+  const f=fixture(),p={...phoneStatus(),foreground:false,audio_ready:true,audio_session:randomUUID()};
+  const synced=await(await f.call('/internal/phone-sync','POST',p)).json();
+  assert.equal(synced.background_audio,1);assert.equal(synced.foreground,false);assert.equal(synced.audio_ready,true);
+  const c=command(),r=await f.call('/internal/phones/'+p.id+'/command','POST',c);
+  assert.equal(r.status,200);const waiting=await r.json();assert.equal(waiting.state,'idle');assert.equal(waiting.handled_command,null);
+  const acknowledged=await(await f.call('/internal/phone-sync','POST',{...p,state:'recording',handled_command:c.id})).json();
+  assert.equal(acknowledged.state,'recording');assert.equal(acknowledged.handled_command,c.id);
+});
+test('v19 disabled readiness rejects Start even when the app is visible',async()=>{
+  for(const foreground of [true,false]){
+    const f=fixture(),p={...phoneStatus(),foreground,audio_ready:false};await f.call('/internal/phone-sync','POST',p);
+    assert.equal((await f.call('/internal/phones/'+p.id+'/command','POST',command())).status,409);
+  }
+});
+test('readiness is strictly boolean and requires audio permission',async()=>{
+  for(const audio_ready of ['true',1,null,{}]){const f=fixture();assert.equal((await f.call('/internal/phone-sync','POST',{...phoneStatus(),audio_ready})).status,400);}
+  const f=fixture();assert.equal((await f.call('/internal/phone-sync','POST',{...phoneStatus(),audio_allowed:false,audio_ready:true})).status,400);
+});
+test('readiness expires with the heartbeat and cannot address another owner',async()=>{
+  const f=fixture(),p={...phoneStatus(),foreground:false,audio_ready:true,audio_session:randomUUID()};await f.call('/internal/phone-sync','POST',p);
+  const path='/internal/phones/'+p.id+'/command',old=await f.storage.get('phone:'+p.id);old.seen_at=Date.now()-25000;await f.storage.put('phone:'+p.id,old);
+  assert.equal((await f.call(path,'POST',command())).status,409);
+  assert.equal((await f.call(path,'POST',command(),'userB')).status,403);
+  assert.equal((await f.call(path,'POST',{...command(),action:'stop'})).status,200);
+});
+test('disarming drops readiness and a new pairing discards previous scheduled commands',async()=>{
+  const f=fixture(),p={...phoneStatus(),foreground:false,audio_ready:true,audio_session:randomUUID()};await f.call('/internal/phone-sync','POST',p);
+  const start_at=Date.now()+60000,path='/internal/phones/'+p.id+'/command';
+  assert.equal((await f.call(path,'POST',{...command(),minutes:5,start_at,stop_at:start_at+300000})).status,200);
+  const off=await(await f.call('/internal/phone-sync','POST',{...p,audio_ready:false,audio_session:null})).json();assert.equal(off.audio_ready,false);
+  const renew=await(await f.call('/internal/phone-sync','POST',{...p,grant:randomUUID(),audio_ready:false,audio_session:null})).json();assert.equal(renew.command,null);assert.equal(renew.audio_ready,false);
+  assert.equal((await f.call(path,'POST',command(renew.revision))).status,409);
+});
+test('changing the armed session cancels queued commands and rejects stale browser revisions',async()=>{
+  const f=fixture(),p={...phoneStatus(),foreground:false,audio_ready:true,audio_session:randomUUID()};
+  await f.call('/internal/phone-sync','POST',p);const path='/internal/phones/'+p.id+'/command';
+  const sent=await(await f.call(path,'POST',command())).json();assert.equal(sent.command.audio_session,p.audio_session);
+  const rearmed=await(await f.call('/internal/phone-sync','POST',{...p,audio_session:randomUUID()})).json();
+  assert.equal(rearmed.command,null);assert.equal(rearmed.revision,sent.revision+1);
+  assert.equal((await f.call(path,'POST',command(sent.revision))).status,409);
+  assert.equal((await f.call(path,'POST',command(rearmed.revision))).status,200);
+});
+test('readiness requires a valid session and inactive phones cannot retain a session',async()=>{
+  for(const changes of [{audio_ready:true},{audio_ready:true,audio_session:'bad'},{audio_ready:true,audio_session:12},{audio_ready:false,audio_session:randomUUID()}]){
+    const f=fixture();assert.equal((await f.call('/internal/phone-sync','POST',{...phoneStatus(),...changes})).status,400);
+  }
+});

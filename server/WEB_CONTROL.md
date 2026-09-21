@@ -1,92 +1,107 @@
-# FORJA web control and in-app campaigns
+# FORJA 3.7-online.19 — Audio din web cu ecranul blocat
 
-The client controls their own paired phone from their verified Firebase account at
-`/insights`. The Worker always replaces the internal owner header and binds every
-Durable Object to a single UID.
+## Instalare și utilizare
 
-## Phone authorization and operation
+1. Publică serverul din `FORJA_Publicare_Windows.zip`: extrage arhiva complet,
+   deschide `PUBLICA_FORJA.cmd`, autorizează Wrangler în contul Cloudflare care
+   deține site-ul și așteaptă mesajul **GATA**. Serverul trebuie să raporteze
+   `/health`: `version: 7`, `background_audio: 1`.
+2. Instalează `FORJA_Research.apk` peste versiunea existentă, fără dezinstalare.
+3. În FORJA: **Profil → Permisiuni și sincronizare → Control din contul web**.
+   Ecranul se numește **Audio și conexiune**.
+4. Dacă nu ai asociat contul, activează-l în secțiunea **Contul tău online**.
+5. În **Audio din web**, bifează acordul explicit pentru controlul din propriul
+   cont și încărcare. Apasă **Activează Audio din web** și permite microfonul și
+   notificările. Așteaptă confirmarea „Pregătit pentru Start din web”.
+6. Poți bloca ecranul. În același cont pe site, așteaptă „Audio din web activ”,
+   alege durata și apasă **Pornește acum**. Comenzile se verifică aproximativ la
+   10 secunde, când conexiunea permite; panoul confirmă separat pornirea reală.
+7. Înregistrarea are notificare **FORJA înregistrează audio**. **Oprește și
+   trimite** finalizează fișierul. **Dezactivează audio web** închide întregul mod.
+8. La oprire sau la expirarea intervalului, fișierul AAC/M4A complet se trimite
+   prin coada existentă. În site: **Date primite → Înregistrări audio**.
+   Primirea datelor trebuie să fie activă. Copiile online expiră după 24 h.
 
-- On the phone, open **Profil → Permisiuni și sincronizare → Control din contul web**.
-  Grant microphone/notification access and explicitly authorize the own-account web
-  control once. Location and app usage remain separately selected categories.
-- Web controls provide Start now, Stop, or a scheduled X–Y interval of 1–60 minutes
-  within the next 24 hours. The phone polls while FORJA is open, while recording,
-  or during explicitly enabled background collection. There is no push wakeup or
-  boot receiver. The app must be visible when microphone recording starts.
-- The start command expires 30 seconds after its scheduled beginning. A delayed
-  delivery keeps the original end time. A missed window never starts later.
-- The Android microphone indicator and recording notification with Stop remain
-  visible during recording. Starting from a closed app is not supported.
-- A new local authorization uses a new grant UUID, invalidating older commands
-  and collection grants. Logout/revocation invalidates the recording epoch,
-  stops recording and cancels pending network work.
-- Stop is a queued request until acknowledged by the phone. Offline phones are
-  displayed as unavailable; the web UI never presents a click as an executed action.
-- Device collection and server intake are distinct controls. Intake pause rejects
-  new `/v2` writes with 423; existing data can still be read/deleted. Fitness
-  journal synchronization has its own existing consent and Firestore path.
+Modul care așteaptă comenzi nu creează un recorder și nu salvează sunet.
+Notificarea sa rămâne vizibilă, cu buton de dezactivare. Acordul pentru Somn
+nu este reutilizat implicit pentru control web sau încărcare.
 
-## Complete audio uploads
+Oprirea unei înregistrări păstrează modul web activ pentru următoarea comandă.
+Dezactivarea modului invalidează intervalele în așteptare. O nouă activare
+creează un identificator nou; comenzile unei activări vechi sunt respinse atât
+pe telefon, cât și pe server. Pentru programarea unui interval, modul trebuie
+să fie activ și telefonul conectat la momentul programării.
 
-`TimedRecordingService` records one private AAC/M4A file, bounded to 60 minutes and
-30 MiB. WorkManager automatically uploads it when connected, under its original
-account and recording epoch. There are at most five local recording files. Failed
-copies can be retried or deleted in the pairing settings. Deleting the local copy
-does not delete a previously received server copy.
+După repornire, force-stop sau închiderea serviciului de către Android, modul
+necesită reactivare pe telefon. Nu se pornește automat din boot și nu folosește
+excepții ascunse, suprapuneri sau servicii de accesibilitate. Economisirea
+bateriei/Doze, lipsa internetului și restricțiile producătorului pot întârzia
+comenzile; nu este o alarmă exactă. Modul activ consumă baterie. Butonul pentru
+setările bateriei deschide setările FORJA, unde utilizatorul poate verifica
+restricțiile. Nu modifică automat setările sistemului.
 
-Version 3.7-online.12 preserves an upload as pending when WorkManager stops it
-because of connectivity or scheduling constraints. This is distinct from account
-revocation. Transient errors retry within the seven-day upload acceptance window;
-HTTP failures are explained in both phone settings and the own-account web status.
-Completed uploads use expedited work on Android 12+ with ordinary-work fallback.
-Opening FORJA resumes pending uploads and retries eligible failed uploads once
-after an app update, without starting the microphone. The v41 OS-stop cancellation
-bug is recovered only with the same owner, unchanged recording epoch, active web
-authorization and the exact old uploading message; revoked/deleted copies stay off.
+Modul Somn păstrează recorderul și fluxul său existente. Dacă Somn folosește
+microfonul, o înregistrare web separată este refuzată. Dacă pornești Somn în
+ timpul unei înregistrări web, sesiunea web este finalizată. Audio din Somn nu
+este transferat în alt flux prin această modificare.
 
-The web duration selector offers 5, 10 (default), 15, 30 and 60 minutes, plus X–Y
-scheduling. **Date primite → Înregistrări audio** lists received complete files
-with their actual start/end/duration, playback and download. Refreshes insert new
-cards without moving or recreating playing audio elements. Open session details
-no longer prevent newly uploaded sessions/items from appearing. The displayed
-24-hour expiry is server retention after receipt, never an audio capture duration.
+## Verificări și limite
 
-`POST /v2/sessions` with `mode: recording` requires audio-only consent.
-`POST /v2/sessions/{id}/recording` accepts `audio/mp4` and millisecond headers
-`X-Recorded-From` / `X-Recorded-To`. The server validates the container, audio-only
-AAC track, self-contained references and duration against the declared interval.
-Duplicate uploads return the same receipt; conflicting content returns 409.
-The app deletes its file only after validating the receipt's byte count and SHA-256.
-Explicit web deletion leaves a seven-day tombstone to prevent automatic retries
-from recreating that session. Session retention remains 24 hours after upload;
-this is separate from the recording duration.
+- 68 de teste ale serverului: inclusiv comenzi în fundal, autentificare,
+  izolare între conturi, revocare, sesiuni expirate, reluări și fișiere audio.
+- 7 teste ale programului de publicare.
+- 24 verificări JVM ale diagnosticului și 26 ale regulilor pentru autorizare,
+  identificator de activare și durată.
+- Compilare Java/DEX, semnătură APK identică versiunii existente, unicitatea
+  claselor și verificarea referințelor ABI către codul păstrat.
+- Compilare Worker prin `wrangler deploy --dry-run`; aceasta NU publică site-ul.
 
-## Campaigns
+Nu există un telefon sau emulator Android conectat în mediul de construire.
+Captura reală cu ecranul blocat, efectul Doze pe dispozitiv și încărcarea în
+contul live nu au fost verificate aici. Publicarea live nu a fost efectuată.
 
-The editor supports AI drafts, manual edits, draft storage, explicit publication,
-withdrawal and deletion. AI sees only the creator's brief and sponsor. It does not
-receive phone files, coordinates, health journals or audio for ad generation.
-Published campaigns are labeled **Publicitate** and shown only in the same account's
-home carousel when its optional ads preference is enabled. The app refreshes the
-feed every 30 seconds while visible. There is no global or cross-account ad feed.
+### Probă necesară pe telefon
 
-## Deployment and verification
+1. Activează modul, blochează ecranul, pornește o sesiune de 5 minute din web.
+2. Confirmă schimbarea notificării, apoi oprește după minimum 10 secunde.
+3. Ascultă fișierul din site; verifică ora și durata, apoi pornește încă o sesiune
+   fără să redeschizi aplicația.
+4. Dezactivează modul din notificare: Start trebuie refuzat. Reactivează-l:
+   un interval programat înainte de dezactivare nu trebuie executat.
+5. Repetă după o perioadă de ecran blocat pentru a evalua restricțiile de baterie.
 
-Deploy the APK and Insights Worker together. An older live Worker does not provide
-phone controls or complete recording uploads; the app retains pending recordings
-and does not fall back to five-second audio chunks.
+## Construire reproductibilă
+
+Baza este APK-ul v17 exact, SHA-256:
+`2e95b91c19cbb07f2854f6ba1945975fd554bcf453c84ea89bb327ceb579b0fa`.
+Nu folosi drept bază APK-ul v18/v19 și nu reconstrui aplicația veche de pe main.
+Modelele locale, curățenia și programarea fișierelor din v17 sunt păstrate.
+
+Necesită Java 17 cu modulul javac, Python, platforma Android 35, build-tools 35,
+R8 8.7.18, smali/baksmali 2.5.2 și cheia de semnare existentă, furnizată separat.
+Instrumentele sunt distribuite în depozitele oficiale Google/Maven.
+
+Structura `tools`: `sdk/android-35/android.jar`, `sdk/android-15/`,
+`smali/*.jar`, `r8-8.7.18.jar`, `debug.keystore`.
 
 ```sh
-cd server
-npm ci
-npm test
-npx wrangler deploy --config wrangler.insights.toml --dry-run
-# Requires the project's authenticated Cloudflare account:
-npx wrangler deploy --config wrangler.insights.toml
+python build.py --base /path/FORJA-v17.apk --tools /path/tools --output /path/FORJA_Research.apk
+python verify.py /path/FORJA_Research.apk --work-dir /tmp/path-printed-by-build --android-jar /path/tools/sdk/android-35/android.jar
 ```
 
-The Worker uses the existing Insights Durable Object, R2 bucket and Workers AI
-bindings. No new secrets are embedded in the APK. Validate on a real Android device
-before production rollout: pairing, visible start, lock screen continuation,
-notification Stop, web Stop/acknowledgement, scheduled missed interval, logout,
-revocation, offline retry, intake pause, and same-account campaign publication.
+Declarațiile ABI generate sunt numai pentru compilare și nu sunt incluse în
+APK. Serviciul nou păstrează componenta Android și ABI-ul `Companion.getActiveId`
+folosit de coada existentă. Manifestul schimbă numai versiunea 49/3.7-online.19.
+Se modifică DEX 4/11/12/16 și se adaugă DEX 23; celelalte 18 DEX și resursele
+originale rămân identice. Coada WorkManager și confirmarea SHA-256/bytes la
+încărcare sunt păstrate.
+
+Pornirea inițială a serviciului de microfon se face explicit cât timp activitatea
+este vizibilă. Ulterior, comenzile folosesc aceeași instanță deja promovată,
+cu o notificare permanentă. `foreground` continuă să descrie vizibilitatea
+reală; `audio_ready` și `audio_session` descriu separat modul activ.
+Starea de pregătire nu se restaurează din preferințe după moartea procesului.
+
+Referințe Android:
+- https://developer.android.com/develop/background-work/services/fgs/service-types#microphone
+- https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start

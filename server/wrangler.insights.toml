@@ -24,3 +24,11 @@ fallthrough = true
 
 [observability]
 enabled = false
+
+[[durable_objects.bindings]]
+name = "SOCIAL"
+class_name = "SocialGraph"
+
+[[migrations]]
+tag = "social-v1"
+new_sqlite_classes = ["SocialGraph"]

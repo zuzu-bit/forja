@@ -1,0 +1,51 @@
+const cleanupUI={serial:0,dirty:false};
+function clearCleanup(){cleanupUI.serial++;cleanupUI.dirty=false;$('cleanup-devices').replaceChildren();$('cleanup-runs').replaceChildren();}
+function cleanupField(text,input){const label=el('label',undefined,'cleanup-field');label.append(el('span',text),input);return label;}
+function cleanupCheck(text,checked,disabled=false){const input=el('input');input.type='checkbox';input.checked=checked;input.disabled=disabled;return {input,label:cleanupField(text,input)};}
+async function refreshCleanup(force=false){
+ if(!auth)return;const current=auth,serial=++cleanupUI.serial;
+ try{
+  const data=await api('/v2/cleanup/devices');if(auth!==current||serial!==cleanupUI.serial)return;
+  refreshOrganizer(data);
+  if(force||!cleanupUI.dirty){
+   cleanupUI.dirty=false;$('cleanup-devices').replaceChildren();
+   if(!data.devices.length)empty($('cleanup-devices'),'Activează o dată din telefon','În Curățenie, apasă „Analizează-mi automat”, alege sursele și activează. Apoi setează orele aici.');
+   for(const d of data.devices)$('cleanup-devices').append(cleanupDevice(d));
+  }
+  $('cleanup-runs').replaceChildren();
+  for(const r of data.runs){
+   const card=el('article',undefined,'cleanup-result');
+   const phase=r.cancelled?'Oprită · programul s-a schimbat':r.paused?'În pauză din site':({queued:'Programare preluată',analyzing:'Se analizează pe telefon',analyzed:'Analiză gata · transfer în curs',complete:r.uploaded===r.total?'Analiză și transfer terminate':'Analizat · încărcare incompletă',error:'Necesită atenție'}[r.phase]||r.phase);
+   card.append(el('h3',dt(r.at)+' · '+phase),el('p',r.analyzed+' analizate · '+r.proposals.length+' propuneri · '+r.duplicates+' duplicate · '+r.uploaded+'/'+r.total+' primite pe site','muted small'));
+   if(r.message)card.append(el('p',r.message,'muted small'));
+   if(r.proposals.length){const detail=el('details'),summary=el('summary','Vezi propunerile de organizare');detail.append(summary);for(const p of r.proposals){const row=el('div',undefined,'cleanup-proposal');row.append(el('strong',p.name),el('p','→ '+p.destination),el('p',p.reason,'muted small'));detail.append(row);}card.append(detail);}
+   if(data.devices.find(d=>d.id===r.device)?.protocol===2)card.append(button('Vezi și organizează selecția',()=>openOrganizer(r)));
+   card.append(el('p','Raportul expiră după 24 h; fiecare copie are propriul termen de 24 h.','muted small'));$('cleanup-runs').append(card);
+  }
+ }catch(e){if(auth===current&&e.name!=='AbortError')notice(e.message);}
+}
+function cleanupDevice(d){
+ const form=el('form',undefined,'cleanup-device');form.addEventListener('input',()=>{cleanupUI.dirty=true;});form.addEventListener('change',()=>{cleanupUI.dirty=true;});
+ form.append(el('h3',d.label||'Telefon '+d.id.slice(0,8)),el('p','Ultimul contact: '+dt(d.last_seen),'muted small'));
+ if(!d.grant.enabled){form.append(el('p','Dezactivat pe telefon. Reactivează din aplicație pentru un program nou.'));return form;}
+ const enabled=cleanupCheck('Analiză automată activă',d.schedule.enabled),photos=cleanupCheck('Fotografii',d.schedule.photos,!d.grant.photos),files=cleanupCheck('Fișiere din dosarul autorizat',d.schedule.files,!d.grant.files),wifi=cleanupCheck('Doar Wi-Fi / conexiune fără cost de date',d.schedule.wifi_only);
+ const count=el('select');count.name='count';for(const n of [25,50]){const option=el('option','Ultimele '+n+' din fiecare sursă');option.value=n;count.append(option);}count.value=d.schedule.count;
+ const zone=el('input');zone.value=d.schedule.timezone;zone.maxLength=64;zone.name='timezone';
+ const times=Array.from({length:4},(_,i)=>{const input=el('input');input.type='time';input.name='time'+i;input.value=d.schedule.times[i]||'';return input;});
+ const grid=el('div',undefined,'cleanup-grid');grid.append(enabled.label,cleanupField('Câte analizăm?',count),photos.label,files.label,cleanupField('Fus orar',zone),wifi.label);
+ times.forEach((input,i)=>grid.append(cleanupField('Ora '+(i+1)+(i?' (opțional)':''),input)));
+ const days=['Luni','Marți','Miercuri','Joi','Vineri','Sâmbătă','Duminică'].map((name,i)=>cleanupCheck(name,d.schedule.days.includes(i+1)));
+ const dayRow=el('div',undefined,'cleanup-days');days.forEach(d=>dayRow.append(d.label));
+ const save=el('button','Salvează programul','primary');save.type='submit';
+ form.append(grid,el('p','Zilele în care rulează','muted small'),dayRow,save);
+ form.addEventListener('submit',async event=>{
+  event.preventDefault();save.disabled=true;const current=auth;
+  try{
+   const schedule={enabled:enabled.input.checked,count:Number(count.value),photos:photos.input.checked,files:files.input.checked,times:times.map(t=>t.value).filter(Boolean),days:days.flatMap((d,i)=>d.input.checked?[i+1]:[]),timezone:zone.value.trim(),wifi_only:wifi.input.checked};
+   await api('/v2/cleanup/devices/'+d.id+'/schedule',{method:'POST',body:JSON.stringify({revision:d.revision,schedule})});
+   if(auth!==current)return;cleanupUI.dirty=false;notice('Program salvat. Telefonul îl va prelua automat; dacă ai aplicația deschisă, apasă „Verifică programul”.',true);await refreshCleanup(true);
+  }catch(e){if(auth===current&&e.name!=='AbortError')notice(e.message);}finally{if(auth===current)save.disabled=false;}
+ });return form;
+}
+$('cleanup-refresh').addEventListener('click',()=>refreshCleanup(true));
+setInterval(()=>{if(auth&&!document.hidden&&!$('page-files').hidden)refreshCleanup();},30000);

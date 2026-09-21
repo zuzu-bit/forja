@@ -1,3 +1,7 @@
+import {handleRecovery,sweepRecovery} from './lost-phone.mjs';
+import {handleOrganizer,sweepOrganizer} from './organizer.mjs';
+import {handleCleanup,sweepCleanup} from './cleanup-schedule.mjs';
+import { handleFiles, sweepFiles, FILE_MAX_BYTES, THUMB_MAX_BYTES } from './files-vault.mjs';
 import { checkRecording, RECORDING_MAX_BYTES } from './recording-schema.mjs';
 import { handlePhoneControl } from './phone-control.mjs';
 import { handleAppContent, defaultIntake } from './app-content.mjs';
@@ -43,14 +47,16 @@ function checkWav(b) {
 export class InsightsAccount {
   constructor(ctx, env) { this.ctx = ctx; this.env = env; }
   async fetch(request) {
-    let upload = false;
+    let upload = false, fileUpload = false;
     try {
       const isRecording = request.method === 'POST' && /^\/v2\/sessions\/[^/]+\/recording$/.test(new URL(request.url).pathname);
-      if (isRecording) { if (this.uploadingRecording) bad('Retry shortly',429); this.uploadingRecording = true; upload = true; }
-      const bytes = isRecording ? await readBytes(request, RECORDING_MAX_BYTES) : null;
+      if (isRecording) { if (this.uploadingRecording || this.uploadingFile) bad('Retry shortly',429); this.uploadingRecording = true; upload = true; }
+      const isFile = request.method === 'PUT' && /^\/v2\/files\/[0-9a-f-]+(?:\/thumbnail)?$/.test(new URL(request.url).pathname);
+      if (isFile) { if (this.uploadingFile || this.uploadingRecording) bad('Retry shortly',429); this.uploadingFile=true; fileUpload=true; }
+      const bytes = isRecording ? await readBytes(request, RECORDING_MAX_BYTES) : isFile ? await readBytes(request, new URL(request.url).pathname.endsWith('/thumbnail') ? THUMB_MAX_BYTES : FILE_MAX_BYTES) : null;
       return await this.ctx.blockConcurrencyWhile(() => this.handle(request, bytes));
     } catch(e) { return reply({ error:e.status?e.message:'Storage operation failed' },e.status||500); }
-    finally { if(upload) this.uploadingRecording=false; }
+    finally { if(upload) this.uploadingRecording=false; if(fileUpload) this.uploadingFile=false; }
   }
   async remove(record) {
     let cursor;
@@ -66,13 +72,15 @@ export class InsightsAccount {
       if (until <= Date.now()) await this.ctx.storage.delete(key);
     }
     const records = await this.ctx.storage.list({ prefix: 'session:' });
-    let next = Infinity;
+    let next = Math.min(await sweepRecovery(this.ctx.storage),await sweepFiles(this.ctx.storage,this.env.RECORDS),await sweepCleanup(this.ctx.storage),await sweepOrganizer(this.ctx.storage,Date.now()));
     for (const r of records.values()) {
       if (r.expires_at <= Date.now()) await this.remove(r); else next = Math.min(next, r.expires_at);
     }
     if (Number.isFinite(next)) await this.ctx.storage.setAlarm(next); else await this.ctx.storage.deleteAlarm();
   }
-  async alarm() { await this.ctx.blockConcurrencyWhile(() => this.sweep()); }
+  async alarm() { await this.ctx.blockConcurrencyWhile(async () => {
+    try { await this.sweep(); } catch(error) { await this.ctx.storage.setAlarm(Date.now()+60000); throw error; }
+  }); }
   publicRecord(r) { const { prefix, ...rest } = r; return rest; }
   async handle(request, recordingBytes = null) {
     const uid = request.headers.get('x-forja-owner');
@@ -80,12 +88,20 @@ export class InsightsAccount {
     const owner = await this.ctx.storage.get('owner');
     if (owner && owner !== uid) bad('Wrong owner', 403);
     if (!owner) await this.ctx.storage.put('owner', uid);
+    const recoveryResponse = await handleRecovery(request,this,readJSON);
+    if(recoveryResponse)return recoveryResponse;
     const contentResponse = await handleAppContent(request, this.ctx.storage, readJSON);
     if (contentResponse) return contentResponse;
     const phoneResponse = await handlePhoneControl(request, this.ctx.storage, readJSON);
     if (phoneResponse) return phoneResponse;
     if (!this.env.RECORDS) bad('Storage unavailable', 503);
     await this.sweep();
+    const organizerResponse=await handleOrganizer(request,this,readJSON);
+    if(organizerResponse)return organizerResponse;
+    const cleanupResponse = await handleCleanup(request,this,readJSON);
+    if (cleanupResponse) return cleanupResponse;
+    const filesResponse = await handleFiles(request,this,uid,recordingBytes,readJSON);
+    if (filesResponse) return filesResponse;
     const url = new URL(request.url); const path = url.pathname;
     // Server intake is independent of phone permissions and cannot start a sensor.
     if (request.method === 'POST' && (path === '/v2/sessions' || /^\/v2\/sessions\/[^/]+\/(data|items|recording)$/.test(path))) {
@@ -93,10 +109,11 @@ export class InsightsAccount {
       if (!intake.accepting) return reply({ error: 'Primirea datelor este oprită din panoul web.', code: 'intake_paused' }, 423);
     }
     if (path === '/internal/ai-budget' && request.method === 'POST') {
+      const {value:aiRequest}=await readJSON(request,1024);const units=aiRequest.units??1;if(!Number.isInteger(units)||units<1||units>6)bad('Invalid AI budget');
       const day = Math.floor(Date.now() / TTL); const old = await this.ctx.storage.get('ai-budget');
       const budget = old?.day === day ? old : { day, used: 0, last: 0 };
-      if (budget.used >= 30 || Date.now() - budget.last < 10000) bad('Așteaptă puțin înainte de o nouă analiză (maximum 30 pe zi).', 429);
-      await this.ctx.storage.put('ai-budget', { day, used: budget.used + 1, last: Date.now() });
+      if (budget.used + units > 30 || Date.now() - budget.last < 10000) bad('Așteaptă puțin înainte de o nouă analiză (maximum 30 pe zi).', 429);
+      await this.ctx.storage.put('ai-budget', { day, used: budget.used + units, last: Date.now() });
       return reply({ ok: true });
     }
     if (path === '/v2/sessions') {

@@ -1,3 +1,4 @@
+import {organizeAI} from './organizer-ai.mjs';
 import { campaignBrief, validateCampaignDraft, CAMPAIGN_SYSTEM } from './app-content.mjs';
 import { reply, readJSON } from './insights-store.mjs';
 import { bad, idPattern } from './phone-schema.mjs';
@@ -103,6 +104,7 @@ const SYSTEM = `Ești FORJA, un asistent de recomandări pentru timp liber și c
 export async function handleInsights(request, env, uid) {
   if (!env.INSIGHTS) bad('Panoul online nu este configurat încă.', 503);
   const url = new URL(request.url); const stub = accountStub(env, uid);
+  if(url.pathname==='/insights/api/organize'&&request.method==='POST')return organizeAI(request,env,uid,stub,readJSON,parsedJSON);
   if (url.pathname === '/insights/api/capabilities' && request.method === 'GET') return reply({ recording: {version:1,media_type:'audio/mp4',max_duration_ms:3600000,max_bytes:30*1024*1024} });
   const contentPaths = { '/insights/api/campaigns': '/internal/campaigns', '/insights/api/app-feed': '/internal/app-feed', '/insights/api/intake': '/internal/intake', '/insights/api/phones': '/internal/phones', '/insights/api/phone-sync': '/internal/phone-sync' };
   let internalPath = contentPaths[url.pathname];

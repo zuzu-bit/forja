@@ -1,0 +1,33 @@
+// Small, bounded DOCX reader: only word/document.xml is decompressed. No macros or HTML.
+async function readDocxXml(buffer) {
+  const b=new Uint8Array(buffer),v=new DataView(buffer),max=4*1024*1024;
+  const fail=()=>{throw Error('Acest document Word nu poate fi previzualizat. Îl poți descărca.');};
+  if(b.length<22||b.length>25*1024*1024)fail();
+  let end=-1;for(let i=b.length-22;i>=Math.max(0,b.length-65557);i--)if(v.getUint32(i,true)===0x06054b50&&i+22+v.getUint16(i+20,true)===b.length){end=i;break;}
+  if(end<0||v.getUint16(end+4,true)||v.getUint16(end+6,true))fail();
+  const count=v.getUint16(end+10,true),length=v.getUint32(end+12,true),start=v.getUint32(end+16,true);
+  if(count>4096||count!==v.getUint16(end+8,true)||start+length>end)fail();
+  let p=start,found=null;const decoder=new TextDecoder('utf-8',{fatal:true});
+  for(let i=0;i<count;i++){
+    if(p+46>start+length||v.getUint32(p,true)!==0x02014b50)fail();
+    const flags=v.getUint16(p+8,true),method=v.getUint16(p+10,true),compressed=v.getUint32(p+20,true),uncompressed=v.getUint32(p+24,true),n=v.getUint16(p+28,true),extra=v.getUint16(p+30,true),comment=v.getUint16(p+32,true),offset=v.getUint32(p+42,true);
+    if(p+46+n+extra+comment>start+length)fail();
+    const name=decoder.decode(b.subarray(p+46,p+46+n));
+    if(name==='word/document.xml'){
+      if(found||flags&1||![0,8].includes(method)||compressed>max||uncompressed>max||offset+30>start||v.getUint32(offset,true)!==0x04034b50||v.getUint16(offset+8,true)!==method||v.getUint16(offset+6,true)&1)fail();
+      const localN=v.getUint16(offset+26,true),localExtra=v.getUint16(offset+28,true),dataStart=offset+30+localN+localExtra;
+      if(dataStart+compressed>start||decoder.decode(b.subarray(offset+30,offset+30+localN))!==name)fail();
+      found={bytes:b.slice(dataStart,dataStart+compressed),method,uncompressed};
+    }
+    p+=46+n+extra+comment;
+  }
+  if(!found)fail();let data=found.bytes;
+  if(found.method===8){
+    const reader=new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+    const parts=[];let total=0;
+    try{while(true){const {value,done}=await reader.read();if(done)break;total+=value.length;if(total>max||total>found.uncompressed){await reader.cancel();fail();}parts.push(value);}}finally{reader.releaseLock();}
+    data=new Uint8Array(total);let pos=0;for(const part of parts){data.set(part,pos);pos+=part.length;}
+  }
+  if(data.length!==found.uncompressed)fail();
+  const xml=decoder.decode(data);if(/<!DOCTYPE|<!ENTITY/i.test(xml))fail();return xml;
+}

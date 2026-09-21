@@ -12,8 +12,13 @@ export async function handlePhoneControl(request, storage, readJSON) {
   if (path === '/internal/phone-sync' && request.method === 'POST') {
     const { value: v } = await readJSON(request, 4096);
     const required = ['id', 'grant', 'name', 'foreground', 'audio_allowed', 'state', 'handled_command'];
-    keys(v, [...required, 'recording_transfer', 'audio_status'], required);
+    keys(v, [...required, 'recording_transfer', 'audio_status', 'audio_ready', 'audio_session'], required);
     if (!idPattern.test(v.id) || !idPattern.test(v.grant) || typeof v.name !== 'string' || v.name.length > 80 || typeof v.foreground !== 'boolean' || typeof v.audio_allowed !== 'boolean' || !states.includes(v.state) || (v.handled_command !== null && !idPattern.test(v.handled_command))) bad('Invalid phone status');
+    if (v.audio_ready !== undefined && typeof v.audio_ready !== 'boolean') bad('Invalid audio readiness');
+    if (v.audio_session !== undefined && v.audio_session !== null && (typeof v.audio_session !== 'string' || !idPattern.test(v.audio_session))) bad('Invalid audio session');
+    if (v.audio_ready === true && !v.audio_session) bad('Ready session required');
+    if (v.audio_ready !== true && v.audio_session != null) bad('Inactive audio session');
+    if (v.audio_ready && !v.audio_allowed) bad('Readiness requires audio authorization');
     if (v.audio_status !== undefined && (typeof v.audio_status !== 'string' || v.audio_status.length > 256)) bad('Invalid audio status');
     const transfer = v.recording_transfer ?? null;
     if (transfer !== null) {
@@ -25,12 +30,13 @@ export async function handlePhoneControl(request, storage, readJSON) {
     if (!old && (await storage.list({ prefix: 'phone:' })).size >= 5) bad('Maximum five paired phones', 429);
     // The phone reports execution; a web click alone never means the microphone started.
     const sameGrant = old?.grant === v.grant;
+    const sameAudioSession = (old?.audio_session ?? null) === (v.audio_session ?? null);
     const phone = { id: v.id, grant: v.grant, name: v.name, foreground: v.foreground, audio_allowed: v.audio_allowed, state: v.state,
       handled_command: v.handled_command, seen_at: Date.now(), collection_enabled: sameGrant && old.collection_enabled,
-      revision: (old?.revision || 0) + (old && !sameGrant ? 1 : 0), command: sameGrant ? old.command : null,
-      recording_transfer: transfer, audio_status: v.audio_status || '' };
+      revision: (old?.revision || 0) + (old && (!sameGrant || !sameAudioSession) ? 1 : 0), command: sameGrant && sameAudioSession ? old.command : null,
+      recording_transfer: transfer, audio_status: v.audio_status || '', audio_ready: v.audio_ready === true, audio_background_capable: v.audio_ready !== undefined, audio_session: v.audio_session ?? null };
     await storage.put('phone:' + phone.id, phone);
-    return reply({ ...phone, server_at: Date.now() });
+    return reply({ ...phone, server_at: Date.now(), background_audio: 1 });
   }
   const match = /^\/internal\/phones\/([0-9a-f-]+)\/(command|collection)$/.exec(path);
   if (!match || request.method !== 'POST') return null;
@@ -62,11 +68,12 @@ export async function handlePhoneControl(request, storage, readJSON) {
     }
     if (v.action === 'start') {
       if (!phone.audio_allowed) bad('Autorizează controlul audio o singură dată pe telefon.', 403);
-      if (startAt <= now && (!phone.foreground || now - phone.seen_at > 25000)) bad('Deschide FORJA pe telefon pentru a începe înregistrarea.', 409);
+      const ready = phone.audio_background_capable ? phone.audio_ready : phone.foreground;
+      if ((phone.audio_background_capable || startAt <= now) && (!ready || now - phone.seen_at >= 25000)) bad('Activează Audio din web pe telefon și așteaptă reconectarea înainte de Start.', 409);
       if (phone.state === 'recording' || (phone.command?.action === 'start' && phone.handled_command !== phone.command.id && now < phone.command.start_before)) bad('Există deja o înregistrare sau o pornire în așteptare.', 409);
     }
     phone.command = { id: v.id, action: v.action, minutes: v.minutes, requested_at: now, start_at: startAt,
-      start_before: startAt + 30000, stop_at: stopAt };
+      start_before: startAt + 30000, stop_at: stopAt, audio_session: phone.audio_session ?? null };
   }
   phone.revision++;
   await storage.put('phone:' + phone.id, phone);
