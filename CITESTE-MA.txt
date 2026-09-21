@@ -1,0 +1,124 @@
+FORJA v23 — TELEFON PIERDUT, CUPLU ȘI CONTACTE
+
+STADIU ACTUAL — REVERIFICARE 21 SEPTEMBRIE 2026
+APK-ul v23 este semnat cu cheia originală, recuperată din proiectul FORJA.
+Actualizarea poate fi instalată peste v22 fără dezinstalare. Testul practic pe
+telefon rămâne necesar. Site-ul a fost publicat și verificat la 21.09.2026: Worker 11.
+Autorizarea Wrangler singură nu publică site-ul.
+
+TELEFON PIERDUT — DUPĂ INSTALAREA V23
+1. Pe propriul telefon, Hartă -> Telefon pierdut -> Activează găsirea din site.
+2. Telefonul rămâne pregătit cu notificare. Se refolosesc permisiunile existente;
+   pentru această funcție sunt necesare locația precisă și notificările.
+3. Din site, în același cont, Hartă -> Telefon pierdut -> Localizează telefonul.
+   Alegi 5/15/30 minute. Căutarea pornește cu notificare când telefonul primește
+   cererea; sunt afișate confirmarea, ora poziției și precizia estimată în metri.
+4. Oprești din site sau notificare. Partenerul nu poate folosi această comandă
+   pentru telefonul tău și nu primește pozițiile acestei căutări.
+5. GPS-ul Android și internetul trebuie să fie pornite. Site-ul nu poate activa
+   GPS-ul dacă e dezactivat. Un telefon oprit sau o aplicație oprită forțat nu
+   răspunde. Pentru reluare după restart: locație Tot timpul. Android poate întârzia
+   cererile; ele expiră dacă nu sunt confirmate în cinci minute.
+6. Ultima poziție rămâne cel mult 24 h. După două minute este marcată ca veche,
+   cu ora măsurării. Oprirea/dezactivarea șterge și poziția salvată.
+
+ACTUALIZAREA SITE-ULUI
+1. Extrage TOT conținutul acestui ZIP pe Windows. Deschide PUBLICA_FORJA.cmd.
+2. Autorizează Wrangler în contul Cloudflare care deține site-ul FORJA.
+   Așteaptă GATA. Autorizarea Wrangler singură nu publică actualizarea.
+   Pachetul publică Worker v11 și adaugă stocarea hărții sociale.
+3. Instalează FORJA_v23_Telefon_Pierdut.apk peste aplicația existentă.
+   Nu dezinstala versiunea anterioară. Detalii: server/LOST_PHONE.md.
+4. Site: https://forja-insights.forja-22e7ea2d.workers.dev
+   Intră cu contul FORJA din aplicație.
+
+CUPLU — PARTAJARE CONTINUĂ
+• Fiecare folosește propriul cont. Adăugați-vă și acceptați-vă întâi ca prieteni.
+• Hartă -> Cuplu & contacte: invită partenerul în cuplu. El acceptă asocierea.
+• Fiecare activează separat „Activează partajarea continuă” pe telefonul său.
+  Locația este rezervată partenerului ales, până o oprești, fără limita de 4 ore.
+• Notificarea are Oprește; se poate opri și din Fantomă / site. Închiderea
+  asocierii sau blocarea oprește ambele sesiuni. Acceptarea nu pornește GPS-ul.
+• Telefonul reîncearcă după lipsa conexiunii. Pentru reluare după restart,
+  permite locația „Tot timpul” din setările Android. După oprire forțată,
+  redeschide FORJA. Restricțiile Android, internetul și GPS-ul pot întrerupe
+  actualizările. Pozițiile neactualizate dispar după două minute.
+
+CONTACTE — NUME, NUMERE ȘI PRIETENI
+• Hartă -> Cuplu & contacte -> Permite accesul la agenda completă.
+  Poți căuta toate numele și numerele accesibile, afișate local în pagini de 50.
+• Pentru găsirea persoanelor în FORJA: verifică propriul număr prin SMS,
+  activează găsirea după număr, apoi sincronizarea contactelor.
+• Se compară numerele cu conturile verificate care au acceptat să fie găsite.
+  Numele din agenda ta rămân pe telefon. Maximum 10.000 numere comparate/zi,
+  cu reîmprospătare automată aproximativ zilnic; Android poate întârzia lucrul.
+• Trimiți cereri de prietenie, care trebuie acceptate. Invitația SMS doar
+  pregătește mesajul în aplicația SMS; tu decizi dacă îl trimiți.
+• Sincronizarea agendei și găsirea după propriul număr au comenzi de oprire.
+
+CONFIGURARE NECESARĂ PENTRU SMS
+Autentificarea prin telefon trebuie activată în Firebase, proiect forja-65093.
+Se configurează regiunile SMS, certificatul APK și condițiile de facturare/cote.
+SMS-urile reale necesită planul Firebase corespunzător (Blaze). Aceste setări
+nu au fost modificate aici. Pașii exacți și certificatele sunt în
+server/PARTNERS_CONTACTS.md. Fără ele, verificarea SMS și găsirea automată
+pot să nu funcționeze; agenda locală, codurile de invitație și cuplurile
+rămân independente de SMS. Numărul este legat de contul FORJA existent.
+
+HARTĂ SOCIALĂ — SESIUNI OBIȘNUITE PENTRU PRIETENI
+• Deschide Harta din aplicație, apoi Tu: salvează numele și copiază codul tău.
+• Prietenul introduce codul în Prieteni. Tu accepți cererea.
+• Acceptarea nu pornește locația. Fiecare alege Pornește pe propriul telefon,
+  activitatea (Mers / Cycling / În oraș) și 30, 60, 120 sau 240 minute.
+• Confirmă partajarea cu prietenii acceptați. Android refolosește permisiunile
+  deja acordate. Pe Android 13+ sunt cerute și notificările pentru acest flux.
+• Sesiunea continuă cu ecranul blocat, cu notificare. Se oprește din notificare,
+  din Mod fantomă, din site sau la expirare. Nu pornește la repornirea telefonului.
+• Prietenii văd numai ultima poziție recentă, precizia, viteza și bateria.
+  Fără actualizare, poziția dispare în cel mult 2 minute. Internetul/GPS/bateria
+  pot întrerupe funcționarea; aceasta nu este urmărire garantată în timp real.
+• Mers & cycling: invită prieteni la o întâlnire, cu loc și oră. Participarea
+  la grup nu acordă acces suplimentar la locație. Poți confirma sau ieși.
+• Locuri: mută harta și salvează centrul. Locurile sunt private. Navigarea
+  deschide aplicația de hărți. În Tu poți spune explicit prietenilor unde ești.
+• Conversație text și emoji din cardul prietenului, în aplicație sau pe site.
+  Se păstrează ultimele 100 mesaje, maximum 7 zile. Nu sunt E2E criptate;
+  accesul este autentificat și limitat la prietenii acceptați.
+• Explorarea personală arată ultimele 500 zone vizitate cu precizie suficientă.
+  Istoricul reține ultimele 30 sesiuni cu distanță GPS estimată. Nu oferă premii.
+• Noua hartă folosește cereri reciproce. Prieteniile vechi nu sunt importate
+  automat. Publisherul vechi de locație din Firestore este dezactivat în APK.
+• Harta de bază este OpenStreetMap, fără API key. Nu descarcă regiuni offline.
+
+ORGANIZARE MANUALĂ, LOCALĂ ȘI ONLINE
+• Pe telefon, Curățenie: Manual fără AI sau Analiză locală.
+  Manual inventariază selecția; nu rulează OCR/clasificarea. Editezi destinațiile.
+  Analiză locală propune dosare după conținut; verifici înainte de aplicare.
+• „Trimite pe site” rămâne o alegere separată de modul de analiză.
+• Pentru selecții din laptop: Curățenie -> Configurare -> reactivează sursele
+  în v22. Serverul detectează noua capacitate Manual. Acordă aplicarea mutărilor
+  aprobate numai dacă dorești organizarea originalelor din laptop.
+• Site -> Poze și documente: ultimele 25/50/100, număr propriu sau Toate,
+  dosar și interval; alege Manual sau Analiză locală. AI online se pornește
+  separat pentru 1–5 elemente alese, după confirmarea procesării online.
+• Mutările sunt reale. Documentele rămân în dosarul autorizat; Galeria cere
+  confirmarea Android pe telefon. Nu se șterge automat nimic prin AI.
+• Copiile expiră la 24 h de la primire. Limite: 25 MB/fișier, 500 copii și
+  512 MB temporar/cont. „Toate” inventariază cel mult 15.000 elemente/sursă;
+  nu înseamnă că toate pot fi încărcate simultan. Verifică totalul primit.
+• Programările existente păstrează analiza locală. În fundal, Android poate
+  întârzia cererile. După oprire forțată redeschide aplicația.
+
+STADIU
+Aceasta este implementarea v23, cu găsirea telefonului, cuplu și contacte.
+Nu include încă Spotify, chat cu fișiere/stickere proprii, widgeturi, efectul
+BUMP între telefoane, descoperire automată de domiciliu sau economie de joc,
+achiziții, clasamente antifraudă ori integrare nouă Health Connect.
+Site-ul a fost publicat prin fluxul existent GitHub și verificat online.
+Sunt disponibile compilarea și testele automate; nu a fost disponibil un
+telefon/emulator conectat pentru testarea acestei versiuni.
+Testul practic pe două telefoane rămâne necesar înaintea unei lansări publice.
+V23 nu adaugă permisiuni față de v22.
+Somnul, audio din web și regulile lor de activare explicită sunt păstrate.
+
+Detalii tehnice: server/LOST_PHONE.md, server/PARTNERS_CONTACTS.md, server/SOCIAL.md și server/ORGANIZER.md.
