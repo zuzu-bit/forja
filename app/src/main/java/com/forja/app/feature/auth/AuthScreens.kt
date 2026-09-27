@@ -6,7 +6,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -14,22 +17,29 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.forja.app.ForjaApp
 import com.forja.app.core.designsystem.*
+import com.forja.app.core.designsystem.components.BoxScopeBottomScrim
+import com.forja.app.core.designsystem.components.EmberField
+import com.forja.app.core.designsystem.components.PopIn
 import com.forja.app.core.designsystem.components.PrimaryButton
+import com.forja.app.core.designsystem.components.Reveal
+import com.forja.app.core.designsystem.components.StampLabel
+import com.forja.app.core.designsystem.components.TopScrim
+import com.forja.app.core.designsystem.components.VideoSurface
 import com.forja.app.core.designsystem.components.pressable
-import com.forja.app.core.designsystem.components.topoBackground
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.LocalFireDepartment
-import androidx.compose.material3.Icon
 import kotlinx.coroutines.launch
+
+// Fundalul: balcon la asfințit — calm, mișcare puțină, se citește bine sub text.
+private const val AUTH_VIDEO = "https://v.ftcdn.net/04/99/13/67/700_F_499136769_X4Pfv9UFpmLtXcXu0JLdSo80FTPH2BGx_ST.mp4"
+private const val AUTH_POSTER = "https://t3.ftcdn.net/jpg/10/16/02/48/500_F_1016024842_sVPfKb4a4gZkZ7XjEjnGtdkeYz1eF2Gz.jpg"
 
 @Composable
 private fun ForjaField(
@@ -46,7 +56,7 @@ private fun ForjaField(
             value = value,
             onValueChange = onValue,
             singleLine = true,
-            visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+            visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
             keyboardOptions = KeyboardOptions(keyboardType = keyboard),
             textStyle = BodyStrong.copy(fontSize = 15.sp),
             modifier = Modifier
@@ -54,8 +64,9 @@ private fun ForjaField(
                 .clip(SecondaryShape)
                 .border(1.dp, StrokeCardStrong, SecondaryShape),
             colors = TextFieldDefaults.colors(
-                focusedContainerColor = Surface2,
-                unfocusedContainerColor = Surface1,
+                // Translucide: videoul se ghicește sub câmpuri, textul rămâne lizibil.
+                focusedContainerColor = Color(0xCC1A1A1E),
+                unfocusedContainerColor = Color(0xB3121214),
                 focusedTextColor = TextPrimary,
                 unfocusedTextColor = TextPrimary,
                 cursorColor = Accent2,
@@ -66,7 +77,7 @@ private fun ForjaField(
     }
 }
 
-/** Login + Register — poarta către contul FORJA (Firebase). */
+/** Login + Register — poarta către contul FORJA (Firebase), peste un video calm. */
 @Composable
 fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
     val context = LocalContext.current
@@ -105,18 +116,13 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
         }
     }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .topoBackground(decor = true)
-            .background(
-                Brush.radialGradient(
-                    listOf(Color(0x266F855A), Color.Transparent),
-                    center = androidx.compose.ui.geometry.Offset(180f, 300f),
-                    radius = 800f
-                )
-            )
-    ) {
+    Box(Modifier.fillMaxSize().background(Surface0)) {
+        VideoSurface(url = AUTH_VIDEO, posterUrl = AUTH_POSTER, modifier = Modifier.fillMaxSize())
+        Box(Modifier.fillMaxSize().background(Color(0x990A0A0B)))
+        BoxScopeBottomScrim()
+        TopScrim()
+        EmberField(Modifier.fillMaxSize(), count = 18, alpha = 0.5f)
+
         Column(
             Modifier
                 .fillMaxSize()
@@ -129,26 +135,33 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
         ) {
             Spacer(Modifier.height(64.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.LocalFireDepartment, contentDescription = null, tint = Accent2, modifier = Modifier.size(30.dp))
+                PopIn {
+                    Icon(Icons.Filled.LocalFireDepartment, contentDescription = null, tint = Accent2, modifier = Modifier.size(30.dp))
+                }
                 Spacer(Modifier.width(8.dp))
-                Text("FORJA", style = TitleModule.copy(fontSize = 34.sp))
+                Reveal(index = 0) {
+                    Text("FORJA", style = TitleModule.copy(fontSize = 34.sp))
+                }
             }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                if (isLogin) "CONTUL TĂU · LIVE IT" else "CONT NOU · LIVE IT",
-                style = monoLabel(10, 0.16f).copy(color = Accent2)
-            )
-            Spacer(Modifier.height(36.dp))
-            Text(
-                if (isLogin) "Bine ai revenit." else "Hai să te cunoaștem.",
-                style = TitleOnboarding.copy(fontSize = 32.sp, lineHeight = 35.sp)
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                if (isLogin) "Intră în cont — progresul și prietenii tăi te așteaptă."
-                else "Contul tău ține progresul, prietenii și harta voastră comună.",
-                style = Body.copy(fontSize = 15.sp, lineHeight = 20.sp)
-            )
+            Spacer(Modifier.height(10.dp))
+            Reveal(index = 1, key = isLogin) {
+                StampLabel(if (isLogin) "RAPORT LA DATORIE" else "ÎNROLARE")
+            }
+            Spacer(Modifier.height(30.dp))
+            Reveal(index = 2, key = isLogin) {
+                Column {
+                    Text(
+                        if (isLogin) "Bine ai revenit." else "Hai să te cunoaștem.",
+                        style = TitleOnboarding.copy(fontSize = 32.sp, lineHeight = 35.sp)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        if (isLogin) "Intră în cont — progresul și prietenii tăi te așteaptă."
+                        else "Contul tău ține progresul, prietenii și harta voastră comună.",
+                        style = Body.copy(fontSize = 15.sp, lineHeight = 20.sp)
+                    )
+                }
+            }
             Spacer(Modifier.height(28.dp))
 
             if (!isLogin) {
@@ -159,9 +172,11 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
             Spacer(Modifier.height(14.dp))
             ForjaField(password, { password = it }, "Parolă (minim 6 caractere)", keyboard = KeyboardType.Password, password = true)
 
-            error?.let {
+            error?.let { msg ->
                 Spacer(Modifier.height(14.dp))
-                Text(it, style = Body.copy(color = Error, fontSize = 13.sp, lineHeight = 17.sp))
+                Reveal(key = msg, offsetY = 8.dp) {
+                    Text(msg, style = Body.copy(color = Error, fontSize = 13.sp, lineHeight = 17.sp))
+                }
             }
 
             Spacer(Modifier.height(24.dp))

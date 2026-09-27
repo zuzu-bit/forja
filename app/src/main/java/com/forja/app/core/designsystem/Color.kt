@@ -45,3 +45,8 @@ val AccentGradientVertical = Brush.verticalGradient(listOf(Accent, Accent2))
 val OverVideoFill = Color(0xB8101114)       // rgba(16,17,20,.72)
 val UtilFill = Color(0xFF17181C)
 val SwitchOff = Color(0xFF2A2A30)
+
+// v4.0 — jarul forjei (scântei, pulsul flăcării, ștampile calde)
+val EmberHot = Color(0xFFFFB35C)
+val EmberWarm = Color(0xFFE0762E)
+val EmberDeep = Color(0xFF8A3A16)
