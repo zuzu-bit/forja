@@ -196,14 +196,14 @@ class GoTrackService : Service() {
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
         val label = when (sport) {
-            "walk" -> "Mersul tău se înregistrează"
-            "ride" -> "Tura ta pe roți se înregistrează"
-            else -> "Alergarea ta se înregistrează"
+            "walk" -> "Tură în curs · Mers"
+            "ride" -> "Tură în curs · Ciclism"
+            else -> "Tură în curs · Alergare"
         }
         return NotificationCompat.Builder(this, "go")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle(label)
-            .setContentText("Atinge pentru consolă. Oprești din hartă.")
+            .setContentText("Traseul se înregistrează. Atinge pentru consolă. Oprești din hartă.")
             .setOngoing(true)
             .setContentIntent(pi)
             .build()

@@ -67,12 +67,12 @@ fun BreathScreen() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.height(18.dp))
-        Text("Respiră", style = TitleModule.copy(fontSize = 26.sp))
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "Câteva minute doar pentru tine. Urmează cercul: inspiră, ține, expiră, ține.",
-            style = BodySmall.copy(color = TextSecondary),
-            textAlign = TextAlign.Center
+        ModuleHeader(
+            stamp = "REPAUS",
+            title = "Respiră",
+            order = "Urmează cercul: inspiră, ține, expiră, ține. Patru secunde fiecare.",
+            titleStyle = TitleModule.copy(fontSize = 26.sp),
+            modifier = Modifier.fillMaxWidth()
         )
 
         Spacer(Modifier.weight(1f))
@@ -88,7 +88,7 @@ fun BreathScreen() {
             contentAlignment = Alignment.Center
         ) {
             Text(
-                if (running) phases[phase].first else "Gata?",
+                if (running) phases[phase].first else "Gata",
                 style = TitleModule.copy(fontSize = 30.sp),
                 textAlign = TextAlign.Center
             )
@@ -96,7 +96,7 @@ fun BreathScreen() {
 
         Spacer(Modifier.height(20.dp))
         Text(
-            if (running) "%d:%02d".format((elapsedMs / 1000) / 60, (elapsedMs / 1000) % 60) else "apasă Începe și lasă restul lumii pe pauză",
+            if (running) "%d:%02d".format((elapsedMs / 1000) / 60, (elapsedMs / 1000) % 60) else "Apasă Începe. Restul lumii așteaptă.",
             style = if (running) heroNumeral(28) else BodySmall.copy(color = TextDim),
             textAlign = TextAlign.Center
         )
@@ -108,11 +108,13 @@ fun BreathScreen() {
         } else {
             PrimaryButton("Începe", onClick = { elapsedMs = 0L; running = true }, modifier = Modifier.fillMaxWidth())
         }
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "Respirația pătrată liniștește sistemul nervos. Fă-o oriunde, oricând — e mereu aici pentru tine.",
-            style = BodyTiny.copy(color = TextDim2),
-            textAlign = TextAlign.Center
+        Spacer(Modifier.height(14.dp))
+        WarmQuote(
+            Tone.ofDay(Tone.breath),
+            modifier = Modifier.fillMaxWidth(),
+            color = TextSecondary,
+            byColor = TextDim2,
+            fontSize = 15
         )
         Spacer(Modifier.height(24.dp))
     }

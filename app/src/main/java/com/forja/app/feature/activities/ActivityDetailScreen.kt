@@ -186,7 +186,7 @@ fun ActivityDetailScreen(activityId: Long, onBack: () -> Unit) {
                 )
             }
             Column {
-                SectionLabel("Calorii")
+                SectionLabel("Calorii · estimat")
                 Text("${a.kcal}", style = heroNumeral(30))
             }
             Column {

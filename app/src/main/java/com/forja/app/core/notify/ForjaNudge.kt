@@ -31,16 +31,16 @@ object ForjaNudge {
     private const val NOTIF_ID = 40
 
     private val MESSAGES = listOf(
-        "Cinci minute pentru tine? Deschide FORJA și respiră puțin.",
-        "Corpul tău îți mulțumește pentru fiecare pas. Hai la o tură scurtă.",
-        "Mâncarea de azi contează — notează-ți o masă în FORJA.",
-        "Somnul bun începe de cu seară. Pregătește-ți noaptea în FORJA.",
-        "Ești mai puternic decât scuza de azi. Un pas mic, acum.",
-        "Prietenii tăi se mișcă. Vezi ce fac și inspiră-te.",
-        "O apă, o respirație, un gând bun — le ai pe toate în FORJA.",
+        "Cinci minute de repaus. Deschide FORJA și respiră rar.",
+        "O tură scurtă ajunge. Corpul ține minte fiecare pas.",
+        "Notează masa de azi. Sinceritatea începe în farfurie.",
+        "Somnul bun începe de cu seară. Pregătește stingerea în FORJA.",
+        "Scuza de azi e mai mică decât tine. Un pas, acum.",
+        "Camarazii tăi se mișcă. Vezi unde sunt și ține pasul.",
+        "O apă, o respirație, un gând limpede. Le ai pe toate în FORJA.",
         "Progresul e suma zilelor mici. Azi e una dintre ele.",
         "Mândria de diseară se clădește din alegerea de acum.",
-        "Cum te simți azi? Un minut de somn, mâncare sau mișcare contează."
+        "Un minut azi pentru somn, masă sau mișcare. Tot contează."
     )
 
     private fun nextDelayMs(): Long {
