@@ -19,6 +19,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ORGANIZER_EVAL_OUTPUT: organizer-model-evaluation.json
+          ORGANIZER_EVAL_DIAGNOSTIC: '1'
         run: node server/organizer-model-eval.mjs
       - name: Keep model evaluation evidence
         if: always()
