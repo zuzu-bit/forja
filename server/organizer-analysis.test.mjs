@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
-import {analyzeOrganizerContent,prepareOrganizerEvidence,validateOrganizerProposal,organizerModelInput,ORGANIZER_MODELS,ORGANIZER_VISION_MODEL} from './organizer-analysis.mjs';
+import {analyzeOrganizerContent,prepareOrganizerEvidence,validateOrganizerProposal,organizerModelInput,organizerModel,geminiGenerate,ORGANIZER_MODELS,ORGANIZER_VISION_MODEL} from './organizer-analysis.mjs';
+import {GEMINI_ENDPOINT,geminiSchema} from './gemini.mjs';
 import {evaluateOrganizerModels} from './organizer-model-eval.mjs';
 import evaluationBridge from './organizer-eval-worker.mjs';
 
@@ -77,7 +78,7 @@ test('authorization required before loading and must remain stable even for unsu
 });
 test('actual original image bytes enter vision and legacy caption stage is explicitly partial',async()=>{
   const bytes=new Uint8Array(await readFile(new URL('./fixtures/organizer/invoice.png',import.meta.url))),f=source(bytes,'image/png'),calls=[];
-  const {result}=await analyze(f,{env:{AI:{run:async(model,input)=>{calls.push({model,input});if(model===ORGANIZER_VISION_MODEL)return{response:'Fotografie de factură pentru reparație de bicicletă.'};return{response:proposal({destination:'Documente/Facturi',evidence:[{source_id:'image',quote:'',observation:'Textul FACTURĂ este vizibil.'}]})};}}}});
+  const {result}=await analyze(f,{env:{ORGANIZER_ANALYSIS_MODEL:ORGANIZER_MODELS.legacy,AI:{run:async(model,input)=>{calls.push({model,input});if(model===ORGANIZER_VISION_MODEL)return{response:'Fotografie de factură pentru reparație de bicicletă.'};return{response:proposal({destination:'Documente/Facturi',evidence:[{source_id:'image',quote:'',observation:'Textul FACTURĂ este vizibil.'}]})};}}}});
   assert.equal(calls.length,2);assert.deepEqual(calls[0].input.image,[...bytes]);assert.equal(result.status,'partial');assert(result.coverage.limitations.includes('intermediate_visual_description'));
   assert.equal(result.evidence[0].representation,'original');assert.equal(result.evidence[0].interpretation,'unconfirmed_ai_observation');
 });
@@ -127,4 +128,71 @@ test('local evaluation bridge rejects public hosts and nonallowlisted models and
   assert.equal((await evaluationBridge.fetch(request(undefined,'invented'),env)).status,400);assert.equal(calls,0);
   for(let i=0;i<12;i++)assert.equal((await evaluationBridge.fetch(request(),env)).status,200);
   assert.equal((await evaluationBridge.fetch(request(),env)).status,429);assert.equal(calls,12);
+});
+
+// ── Gemini 2.5 Flash adapter (fetch is mocked; no network) ──
+const geminiReply=(value,status=200)=>new Response(JSON.stringify(status===200?{candidates:[{content:{parts:[{text:JSON.stringify(value)}]},finishReason:'STOP'}]}:{error:{code:status}}),{status,headers:{'content-type':'application/json'}});
+const hasKeyword=(value,keys)=>JSON.stringify(value).split('"').some(s=>keys.includes(s));
+test('a Gemini key selects gemini-2.5-flash; without it the configured Workers AI model or Scout is used',()=>{
+  assert.equal(organizerModel({GEMINI_API_KEY:'k',ORGANIZER_ANALYSIS_MODEL:ORGANIZER_MODELS.kimi}),ORGANIZER_MODELS.gemini);
+  assert.equal(organizerModel({ORGANIZER_ANALYSIS_MODEL:ORGANIZER_MODELS.kimi}),ORGANIZER_MODELS.kimi);
+  assert.equal(organizerModel({}),ORGANIZER_MODELS.scout);assert.equal(organizerModel({GEMINI_API_KEY:''}),ORGANIZER_MODELS.scout);
+});
+test('Gemini receives the system rule, the evidence context, the real image bytes inline and a relaxed JSON schema',async(t)=>{
+  const bytes=new Uint8Array(await readFile(new URL('./fixtures/organizer/invoice.png',import.meta.url))),f=source(bytes,'image/png'),requests=[];let aiCalls=0;
+  t.mock.method(globalThis,'fetch',async(url,init)=>{requests.push({url,init});return geminiReply(proposal({destination:'Documente/Facturi',evidence:[{source_id:'image',quote:'',observation:'Se vede o factură tipărită cu un total în lei.'}]}));});
+  const {result}=await analyze(f,{env:{GEMINI_API_KEY:'secret-key',ORGANIZER_ANALYSIS_MODEL:ORGANIZER_MODELS.scout,AI:{run:async()=>{aiCalls++;return {};}}}});
+  assert.equal(aiCalls,0);assert.equal(requests.length,1);assert.equal(requests[0].url,GEMINI_ENDPOINT);assert.equal(requests[0].url,'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
+  assert.equal(requests[0].init.method,'POST');assert.equal(requests[0].init.headers['x-goog-api-key'],'secret-key');assert.equal(requests[0].init.headers['content-type'],'application/json');
+  const body=JSON.parse(requests[0].init.body);
+  assert.match(body.system_instruction.parts[0].text,/Clasifică numai conținutul furnizat/);
+  assert.equal(body.contents[0].role,'user');assert.equal(body.contents[0].parts[0].text.includes('"source_sha256":"'+f.file.sha256+'"'),true);assert.doesNotMatch(body.contents[0].parts[0].text,/secretă/);
+  assert.deepEqual(body.contents[0].parts[1],{inline_data:{mime_type:'image/png',data:Buffer.from(bytes).toString('base64')}});
+  assert.equal(body.generationConfig.responseMimeType,'application/json');assert.equal(body.generationConfig.temperature,0.1);assert.equal(body.generationConfig.maxOutputTokens,2000);
+  const schema=body.generationConfig.responseSchema;
+  assert.equal(hasKeyword(schema,['const','oneOf','additionalProperties']),false);
+  assert.deepEqual(schema.properties.evidence.items.properties.source_id.enum,['image']);assert.deepEqual(schema.properties.deletion_review.anyOf[0].properties.suggested,{enum:[false],type:'boolean'});
+  assert.equal(result.model,ORGANIZER_MODELS.gemini);assert.equal(result.vision_model,null);assert.equal(result.status,'complete');assert.equal(result.destination,'Documente/Facturi');
+  assert.equal(result.evidence[0].representation,'original');assert.equal(result.applied,false);
+});
+test('Gemini stays behind the proposal gate: invented quotes and deletions are rejected even from the preferred model',async(t)=>{
+  t.mock.method(globalThis,'fetch',async()=>geminiReply(proposal({evidence:[{source_id:'text',quote:'Fișier inutil',observation:''}]})));
+  await assert.rejects(()=>analyze(source(),{env:{GEMINI_API_KEY:'k',AI:{run:async()=>({response:proposal()})}}}),/Citatul AI nu există/);
+});
+test('any Gemini failure falls back to Workers AI Scout with the same context; the 503 remains only when both fail',async(t)=>{
+  for(const failure of [()=>geminiReply(null,500),()=>{throw new Error('network');},()=>new Response(JSON.stringify({promptFeedback:{blockReason:'SAFETY'}}),{status:200}),()=>new Response(JSON.stringify({candidates:[{content:{parts:[]},finishReason:'MAX_TOKENS'}]}),{status:200})]) {
+    const fetchMock=t.mock.method(globalThis,'fetch',async()=>failure());
+    const f=source(),calls=[],{result}=await analyze(f,{env:{GEMINI_API_KEY:'k',AI:{run:async(model,input)=>{calls.push({model,input});return {response:proposal()};}}}});
+    assert.equal(fetchMock.mock.callCount(),1);fetchMock.mock.restore();
+    assert.equal(calls.length,1);assert.equal(calls[0].model,ORGANIZER_MODELS.scout);assert.equal(calls[0].input.guided_json.type,'object');assert.match(calls[0].input.messages[1].content,/fotosinteză/);
+    assert.equal(result.model,ORGANIZER_MODELS.scout);assert.equal(result.destination,'Educație/Biologie');
+  }
+  t.mock.method(globalThis,'fetch',async()=>geminiReply(null,429));
+  await assert.rejects(()=>analyze(source(),{env:{GEMINI_API_KEY:'k',AI:{run:async()=>{throw new Error('unavailable');}}}}),/Analiza AI nu a reușit/);
+  await assert.rejects(()=>analyze(source(),{env:{GEMINI_API_KEY:'k'}}),/Analiza AI nu a reușit/);
+  await assert.rejects(()=>analyze(source(),{env:{}}),/Serviciul de analiză nu este disponibil/);
+});
+test('a grant change during the Gemini call discards the result before any fallback',async(t)=>{
+  let token='grant:1';
+  t.mock.method(globalThis,'fetch',async()=>{token='grant:2';return geminiReply(proposal());});
+  let aiCalls=0;
+  await assert.rejects(()=>analyze(source(),{authorize:async()=>token,env:{GEMINI_API_KEY:'k',AI:{run:async()=>{aiCalls++;return {response:proposal()};}}}}),/s-a schimbat/);
+  assert.equal(aiCalls,0);
+});
+test('geminiGenerate never runs without a key and converts every schema keyword Gemini rejects',async()=>{
+  await assert.rejects(()=>geminiGenerate({},{system:'s',parts:[{text:'t'}]}),/gemini_key_missing/);
+  const relaxed=geminiSchema({type:'object',additionalProperties:false,required:['a'],properties:{a:{type:'string',const:'x'},b:{oneOf:[{type:'string',minLength:2,maxLength:5},{type:'string',const:''}]},c:{type:'boolean',const:true},d:{type:'array',minItems:0,maxItems:2,items:{type:'string',enum:['e1']}}}});
+  assert.deepEqual(relaxed,{type:'object',required:['a'],properties:{a:{type:'string',enum:['x']},b:{anyOf:[{type:'string',minLength:2,maxLength:5},{type:'string',enum:['']}]},c:{type:'boolean',enum:[true]},d:{type:'array',minItems:0,maxItems:2,items:{type:'string',enum:['e1']}}}});
+  const text=source(),input=organizerModelInput(ORGANIZER_MODELS.gemini,[{role:'system',content:'S'},{role:'user',content:'context'}],[{id:'text',kind:'text',text:'abc'}]);
+  assert.deepEqual(input.parts,[{text:'context'}]);assert.equal(input.system,'S');assert.deepEqual(input.schema.properties.evidence.items.properties.source_id.enum,['text']);
+  assert.equal(hasKeyword(input.schema,['const','oneOf','additionalProperties']),false);
+  const fetched=[];const r=await geminiGenerate({GEMINI_API_KEY:'k'},input,async(url,init)=>{fetched.push(init);return geminiReply({ok:true});});
+  assert.deepEqual(JSON.parse(r.response),{ok:true});assert.equal(r.model,'gemini-2.5-flash');assert.equal(JSON.parse(fetched[0].body).generationConfig.responseSchema.type,'object');
+  assert.equal(text.file.bytes>0,true);
+});
+test('the evaluation allowlist accepts gemini-2.5-flash and routes it through the Gemini contract, not Workers AI',async()=>{
+  const seen=[];
+  const report=await evaluateOrganizerModels(async(model,input)=>{seen.push({model,input});return {response:JSON.stringify(proposal({destination:'Documente/Facturi',evidence:[{source_id:'text',quote:'FACTURĂ.',observation:''}]}))};},{models:[ORGANIZER_MODELS.gemini],cases:['text_not_filename'],maxCalls:1});
+  assert.equal(report.calls,1);assert.equal(seen[0].model,'gemini-2.5-flash');assert.equal(Array.isArray(seen[0].input.parts),true);assert.equal(seen[0].input.messages,undefined);
+  assert.equal(report.summary[0].passed,1);
 });

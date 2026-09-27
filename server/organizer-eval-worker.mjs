@@ -1,5 +1,6 @@
 /** Local Wrangler-only bridge to its remote AI binding. No production bindings or routes. */
-import {ORGANIZER_MODELS,ORGANIZER_VISION_MODEL} from './organizer-analysis.mjs';
+import {ORGANIZER_MODELS,ORGANIZER_VISION_MODEL,geminiGenerate} from './organizer-analysis.mjs';
+import {geminiAvailable} from './gemini.mjs';
 const models=new Set([...Object.values(ORGANIZER_MODELS),ORGANIZER_VISION_MODEL]);
 let calls=0;
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
@@ -14,7 +15,7 @@ export default {
     let body;try{const text=await request.text();if(text.length>256*1024)return json({error:'fixture_too_large'},413);body=JSON.parse(text);}catch{return json({error:'invalid_fixture'},400);}
     if(!body||Object.keys(body).some(k=>!['model','input'].includes(k))||!models.has(body.model)||!body.input||typeof body.input!=='object'||Array.isArray(body.input))return json({error:'invalid_fixture'},400);
     calls++;
-    try{return json({success:true,result:await env.AI.run(body.model,body.input)});}
+    try{return json({success:true,result:body.model===ORGANIZER_MODELS.gemini&&geminiAvailable(env)?await geminiGenerate(env,body.input):await env.AI.run(body.model,body.input)});}
     catch(error){
       // Never return a provider message/stack: these may contain prompt or credential material.
       const status=Number(error?.status??error?.httpStatus),code=Number(error?.code);

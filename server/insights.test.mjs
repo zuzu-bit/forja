@@ -4,7 +4,8 @@ import { InsightsAccount } from './insights-store.mjs';
 import { buildEvidence, validateRecommendations, loadJournals, internalRequest, parsedJSON, recommendationFormat } from './insights-ai.mjs';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { handleInsights } from './insights-ai.mjs';
+import { handleInsights, runText, preferredModel, TEXT_MODEL } from './insights-ai.mjs';
+import { GEMINI_ENDPOINT, GEMINI_MODEL } from './gemini.mjs';
 import { checkRecording } from './recording-schema.mjs';
 import { campaignFields } from './app-content.mjs';
 class MemoryStorage {
@@ -379,4 +380,57 @@ test('unified recording journals preserve null metrics and never imply measured 
  const row=data.sleep.records[0];assert.equal(row.score,null);assert.equal(row.deepMin,null);assert.equal(row.remMin,null);assert.equal(row.measurement,'recording_interval');assert.equal(row.recordingId,'stable-recording');
  const evidence=buildEvidence(data,[]),recording=evidence.find(e=>e.id==='recording-interval-summary');assert(recording);assert.match(recording.text,/NU durata somnului/);assert.match(recording.text,/necunoscute/);assert.equal(evidence.find(e=>e.id==='sleep-summary'),undefined);
  data.sleep.records.push({startAt:2000,endAt:null,measurement:'recording_interval',score:-1});assert.equal(buildEvidence(data,[]).find(e=>e.id==='recording-interval-summary').count,1);
+});
+
+// ── runText(): Gemini 2.5 Flash when a key exists, Workers AI otherwise; fetch is mocked, no network ──
+const geminiText=(text,status=200)=>new Response(JSON.stringify(status===200?{candidates:[{content:{parts:[{text}]},finishReason:'STOP'}]}:{error:{code:status}}),{status,headers:{'content-type':'application/json'}});
+const draftSchema={type:'object',additionalProperties:false,required:['title','body'],properties:{title:{type:'string',maxLength:100},body:{type:'string',maxLength:500}}};
+test('runText prefers Gemini with the system rule, user text and a relaxed JSON schema, never touching Workers AI',async(t)=>{
+  const requests=[];let runs=0;
+  t.mock.method(globalThis,'fetch',async(url,init)=>{requests.push({url,init});return geminiText('{"title":"Atelier","body":"Vino la atelier."}');});
+  const result=await runText({GEMINI_API_KEY:'secret',AI:{run:async()=>{runs++;return {};}}},{system:'Regula.',user:'{"brief":"x"}',schema:draftSchema,maxTokens:500,temperature:0.3});
+  assert.deepEqual(result,{text:'{"title":"Atelier","body":"Vino la atelier."}',model:GEMINI_MODEL});assert.equal(runs,0);assert.equal(requests.length,1);
+  assert.equal(requests[0].url,GEMINI_ENDPOINT);assert.equal(requests[0].init.headers['x-goog-api-key'],'secret');
+  const body=JSON.parse(requests[0].init.body);
+  assert.deepEqual(body.system_instruction,{parts:[{text:'Regula.'}]});assert.deepEqual(body.contents,[{role:'user',parts:[{text:'{"brief":"x"}'}]}]);
+  assert.deepEqual(body.generationConfig,{temperature:0.3,maxOutputTokens:500,responseMimeType:'application/json',responseSchema:{type:'object',required:['title','body'],properties:{title:{type:'string',maxLength:100},body:{type:'string',maxLength:500}}}});
+});
+test('runText falls back to Workers AI Llama on any Gemini error and uses it directly without a key',async(t)=>{
+  const runs=[];const env={GEMINI_API_KEY:'k',AI:{run:async(model,input)=>{runs.push({model,input});return {response:'{"ok":1}'};}}};
+  t.mock.method(globalThis,'fetch',async()=>geminiText('',503));
+  const result=await runText(env,{system:'S',user:'U',schema:draftSchema,maxTokens:99,temperature:0.2});
+  assert.deepEqual(result,{text:'{"ok":1}',model:TEXT_MODEL});
+  assert.deepEqual(runs[0],{model:TEXT_MODEL,input:{messages:[{role:'system',content:'S'},{role:'user',content:'U'}],response_format:{type:'json_schema',json_schema:draftSchema},max_tokens:99,temperature:0.2}});
+  const fetchMock=t.mock.method(globalThis,'fetch',async()=>assert.fail('no network without a key'));
+  const plain=await runText({AI:env.AI},{system:'S',user:'U'});
+  assert.equal(plain.model,TEXT_MODEL);assert.equal(fetchMock.mock.callCount(),0);assert.equal(runs[1].input.response_format,undefined);
+  await assert.rejects(()=>runText({},{system:'S',user:'U'}),/provider_unavailable/);
+  t.mock.method(globalThis,'fetch',async()=>{throw new Error('offline');});
+  await assert.rejects(()=>runText({GEMINI_API_KEY:'k'},{system:'S',user:'U'}),/provider_unavailable/);
+});
+test('runText hands photo bytes to Gemini inline and keeps the Llama-Vision hop only for Workers AI',async(t)=>{
+  const bytes=new Uint8Array([255,216,255,224,7,8,9]),requests=[],runs=[];
+  t.mock.method(globalThis,'fetch',async(url,init)=>{requests.push(JSON.parse(init.body));return geminiText('O farfurie cu paste.');});
+  const env={GEMINI_API_KEY:'k',AI:{run:async(model,input)=>{runs.push({model,input});return {description:'O farfurie.'};}}};
+  const seen=await runText(env,{system:'Reguli.',user:'Descrie.',image:{bytes,mediaType:'image/jpeg'},maxTokens:250,temperature:0.1});
+  assert.deepEqual(seen,{text:'O farfurie cu paste.',model:GEMINI_MODEL});assert.equal(runs.length,0);
+  assert.deepEqual(requests[0].contents[0].parts,[{text:'Descrie.'},{inline_data:{mime_type:'image/jpeg',data:Buffer.from(bytes).toString('base64')}}]);
+  assert.equal(requests[0].generationConfig.responseMimeType,undefined);
+  t.mock.method(globalThis,'fetch',async()=>geminiText('',500));
+  const fallback=await runText(env,{system:'Reguli.',user:'Descrie.',image:{bytes,mediaType:'image/jpeg'},maxTokens:250,temperature:0.1});
+  assert.equal(fallback.model,'@cf/meta/llama-3.2-11b-vision-instruct');assert.equal(fallback.text,'O farfurie.');
+  assert.deepEqual(runs[0].input.image,[...bytes]);assert.match(runs[0].input.prompt,/^Reguli\. Descrie\.$/);
+});
+test('campaign drafts and recommendations report the model actually used, Gemini when a key exists',async(t)=>{
+  const stub={fetch:async request=>Response.json({ok:true,sessions:[]})};
+  const env={GEMINI_API_KEY:'k',INSIGHTS:{idFromName:name=>name,get:()=>stub},AI:{run:async()=>assert.fail('Workers AI must stay idle while Gemini answers')}};
+  t.mock.method(globalThis,'fetch',async(url)=>String(url).startsWith('https://firestore.googleapis.com/')?new Response('[]',{status:500}):geminiText('{"title":"Atelier de desen","body":"Descoperă atelierul de desen."}'));
+  const draft=await handleInsights(new Request('https://test/insights/api/campaign-draft',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({brief:'Atelier de desen în weekend.',sponsor:'Atelier'})}),env,'userA');
+  assert.deepEqual(await draft.json(),{draft:{title:'Atelier de desen',body:'Descoperă atelierul de desen.'},published:false});
+  const headers={'content-type':'application/json',Authorization:'Bearer token'};
+  const state=await handleInsights(new Request('https://test/insights/api/state',{headers}),env,'userA');
+  assert.equal((await state.json()).model,GEMINI_MODEL);
+  const empty=await handleInsights(new Request('https://test/insights/api/recommendations',{method:'POST',headers,body:JSON.stringify({consent:true})}),env,'userA');
+  const data=await empty.json();assert.deepEqual(data.recommendations,[]);assert.equal(data.model,GEMINI_MODEL);
+  assert.equal(preferredModel({}),TEXT_MODEL);assert.equal(preferredModel({GEMINI_API_KEY:'k'}),GEMINI_MODEL);
 });

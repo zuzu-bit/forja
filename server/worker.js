@@ -545,8 +545,8 @@ async function handleSleepAudio(request, env) {
 async function handleSleepTalkSummary(request, env) {
   let s;
   try { s = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
-  const phrases = Array.isArray(s.phrases)
-    ? s.phrases.filter((p) => typeof p === "string" && p.trim()).slice(0, 20)
+  const phrases = Array.isArray(s && s.phrases)
+    ? s.phrases.filter((p) => typeof p === "string" && p.trim()).slice(0, 20).map((p) => p.trim().slice(0, 200))
     : [];
   if (!phrases.length) return json({ summary: "" });
   const joined = phrases.map((p, i) => `(${i + 1}) ${p}`).join(" ");
@@ -588,14 +588,20 @@ async function handleRecordingGet(env, uid, sessionId) {
 }
 
 // ── Rezumatul de dimineață — două propoziții calde, din cifre reale ──────────
+// Doar numere întregi, în limite reale, ajung în prompt: JSON-ul clientului nu poate strecura text în instrucțiuni.
+function bounded(value, max) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.min(max, Math.round(n))) : 0;
+}
 async function handleSleepSummary(request, env) {
   let s;
   try { s = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
+  if (!s || typeof s !== "object" || Array.isArray(s)) return json({ error: "Cerere invalidă." }, 400);
   const prompt =
     "Ești un coach de somn cald și onest, care scrie în română. Din datele: " +
-    `durată ${s.minutes || 0} minute, scor ${s.score || 0}/100, profund ${s.deepMin || 0} min, ` +
-    `REM ${s.remMin || 0} min, ${s.movements || 0} mișcări, ${s.snoreEvents || 0} episoade de sforăit, ` +
-    `${s.talkEvents || 0} episoade de vorbit. ` +
+    `durată ${bounded(s.minutes, 1440)} minute, scor ${bounded(s.score, 100)}/100, profund ${bounded(s.deepMin, 1440)} min, ` +
+    `REM ${bounded(s.remMin, 1440)} min, ${bounded(s.movements, 100000)} mișcări, ${bounded(s.snoreEvents, 10000)} episoade de sforăit, ` +
+    `${bounded(s.talkEvents, 10000)} episoade de vorbit. ` +
     "Scrie EXACT două propoziții scurte: prima descrie noaptea, a doua dă un sfat blând și concret. " +
     "Fără diagnostice medicale, fără emoji, fără introducere.";
   const out = (await runText(env, prompt, 160)).trim();

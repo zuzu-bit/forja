@@ -1,7 +1,7 @@
 /** Bounded synthetic evaluation. No account content and no secrets are emitted. Node >=20. */
 import {readFile,writeFile} from 'node:fs/promises';
 import {createHash,randomUUID} from 'node:crypto';
-import {analyzeOrganizerContent,ORGANIZER_MODELS} from './organizer-analysis.mjs';
+import {analyzeOrganizerContent,ORGANIZER_MODELS,geminiGenerate} from './organizer-analysis.mjs';
 
 const fixtures=[
   {id:'text_not_filename',name:'vacanță.txt',mime:'text/plain',text:'FACTURĂ. Serviciu: reparație frâne bicicletă. Cantitate 1. Total de plată: 120 lei.',accept:/factur|finan|cheltu|document|contabil/i},
@@ -63,6 +63,8 @@ if(process.argv[1]&&new URL('file://'+process.argv[1]).href===import.meta.url) {
   }
   const selected=process.env.ORGANIZER_EVAL_MODELS?.split(',').map(s=>s.trim()).filter(Boolean);
   const report=await evaluateOrganizerModels(async(model,input)=>{
+    // Gemini is called directly with the local key (ORGANIZER_EVAL_MODELS=gemini-2.5-flash); the loopback bridge may also hold the key.
+    if(model===ORGANIZER_MODELS.gemini&&!localEndpoint)return geminiGenerate({GEMINI_API_KEY:process.env.GEMINI_API_KEY||''},input);
     const response=await fetch(localEndpoint||`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/ai/run/${model}`,{
       method:'POST',headers:{...(localEndpoint?{'x-organizer-eval':'synthetic-only-v1'}:{authorization:`Bearer ${token}`}), 'content-type':'application/json'},
       body:JSON.stringify(localEndpoint?{model,input}:input),signal:AbortSignal.timeout(40000)});
