@@ -22,6 +22,7 @@ public final class AudioDiagnostics {
     private static volatile String captureStage = "pornire";
     private AudioDiagnostics() {}
     public static void install(Context c) { app = c.getApplicationContext(); }
+    public static Context context() { return app; }
     public static String owner() {
         com.google.firebase.auth.FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         return user == null ? null : user.getUid();

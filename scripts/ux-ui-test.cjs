@@ -48,7 +48,7 @@ w.L = {
 };
 const fixture = createFixture();
 installMockFetch(w, fixture);
-w.eval(clientSource() + '\nwindow.__ux = {page, logout, refreshSocial, socialChat, expireSocialMarkers, socialUI, refreshRecovery, recoveryUI};');
+w.eval(clientSource() + '\nwindow.__ux = {page, logout, refresh, refreshSocial, socialChat, expireSocialMarkers, socialUI, refreshRecovery, recoveryUI, refreshPhones, refreshSleepReports, openSleepReport, localTimeInput, phoneWindows, phoneDurations, sleepUI};');
 const $ = id => {const node = w.document.getElementById(id); assert(node, `Missing #${id}`); return node;};
 const tick = () => new Promise(resolve => setTimeout(resolve, 15));
 const checks = [];
@@ -132,6 +132,25 @@ const callFor = (suffix, method) => fixture.calls.findLast(c => c.route.endsWith
     }
     w.document.querySelector('[data-tab="audio"]').click(); $('audio-control').click(); await tick();
     assert(!$('page-control').hidden);
+  });
+  await check('unknown sleep scores and audio intervals do not become invented sleep measurements', async () => {
+    const original = fixture.state.journals.sleep.records, today = new Date(); today.setHours(0,0,0,0);
+    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate()-1);
+    fixture.state.journals.sleep.records = [
+      {startAt:yesterday.getTime()+60000,endAt:null,score:null},
+      {startAt:today.getTime()+60000,endAt:today.getTime()+120000,score:-1},
+      {startAt:today.getTime()+120000,endAt:today.getTime()+180000,score:95,measurement:'recording_interval'},
+      {startAt:today.getTime()+180000,endAt:today.getTime()+240000,score:82}
+    ];
+    try {
+      await w.__ux.refresh();
+      const rows = [...$('journals').querySelectorAll('.panel:first-child tbody tr')].map(row => [...row.querySelectorAll('td')].map(cell => cell.textContent));
+      assert.equal(rows.length,4); assert.equal(rows[0][1],'—');
+      assert.deepEqual(rows.map(row => row[3]),['—','—','—','82']);
+      assert.equal(rows[2][2],'Înregistrare audio'); assert.equal(rows[2][1],'1 min');
+      const bars = [...$('sleep-chart').querySelectorAll('.sleep-bar')];
+      assert.equal(bars.length,7); assert(bars.slice(0,6).every(bar => bar.hidden)); assert(!bars[6].hidden);
+    } finally {fixture.state.journals.sleep.records=original; await w.__ux.refresh();}
   });
   await check('social invitations preserve intended request payload', async () => {
     w.__ux.page('social'); await tick();
@@ -232,17 +251,128 @@ const callFor = (suffix, method) => fixture.calls.findLast(c => c.route.endsWith
     $('campaign-sponsor').value = 'Demo'; $('campaign-title').value = 'Weekend'; $('campaign-body').value = 'O idee simplă.';
     $('campaign-save').click(); await tick(); assert.equal(callFor('/campaigns','POST').body.content.published, false);
   });
+  await check('legacy phone controls remain bounded to one hour', async () => {
+    w.__ux.page('control'); await tick();
+    const durations = [...$('phone-list').querySelector('select').options].map(o => Number(o.value));
+    assert.equal(Math.max(...durations), 60);
+    assert.equal($('sleep-reports').querySelectorAll(':scope>details').length, 0);
+  });
+  await check('sleep start sends an explicit 12 hour command and awaits confirmation', async () => {
+    const phone = fixture.phones[0]; phone.sleep_capable = true; phone.sleep_analysis_allowed = true;
+    await w.__ux.refreshPhones();
+    const select = $('phone-list').querySelector('select'); select.value = '720'; select.dispatchEvent(new w.Event('change'));
+    await clickText($('phone-list'), /^Pornește acum$/);
+    const request = fixture.calls.findLast(c => c.route === '/insights/api/phones/' + phone.id + '/command');
+    assert.equal(request.body.purpose, 'sleep'); assert.equal(request.body.minutes, 720);
+    assert.match(request.body.sleep_id, /^[a-f\d-]{36}$/); assert.match(request.body.id, /^[a-f\d-]{36}$/);
+    assert.match($('phone-list').textContent, /așteaptă confirmarea/i);
+    assert(!$('phone-list').textContent.includes('● Se înregistrează'));
+    phone.command = null; await w.__ux.refreshPhones();
+  });
+  await check('a daytime nap can be scheduled then replaced with new hours', async () => {
+    const phone = fixture.phones[0];
+    const start = new Date(); start.setHours(14, 0, 0, 0); if (start.getTime() <= Date.now()) start.setDate(start.getDate() + 1);
+    const end = new Date(start.getTime() + 90 * 60000);
+    function setTime(key, date) {const field = $('phone-' + phone.id + '-' + key); field.value = w.__ux.localTimeInput(date.getTime()); field.dispatchEvent(new w.Event('input'));}
+    setTime('start', start); setTime('end', end);
+    await clickText($('phone-list'), /^Programează intervalul$/);
+    const first = fixture.calls.findLast(c => c.route === '/insights/api/phones/' + phone.id + '/command');
+    assert.equal(first.body.purpose, 'sleep'); assert.equal(first.body.start_at, start.getTime()); assert.equal(first.body.stop_at, end.getTime());
+    assert.equal(first.body.minutes, 90); assert.match($('phone-list').textContent, /Programat/);
+    setTime('start', new Date(start.getTime() + 60000)); setTime('end', new Date(end.getTime() + 60000));
+    await clickText($('phone-list'), /^Salvează orele$/);
+    const replacement = fixture.calls.findLast(c => c.route === '/insights/api/phones/' + phone.id + '/command');
+    assert.equal(replacement.body.replace_command, first.body.id); assert.notEqual(replacement.body.sleep_id, first.body.sleep_id);
+    assert.equal(replacement.body.start_at, start.getTime() + 60000);
+    phone.command = null; await w.__ux.refreshPhones();
+  });
+  await check('unready and actively recording phones cannot start another sleep session', async () => {
+    const phone = fixture.phones[0]; phone.audio_ready = false; await w.__ux.refreshPhones();
+    let start = [...$('phone-list').querySelectorAll('button')].find(b => b.textContent === 'Pornește acum'); assert(start.disabled);
+    phone.audio_ready = true; phone.sleep_session = {state:'recording'}; await w.__ux.refreshPhones();
+    start = [...$('phone-list').querySelectorAll('button')].find(b => b.textContent === 'Pornește acum'); assert(start.disabled);
+    assert.match($('phone-list').textContent, /Se înregistrează/); phone.sleep_session = null;
+  });
+  await check('sleep reports escape transcripts and retain retry, pagination and privacy actions', async () => {
+    const id = randomUUID(), chunk = randomUUID();
+    const result = {id, started_at:Date.now()-7200000, state:'needs_retry'};
+    fixture.sleep.sessions = [result];
+    fixture.sleep.reports[id] = {id, recorded_ms:120000, analyzed_ms:60000, analysis_consent:true, snoring:{status:'unavailable'},
+      chunks:[{id:chunk,item_id:randomUUID(),recorded_from:Date.now()-7200000,duration_ms:60000,state:'failed',result:{transcript:'<img src=x onerror=alert(1)> Text demo',topics:[{title:'<script>injected()</script>'}],limitations:['limited']}}],
+      next_cursor:'page-two', pages:{'page-two':{id,analysis_consent:true,chunks:[{id:randomUUID(),item_id:randomUUID(),recorded_from:Date.now()-7140000,duration_ms:60000,state:'complete',result:{transcript_status:'empty'}}],next_cursor:null}}
+    };
+    await w.__ux.refreshSleepReports(); const report = $('sleep-reports').querySelector(':scope>details'); report.open = true; await tick();
+    assert(report.textContent.includes('<img')); assert.equal(report.querySelectorAll('img,script').length, 0);
+    assert(report.querySelector('a[href="#privacy-sleep"]')); assert.match(report.textContent, /2 min primit · 1 min analizat/);
+    await clickText(report, /^Reîncearcă analiza$/);
+    assert.equal(callFor('/chunks','POST').body.recording_session_id, chunk);
+    await clickText(report, /^Mai multe fragmente$/);
+    assert.equal(report.querySelectorAll('.file-card').length, 2); assert.match(report.textContent, /Nu s-a distins vorbire/);
+    await clickText(report, /^Șterge raportul$/); assert(callFor('/' + id,'DELETE')); assert.equal($('sleep-reports').querySelectorAll(':scope>details').length, 0);
+  });
+  await check('open sleep reports update automatically without interrupting active playback', async () => {
+    const id = randomUUID(), chunk = {id:randomUUID(),item_id:randomUUID(),recorded_from:Date.now()-60000,duration_ms:60000,state:'pending'};
+    fixture.sleep.sessions = [{id,started_at:Date.now()-60000,state:'analyzing',chunk_count:1,analyzed_ms:0,snoring:{status:'unavailable'}}];
+    fixture.sleep.reports[id] = {id,recorded_ms:60000,analyzed_ms:0,analysis_consent:true,snoring:{status:'unavailable'},chunks:[chunk],next_cursor:null};
+    await w.__ux.refreshSleepReports(); const report = $('sleep-reports').querySelector(':scope>details'); report.open = true; await tick();
+    assert.match(report.querySelector('.sleep-report-body').textContent, /În așteptare/);
+    fixture.sleep.sessions[0].state = 'complete'; fixture.sleep.sessions[0].analyzed_ms = 60000;
+    fixture.sleep.reports[id].analyzed_ms = 60000; chunk.state = 'complete'; chunk.result = {transcript:'Text nou, disponibil automat.'};
+    await w.__ux.refreshSleepReports(); await tick(); assert(report.textContent.includes('Text nou, disponibil automat.'));
+    const audio = w.document.createElement('audio'); let playing = true;
+    Object.defineProperty(audio,'paused',{get:()=>!playing}); Object.defineProperty(audio,'ended',{get:()=>false});
+    report.querySelector('.file-card').append(audio);
+    fixture.sleep.sessions[0].chunk_count = 2; chunk.result.transcript = 'Actualizare după ascultare.';
+    await w.__ux.refreshSleepReports(); await tick();
+    assert(audio.isConnected); assert(!report.textContent.includes('Actualizare după ascultare.'));
+    playing = false; await w.__ux.refreshSleepReports(); await tick();
+    assert(report.textContent.includes('Actualizare după ascultare.')); assert(!audio.isConnected);
+  });
+  await check('late sleep detail responses cannot overwrite the newer report', async () => {
+    const report = $('sleep-reports').querySelector(':scope>details'), id = report.dataset.sleep;
+    const body = report.querySelector('.sleep-report-body'), fetch = w.fetch, pending = [];
+    w.fetch = (url, options) => String(url) === '/v2/sleep/sessions/' + id ? new Promise(r => pending.push(r)) : fetch(url, options);
+    try {
+      const first = w.__ux.openSleepReport(id,body); await tick();
+      const second = w.__ux.openSleepReport(id,body); await tick(); assert.equal(pending.length, 2);
+      const old = structuredClone(fixture.sleep.reports[id]), recent = structuredClone(old);
+      old.chunks[0].result.transcript = 'Stare veche, primită târziu.';
+      recent.chunks[0].result.transcript = 'Raport recent, afișat corect.';
+      pending[1](Response.json(recent)); await second;
+      pending[0](Response.json(old)); await first;
+      assert(report.textContent.includes('Raport recent, afișat corect.'));
+      assert(!report.textContent.includes('Stare veche, primită târziu.'));
+    } finally {w.fetch = fetch;}
+  });
+  await check('deleting a sleep report while audio loads cannot start detached playback', async () => {
+    const report = $('sleep-reports').querySelector(':scope>details');
+    assert(report?.open);
+    const fetch = w.fetch, createURL = w.URL.createObjectURL, play = w.HTMLMediaElement.prototype.play;
+    let resolve, created = 0, played = 0;
+    w.fetch = (url, options) => /\/v2\/sessions\/[^/]+\/items\//.test(String(url)) ? new Promise(r => {resolve = r;}) : fetch(url, options);
+    w.URL.createObjectURL = () => {created++; return 'blob:delayed-sleep';};
+    w.HTMLMediaElement.prototype.play = async () => {played++;};
+    try {
+      await clickText(report, /^Ascultă fragmentul$/); assert(resolve, 'Audio fetch must be in flight');
+      await clickText(report, /^Șterge raportul$/); assert(!report.isConnected);
+      resolve(new Response(new Uint8Array([1,2,3]), {headers:{'content-type':'audio/mp4'}})); await tick();
+      assert.equal(created, 0, 'Detached cards must not allocate media URLs');
+      assert.equal(played, 0, 'Deleted reports must not begin playback');
+    } finally {w.fetch = fetch; w.URL.createObjectURL = createURL; w.HTMLMediaElement.prototype.play = play;}
+  });
   await check('logout clears private content and pending social data', async () => {
     w.__ux.page('social'); await tick();
-    const fetch = w.fetch; let resolve;
-    w.fetch = (url, options) => String(url).endsWith('/v2/recovery/devices') ? new Promise(r => {resolve = r;}) : fetch(url, options);
-    const pending = w.__ux.refreshRecovery(); await tick(); w.__ux.logout();
+    const fetch = w.fetch; let resolve, resolveSleep;
+    w.fetch = (url, options) => String(url).endsWith('/v2/recovery/devices') ? new Promise(r => {resolve = r;}) : String(url).endsWith('/v2/sleep/sessions') ? new Promise(r => {resolveSleep = r;}) : fetch(url, options);
+    const pending = w.__ux.refreshRecovery(), pendingSleep = w.__ux.refreshSleepReports(); await tick(); w.__ux.logout();
     resolve(Response.json({devices: fixture.recovery})); await pending;
+    resolveSleep(Response.json({sessions:[{id:randomUUID(),state:'complete',started_at:Date.now()}]})); await pendingSleep;
     w.fetch = fetch;
     assert($('app').hidden); assert(!$('login').hidden);
     assert.equal(w.__ux.socialUI.data, null); assert.equal(w.__ux.recoveryUI.data, null);
     assert.equal($('social-friends').childNodes.length, 0); assert.equal($('recovery-devices').childNodes.length, 0);
     assert.equal($('vault-grid').childNodes.length, 0);
+    assert.equal($('sleep-reports').childNodes.length, 0); assert.equal(w.__ux.sleepUI.owner, null);
   });
   await check('privacy opened during sign in stays the only visible screen', async () => {
     const fetch = w.fetch; let resolve;
@@ -254,6 +384,16 @@ const callFor = (suffix, method) => fixture.calls.findLast(c => c.route.endsWith
     resolve(Response.json({idToken:'local-demo-token', refreshToken:'local-demo-refresh', expiresIn:'3600', email:'alex@example.test'}));
     await tick(); assert(!$('privacy').hidden); assert($('app').hidden); assert($('login').hidden);
     $('privacy-back').click(); await tick(); assert($('privacy').hidden); assert(!$('app').hidden);
+    w.__ux.logout();
+  });
+  await check('sleep deep link waits for login and opens the linked controls', async () => {
+    w.location.hash = '#sleep'; await tick();
+    assert(!$('login').hidden); assert($('app').hidden); assert($('privacy').hidden);
+    $('email').value = 'alex@example.test'; $('password').value = 'local-demo-only'; await submit('login-form');
+    assert(!$('app').hidden); assert(!$('page-control').hidden); assert.equal(w.location.hash, '#sleep');
+    w.document.querySelector('[data-page="data"]').click(); await tick();
+    assert(!$('page-data').hidden); assert.equal(w.location.hash, '');
+    w.location.hash = '#sleep'; await tick(); assert(!$('page-control').hidden);
     w.__ux.logout();
   });
   console.log(JSON.stringify({passed: checks.length, checks, live_backend: false, live_browser: false}, null, 2));

@@ -1,3 +1,4 @@
+import {handleSleepStore,sweepSleep} from './sleep-store.mjs';
 import {handleRecovery,sweepRecovery} from './lost-phone.mjs';
 import {handleOrganizer,sweepOrganizer} from './organizer.mjs';
 import {handleCleanup,sweepCleanup} from './cleanup-schedule.mjs';
@@ -72,7 +73,7 @@ export class InsightsAccount {
       if (until <= Date.now()) await this.ctx.storage.delete(key);
     }
     const records = await this.ctx.storage.list({ prefix: 'session:' });
-    let next = Math.min(await sweepRecovery(this.ctx.storage),await sweepFiles(this.ctx.storage,this.env.RECORDS),await sweepCleanup(this.ctx.storage),await sweepOrganizer(this.ctx.storage,Date.now()));
+    let next = Math.min(await sweepSleep(this.ctx.storage),await sweepRecovery(this.ctx.storage),await sweepFiles(this.ctx.storage,this.env.RECORDS),await sweepCleanup(this.ctx.storage),await sweepOrganizer(this.ctx.storage,Date.now()));
     for (const r of records.values()) {
       if (r.expires_at <= Date.now()) await this.remove(r); else next = Math.min(next, r.expires_at);
     }
@@ -96,6 +97,8 @@ export class InsightsAccount {
     if (phoneResponse) return phoneResponse;
     if (!this.env.RECORDS) bad('Storage unavailable', 503);
     await this.sweep();
+    const sleepResponse=await handleSleepStore(request,this,readJSON);
+    if(sleepResponse)return sleepResponse;
     const organizerResponse=await handleOrganizer(request,this,readJSON);
     if(organizerResponse)return organizerResponse;
     const cleanupResponse = await handleCleanup(request,this,readJSON);
@@ -131,9 +134,13 @@ export class InsightsAccount {
         if (['automatic','recording'].includes(same.mode) && same.mode === value.mode && categories.every(k => same.consent[k] === value.consent[k])) return reply(this.publicRecord(same));
         bad('Session already exists', 409);
       }
-      if (existing.length >= 20) bad('Delete an older session first (maximum 20).', 429);
+      const reservation=await this.ctx.storage.get('sleep-reservation:'+value.session_id);
+      const sleep=reservation?await this.ctx.storage.get('sleep:'+reservation.sleep_id):null;
+      if(reservation&&(!sleep||sleep.expires_at<=Date.now()||reservation.expires_at<=Date.now()||value.mode!=='recording'))bad('Invalid sleep reservation',409);
+      if (!reservation&&existing.filter(r=>!r.sleep_session_id).length >= 20) bad('Delete an older session first (maximum 20).', 429);
+      if(reservation&&existing.filter(r=>r.sleep_session_id).length>=365)bad('Maximum 365 retained sleep chunks',429);
       const now = Date.now();
-      const record = { ...value, created_at: now, expires_at: now + TTL, bytes: 0, items: [], data: null, observations: [], prefix: `_insights/${uid}/${value.session_id}/` };
+      const record = { ...value, ...(reservation?{sleep_session_id:reservation.sleep_id}:{}), created_at: now, expires_at: now + TTL, bytes: 0, items: [], data: null, observations: [], prefix: `_insights/${uid}/${value.session_id}/` };
       await this.ctx.storage.put('session:' + record.session_id, record); await this.sweep();
       return reply(this.publicRecord(record), 201);
     }
@@ -169,6 +176,14 @@ export class InsightsAccount {
       const from=Number(request.headers.get('x-recorded-from')),to=Number(request.headers.get('x-recorded-to'));
       const bytes=recordingBytes ?? await readBytes(request,RECORDING_MAX_BYTES),duration_ms=checkRecording(bytes,from,to),receipt=await digest(bytes);
       if(record.items.length) { const old=record.items[0];if(old.sha256===receipt.sha256 && old.recorded_from===from && old.recorded_to===to)return reply(old);bad('Recording already uploaded',409); }
+      if(record.sleep_session_id){
+        const sleep=await this.ctx.storage.get('sleep:'+record.sleep_session_id);
+        if(!sleep||sleep.expires_at<=Date.now())bad('Sleep session unavailable',410);
+        if(duration_ms>300000||bytes.length>2*1024*1024)bad('Sleep chunk exceeds five minutes or 2 MiB',413);
+        if(from<sleep.started_at-5000||to>(sleep.ended_at||sleep.planned_stop_at)+5000)bad('Recording outside sleep interval');
+        const retained=[...(await this.ctx.storage.list({prefix:'session:'})).values()].filter(r=>r.sleep_session_id).reduce((sum,r)=>sum+r.bytes,0);
+        if(retained+bytes.length>384*1024*1024)bad('Sleep storage limit (384 MiB)',413);
+      }
       const item={item_id:crypto.randomUUID(),kind:'audio',sequence:0,name:'FORJA-'+new Date(from).toISOString().replace(/[:.]/g,'-')+'.m4a',media_type:'audio/mp4',recorded_from:from,recorded_to:to,duration_ms,...receipt,received_at:Date.now()};
       await this.env.RECORDS.put(record.prefix+item.item_id,bytes,{httpMetadata:{contentType:'application/octet-stream'}});
       record.items.push(item);record.bytes=bytes.length;record.updated_at=Date.now();await this.ctx.storage.put('session:'+id,record);return reply(item,201);

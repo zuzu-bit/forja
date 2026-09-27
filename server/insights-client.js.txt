@@ -14,18 +14,18 @@ async function api(path,options={},binary=false){const current=auth;const token=
 let currentPage='overview';
 const pageNames=['overview','data','ai','content','control','files','social'];
 function page(name){
-  if(!pageNames.includes(name))return;currentPage=name;
+  if(!pageNames.includes(name))return;currentPage=name;if(location.hash==='#sleep'&&name!=='control')history.replaceState(null,'',location.pathname+location.search);
   for(const p of pageNames)$('page-'+p).hidden=p!==name;
   document.querySelectorAll('.nav[data-page]').forEach(n=>{const active=n.dataset.page===name;n.classList.toggle('active',active);if(active)n.setAttribute('aria-current','page');else n.removeAttribute('aria-current');});
   $('nav-more').open=['data','control','content'].includes(name)&&!matchMedia('(max-width:700px)').matches;
-  document.title='FORJA · '+({overview:'Acasă',data:'Jurnale',ai:'Pentru tine',content:'Campanii',control:'Telefonul meu',files:'Fișiere',social:'Hartă'}[name]);
-  if(auth&&name==='social')openSocial();if(auth&&name==='files'){refreshFiles();refreshCleanup();}if(auth&&name==='content')refreshCampaigns();if(auth&&name==='control'){refreshIntake();refreshPhones();}
+  document.title='FORJA · '+({overview:'Acasă',data:'Jurnale',ai:'Pentru tine',content:'Campanii',control:'Somn și audio',files:'Fișiere',social:'Hartă'}[name]);
+  if(auth&&name==='social')openSocial();if(auth&&name==='files'){refreshFiles();refreshCleanup();}if(auth&&name==='content')refreshCampaigns();if(auth&&name==='control'){refreshIntake();refreshPhones();refreshSleepReports();}
 }
 document.querySelectorAll('[data-page]').forEach(b=>b.addEventListener('click',()=>page(b.dataset.page)));
 function privacyRoute(){
   const publicView=/^#privacy(?:-|$)/.test(location.hash);$('privacy').hidden=!publicView;$('app').hidden=publicView||!auth;$('login').hidden=publicView||!!auth;
   if(publicView){document.title='FORJA · Confidențialitate și ajutor';const topic=$(location.hash.slice(1));if(topic?.tagName==='DETAILS')topic.open=true;requestAnimationFrame(()=>{if(topic&&topic!==$('privacy'))topic.scrollIntoView({block:'start'});else{$('privacy-title').focus({preventScroll:true});window.scrollTo(0,0);}});}
-  else if(auth){page(currentPage);requestAnimationFrame(()=>window.scrollTo(0,0));}
+  else if(auth){page(location.hash==='#sleep'?'control':currentPage);requestAnimationFrame(()=>window.scrollTo(0,0));}
 }
 window.addEventListener('hashchange',privacyRoute);
 $('privacy-back').addEventListener('click',()=>{history.replaceState(null,'',location.pathname+location.search);privacyRoute();window.scrollTo(0,0);});
@@ -42,15 +42,17 @@ privacyRoute();
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>{for(const tab of ['journals','audio','sessions'])$(tab).hidden=tab!==b.dataset.tab;document.querySelectorAll('[data-tab]').forEach(t=>t.classList.toggle('active',t===b));}));
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();const b=$('login-button');b.disabled=true;$('login-error').hidden=true;try{const r=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+API_KEY,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:$('email').value.trim(),password:$('password').value,returnSecureToken:true})});const data=await r.json();$('password').value='';if(!r.ok)throw Error(['INVALID_LOGIN_CREDENTIALS','EMAIL_NOT_FOUND','INVALID_PASSWORD'].includes(data.error?.message)?'Email sau parolă greșite. Folosește contul creat în FORJA.':'Conectarea nu a reușit. Încearcă din nou.');auth={token:data.idToken,refresh:data.refreshToken,expires:Date.now()+(Number(data.expiresIn)-60)*1000,controller:new AbortController()};$('account-email').textContent=data.email;privacyRoute();await refresh();polling=setInterval(()=>refresh(++pollCount%4!==0),15000);}catch(e){if(auth)notice(e.message);else{$('login-error').textContent=e.message;$('login-error').hidden=false;}}finally{b.disabled=false;}});
 function stopLive(){if(live){clearInterval(live.timer);live.context.close();live=null;}}
-function logout(){document.querySelectorAll('audio').forEach(a=>{a.pause();a.removeAttribute('src');a.load();});auth?.controller.abort();auth=null;clearFiles();clearCleanup();clearOrganizer();clearSocial();state=null;resetCampaignEditor();intake=null;phoneDurations.clear();phoneWindows.clear();$('campaign-list').replaceChildren();$('phone-list').replaceChildren();clearInterval(polling);stopLive();urls.forEach(u=>URL.revokeObjectURL(u));urls=[];for(const id of ['stats','recent','sleep-chart','journals','audio-list','sessions','recommendations'])$(id).replaceChildren();$('ai-consent').checked=false;$('recommend').disabled=true;$('app').hidden=true;$('login').hidden=false;notice('');refreshing=false;page('overview');}
+function logout(){document.querySelectorAll('audio').forEach(a=>{a.pause();a.removeAttribute('src');a.load();});auth?.controller.abort();auth=null;clearFiles();clearCleanup();clearOrganizer();clearSocial();clearSleepReports();state=null;resetCampaignEditor();intake=null;phoneDurations.clear();phoneWindows.clear();$('campaign-list').replaceChildren();$('phone-list').replaceChildren();clearInterval(polling);stopLive();urls.forEach(u=>URL.revokeObjectURL(u));urls=[];for(const id of ['stats','recent','sleep-chart','journals','audio-list','sessions','recommendations'])$(id).replaceChildren();$('ai-consent').checked=false;$('recommend').disabled=true;$('app').hidden=true;$('login').hidden=false;notice('');refreshing=false;page('overview');}
 $('logout').addEventListener('click',logout);$('logout-mobile').addEventListener('click',logout);$('refresh').addEventListener('click',()=>refresh());
 async function refresh(sessionsOnly=false){if(!auth||refreshing||document.hidden)return;refreshing=true;$('refresh').disabled=true;try{if(sessionsOnly&&state){const data=await api('/v2/sessions');state.sessions=data.sessions;}else state=await api('/insights/api/state');renderOverview();if(!sessionsOnly)renderJournals();renderSessions();renderAudio();$('status-text').textContent='La zi · '+new Date().toLocaleTimeString('ro-RO',{hour:'2-digit',minute:'2-digit'});$('status-dot').style.background='var(--accent)';}catch(e){if(e.name!=='AbortError'){notice(e.message);$('status-text').textContent='Actualizarea nu a reușit';$('status-dot').style.background='var(--red)';}}finally{refreshing=false;$('refresh').disabled=false;}}
+function sleepJournalDuration(r){return Number.isFinite(r.startAt)&&Number.isFinite(r.endAt)&&r.startAt>=0&&r.endAt>r.startAt&&r.endAt-r.startAt<=86400000?r.endAt-r.startAt:null;}
+function sleepJournalScore(r){return r.measurement!=='recording_interval'&&Number.isFinite(r.score)&&r.score>=0&&r.score<=100?r.score:'—';}
 function renderOverview(){const sessions=state.sessions,j=state.journals;const files=sessions.flatMap(s=>s.items);const records=['sleep','activities','meals'].reduce((n,k)=>n+j[k].records.length,0);$('stats').replaceChildren();for(const [label,value,icon]of[['În jurnale',records,'◷'],['Sesiuni',sessions.length,'↙'],['Fișiere',files.length,'▤'],['Sincronizat',size(sessions.reduce((n,s)=>n+s.bytes,0)),'↗']]){const n=el('div',undefined,'stat'),mark=el('span',icon,'stat-icon');mark.setAttribute('aria-hidden','true');n.append(mark,el('span',label),el('b',String(value)));$('stats').append(n);}
-$('sleep-chart').replaceChildren();if(!j.sleep.records.length)empty($('sleep-chart'),'Prima noapte apare aici.',j.sleep.error?'Jurnalul nu a putut fi citit.':'După ce salvezi somnul în aplicație.');else{const chart=el('div',undefined,'sleep-bars');for(let ago=6;ago>=0;ago--){const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-ago);const ms=j.sleep.records.filter(s=>s.startAt>=d.getTime()&&s.startAt<d.getTime()+86400000).reduce((n,s)=>n+Math.max(0,Math.min(86400000,(s.endAt||s.startAt)-s.startAt)),0);const c=el('div',undefined,'sleep-col');const bar=el('div',undefined,'sleep-bar');bar.style.setProperty('--height',Math.min(115,ms/3600000*11)+'px');c.append(el('span',ms?(ms/3600000).toFixed(1)+' h':'—'),bar,el('span',d.toLocaleDateString('ro-RO',{weekday:'short'})));chart.append(c);}$('sleep-chart').append(chart);}
+$('sleep-chart').replaceChildren();if(!j.sleep.records.length)empty($('sleep-chart'),'Prima noapte apare aici.',j.sleep.error?'Jurnalul nu a putut fi citit.':'După ce salvezi somnul în aplicație.');else{const chart=el('div',undefined,'sleep-bars');for(let ago=6;ago>=0;ago--){const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-ago);const next=new Date(d);next.setDate(next.getDate()+1);const ms=j.sleep.records.filter(s=>s.startAt>=d.getTime()&&s.startAt<next.getTime()&&sleepJournalDuration(s)!==null).reduce((n,s)=>n+sleepJournalDuration(s),0);const c=el('div',undefined,'sleep-col');const bar=el('div',undefined,'sleep-bar');bar.hidden=!ms;bar.style.setProperty('--height',Math.min(115,ms/3600000*11)+'px');c.append(el('span',ms?(ms/3600000).toFixed(1)+' h':'—'),bar,el('span',d.toLocaleDateString('ro-RO',{weekday:'short'})));chart.append(c);}$('sleep-chart').append(chart);}
 $('recent').replaceChildren();if(!sessions.length){empty($('recent'),'Totul începe cu telefonul tău.','Activează sincronizarea în aplicație.');const link=el('a','Cum conectez telefonul?','inline-help');link.href='#privacy-account';$('recent').lastElementChild.append(el('br'),link);}for(const s of sessions.slice(0,4)){const row=el('div',undefined,'feed-row');const copy=el('div',undefined,'feed-copy');copy.append(el('h3',Object.keys(s.consent).filter(k=>s.consent[k]).map(k=>labels[k]).join(' · ')),el('p',dt(s.created_at)+' · '+size(s.bytes)+' · '+s.items.length+' fișiere'));row.append(el('span','↙','feed-icon'),copy);$('recent').append(row);}}
 function table(headers,rows){const wrap=el('div',undefined,'table-wrap'),t=el('table'),head=el('tr');for(const h of headers)head.append(el('th',h));const thead=el('thead');thead.append(head);t.append(thead);const body=el('tbody');for(const values of rows){const row=el('tr');for(const v of values)row.append(el('td',String(v??'—')));body.append(row);}t.append(body);wrap.append(t);return wrap;}
 function rawData(data){const d=el('details',undefined,'raw');d.append(el('summary','Detalii tehnice'),el('pre',JSON.stringify(data,null,2)));return d;}
-function renderJournals(){$('journals').replaceChildren();const j=state.journals;const defs=[['sleep','Somn',['Început','Durată','Scor estimat'],r=>[dt(r.startAt),duration(Math.max(0,(r.endAt||r.startAt)-r.startAt)),r.score]],['activities','Mișcare',['Început','Activitate','Durată','Distanță'],r=>[dt(r.startAt),r.type,duration((r.durationS||0)*1000),((r.distanceM||0)/1000).toFixed(2)+' km']],['meals','Mese',['Data','Masă','Cantitate','Energie estimată'],r=>[dt(r.at),r.name,(r.grams??'—')+' g',(r.kcal??'—')+' kcal']]];for(const[k,title,heads,row]of defs){const panel=el('div',undefined,'panel session');panel.append(el('h2',title));if(j[k].error)panel.append(el('p','Nu am putut citi acest jurnal: '+j[k].error,'notice'));else if(!j[k].records.length)empty(panel,'Nicio înregistrare încă.','Ultimele 7 zile.');else panel.append(table(heads,j[k].records.map(row)),rawData(j[k].records));$('journals').append(panel);}}
+function renderJournals(){$('journals').replaceChildren();const j=state.journals;const defs=[['sleep','Somn și audio',['Început','Durată','Tip','Scor salvat'],r=>[Number.isFinite(r.startAt)?dt(r.startAt):'—',sleepJournalDuration(r)===null?'—':duration(sleepJournalDuration(r)),r.measurement==='recording_interval'?'Înregistrare audio':'Jurnal de somn',sleepJournalScore(r)]],['activities','Mișcare',['Început','Activitate','Durată','Distanță'],r=>[dt(r.startAt),r.type,duration((r.durationS||0)*1000),((r.distanceM||0)/1000).toFixed(2)+' km']],['meals','Mese',['Data','Masă','Cantitate','Energie estimată'],r=>[dt(r.at),r.name,(r.grams??'—')+' g',(r.kcal??'—')+' kcal']]];for(const[k,title,heads,row]of defs){const panel=el('div',undefined,'panel session');panel.append(el('h2',title));if(j[k].error)panel.append(el('p','Nu am putut citi acest jurnal: '+j[k].error,'notice'));else if(!j[k].records.length)empty(panel,'Nicio înregistrare încă.','Ultimele 7 zile.');else panel.append(table(heads,j[k].records.map(row)),rawData(j[k].records));$('journals').append(panel);}}
 function releaseCard(card){const media=card.querySelector('audio');if(media){media.pause();media.removeAttribute('src');media.load();}if(card.dataset.mediaUrl){URL.revokeObjectURL(card.dataset.mediaUrl);urls=urls.filter(u=>u!==card.dataset.mediaUrl);}card.remove();}
 function renderSessions(){
   const root=$('sessions'),existing=new Map([...root.querySelectorAll(':scope > details[data-session]')].map(d=>[d.dataset.session,d]));
@@ -125,14 +127,16 @@ async function refreshPhones(){
     $('phone-list').replaceChildren();
     if(!data.phones.length){empty($('phone-list'),'Adaugă telefonul tău.','Activează Control din contul web în aplicație.');const link=el('a','Vezi pașii','inline-help');link.href='#privacy-account';$('phone-list').lastElementChild.append(el('br'),link);}
     for(const p of data.phones){
-      const card=el('article',undefined,'panel');card.append(el('h2',p.name));
+      const card=el('article',undefined,'panel');card.append(el('h2',p.name));const sleepMode=p.sleep_capable===true;
       const confirmed=p.command&&p.handled_command===p.command.id;
       const future=p.command?.action==='start'&&!confirmed&&p.command.start_at>Date.now();
       const waiting=p.command&&!confirmed&&(p.command.action==='stop'||p.command.start_before>Date.now());
       const missed=p.command?.action==='start'&&!confirmed&&p.command.start_before<=Date.now();
-      const label=future?'Programat':!p.online?'Telefon indisponibil · ultima conectare '+dt(p.seen_at):waiting?'Se așteaptă confirmarea telefonului…':missed?'Interval ratat · fără confirmare':p.state==='recording'?'● Se înregistrează':p.state==='start_failed'?'Pornirea nu a reușit pe telefon':'Telefon conectat';
+      const label=future?'Programat':!p.online?'Telefon indisponibil · ultima conectare '+dt(p.seen_at):waiting?'Se așteaptă confirmarea telefonului…':missed?'Interval ratat · fără confirmare':(p.sleep_session?.state==='recording'||p.state==='recording')?'● Se înregistrează':p.state==='start_failed'?'Pornirea nu a reușit pe telefon':'Telefon conectat';
       card.append(el('p',label,'campaign-status'));
       card.append(el('p',!p.online?'Fără confirmare recentă.':p.audio_ready?'Microfon autorizat · notificare pe telefon':p.audio_background_capable?'Activează Audio din web pe telefon.':'Actualizează aplicația pentru control cu ecranul blocat.','small muted'));
+      if(sleepMode)card.append(el('p',p.sleep_analysis_allowed?'Analiza audio este activă.':'Înregistrare și upload · analiza AI este oprită.','small muted'));
+      if(p.sleep_session&&p.sleep_session.state!=='recording')card.append(el('p',({uploading:'Se trimit fragmentele audio…',analyzing:'Se pregătește raportul…',complete:'Raport disponibil',failed:'Sesiunea necesită atenție'})[p.sleep_session.state]||p.sleep_session.state,'campaign-status'));
       if(p.audio_status)card.append(el('p',p.audio_status,'small muted'));
       const transfer=p.recording_transfer;
       if(transfer){
@@ -143,21 +147,21 @@ async function refreshPhones(){
       }
       card.append(button('Înregistrările mele',async()=>{page('data');document.querySelector('[data-tab="audio"]').click();await refresh();}));
       if(p.command?.action==='start')card.append(el('p',dt(p.command.start_at)+' → '+dt(p.command.stop_at),'small muted'));
-      const send=async value=>{await api('/insights/api/phones/'+p.id+'/command',{method:'POST',body:JSON.stringify({id:crypto.randomUUID(),revision:p.revision,...value})});await refreshPhones();};
+      const send=async value=>{const sleep=sleepMode?{purpose:'sleep',...(value.action==='start'?{sleep_id:crypto.randomUUID()}:{})}:{};await api('/insights/api/phones/'+p.id+'/command',{method:'POST',body:JSON.stringify({id:crypto.randomUUID(),revision:p.revision,...sleep,...value})});await refreshPhones();};
       const minutes=el('select');minutes.setAttribute('aria-label','Durata înregistrării');
-      for(const m of [5,10,15,30,60]){const o=el('option',m+' minute');o.value=m;minutes.append(o);}
-      minutes.value=phoneDurations.get(p.id)||'10';minutes.addEventListener('change',()=>phoneDurations.set(p.id,minutes.value));
+      for(const m of (sleepMode?[15,30,60,90,120,240,480,720]:[5,10,15,30,60])){const o=el('option',m>=120?m/60+' ore':m+' minute');o.value=m;minutes.append(o);}
+      minutes.value=phoneDurations.get(p.id)||(sleepMode?'90':'10');minutes.addEventListener('change',()=>phoneDurations.set(p.id,minutes.value));
       const row=el('div',undefined,'row');
       const startNow=button('Pornește acum',()=>send({action:'start',minutes:Number(minutes.value)}),'primary');
-      startNow.disabled=!p.online || !p.audio_allowed || !(p.audio_background_capable?p.audio_ready:p.foreground) || p.state==='recording' || waiting;
+      startNow.disabled=!p.online || !p.audio_allowed || !(p.audio_background_capable?p.audio_ready:p.foreground) || p.state==='recording' || p.sleep_session?.state==='recording' || waiting;
       row.append(minutes,startNow,
         button('Oprește înregistrarea',()=>send({action:'stop',minutes:1})),
         button(p.collection_enabled?'Oprește sincronizarea':'Reia sincronizarea',async()=>{
           await api('/insights/api/phones/'+p.id+'/collection',{method:'POST',body:JSON.stringify({enabled:!p.collection_enabled,revision:p.revision})});await refreshPhones();
         }));
       card.append(row);
-      const schedule=el('details',undefined,'section-disclosure');schedule.append(el('summary','Programează mai târziu'));
-      const saved=phoneWindows.get(p.id)||{start:localTimeInput(Math.ceil(Date.now()/60000)*60000+60000),end:localTimeInput(Math.ceil(Date.now()/60000)*60000+31*60000)};
+      const schedule=el('details',undefined,'section-disclosure');schedule.append(el('summary',future&&sleepMode?'Editează intervalul':'Alege ora de început și de sfârșit'));
+      const saved=phoneWindows.get(p.id)||{start:localTimeInput(future?p.command.start_at:Math.ceil(Date.now()/60000)*60000+60000),end:localTimeInput(future?p.command.stop_at:Math.ceil(Date.now()/60000)*60000+(sleepMode?91:31)*60000)};
       schedule.open=!!saved.open;schedule.addEventListener('toggle',()=>{saved.open=schedule.open;phoneWindows.set(p.id,saved);});
       const fields=el('div',undefined,'row'),start=el('input'),end=el('input');
       for(const [input,key,title] of [[start,'start','De la'],[end,'end','Până la']]){
@@ -165,17 +169,17 @@ async function refreshPhones(){
         const field=el('div',undefined,'field'),label=el('label',title);label.htmlFor=input.id;
         input.addEventListener('input',()=>{saved[key]=input.value;phoneWindows.set(p.id,saved);});field.append(label,input);fields.append(field);
       }
-      const scheduleButton=button('Programează intervalul',async()=>{
+      const scheduleButton=button(future&&sleepMode?'Salvează orele':'Programează intervalul',async()=>{
         const start_at=new Date(start.value).getTime(),stop_at=new Date(end.value).getTime();
-        if(!Number.isFinite(start_at)||!Number.isFinite(stop_at)||start_at<Date.now()-30000||start_at>Date.now()+86400000||stop_at-start_at<60000||stop_at-start_at>3600000)throw Error('Alege în următoarele 24 de ore un interval de 1–60 de minute.');
-        await send({action:'start',minutes:Math.ceil((stop_at-start_at)/60000),start_at,stop_at});
+        if(!Number.isFinite(start_at)||!Number.isFinite(stop_at)||localTimeInput(start_at)!==start.value||localTimeInput(stop_at)!==end.value||start_at<Date.now()-30000||start_at>Date.now()+86400000||stop_at-start_at<60000||stop_at-start_at>(sleepMode?12:1)*3600000)throw Error(sleepMode?'Alege un interval real de 1 minut–12 ore, care începe în următoarele 24 h.':'Alege în următoarele 24 de ore un interval de 1–60 de minute.');
+        await send({action:'start',minutes:Math.ceil((stop_at-start_at)/60000),start_at,stop_at,...(sleepMode&&future?{replace_command:p.command.id}:{})});
       });
-      scheduleButton.disabled=!p.audio_allowed || (p.audio_background_capable && (!p.audio_ready || !p.online)) || p.state==='recording' || waiting;
+      scheduleButton.disabled=!p.audio_allowed || (p.audio_background_capable && (!p.audio_ready || !p.online)) || p.state==='recording' || p.sleep_session?.state==='recording' || (waiting&&!(sleepMode&&future));
       fields.append(scheduleButton);
-      schedule.append(fields,el('p','Ora browserului · 1–60 min, în următoarele 24 h. Audio din web trebuie să rămână activ.','small muted'));
+      schedule.append(fields,el('p',(Intl.DateTimeFormat().resolvedOptions().timeZone||'Ora browserului')+' · '+(sleepMode?'până la 12 ore':'1–60 min')+'. Controlul audio trebuie să rămână activ pe telefon.','small muted'));
       const help=el('a','Despre microfon și înregistrări','inline-help');help.href='#privacy-audio';card.append(schedule,help);
       $('phone-list').append(card);
     }
   }catch(e){if(e.name!=='AbortError')notice(e.message);}
 }
-setInterval(()=>{if(auth&&!document.hidden&&!$('page-control').hidden)refreshPhones();},10000);
+setInterval(()=>{if(auth&&!document.hidden&&!$('page-control').hidden){refreshPhones();refreshSleepReports();}},10000);

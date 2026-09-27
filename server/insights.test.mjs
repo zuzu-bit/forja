@@ -373,3 +373,10 @@ test('readiness requires a valid session and inactive phones cannot retain a ses
     const f=fixture();assert.equal((await f.call('/internal/phone-sync','POST',{...phoneStatus(),...changes})).status,400);
   }
 });
+
+test('unified recording journals preserve null metrics and never imply measured sleep quality or phases',async()=>{
+ const data=await loadJournals('testUid','token',async(url,opts)=>{const kind=JSON.parse(opts.body).structuredQuery.from[0].collectionId;return Response.json(kind==='sleep'?[{document:{name:'users/testUid/sleep/stable',fields:{startAt:{integerValue:'1000'},endAt:{integerValue:'3601000'},score:{nullValue:null},deepMin:{nullValue:null},lightMin:{nullValue:null},remMin:{nullValue:null},measurement:{stringValue:'recording_interval'},recordingId:{stringValue:'stable-recording'}}}}]:[]);},1000000000);
+ const row=data.sleep.records[0];assert.equal(row.score,null);assert.equal(row.deepMin,null);assert.equal(row.remMin,null);assert.equal(row.measurement,'recording_interval');assert.equal(row.recordingId,'stable-recording');
+ const evidence=buildEvidence(data,[]),recording=evidence.find(e=>e.id==='recording-interval-summary');assert(recording);assert.match(recording.text,/NU durata somnului/);assert.match(recording.text,/necunoscute/);assert.equal(evidence.find(e=>e.id==='sleep-summary'),undefined);
+ data.sleep.records.push({startAt:2000,endAt:null,measurement:'recording_interval',score:-1});assert.equal(buildEvidence(data,[]).find(e=>e.id==='recording-interval-summary').count,1);
+});

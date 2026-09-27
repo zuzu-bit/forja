@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const server = path.resolve(__dirname, '../server');
-const clients = ['insights-client.js.txt', 'files-preview.js.txt', 'files-client.js.txt', 'cleanup-client.js.txt', 'organizer-client.js.txt', 'social-client.js.txt', 'recovery-client.js.txt'];
+const clients = ['insights-client.js.txt', 'sleep-client.js.txt', 'files-preview.js.txt', 'files-client.js.txt', 'cleanup-client.js.txt', 'organizer-client.js.txt', 'social-client.js.txt', 'recovery-client.js.txt'];
 
 function createFixture(now = Date.now()) {
   const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -35,6 +35,7 @@ function createFixture(now = Date.now()) {
     intake: {accepting: true, revision: 1},
     phones: [{id: deviceId, name: 'Telefonul meu', online: true, seen_at: now, audio_allowed: true, audio_background_capable: true, audio_ready: true, foreground: false, collection_enabled: true, state: 'idle', revision: 1}],
     campaigns: [],
+    sleep: {sessions: [], reports: {}},
     messages: [{id: id(11), from: 'demo-ana', text: 'Ne vedem în parc? ☀️', at: now}]
   };
 }
@@ -70,6 +71,23 @@ function installMockFetch(win, fixture) {
     if (route.startsWith('/v2/files/') && method === 'GET') return new win.Response('Plimbare în parc\nApă\nO carte bună', {headers: {'content-type':'text/plain'}});
     if (route === '/v2/cleanup/devices') return response(fixture.cleanup);
     if (route === '/insights/api/phones') return response({phones: fixture.phones});
+    if (route.startsWith('/insights/api/phones/') && route.endsWith('/command') && method === 'POST') {
+      const phone = fixture.phones.find(p => route.includes(p.id));
+      const start = body.start_at || Date.now();
+      phone.command = {...body, start_at: start, stop_at: body.stop_at || start + body.minutes * 60000, start_before: start + 300000};
+      phone.revision++;
+      return response({ok: true});
+    }
+    if (route === '/v2/sleep/sessions') return response({sessions: fixture.sleep.sessions});
+    if (route.startsWith('/v2/sleep/sessions/')) {
+      const id = route.split('/')[4];
+      if (method === 'DELETE') {fixture.sleep.sessions = fixture.sleep.sessions.filter(s => s.id !== id); delete fixture.sleep.reports[id]; return response({ok: true});}
+      if (method === 'GET') {
+        const report = fixture.sleep.reports[id];
+        return response(address.searchParams.has('cursor') ? report.pages[address.searchParams.get('cursor')] : report);
+      }
+      return response({ok: true});
+    }
     if (route === '/insights/api/intake') {
       if (method === 'POST') fixture.intake = {...fixture.intake, ...body, revision: fixture.intake.revision + 1};
       return response(fixture.intake);
