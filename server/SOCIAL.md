@@ -1,7 +1,8 @@
 # FORJA social map — implementation and delivery boundaries
 
 For the v22 continuous partner session, reboot recovery, contacts permission and
-verified-phone discovery additions, see PARTNERS_CONTACTS.md. Timed sessions below
+phone discovery additions (verified or declared number, mutual-agenda friendships,
+site version 17 / `contacts:2`), see PARTNERS_CONTACTS.md. Timed sessions below
 retain their v21 behavior.
 
 Native Android map uses the already bundled osmdroid 6.1.20 SDK and OSM standard
@@ -49,7 +50,9 @@ Chat is authenticated friend-only text/emoji, maximum 100 messages per pair and
 seven days, with expiry alarms. It is not end-to-end encrypted. Message text is
 rendered as text nodes, never HTML. Removing/blocking clears the pair's messages.
 Limits: 100 friends, 50 incoming/outgoing requests, 200 blocks, 100 saved places,
-30 active group memberships, 90 writes/minute/user. v22 adds READ_CONTACTS for the separate opt-in contact workflow.
+30 active group memberships, 90 writes/minute/user. v22 adds READ_CONTACTS for the separate opt-in contact workflow;
+version 17 lets a mutual agenda match (both accounts hold each other's number) create the friendship on both
+profiles without a request — the only path that bypasses invite/accept, and it still respects blocks and limits.
 
 The old independent `PresenceRepository.start/publishState` publishers are retired
 in the APK so new ghost mode does not leave a second publisher active. Existing

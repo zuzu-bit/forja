@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
 const site = 'https://forja-insights.forja-22e7ea2d.workers.dev';
-const flags = { journey: 1, explore_sync: 1, map3d: 1, content_ai: 2, sleep_audio: 1, visual_ui: 1, files_sync: 1, cleanup_schedule: 1, background_audio: 1, organizer: 1, organizer_modes: 1, social: 1, partners: 1, contacts: 1, lost_phone: 1 };
+const flags = { journey: 1, explore_sync: 1, map3d: 1, content_ai: 2, sleep_audio: 1, visual_ui: 1, files_sync: 1, cleanup_schedule: 1, background_audio: 1, organizer: 1, organizer_modes: 1, social: 1, partners: 1, contacts: 2, lost_phone: 1 };
 const sha = value => createHash('sha256').update(value).digest('hex');
 async function get(path) {
   return fetch(site + path, { cache: 'no-store', signal: AbortSignal.timeout(20000) });
@@ -12,7 +12,7 @@ async function health() {
   if (!r.ok) throw Error('Site indisponibil: HTTP ' + r.status);
   const h = await r.json();
   if (h.service !== 'forja-insights' || !Number.isInteger(h.version)) throw Error('Adresa nu răspunde ca site FORJA.');
-  if (h.version > 16) throw Error('Site-ul este mai nou decât acest pachet. Publicarea a fost oprită.');
+  if (h.version > 17) throw Error('Site-ul este mai nou decât acest pachet. Publicarea a fost oprită.');
   return h;
 }
 if (process.argv.includes('--before')) {
@@ -26,7 +26,7 @@ if (process.argv.includes('--before')) {
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
       const h = await health();
-      if (h.version !== 16 || h.organizer_jobs!==4 || Object.entries(flags).some(([k, v]) => h[k] !== v)) throw Error('Versiunea sau funcțiile online nu corespund actualizării.');
+      if (h.version !== 17 || h.organizer_jobs!==4 || Object.entries(flags).some(([k, v]) => h[k] !== v)) throw Error('Versiunea sau funcțiile online nu corespund actualizării.');
       const page = await get('/');
       const client = await get('/insights/app.js');
       if (!page.ok || !client.ok || sha(await page.text()) !== sha(html) || sha(await client.text()) !== sha(js)) throw Error('Pagina sau interfața online diferă de fișierele verificate.');

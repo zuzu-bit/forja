@@ -1,7 +1,9 @@
 # FORJA v22 — couples and contact discovery
 
-The Android build is 3.7-online.22 / 52; the Worker health version is 10, with
-`partners:1` and `contacts:1`. Deploy the Worker before installing/testing v22.
+The Android build is 3.7-online.22 / 52; the Worker health version was 10, with
+`partners:1` and `contacts:1`. FORJA 4.x raises the Worker to version 17 with
+`contacts:2` (declared numbers + mutual-agenda friendships, below). Deploy the
+Worker before installing/testing.
 The existing social Durable Object and migration are reused. No new paid service
 or Firebase configuration has been enabled from this environment.
 
@@ -46,15 +48,43 @@ OS process limits, notification settings, battery management, GPS and connectivi
 can interrupt service. A continuous choice is not a guarantee of uninterrupted
 tracking. The app does not bypass OS restrictions or hide the location notification.
 
-## Agenda and optional matching
+## Agenda and optional matching (v17: declared or verified number, reciprocity)
+
+Two trust levels exist for the account's OWN number. **Verified**: the Firebase
+token carries `phone_number` (Phone Auth enabled in the console); the gateway sets
+`x-forja-phone` from the token only. **Declared** (new): the app sends the number it
+typed as `x-forja-phone-declared`; the gateway forwards it ONLY under that name
+(validated as E.164, never as `x-forja-phone`). The Durable Object uses
+`phone = verified || declared` and stores `phone:{hmac} = {uid, until, verified}`.
+Rules: a verified registration replaces a declared one of another account; a
+declared one can replace neither a verified listing nor another account's still
+active declared listing (409 „Numărul e folosit deja de alt cont. Verifică-l prin
+SMS ca să-l revendici.”). Match results carry `verified` per match. Accepted risk,
+explained to the owner: a declared number is not proven; an impostor would need
+both numbers and to register before the real person; enabling Phone Auth in the
+console closes the gap (the verified path is implemented).
+
+Reciprocity: for each account the server keeps ONLY the HMAC fingerprints of the
+numbers in that account's agenda (`contacts-of:{uid}`, truncated to 64 bits, at
+most 5000 entries, 30-day expiry refreshed on every match; deleted by
+`DELETE contacts/discovery`). Never numbers or names. When my fingerprint is in
+his index and his in mine, `/contacts/match` returns `mutual:true`, adds both to
+each other's `friends` on the site graph (unless blocked or at the 100-friend
+limit) and the app creates `friendships/{a_b}` in Firestore (idempotent). A
+non-mutual match stays a listing with an invite proof; the app shows it under
+„Din agendă” with „Trimite-i codul tău” — no friendship (= map visibility) is
+created without the other person's consent.
 
 READ_CONTACTS is the only new manifest permission. The local phone-number query
 reads all accessible contact names and phone numbers, deduplicates normalized
 numbers and supports search/paging. It does not modify contacts or silently send
 SMS. The SMS invite action only opens the user's SMS composer.
 
-Matching is separate and opt-in: verify the account's own phone with Firebase,
-enable finding this account by that phone, then enable daily contact matching.
+Matching is separate and opt-in: declare the account's own phone (or verify it
+with Firebase when Phone Auth is enabled), enable finding this account by that
+phone, then enable daily contact matching (the app does all three from the sixth
+„Echipare” row, and exposes the switch, SMS verification and „Sincronizează acum”
+in the profile).
 The Firebase credential is linked to the already signed-in UID (or updates that
 UID's phone). Credential collisions do not auto-sign-in, merge accounts or move
 existing data. Changing a previously linked phone first removes its old discovery
@@ -63,19 +93,22 @@ reenabling discovery for the unchanged number.
 
 The Worker validates Firebase RS256 JWT issuer/audience/signature/expiry and
 **overwrites**, never trusts, incoming owner, phone and token-issued headers.
-Discovery registration requires a fresh token (within five minutes) carrying a
-verified `phone_number`. Reading local contacts does not prove number ownership.
+Discovery registration requires a fresh token (within five minutes) and either a
+verified `phone_number` claim or a declared number header. Reading local contacts
+does not prove number ownership.
 
-`POST contacts/discovery {consent:true}` registers the verified number; DELETE
-removes it. The server stores a keyed HMAC-SHA256 index with UID and expiry, not
-the raw number. An inactive listing expires after 30 days; already-enabled
+`POST contacts/discovery {consent:true}` registers the verified or declared
+number (response `{ok, until, verified}`); DELETE removes it together with the
+account's agenda fingerprint index. The server stores a keyed HMAC-SHA256 index
+with UID, expiry and the `verified` flag, not the raw number. An inactive listing expires after 30 days; already-enabled
 matching renews a still-active listing. Opt-out is never automatically reversed.
 
 `POST contacts/match {numbers:[E164],consent:true}` compares batches of up to 200
 numbers over HTTPS. Names remain on the phone. Supplied numbers are processed in
 memory and not persisted in the social store, responses or application logs.
-Only verified, opted-in, unblocked accounts are returned with the input index,
-public FORJA name, UID, relationship state and a short-lived invite proof. There
+Only opted-in, unblocked accounts are returned with the input index, public FORJA
+name, UID, relationship state (`friend`, `pending`, `mutual`, `verified`) and a
+short-lived invite proof. There
 is no unauthenticated directory endpoint. A 10,000-number daily quota limits
 matching, distinct from reading the full local agenda. An installation can read
 more locally but does not match more than this server quota per day.
@@ -124,7 +157,10 @@ Official documentation checked 2026-09-17:
 Automated checks cover pair acceptance, chosen-partner isolation, independent
 consent, >24-hour sessions, stale-coordinate erasure, stop/block/remove, verified
 phone claims, contact opt-out, number reassignment, bounded batches/quotas and
-proof scope/expiry. A separate bundled-Worker test uses synthetic RS256 keys to
+proof scope/expiry; `social-contacts.test.mjs` adds declared vs verified priority
+and 409, mutual → friend on both profiles, blocks winning over reciprocity, the
+fingerprint-only agenda index (5000 cap, 30-day expiry), opt-out cleanup and the
+gateway header/version 17 contract. A separate bundled-Worker test uses synthetic RS256 keys to
 check issuer/audience/expiry and replacement of attacker-supplied identity headers.
 Existing server, organization and Android unit tests remain part of the build.
 APK checks cover manifest changes, preserved assets, signature continuity,

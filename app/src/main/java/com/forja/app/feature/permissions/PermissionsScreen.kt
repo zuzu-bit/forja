@@ -23,12 +23,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.BatteryChargingFull
+import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MyLocation
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +41,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
@@ -45,29 +50,41 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.forja.app.ForjaApp
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.media.Media
+import com.forja.app.core.social.ContactsReader
+import com.forja.app.core.social.ContactsSync
+import com.forja.app.core.social.Discovery
+import com.forja.app.core.social.PhoneNumbers
+import com.forja.app.core.util.Fmt
+import kotlinx.coroutines.launch
 
-/** Cele cinci piese de echipament — o bifă fiecare. */
+/** Cele șase piese de echipament — o bifă fiecare. */
 private enum class Gear(val title: String, val sub: String, val icon: ImageVector) {
     Notifications("Notificări", "raportul de dimineață, alarma, prietenii", Icons.Outlined.Notifications),
     Location("Locație (precisă + în fundal)", "harta, alergarea, prietenii te văd", Icons.Outlined.MyLocation),
     Microphone("Microfon", "somnul măsurat local — sforăit, vorbit", Icons.Outlined.Mic),
     Photos("Poze & galerie", "curățenia galeriei, analiza meselor", Icons.Outlined.PhotoLibrary),
-    Battery("Baterie & alarmă pe ecran", "FORJA rămâne trează noaptea și te trezește", Icons.Outlined.BatteryChargingFull)
+    Battery("Baterie & alarmă pe ecran", "FORJA rămâne trează noaptea și te trezește", Icons.Outlined.BatteryChargingFull),
+    Contacts("Agendă", "prietenii cu FORJA din agenda ta apar singuri", Icons.Outlined.Contacts)
 }
+
+private const val GEAR_COUNT = 6
 
 // Videoul ghidului (încărcat manual în R2); când nu există server, trezirea de dimineață.
 private const val FALLBACK_VIDEO = "https://v.ftcdn.net/05/12/88/79/700_F_512887976_190EN7woFkvAws5F4qzRxGMIOuIjvyPY_ST.mp4"
 private const val FALLBACK_POSTER = "https://t3.ftcdn.net/jpg/04/70/98/78/500_F_470987805_jsREzUZZZNUDZ56fG4J9Cpz4UquN6zJg.jpg"
 
-/** „Echipare” — cinci bife, o singură dată; apoi FORJA nu te mai întrerupe. */
+/** „Echipare” — șase bife, o singură dată; apoi FORJA nu te mai întrerupe. */
 @Composable
 fun PermissionsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val toast = LocalToast.current
     val activity = remember(context) { context.findActivity() }
+    val app = remember(context) { ForjaApp.from(context) }
+    val scope = rememberCoroutineScope()
 
     var refresh by remember { mutableIntStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -109,7 +126,18 @@ fun PermissionsScreen(onBack: () -> Unit) {
         } else true
     }
     val powerOn = batteryOn && fsiOn
-    val done = listOf(notifOn, locationOn, micOn, photosOn, powerOn).count { it }
+    // Agenda: permisiune + comutator pornit + număr (declarat sau verificat prin SMS).
+    val contactsGranted = remember(refresh) { ContactsReader.granted(context) }
+    val contactsOn by app.prefs.contactsOn.collectAsState(initial = false)
+    val phoneDeclared by app.prefs.phoneDeclared.collectAsState(initial = "")
+    val contactsStatus by app.prefs.contactsStatus.collectAsState(initial = "")
+    val contactsSyncedAt by app.prefs.contactsSyncedAt.collectAsState(initial = 0L)
+    val verifiedPhone = remember(refresh) { Discovery.verifiedPhone() }
+    val hasNumber = PhoneNumbers.isValid(phoneDeclared) || verifiedPhone != null
+    val contactsReady = contactsGranted && contactsOn && hasNumber
+    var numberOpen by remember { mutableStateOf(false) }
+    var numberBusy by remember { mutableStateOf(false) }
+    val done = listOf(notifOn, locationOn, micOn, photosOn, powerOn, contactsReady).count { it }
 
     var deniedForever by remember { mutableStateOf(false) }
     var pendingSingle by remember { mutableStateOf<String?>(null) }
@@ -120,6 +148,8 @@ fun PermissionsScreen(onBack: () -> Unit) {
         val p = pendingSingle
         pendingSingle = null
         if (!ok && p != null && !rationale(p)) deniedForever = true
+        // Agenda bifată: urmează numărul tău, pe loc.
+        if (ok && p == Manifest.permission.READ_CONTACTS) numberOpen = true
     }
     fun askSingle(p: String) {
         pendingSingle = p
@@ -195,6 +225,10 @@ fun PermissionsScreen(onBack: () -> Unit) {
                     )
                 }
             }
+            Gear.Contacts -> {
+                if (!contactsGranted) askSingle(Manifest.permission.READ_CONTACTS)
+                else numberOpen = true
+            }
         }
     }
 
@@ -204,6 +238,7 @@ fun PermissionsScreen(onBack: () -> Unit) {
         Gear.Microphone -> micOn
         Gear.Photos -> photosOn
         Gear.Battery -> powerOn
+        Gear.Contacts -> contactsReady
     }
 
     fun detailOf(g: Gear): String? = when (g) {
@@ -215,6 +250,41 @@ fun PermissionsScreen(onBack: () -> Unit) {
             !batteryOn -> null
             !fsiOn -> "Bateria e gata. Mai lipsește alarma pe tot ecranul."
             else -> null
+        }
+        Gear.Contacts -> when {
+            contactsReady -> contactsStatus.ifBlank { if (contactsSyncedAt > 0) "comparată ${Fmt.freshness(contactsSyncedAt)}" else "se compară la prima ocazie cu net" }
+            contactsGranted && !hasNumber -> "Mai lipsește numărul tău — apasă și scrie-l."
+            contactsGranted && !contactsOn -> "Agenda e bifată. Mai lipsește „Pot fi găsit după număr”."
+            else -> null
+        }
+    }
+
+    /** „Gata”: numărul declarat → Prefs, listare pe site (amprentă), apoi prima comparare a agendei. */
+    fun saveNumber(input: String) {
+        val normalized = PhoneNumbers.normalize(input, PhoneNumbers.defaultCountryCode(context))
+        if (normalized == null) { toast.show("Număr invalid. Scrie-l ca +40 7xx xxx xxx."); return }
+        numberBusy = true
+        scope.launch {
+            try {
+                app.prefs.setPhoneDeclared(normalized)
+                app.prefs.setContactsOn(true)
+                val r = Discovery.register(app)
+                if (r.isSuccess) {
+                    app.prefs.setContactsStatus("")
+                    ContactsSync.scheduleIfOn(app)
+                    ContactsSync.runNow(app)
+                    numberOpen = false
+                    toast.show("Agenda se compară acum. Prietenii apar singuri.")
+                } else {
+                    app.prefs.setContactsOn(false)
+                    toast.show(Discovery.humanError(r.exceptionOrNull() ?: Exception()))
+                }
+            } catch (_: Exception) {
+                app.prefs.setContactsOn(false)
+                toast.show("Nu a mers. Verifică internetul și încearcă din nou.")
+            }
+            numberBusy = false
+            refresh++
         }
     }
 
@@ -251,7 +321,7 @@ fun PermissionsScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(6.dp))
                     Reveal(index = 2) {
                         Text(
-                            "Cinci bife. O singură dată. Apoi FORJA nu te mai întrerupe.",
+                            "Șase bife. O singură dată. Apoi FORJA nu te mai întrerupe.",
                             style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp)
                         )
                     }
@@ -269,12 +339,12 @@ fun PermissionsScreen(onBack: () -> Unit) {
                 ) {
                     SectionLabel("Echipare")
                     Text(
-                        "$done din 5",
-                        style = monoLabel(9, 0.12f).copy(color = if (done == 5) Positive else Accent2)
+                        "$done din $GEAR_COUNT",
+                        style = monoLabel(9, 0.12f).copy(color = if (done == GEAR_COUNT) Positive else Accent2)
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                ProgressBar(progress = done / 5f)
+                ProgressBar(progress = done / GEAR_COUNT.toFloat())
                 Spacer(Modifier.height(12.dp))
 
                 ForjaCard(Modifier.fillMaxWidth(), stroke = StrokeCard, padding = 6.dp) {
@@ -289,8 +359,20 @@ fun PermissionsScreen(onBack: () -> Unit) {
                     }
                 }
 
+                // Agenda: numărul tău — declarat de tine, păstrat pe site doar ca amprentă.
+                if (numberOpen && contactsGranted) {
+                    Spacer(Modifier.height(12.dp))
+                    NumberPanel(
+                        initial = phoneDeclared.ifBlank { verifiedPhone ?: PhoneNumbers.simNumber(context).orEmpty() },
+                        verified = verifiedPhone != null,
+                        busy = numberBusy,
+                        onDone = ::saveNumber,
+                        onLater = { numberOpen = false }
+                    )
+                }
+
                 // Ecranul de setări rămâne la îndemână cât timp mai e ceva de bifat.
-                if (deniedForever && done < 5) {
+                if (deniedForever && done < GEAR_COUNT) {
                     Spacer(Modifier.height(12.dp))
                     Text(
                         "Android a închis dialogul pentru una dintre bife. O poți porni doar din setările aplicației.",
@@ -329,10 +411,53 @@ fun PermissionsScreen(onBack: () -> Unit) {
 
                 Spacer(Modifier.height(20.dp))
                 PrimaryButton(
-                    if (done == 5) "Gata — la datorie" else "Continuă în FORJA",
+                    if (done == GEAR_COUNT) "Gata — la datorie" else "Continuă în FORJA",
                     onClick = onBack, modifier = Modifier.fillMaxWidth()
                 )
             }
+        }
+    }
+}
+
+/** „Numărul tău”: câmp E.164, explicație onestă (declarat ≠ verificat), „Gata” / „Mai târziu”. */
+@Composable
+private fun NumberPanel(initial: String, verified: Boolean, busy: Boolean, onDone: (String) -> Unit, onLater: () -> Unit) {
+    var value by remember(initial) { mutableStateOf(initial) }
+    ForjaCard(Modifier.fillMaxWidth(), fill = Surface2) {
+        SectionLabel("Numărul tău")
+        Spacer(Modifier.height(8.dp))
+        TextField(
+            value = value,
+            onValueChange = { value = it.filter { ch -> ch.isDigit() || ch == '+' || ch == ' ' } },
+            singleLine = true,
+            enabled = !busy,
+            placeholder = { Text("+40 7xx xxx xxx", style = BodySmall) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+            textStyle = BodyStrong.copy(fontSize = 15.sp),
+            modifier = Modifier.fillMaxWidth().clip(SecondaryShape).border(1.dp, StrokeCardStrong, SecondaryShape),
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = Surface1, unfocusedContainerColor = Surface1,
+                focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                cursorColor = Accent2,
+                focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
+            )
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (verified) "Verificat prin SMS. Serverul păstrează o amprentă a numărului, nu numărul."
+            else "Declarat de tine, nu verificat prin SMS. Serverul păstrează o amprentă, nu numărul. Numele din agendă rămân pe telefon.",
+            style = BodyTiny.copy(color = TextSecondary)
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Prietenia apare singură doar când și el te are în agendă. Altfel îi trimiți codul tău.",
+            style = BodyTiny.copy(color = TextDim)
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PrimaryButton(if (busy) "Se salvează" else "Gata", onClick = { onDone(value) }, small = true, enabled = !busy, modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(10.dp))
+            SecondaryButton("Mai târziu", onClick = onLater, padV = 10.dp)
         }
     }
 }
