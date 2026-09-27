@@ -5,6 +5,29 @@ Claude Design din `design_handoff_forja`. Fitness & lifestyle: antrenamente cu v
 nutriție cu cod de bare + baza de date OpenFoodFacts, somn, hartă socială live cu prieteni
 reali (Firebase) și Focus (blocare de aplicații, onestă, fără AccessibilityService).
 
+## Ce e nou în 4.0 (septembrie 2026)
+
+Pachetul aplicației este acum `com.forja.app.research` (versionCode 60), ca 4.0 să se instaleze **peste**
+aplicația „3.7-online” de pe telefon, cu același cont și aceleași date locale (baza Room migrează fără pierderi).
+
+- **Hartă**: dale CARTO → OSM întunecat → offline (chip de stare, niciodată gri la nesfârșit), ciclu de viață corect,
+  butonul GO înapoi, 2D/3D (înclinare), **Explorare** — zonele (~150 m) prin care treci se deblochează pe hartă (măsliniu),
+  **locurile** unde ai STAT ≥ prag (30 min / 1 h / 2 h / 5 h, implicit 5 h) primesc pin amber, nume, stele, notă și
+  „Recomandă prietenilor” (pin albastru la ei). **Familia**: prietenii marcați „Familie” te văd și în modul fantomă.
+- **Somn**: ecranul original (alarmă circadiană + istoric „Nopțile tale”); serviciul nu mai crapă pe Android 14/15
+  (tip de prim-plan după permisiuni), STOP/SNOOZE sigure, „Încă 10 minute”, alarma nu tace niciodată,
+  „Veghea de noapte” (excepție de baterie + alarmă pe tot ecranul).
+- **Start**: splash nou cu scântei, prezentare cu 4 „ordine de zi” (video cu parallax), cont peste video,
+  **Echipare** — 5 bife (notificări, locație, microfon, poze, baterie) cu bară de progres, tranziții între ecrane.
+  Prezentarea se arată o dată și conturilor existente. Pagina „Contul tău este conectat” nu mai există.
+- **Curățenie v2**: „Ce curățăm azi?” (galerie / album / următoarele 50-100-300), **reluare obligatorie** de unde ai rămas,
+  duplicate (SHA-256), aproape identice (dHash), capturi de ecran, neclare, mici, mari; mutare în
+  `Pictures/FORJA Curățenie/<categorie>`; documente prin SAF în `Organizate/<categorie>`; sugestii AI (opt-in) prin
+  `POST /v1/organize` pe serverul FORJA (Gemini 2.5 Flash când există cheie, altfel banca de modele Cloudflare).
+- **Site-ul FORJA** (`server/insights-worker.mjs`, https://forja-insights.forja-22e7ea2d.workers.dev) e acum în acest repo,
+  cu testele lui, și se publică automat din CI (`insights-deploy.yml`). Harta 2D/3D reparată (v27) e live ca versiunea 16.
+- **Firestore**: regulile au colecții noi (`places`, `familyLoc`) — lipește din nou `firestore.rules` în consola Firebase → Publish.
+
 ## Cum obții aplicația (APK)
 
 La fiecare push pe `main`, GitHub Actions construiește APK-ul și îl publică la
@@ -48,12 +71,18 @@ Notă despre release: pagina de release afișează starea acestor servicii la mo
 
 ```
 app/src/main/java/com/forja/app/
-  core/designsystem/   tokens + componente (butoane, carduri, video, tab bar)
-  core/data/           Room, DataStore, repos Firebase (auth, prieteni, prezență)
-  core/network/        OpenFoodFacts (OkHttp)
+  core/designsystem/   tokens + componente (butoane, carduri, video, tab bar, efecte)
+  core/data/           Room (v7), DataStore, repos Firebase (auth, prieteni, prezență, familie)
+  core/network/        ForjaApi (serverul central), InsightsApi (site-ul), OpenFoodFacts
   core/location|sleep|focus/  servicii foreground (GO, somn, blocare)
+  core/explore/        ExploreTracker — zone deblocate + locuri unde ai stat
+  core/map/            ForjaTiles — dale cu rezervă și offline
+  core/cleanup/        CleanupEngine, DocumentOrganizer
   feature/             splash, onboarding, auth, dashboard, workout, nutrition,
-                       sleep, map, focus, profile
+                       sleep, map (explorare, locuri, familie), focus, cleanup, permissions (Echipare), profile
+server/
+  worker.js            forja-api — mese, somn, /v1/organize (Cloudflare Worker)
+  insights-worker.mjs  forja-insights — site-ul (hartă, organizare, telefon pierdut, cuplu, somn, fișiere) + teste
 ```
 
 ## Dezvoltare locală
