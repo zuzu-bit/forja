@@ -45,7 +45,9 @@ export function buildEvidence(journals, sessions) {
   if (!['sleep','activities','meals'].some(k => journals[k].records.length) && !sessions.some(s => s.data || s.observations?.length)) return evidence;
   const add = (id, category, text, count) => evidence.push({ id, category, text, count });
   const sleeps = journals.sleep.records.filter(s => Number.isFinite(s.startAt) && Number.isFinite(s.endAt) && s.endAt > s.startAt && s.endAt-s.startAt <= 24*3600000);
-  if (sleeps.length) add('sleep-summary', 'sleep', `${sleeps.length} sesiuni de somn trimise în ultimele 7 zile; durata medie ${Math.round(sleeps.reduce((n,s) => n+(s.endAt-s.startAt)/60000,0)/sleeps.length)} minute. Estimări ale aplicației, nu măsurători medicale.`, sleeps.length);
+  const recordings=sleeps.filter(s=>s.measurement==='recording_interval'),legacySleep=sleeps.filter(s=>s.measurement!=='recording_interval');
+  if (legacySleep.length) add('sleep-summary', 'sleep', `${legacySleep.length} intrări în jurnalul de somn trimise în ultimele 7 zile; durata medie a intervalelor salvate ${Math.round(legacySleep.reduce((n,s) => n+(s.endAt-s.startAt)/60000,0)/legacySleep.length)} minute. Estimări ale aplicației, nu măsurători medicale. Nu sunt măsurate stadii de somn.`, legacySleep.length);
+  if (recordings.length) add('recording-interval-summary','sleep',`${recordings.length} intervale de înregistrare audio în ultimele 7 zile; durata medie ${Math.round(recordings.reduce((n,s)=>n+(s.endAt-s.startAt)/60000,0)/recordings.length)} minute. Intervalele măsoară timpul înregistrării, NU durata somnului sau odihna. Calitatea, scorul și stadiile somnului sunt necunoscute. Nu deduce somn insuficient sau profund din durata înregistrării.`,recordings.length);
   if (!journals.activities.error) add('activity-coverage', 'movement', `${journals.activities.records.length} activități înregistrate și trimise în ultimele 7 zile. Lipsa înregistrărilor NU demonstrează lipsa mișcării sau a sălii.`, journals.activities.records.length);
   if (journals.activities.records.length) {
     const minutes = journals.activities.records.reduce((n,a) => n+(Number.isFinite(a.durationS)?Math.max(0,a.durationS)/60:0),0);
@@ -105,7 +107,7 @@ export async function handleInsights(request, env, uid) {
   if (!env.INSIGHTS) bad('Panoul online nu este configurat încă.', 503);
   const url = new URL(request.url); const stub = accountStub(env, uid);
   if(url.pathname==='/insights/api/organize'&&request.method==='POST')return organizeAI(request,env,uid,stub,readJSON,parsedJSON);
-  if (url.pathname === '/insights/api/capabilities' && request.method === 'GET') return reply({ recording: {version:1,media_type:'audio/mp4',max_duration_ms:3600000,max_bytes:30*1024*1024} });
+  if (url.pathname === '/insights/api/capabilities' && request.method === 'GET') return reply({ recording: {version:1,media_type:'audio/mp4',max_duration_ms:3600000,max_bytes:30*1024*1024}, sleep_audio:{version:1,chunk_duration_ms:120000,max_chunk_ms:300000,max_chunk_bytes:2*1024*1024,max_session_ms:43200000,reservation:true} });
   const contentPaths = { '/insights/api/campaigns': '/internal/campaigns', '/insights/api/app-feed': '/internal/app-feed', '/insights/api/intake': '/internal/intake', '/insights/api/phones': '/internal/phones', '/insights/api/phone-sync': '/internal/phone-sync' };
   let internalPath = contentPaths[url.pathname];
   if (/^\/insights\/api\/campaigns\/[0-9a-f-]+$/.test(url.pathname) && request.method === 'DELETE') internalPath = url.pathname.replace('/insights/api/', '/internal/') + url.search;
