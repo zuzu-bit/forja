@@ -17,7 +17,7 @@ export async function handleOrganizer(request,account,readJSON){
  const m=/^\/v2\/organizer\/devices\/([0-9a-f-]+)\/(request|plans|runs)(?:\/([0-9a-f-]+))?(?:\/(items|plan))?$/.exec(url.pathname);
  if(!m||!idPattern.test(m[1]))bad('Not found',404);
  const [_,id,action,ref,sub]=m,storage=account.ctx.storage,d=await storage.get('cleanup-device:'+id);
- if(!d||![2,3].includes(d.protocol))bad('Actualizează APK-ul și activează Organizare din laptop pe telefon.',409);
+ if(!d||![2,3,4].includes(d.protocol))bad('Actualizează APK-ul și activează Organizare din laptop pe telefon.',409);
  if(!d.grant.enabled)bad('Organizarea este dezactivată pe telefon.',403);
  if((await storage.get('intake'))?.accepting===false)bad('Primirea datelor este oprită din site.',423);
  if(action==='request'&&!ref&&!sub&&request.method==='POST'){

@@ -23,5 +23,5 @@ function renderRecovery(){
   if(hasPosition){card.append(el('p',(socialFresh(p)?'Poziție recentă':'Ultima poziție cunoscută')+' · '+socialAge(p.at),'social-meta'));actions.append(button('Pe hartă',()=>{socialShowMap(p,p.accuracy>1000?12:16);recoveryUI.markers.get(d.id)?.marker.openPopup();}));more.append(el('p',`±${Math.round(p.accuracy)} m · ${p.battery}% baterie`,'social-meta'),el('p',`${p.lat.toFixed(5)}, ${p.lon.toFixed(5)} · ${dt(p.at)}`,'social-meta'),socialNav(p));}else card.append(el('p','Nicio poziție în ultimele 24 h','social-meta'));
   more.append(el('p',d.seen_at?'Ultimul contact: '+dt(d.seen_at):'Încă nu s-a conectat.','social-meta'));const forget=button('Dezactivează găsirea',()=>recoveryAction('devices/'+d.id+'/grant',null,'DELETE',forget,d.id));forget.disabled=recoveryUI.pending.has(d.id);more.append(forget);if(openMenus.has(more.dataset.socialMenu))more.open=true;card.append(actions,more);box.append(card);
  }
- recoveryMarkers();
+ recoveryMarkers();if(typeof renderJourneyMap==='function')renderJourneyMap();
 }

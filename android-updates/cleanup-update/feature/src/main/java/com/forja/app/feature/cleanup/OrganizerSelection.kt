@@ -19,7 +19,7 @@ internal data class OrganizerSelection(val photos:Boolean,val files:Boolean,val 
     }
     fun select(inventory:List<CleanFile>,source:String):List<CleanFile> {
         val count=if(source=="photos")photoCount else fileCount
-        return inventory.filter{matches(it,source)}.sortedWith(compareByDescending<CleanFile>{if(source=="photos")it.date else it.modified}.thenBy{it.uri}).take(if(count==0)15000 else count)
+        return inventory.filter{matches(it,source)}.sortedWith(compareByDescending<CleanFile>{if(source=="photos")it.date else it.modified}.thenBy{it.uri}).let{if(count==0)it else it.take(count)}
     }
 }
 internal class OrganizerInventoryFilter(val selection:OrganizerSelection,val source:String):kotlin.coroutines.AbstractCoroutineContextElement(Key){companion object Key:kotlin.coroutines.CoroutineContext.Key<OrganizerInventoryFilter>}

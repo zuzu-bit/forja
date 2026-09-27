@@ -1,5 +1,6 @@
 import {runLimit} from './organizer-selection.mjs';
 import {requireCleanupRun} from './cleanup-schedule.mjs';
+import {validateOrganizerUpload,bindOrganizerFile,queueOrganizerFolder} from './organizer-jobs.mjs';
 import { bad, keys, idPattern, TTL } from './phone-schema.mjs';
 
 export const FILE_MAX_BYTES = 25 * 1024 * 1024;
@@ -83,7 +84,9 @@ export async function handleFiles(request,account,uid,bytes,readJSON) {
   }
   if(request.method==='PATCH'&&!thumb) {
     if(!old)bad('Fișier indisponibil.',404);
-    const {value}=await readJSON(request,1024);keys(value,['folder']);
+    const {value}=await readJSON(request,1024);
+    if(old.organizer_job)return json(publicFile(await queueOrganizerFolder(storage,old,value)));
+    keys(value,['folder']);
     if(!cleanText(value.folder,120))bad('Nume de dosar invalid.');
     old.folder=value.folder.trim();await storage.put('cloud-file:'+id,old);return json(publicFile(old));
   }
@@ -91,6 +94,8 @@ export async function handleFiles(request,account,uid,bytes,readJSON) {
   const intake=await storage.get('intake');if(intake?.accepting===false)bad('Primirea datelor este oprită din site.',423);
   const device=request.headers.get('x-device-id');if(!device||!idPattern.test(device))bad('Dispozitiv invalid.');
   const autoRun=request.headers.get('x-cleanup-run');
+  const organizerJob=request.headers.get('x-organizer-job'),organizerItem=request.headers.get('x-organizer-item'),original=request.headers.get('x-original-id'),version=request.headers.get('x-original-version');
+  if(organizerJob&&autoRun)bad('Alege o singură organizare.',409);
   const automatic=autoRun?(await requireCleanupRun(storage,device,autoRun)).run:null;
   const consent=await storage.get('file-device:'+device);
   if(!consent?.enabled)bad('Sincronizarea nu este activată pentru acest dispozitiv.',403);
@@ -113,9 +118,13 @@ export async function handleFiles(request,account,uid,bytes,readJSON) {
   if(bytes.length>FILE_MAX_BYTES)bad('Fișier mai mare de 25 MB.',413);
   const sha256=await hash(bytes),claimed=request.headers.get('x-file-sha256');
   if(claimed!==sha256)bad('Transfer incomplet: amprenta fișierului nu corespunde.',422);
+  if(organizerJob)await validateOrganizerUpload(storage,device,organizerJob,organizerItem,original,version,sha256,kind);
+  else if(organizerItem||original||version)bad('Lipsește organizarea copiei.');
   if(old) {
+    if((old.organizer_job||null)!==(organizerJob||null)||(old.organizer_item||null)!==(organizerItem||null)||(old.original_id||null)!==(original||null)||(old.original_version||null)!==(version||null))bad('Copia aparține altei organizări.',409);
     if((old.cleanup_run||null)!==(autoRun||null))bad('Fișierul aparține altei analize.',409);
     if(old.device_id!==device||old.sha256!==sha256||old.kind!==kind||old.media_type!==mime||old.name!==name)bad('Identificator folosit pentru alt fișier.',409);
+    if(organizerJob)await bindOrganizerFile(storage,old);
     return json(publicFile(old)); // Idempotent: preserves the original expiry and folder edits.
   }
   const rows=[...(await storage.list({prefix:'cloud-file:'})).values()];
@@ -133,10 +142,12 @@ export async function handleFiles(request,account,uid,bytes,readJSON) {
   if(staging&&(staging.sha256!==sha256||staging.device_id!==device))bad('Identificator folosit pentru alt transfer.',409);
   const now=staging?.received_at||Date.now(),item={id,device_id:device,kind,name,folder,media_type:mime,preview:previewType(mime),sha256,bytes:bytes.length,received_at:now,expires_at:now+TTL,thumbnail:false,key};
   if(autoRun)item.cleanup_run=autoRun;
+  if(organizerJob)Object.assign(item,{organizer_job:organizerJob,organizer_item:organizerItem,original_id:original,original_version:version});
   await storage.put('file-staging:'+id,{key,sha256,device_id:device,received_at:now,expires_at:now+TTL});
   await account.sweep();
   await bucket.put(key,bytes,{httpMetadata:{contentType:'application/octet-stream'}});
   await storage.put('cloud-file:'+id,item);
+  if(organizerJob)await bindOrganizerFile(storage,item);
   await storage.delete(['file-staging:'+id,'file-gone:'+id]);
   await storage.put('file-budget',{day,used:used+1});await account.sweep();
   return json(publicFile(item),201);

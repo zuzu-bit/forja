@@ -24,12 +24,16 @@ internal object CleanupAuto {
     suspend fun activate(c:Context,photos:Boolean,files:Boolean,tree:String,organize:Boolean=false){
         check(photos||files){"Alege cel puțin o sursă."};check(!files||tree.isNotBlank()){"Alege dosarul cu fișiere."}
         val uid=checkNotNull(FileSync.owner()){"Conectează-te în FORJA."};val id=device(c);val grant=UUID.randomUUID().toString()
-        val body=JSONObject().put("id",grant).put("enabled",true).put("photos",photos).put("files",files).put("label",Build.MODEL.take(80)).put("protocol",3).put("organize",organize)
+        val body=JSONObject().put("id",grant).put("enabled",true).put("photos",photos).put("files",files).put("label",Build.MODEL.take(80)).put("protocol",4).put("organize",organize)
+        val sources=JSONArray()
+        if(photos)sources.put(JSONObject().put("id",OrganizerJobs.sourceId(c,"photos","")).put("source","photos").put("label","Galeria autorizată în Android").put("folder",""))
+        if(files)sources.put(JSONObject().put("id",OrganizerJobs.sourceId(c,"files",tree)).put("source","files").put("label",androidx.documentfile.provider.DocumentFile.fromTreeUri(c,Uri.parse(tree))?.name?.take(80)?:"Dosarul ales").put("folder",""))
+        body.put("sources",sources)
         stopLocal(c)
         FileSync.request(c,uid,"/v2/cleanup/devices/$id/grant","POST",body.toString().toByteArray(),mapOf("Content-Type" to "application/json"),false)
         FileSync.request(c,uid,"/v2/files/settings/$id","POST",JSONObject().put("enabled",true).put("photos",true).put("files",true).toString().toByteArray(),mapOf("Content-Type" to "application/json"),false)
         check(FileSync.owner()==uid){"Contul s-a schimbat."}
-        check(prefs(c).edit().putString("owner",uid).putString("device",id).putString("grant",grant).putBoolean("enabled",true).putBoolean("organize",organize).putInt("protocol",3).putBoolean("photos",photos).putBoolean("files",files).putString("tree",if(files)tree else "").putString("status","Telefon autorizat. Alege selecția sau orele în site → Poze și documente.").commit())
+        check(prefs(c).edit().putString("owner",uid).putString("device",id).putString("grant",grant).putBoolean("enabled",true).putBoolean("organize",organize).putInt("protocol",4).putBoolean("photos",photos).putBoolean("files",files).putString("tree",if(files)tree else "").putString("status","Telefon autorizat. Alege selecția sau orele în site → Poze și documente.").commit())
         if(FileSync.prefs(c).getBoolean("enabled",false))FileSync.stop(c)
         schedule(c,true);changed.value++
     }
@@ -61,6 +65,7 @@ internal object CleanupAuto {
             val d=request("/v2/cleanup/devices/$device");check(d.getJSONObject("grant").getString("id")==grant){"Activarea s-a schimbat. Reactivează pe telefon."}
             val s=d.getJSONObject("schedule");status(c,if(s.optBoolean("enabled"))"Program: ${s.getInt("count")} din fiecare sursă · ${s.getJSONArray("times").join(", ").replace("\"","")} · ${s.getString("timezone")}"else "Telefon pregătit. Cere o selecție sau programeaz-o din site.")
             val result=request("/v2/cleanup/devices/$device/claim",JSONObject().put("grant_id",grant))
+            if(p.getInt("protocol",0)>=4)OrganizerJobs.pollRemote(c,uid,grant,device)
             OrganizerPlans.poll(c,uid,grant,device)
             val wm=WorkManager.getInstance(c);val run=result.optJSONObject("run")
             if(run!=null){

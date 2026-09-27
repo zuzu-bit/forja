@@ -61,13 +61,17 @@ export async function handleCleanup(request,account,readJSON){
  if(!m||!idPattern.test(m[1]))bad('Not found',404);
  const id=m[1],action=m[2],runId=m[3],key='cleanup-device:'+id;let d=await storage.get(key);
  if(action==='grant'&&request.method==='POST'){
-  const {value:v}=await readJSON(request,2048);keys(v,['id','enabled','photos','files','label','protocol','organize'],['id','enabled','photos','files','label']);
-  if(v.protocol!==undefined&&![2,3].includes(v.protocol)||v.organize!==undefined&&typeof v.organize!=='boolean')bad('Capabilități invalide.');
+  const {value:v}=await readJSON(request,8192);keys(v,['id','enabled','photos','files','label','protocol','organize','sources'],['id','enabled','photos','files','label']);
+  if(v.protocol!==undefined&&![2,3,4].includes(v.protocol)||v.organize!==undefined&&typeof v.organize!=='boolean')bad('Capabilități invalide.');
+  if(v.sources!==undefined){
+   if(v.protocol!==4||!Array.isArray(v.sources)||v.sources.length>12||new Set(v.sources.map(s=>s.id)).size!==v.sources.length)bad('Surse invalide.');
+   for(const s of v.sources){keys(s,['id','source','label','folder']);if(!idPattern.test(s.id)||!['photos','files'].includes(s.source)||!validText(s.label,100)||!validText(s.folder,200)||!v[s.source])bad('Sursă invalidă.');}
+  }
   if(!idPattern.test(v.id)||['enabled','photos','files'].some(k=>typeof v[k]!=='boolean')||v.enabled&&!v.photos&&!v.files||!validText(v.label,80))bad('Permisiuni de analiză invalide.');
   if(!d&&(await storage.list({prefix:'cleanup-device:'})).size>=5)bad('Maximum cinci telefoane.',429);
-  const same=d?.grant.id===v.id;if(same&&(['enabled','photos','files'].some(k=>d.grant[k]!==v[k])||!!d.grant.organize!==(v.organize===true)||(d.protocol||1)!==(v.protocol||1)))bad('Folosește o activare nouă pentru schimbarea surselor.',409);
+  const same=d?.grant.id===v.id;if(same&&(['enabled','photos','files'].some(k=>d.grant[k]!==v[k])||!!d.grant.organize!==(v.organize===true)||(d.protocol||1)!==(v.protocol||1)||JSON.stringify(d.grant.sources||[])!==JSON.stringify(v.sources||[])))bad('Folosește o activare nouă pentru schimbarea surselor.',409);
   if(same)return json(d);
-  d={id,label:v.label,protocol:v.protocol||1,grant:{id:v.id,enabled:v.enabled,photos:v.photos,files:v.files,organize:v.organize===true},schedule:{...defaultSchedule(),photos:v.photos,files:v.files},revision:(d?.revision||0)+1,updated_at:Date.now(),last_seen:Date.now()};
+  d={id,label:v.label,protocol:v.protocol||1,grant:{id:v.id,enabled:v.enabled,photos:v.photos,files:v.files,organize:v.organize===true,...(v.sources?{sources:v.sources}:{})},schedule:{...defaultSchedule(),photos:v.photos,files:v.files},revision:(d?.revision||0)+1,updated_at:Date.now(),last_seen:Date.now()};
   await storage.put(key,d);return json(d);
  }
  if(!d)bad('Activează analiza automată în aplicație.',404);
