@@ -1,0 +1,81 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { validate, extractJsonStrict, normalizeMeal, mealTotals, mealTotalsConsistent, enforceComponentKcal, MEAL_SCHEMA, ORGANIZE_SCHEMA, SLEEP_EVENTS_SCHEMA } from './ai-schemas.mjs';
+
+test('extractJsonStrict: text curat, ```json, text în jur, listă; nimic → null', () => {
+  assert.deepEqual(extractJsonStrict('{"a":1}'), { a: 1 });
+  assert.deepEqual(extractJsonStrict('```json\n{"a":"}"}\n```'), { a: '}' });
+  assert.deepEqual(extractJsonStrict('Sigur! {"a":{"b":[1,2]}} gata.'), { a: { b: [1, 2] } });
+  assert.deepEqual(extractJsonStrict('[1,2]'), [1, 2]);
+  assert.equal(extractJsonStrict('nimic aici'), null);
+  assert.equal(extractJsonStrict('{"a": '), null);
+  assert.equal(extractJsonStrict(''), null);
+});
+
+test('validate: tipuri, enum, required, limite, nullable, erori cu cale', () => {
+  const good = { fel: 'Ciorbă', incredere: 'medie', componente: [{ nume: 'ciorbă', grame: 400, kcal: 180, proteine: 8, carbo: 14, grasimi: 9 }] };
+  assert.equal(validate(MEAL_SCHEMA, good).ok, true);
+  const bad = validate(MEAL_SCHEMA, { fel: 3, incredere: 'sigur', componente: [{ nume: 'x', grame: -1 }] });
+  assert.equal(bad.ok, false);
+  assert.ok(bad.errors.some((e) => e.startsWith('$.fel:')));
+  assert.ok(bad.errors.some((e) => e.includes('$.componente[0]') && e.includes('kcal')));
+  assert.ok(bad.errors.some((e) => e.includes('$.componente[0].grame') && e.includes('minim')));
+  assert.equal(validate(ORGANIZE_SCHEMA, { items: [{ id: 'a', suggestion: 'keep', folder: null, duplicatDe: null }] }).ok, true);
+  assert.equal(validate(ORGANIZE_SCHEMA, { items: [{ id: 'a', suggestion: 'archive' }] }).ok, false);
+  assert.equal(validate(SLEEP_EVENTS_SCHEMA, { events: [] }).ok, true);
+  assert.equal(validate(SLEEP_EVENTS_SCHEMA, { events: [{ type: 'talk', startMs: 5, endMs: 8, transcript: 'x' }] }).ok, true);
+  assert.equal(validate(SLEEP_EVENTS_SCHEMA, { events: [{ type: 'talk', startMs: 'x', endMs: 8 }] }).ok, false);
+  assert.equal(validate(SLEEP_EVENTS_SCHEMA, { events: [{ type: 'silence', startMs: 1, endMs: 2 }] }).ok, false);
+});
+
+test('mese v2: totalurile se recalculează din componente, verificarea 4P+4C+9G ±15 %, versiune 2, câmpuri vechi intacte', () => {
+  const parsed = {
+    fel: ' Pui cu orez ', incredere: 'ridicată',
+    componente: [
+      { nume: 'piept de pui', grame: 150.4, kcal: 248, proteine: 46, carbo: 0, grasimi: 6, fibre: 0, incredere: 'ridicată' },
+      { nume: 'orez', grame: 180, kcal: 234, proteine: 5, carbo: 50, grasimi: 0.5, fibre: 1 },
+    ],
+    total: { kcal: 9999, proteine: 1, carbo: 1, grasimi: 1, fibre: 1 },
+    scor: { valoare: 7.4, motiv: 'Echilibrată.' }, sfat: 'Adaugă legume.', observatii: ['ulei invizibil', ''], portie: 'farfurie medie',
+  };
+  const m = normalizeMeal(parsed, 'gemini-2.5-flash');
+  assert.equal(m.versiune, 2);
+  assert.equal(m.model, 'gemini-2.5-flash');
+  assert.equal(m.fel, 'Pui cu orez');
+  assert.deepEqual(m.total, { kcal: 482, proteine: 51, carbo: 50, grasimi: 7, fibre: 1 });
+  assert.equal(mealTotalsConsistent(m.total), true);
+  assert.equal(m.scor.valoare, 7);
+  assert.deepEqual(m.observatii, ['ulei invizibil']);
+  assert.equal(m.componente[1].incredere, 'ridicată', 'moștenește încrederea felului');
+  assert.deepEqual(Object.keys(m.componente[0]), ['nume', 'grame', 'kcal', 'proteine', 'carbo', 'grasimi', 'fibre', 'incredere']);
+  assert.equal(m.componente[0].grame, 150);
+  assert.ok(['fel', 'incredere', 'componente'].every((k) => k in m), 'contractul vechi rămâne');
+
+  // kcal care contrazice macronutrienții (900 vs 4·10+4·10+9·5 = 125) se corectează determinist, nu doar „se cere” modelului:
+  // kcal = 4P+4C+9G, componenta și felul coboară la cel mult „medie”, iar corectura e spusă în observații.
+  const off = normalizeMeal({ fel: 'x', incredere: 'ridicată', componente: [{ nume: 'a', grame: 100, kcal: 900, proteine: 10, carbo: 10, grasimi: 5, incredere: 'ridicată' }] });
+  assert.equal(off.componente[0].kcal, 125);
+  assert.equal(off.componente[0].incredere, 'medie');
+  assert.equal(off.incredere, 'medie');
+  assert.equal(mealTotalsConsistent(off.total), true, 'după corectură totalul e coerent');
+  assert.deepEqual(Object.keys(off.componente[0]), ['nume', 'grame', 'kcal', 'proteine', 'carbo', 'grasimi', 'fibre', 'incredere'], 'contractul componentei nu primește câmpuri noi');
+  assert.match(off.observatii.at(-1), /Calorii recalculate .* a\./);
+  assert.equal(enforceComponentKcal({ nume: 'b', kcal: 125, proteine: 10, carbo: 10, grasimi: 5, incredere: 'ridicată' }).corectat, false, 'în toleranță rămâne neatins');
+  assert.equal(enforceComponentKcal({ nume: 'b', kcal: 140, proteine: 10, carbo: 10, grasimi: 5, incredere: 'ridicată' }).corectat, false, '12 % e în ±15 %');
+  assert.equal(normalizeMeal({ fel: 'x', incredere: 'scăzută', componente: [{ nume: 'c', grame: 100, kcal: 900, proteine: 10, carbo: 10, grasimi: 5 }] }).incredere, 'scăzută', 'scăzută nu urcă la medie');
+  // Macronutrienți toți 0 cu kcal > 0: nu se poate verifica → kcal rămâne, încrederea componentei devine scăzută, totalul rămâne incoerent.
+  const blind = normalizeMeal({ fel: 'x', incredere: 'ridicată', componente: [{ nume: 'd', grame: 100, kcal: 300, proteine: 0, carbo: 0, grasimi: 0 }] });
+  assert.equal(blind.componente[0].kcal, 300);
+  assert.equal(blind.componente[0].incredere, 'scăzută');
+  assert.equal(mealTotalsConsistent(blind.total), false);
+  assert.equal(blind.incredere, 'medie');
+
+  // Fără mâncare: contract identic cu cel vechi + câmpurile noi goale.
+  const none = normalizeMeal({ fel: '', incredere: 'scăzută', componente: [] });
+  assert.equal(none.fel, '');
+  assert.equal(none.incredere, 'scăzută');
+  assert.deepEqual(none.componente, []);
+  assert.deepEqual(none.total, { kcal: 0, proteine: 0, carbo: 0, grasimi: 0, fibre: 0 });
+  assert.equal(none.scor.valoare, 1);
+  assert.deepEqual(mealTotals(undefined), { kcal: 0, proteine: 0, carbo: 0, grasimi: 0, fibre: 0 });
+});
