@@ -1,0 +1,108 @@
+/* v26: private exploration is independent of every social sharing grant. */
+const journeyUI={data:null,owner:null,loading:false,vector:null,vectorReady:false,threeD:false,mapLoading:false,mapGeneration:0,leafLayer:null,watch:null,recording:null,queue:[],sending:false,flush:null,pages:1,visibility:null,selection:null,generation:0};
+function journeyMerge(old,page){if(!old)return page;const result={...page};for(const key of ['routes','zones'])result[key]={type:'FeatureCollection',features:[...new Map([...(old[key]?.features||[]),...(page[key]?.features||[])].map(f=>[f.properties.id,f])).values()]};result.visits=[...new Map([...(old.visits||[]),...(page.visits||[])].map(v=>[v.id,v])).values()];return result;}
+function clearJourney(){journeyUI.generation++;journeyUI.mapGeneration++;journeyUI.mapLoading=false;if(journeyUI.watch!==null)navigator.geolocation?.clearWatch(journeyUI.watch);journeyUI.watch=null;journeyUI.recording=null;journeyUI.queue=[];journeyUI.sending=false;journeyUI.flush=null;journeyUI.pages=1;journeyUI.data=null;journeyUI.owner=null;journeyUI.loading=false;journeyUI.visibility=null;journeyUI.selection=null;journeyUI.vector?.destroy();journeyUI.vector=null;journeyUI.vectorReady=false;journeyUI.threeD=false;journeyUI.leafLayer?.clearLayers();journeyUI.leafLayer=null;$('social-vector')?.replaceChildren();if($('social-vector'))$('social-vector').hidden=true;for(const id of ['journey-visits','journey-selection','social-visibility-form'])$(id)?.replaceChildren();}
+function journeyModeButton(){const button=$('map-dimension');if(!button)return;button.disabled=journeyUI.mapLoading;button.textContent=journeyUI.mapLoading?'…':journeyUI.threeD?'2D':'3D';button.setAttribute('aria-pressed',String(journeyUI.threeD));}
+function journeyLeave3D(error){
+ journeyUI.mapGeneration++;journeyUI.mapLoading=false;
+ if(journeyUI.vectorReady){const p=journeyUI.vector.getCenter();socialUI.map.setView([p.lat,p.lon],p.zoom||socialUI.map.getZoom(),{animate:false});}
+ try{journeyUI.vector?.destroy();}catch{}journeyUI.vector=null;journeyUI.vectorReady=false;journeyUI.threeD=false;
+ const surface=$('social-vector');surface.hidden=true;surface.style.opacity='0';surface.style.pointerEvents='none';surface.replaceChildren();
+ $('map-render-status').textContent=error?'3D nu este disponibil acum. Harta 2D rămâne activă.':'';
+ if(error){$('map-render-status').dataset.error=String(error?.message||error);console.error('[FORJA map] 3D',error);}
+ journeyModeButton();socialUI.map?.invalidateSize();
+}
+function journeyEnter3D(){
+ if(journeyUI.mapLoading)return;const surface=$('social-vector'),current=auth,generation=++journeyUI.mapGeneration;
+ journeyUI.mapLoading=true;journeyModeButton();$('map-render-status').textContent='Se încarcă 3D…';surface.hidden=false;surface.style.opacity='0';surface.style.pointerEvents='none';
+ try{const p=socialUI.map.getCenter();journeyUI.vector=ForjaMapRenderer.create('social-vector',{center:[p.lng,p.lat],zoom:socialUI.map.getZoom(),
+  onReady:()=>{if(auth!==current||generation!==journeyUI.mapGeneration)return;journeyUI.vectorReady=true;journeyUI.mapLoading=false;journeyUI.threeD=true;journeyUI.vector.resize();journeyUI.vector.set3D(true);renderJourneyMap();surface.style.opacity='1';surface.style.pointerEvents='auto';$('map-render-status').textContent='';journeyModeButton();},
+  onError:error=>{if(auth===current&&generation===journeyUI.mapGeneration)journeyLeave3D(error);},onPick:journeyPick});
+ }catch(error){if(auth===current&&generation===journeyUI.mapGeneration)journeyLeave3D(error);}
+}
+function openJourney(){journeyModeButton();journeyUI.vector?.resize();refreshJourney();}
+
+function journeyInvalidate(){journeyUI.generation++;journeyUI.loading=false;}
+function journeyCenter(){return journeyUI.vectorReady?journeyUI.vector.getCenter():socialUI.map.getCenter();}
+function journeyFocus(p,zoom){journeyUI.vector?.focus(p,zoom);}
+async function refreshJourney(more=false){
+ if(!auth||journeyUI.loading||$('page-social').hidden)return;const current=auth,target=journeyUI.owner,generation=journeyUI.generation;journeyUI.loading=true;
+ try{
+  let result=more?journeyUI.data:null,cursor=more?journeyUI.data?.next_cursor:null;
+  if(more&&!cursor)return;
+  const count=more?1:journeyUI.pages;
+  for(let n=0;n<count;n++){
+   const query=new URLSearchParams();if(target)query.set('owner',target);if(cursor)query.set('cursor',cursor);
+   const page=await socialCall('journey/state'+(query.size?'?'+query:''));if(auth!==current||target!==journeyUI.owner||generation!==journeyUI.generation)return;
+   result=journeyMerge(result,page);cursor=page.next_cursor;if(!cursor)break;
+  }
+  journeyUI.data=result;if(more)journeyUI.pages++;
+  if(!target&&journeyUI.recording&&result.session?.id!==journeyUI.recording){navigator.geolocation?.clearWatch(journeyUI.watch);journeyUI.watch=null;journeyUI.recording=null;journeyUI.queue=[];journeyUI.flush=null;journeyUI.sending=false;notice('Explorarea a fost oprită din cont.');}
+  renderJourney();
+ }catch(e){if(auth===current&&generation===journeyUI.generation&&e.name!=='AbortError'){if(target){journeyUI.data=null;journeyUI.selection=null;$('journey-selection').replaceChildren();$('journey-visits').replaceChildren();$('journey-status').textContent=e.message;$('journey-more').hidden=true;renderJourneyMap();}notice(e.message);}}
+ finally{if(generation===journeyUI.generation)journeyUI.loading=false;}
+}
+function renderJourney(){
+ const d=journeyUI.data;if(!d)return;const owned=!journeyUI.owner;
+ $('journey-title').textContent=owned?'Harta mea':'Istoric partajat';$('journey-status').textContent=d.session?'Explorare activă'+(d.last_sample_at?' · '+socialAge(d.last_sample_at):' · aștept primul punct'):'Explorare oprită';
+ $('journey-start').hidden=!owned||!!d.session;$('journey-stop').hidden=!owned||!d.session;$('journey-erase').hidden=!owned;$('journey-own').hidden=owned;
+ $('journey-rules').textContent=`Grilă: ${d.rules.grid_m} m proiectați · vizite: peste 5 h confirmate · goluri GPS excluse`;
+ $('journey-more').hidden=!d.next_cursor;
+ const list=$('journey-visits');list.replaceChildren();if(!d.visits.length)socialEmpty(list,'⌖','Locurile apar după o vizită de peste 5 ore confirmate.');
+ for(const v of d.visits){const row=el('article',undefined,'social-card');row.append(el('strong',v.name||'Loc vizitat'),el('p',(v.observed_ms/3600000).toFixed(1)+' h confirmate'+(v.rating?' · '+v.rating+'/5 ★':''),'social-meta'),button('Vezi locul',()=>{socialShowMap(v);journeyVisit(v);},'social-primary'));list.append(row);}
+ renderJourneyMap();
+}
+function journeyPayload(){
+ const make=window.ForjaMapRenderer?.feature||((kind,id,p,name)=>({type:'Feature',geometry:{type:'Point',coordinates:[p.lon,p.lat]},properties:{id,kind,name}})),fc=features=>({type:'FeatureCollection',features}),d=socialUI.data;
+ return {routes:journeyUI.data?.routes||fc([]),zones:journeyUI.data?.zones||fc([]),visits:fc((journeyUI.data?.visits||[]).map(v=>make('visit',v.id,v,v.name))),people:fc(d?[{...d.me,name:'Tu'},...d.friends].filter(f=>socialFresh(f.location)).map(f=>make('person',f.id,f.location,f.name)):[]),places:fc((d?.me.places||[]).map(p=>make('place',p.id,p,p.name))),devices:fc((recoveryUI.data||[]).filter(d=>d.position?.at>Date.now()-86400000).map(d=>make('device',d.id,d.position,d.name)))};
+}
+function renderJourneyMap(){
+ if(!socialUI.map)return;const data=journeyPayload();journeyUI.vector?.setData(data);
+ if(!journeyUI.leafLayer)journeyUI.leafLayer=L.layerGroup().addTo(socialUI.map);journeyUI.leafLayer.clearLayers();
+ if(L.geoJSON){L.geoJSON(data.zones,{style:{color:'#37875d',weight:1,fillColor:'#71C99B',fillOpacity:.26}}).addTo(journeyUI.leafLayer);L.geoJSON(data.routes,{style:{color:'#4F92FF',weight:4}}).addTo(journeyUI.leafLayer);for(const v of journeyUI.data?.visits||[]){const icon=el('span','★','journey-visit-pin');L.marker([v.lat,v.lon],{title:v.name,icon:L.divIcon({html:icon,className:'journey-visit-marker',iconSize:[32,32]})}).addTo(journeyUI.leafLayer).on('click',()=>journeyVisit(v));}}
+}
+function journeyPick(p){
+ const box=$('journey-selection');box.replaceChildren();
+ if(p.kind==='visit'){const v=journeyUI.data?.visits.find(v=>v.id===p.id);if(v)journeyVisit(v);return;}
+ const person=socialUI.data?.friends.find(f=>f.id===p.id);box.append(el('h3',p.name||'Loc selectat'),socialNav(p));const device=p.kind==='device'?(recoveryUI.data||[]).find(d=>d.id===p.id):null;if(device?.position)box.append(el('p',(socialFresh(device.position)?'Poziție recentă':'Ultima poziție cunoscută')+' · '+socialAge(device.position.at)+' · ±'+Math.round(device.position.accuracy)+' m','social-meta'));if(person?.location)box.append(el('p',socialAge(person.location.at)+' · ±'+Math.round(person.location.accuracy)+' m','social-meta'));if(person)box.append(button('Mesaj',()=>socialChat(person)),button('Istoric partajat',()=>journeyShared(person.id)));box.append(button('Închide',()=>box.replaceChildren()));
+}
+function journeyVisit(v){
+ journeyUI.selection=v.id;const box=$('journey-selection');box.replaceChildren();box.append(el('h3',v.name||'Loc vizitat'),el('p',(v.observed_ms/3600000).toFixed(1)+' ore confirmate','social-meta'),socialNav(v));
+ if(!journeyUI.owner){const name=el('input');name.value=v.name||'';name.maxLength=80;name.setAttribute('aria-label','Numele locului');const rating=el('select');rating.setAttribute('aria-label','Ratingul locului');const blank=el('option','Alege un rating');blank.value='';rating.append(blank);for(let n=1;n<=5;n++){const option=el('option','★'.repeat(n));option.value=String(n);option.selected=n===v.rating;rating.append(option);}box.append(name,rating,button('Salvează',async()=>{const payload={name:name.value.trim()};if(rating.value)payload.rating=Number(rating.value);if(await socialAction('journey/visits/'+v.id,payload,'PATCH','Loc salvat.')){journeyInvalidate();await refreshJourney();}}));
+  const details=socialMore('recommend-'+v.id,'Recomandă unui prieten');for(const f of socialUI.data?.friends||[])details.append(button(f.name,()=>socialAction('journey/recommend',{visit:v.id,friend:f.id,id:crypto.randomUUID()},'POST','Recomandare trimisă.')));box.append(details,button('Păstrează pentru mai târziu',()=>socialAction('place',{name:v.name,lat:v.lat,lon:v.lon},'POST','Loc salvat în listă.')));
+  const erase=socialMore('visit-delete-'+v.id,'Opțiuni loc');erase.append(button('Șterge vizita',async()=>{if(!confirm('Ștergi această vizită din istoric?'))return;await socialAction('journey/visits/'+v.id,null,'DELETE');box.replaceChildren();journeyInvalidate();refreshJourney();}));box.append(erase);
+ }
+ box.append(button('Închide',()=>box.replaceChildren()));box.scrollIntoView({behavior:socialMotion()?'smooth':'instant',block:'nearest'});
+}
+async function journeyShared(id){journeyUI.generation++;journeyUI.loading=false;journeyUI.pages=1;journeyUI.owner=id;journeyUI.data=null;journeyUI.selection=null;$('journey-selection').replaceChildren();$('journey-visits').replaceChildren();$('journey-title').textContent=id?'Istoric partajat':'Harta mea';$('journey-own').hidden=!id;renderJourneyMap();await refreshJourney();$('journey-panel').open=true;}
+async function startJourney(){
+ if(!navigator.geolocation){notice('Browserul nu oferă acces la locație. Folosește aplicația.');return;}
+ const current=auth,id=crypto.randomUUID();try{const session=await socialCall('journey/session',{id,consent:true});if(auth!==current)return;journeyInvalidate();journeyUI.recording=id;let lastAt=0;
+ journeyUI.watch=navigator.geolocation.watchPosition(p=>{
+  if(auth!==current||journeyUI.recording!==id)return;
+  const at=Math.floor(p.timestamp);if(p.coords.accuracy>50||at<session.started_at||at<Date.now()-90000||at>Date.now()+10000||at-lastAt<25000)return;
+  if(journeyUI.queue.length>=2000){navigator.geolocation.clearWatch(journeyUI.watch);journeyUI.watch=null;notice('Explorarea locală s-a oprit. Reîncearcă sincronizarea înainte de a închide pagina.');return;}
+  lastAt=at;journeyUI.queue.push({id:crypto.randomUUID(),session:id,points:[{at,lat:p.coords.latitude,lon:p.coords.longitude,accuracy:p.coords.accuracy,speed:Math.min(100,Math.max(0,p.coords.speed||0))}]});journeyFlush();
+ },()=>notice('Locația nu este disponibilă. Intervalul lipsă nu este numărat.'),{enableHighAccuracy:true,maximumAge:0,timeout:30000});$('journey-consent-dialog').close();await refreshJourney();}catch(e){if(auth===current)notice(e.message);}
+}
+async function journeyFlush(){
+ if(journeyUI.flush)return journeyUI.flush;if(!auth)return;const current=auth,queue=journeyUI.queue;journeyUI.sending=true;
+ const flush=(async()=>{try{while(queue.length&&auth===current&&journeyUI.queue===queue){const item=queue[0];try{await socialCall('journey/samples',item);}catch(e){
+  if(e.status===400){queue.shift();notice('Un punct invalid sau prea vechi a fost omis. Sincronizarea continuă.');continue;}
+  if([403,404,409].includes(e.status)){navigator.geolocation?.clearWatch(journeyUI.watch);journeyUI.watch=null;journeyUI.recording=null;queue.length=0;notice('Explorarea a fost oprită sau accesul a fost revocat.');break;}throw e;
+ }if(auth===current&&journeyUI.queue===queue)queue.shift();}}
+ catch(e){if(auth===current&&e.name!=='AbortError')notice('Punctele așteaptă conexiunea. Păstrează această pagină deschisă.');}
+ finally{if(journeyUI.queue===queue){journeyUI.sending=false;journeyUI.flush=null;}}})();journeyUI.flush=flush;await flush;if(journeyUI.flush===flush)journeyUI.flush=null;
+}
+async function stopJourney(){const d=journeyUI.data;const id=journeyUI.recording||d?.session?.id;if(!id)return;if(journeyUI.watch!==null)navigator.geolocation.clearWatch(journeyUI.watch);journeyUI.watch=null;try{await journeyFlush();if(journeyUI.queue.length){notice('Explorarea locală s-a oprit. Reîncearcă sincronizarea înainte de a închide pagina.');return;}await socialCall('journey/session?session='+encodeURIComponent(id),null,'DELETE');journeyUI.recording=null;journeyInvalidate();await refreshJourney();}catch(e){notice(e.message);}}
+async function openVisibility(){
+ const current=auth;try{const v=await socialCall('visibility');if(auth!==current)return;journeyUI.visibility=v;const form=$('social-visibility-form');form.replaceChildren();const ghost=el('input');ghost.type='checkbox';ghost.checked=v.ghost;ghost.id='visibility-ghost';const label=el('label',undefined,'journey-check');label.append(ghost,document.createTextNode('Fantomă'));form.append(label);
+  const rows=[];for(const f of socialUI.data?.friends||[]){const saved=v.grants.find(g=>g.id===f.id)||{},row=el('fieldset'),legend=el('legend',f.name),checks={};row.append(legend);for(const[key,text]of [['current','Locația curentă'],['ghost','Inclusiv în Fantomă'],['history','Trasee și locuri din istoric']]){const input=el('input');input.type='checkbox';input.checked=!!saved[key];input.disabled=key==='ghost'&&!saved.current;const label=el('label',undefined,'journey-check');label.append(input,document.createTextNode(text));row.append(label);checks[key]=input;}checks.current.onchange=()=>{checks.ghost.disabled=!checks.current.checked;if(!checks.current.checked)checks.ghost.checked=false;};form.append(row);rows.push({id:f.id,checks});}
+  const consent=el('input');consent.type='checkbox';const consentLabel=el('label',undefined,'journey-check');consentLabel.append(consent,document.createTextNode('Permit accesul ales pentru fiecare persoană.'));const save=button('Salvează',async()=>{if(!consent.checked)return;save.disabled=true;try{await socialCall('visibility',{ghost:ghost.checked,grants:rows.map(({id,checks})=>({id,current:checks.current.checked,ghost:checks.ghost.checked,history:checks.history.checked})),consent:true,revision:v.revision||0});if(auth!==current)return;await refreshSocial();$('visibility-dialog').close();notice('Vizibilitate salvată.',true);}catch(e){if(auth===current){if(e.status===409){$('visibility-dialog').close();await openVisibility();notice('Vizibilitatea s-a schimbat. Alege și confirmă din nou persoanele.');}else notice(e.message);}}finally{save.disabled=!consent.checked;}});save.disabled=true;consent.onchange=()=>save.disabled=!consent.checked;if(!journeyUI.data?.session)form.append(button('Pornește explorarea',()=>{$('visibility-dialog').close();$('journey-consent-dialog').showModal();}));form.append(consentLabel,save,button('Oprește toate partajările',async()=>{await socialAction('session',null,'DELETE','Toate partajările au fost oprite.');$('visibility-dialog').close();}));$('visibility-dialog').showModal();
+ }catch(e){if(auth===current)notice(e.message);}
+}
+$('map-dimension')?.addEventListener('click',()=>journeyUI.threeD?journeyLeave3D():journeyEnter3D());
+$('journey-start')?.addEventListener('click',()=>$('journey-consent-dialog').showModal());$('journey-consent')?.addEventListener('change',()=>$('journey-confirm').disabled=!$('journey-consent').checked);$('journey-confirm')?.addEventListener('click',async()=>{const b=$('journey-confirm');b.disabled=true;try{await startJourney();}finally{b.disabled=!$('journey-consent').checked;}});
+$('journey-stop')?.addEventListener('click',stopJourney);$('journey-more')?.addEventListener('click',()=>refreshJourney(true));$('journey-own')?.addEventListener('click',()=>journeyShared(null));$('social-visibility')?.addEventListener('click',openVisibility);
+$('journey-erase')?.addEventListener('click',async()=>{if(!confirm('Ștergi toate traseele, zonele și vizitele? Explorarea se oprește.'))return;if(journeyUI.watch!==null)navigator.geolocation.clearWatch(journeyUI.watch);journeyUI.watch=null;journeyUI.recording=null;journeyUI.queue=[];journeyUI.flush=null;journeyUI.sending=false;await socialAction('journey/history',null,'DELETE','Istoric șters.');$('journey-selection').replaceChildren();journeyInvalidate();refreshJourney();});
+for(const id of ['visibility-dialog','journey-consent-dialog'])$(id)?.querySelector('[data-close]')?.addEventListener('click',()=>$(id).close());

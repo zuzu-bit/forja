@@ -94,7 +94,7 @@ class ForjaApi {
         val token = idToken() ?: return@withContext false
         try {
             val req = Request.Builder()
-                .url("$base/v1/sleep-recording?session=s$sessionId")
+                .url(sleepRecordingUrl(sessionId))
                 .header("Authorization", "Bearer $token")
                 .post(file.readBytes().toRequestBody("audio/mp4".toMediaType()))
                 .build()
@@ -102,7 +102,7 @@ class ForjaApi {
         } catch (_: Exception) { false }
     }
 
-    fun sleepRecordingUrl(sessionId: Long): String = "$base/v1/sleep-recording?session=s$sessionId"
+    fun sleepRecordingUrl(sessionId: Long): String = "$base/v1/sleep-recording?session=${com.forja.app.core.data.CloudSync.recordingId(sessionId)}"
 
     suspend fun authHeader(): String? = idToken()?.let { "Bearer $it" }
 

@@ -40,6 +40,7 @@ class PresenceRepository(
 
     @SuppressLint("MissingPermission")
     fun start(uid: String, isGhost: () -> Boolean) {
+        if (com.forja.app.BuildConfig.RESEARCH_MODE) return
         if (callback != null) return
         val request = LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 8000L)
             .setMinUpdateDistanceMeters(8f)
@@ -77,6 +78,7 @@ class PresenceRepository(
     }
 
     fun publishState(uid: String, state: String) {
+        if (com.forja.app.BuildConfig.RESEARCH_MODE) return
         db.collection("users").document(uid).set(
             mapOf("state" to state, "locUpdatedAt" to System.currentTimeMillis()),
             SetOptions.merge()

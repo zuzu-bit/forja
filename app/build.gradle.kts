@@ -10,16 +10,20 @@ plugins {
 android {
     namespace = "com.forja.app"
     compileSdk = 35
+    testBuildType = "research"
 
     defaultConfig {
         applicationId = "com.forja.app"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
+        versionCode = 35
         versionName = "3.7"
         vectorDrawables { useSupportLibrary = true }
         // Serverul central FORJA — injectat de CI după deploy; gol = căile locale.
         buildConfigField("String", "FORJA_API_URL", "\"${System.getenv("FORJA_API_URL") ?: ""}\"")
+        buildConfigField("boolean", "RESEARCH_MODE", "false")
+        buildConfigField("String", "INSIGHTS_URL", "\"\"")
     }
 
     signingConfigs {
@@ -34,6 +38,16 @@ android {
     buildTypes {
         debug {
             signingConfig = signingConfigs.getByName("debug")
+        }
+        create("research") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".research"
+            versionNameSuffix = "-online.5"
+            matchingFallbacks += listOf("debug")
+            buildConfigField("boolean", "RESEARCH_MODE", "true")
+            buildConfigField("String", "INSIGHTS_URL", "\"https://forja-insights.forja-22e7ea2d.workers.dev\"")
+            // Same online service as the published FORJA app; account auth uses Firebase.
+            buildConfigField("String", "FORJA_API_URL", "\"https://forja-api.forja-22e7ea2d.workers.dev\"")
         }
         release {
             isMinifyEnabled = false
@@ -60,6 +74,10 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
 

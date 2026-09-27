@@ -48,6 +48,7 @@ object BgLocation {
     /** Pornește urmărirea în fundal dacă totul e la locul lui: cont + setare + permisiuni. */
     @SuppressLint("MissingPermission")
     fun registerIfReady(context: Context) {
+        if (com.forja.app.BuildConfig.RESEARCH_MODE) return
         val app = context.applicationContext as? ForjaApp ?: return
         CoroutineScope(Dispatchers.Default).launch {
             try {
@@ -75,6 +76,7 @@ object BgLocation {
 /** Primește pozițiile și în fundal → le publică prietenilor (dacă nu ești fantomă). */
 class BgLocationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (com.forja.app.BuildConfig.RESEARCH_MODE) return
         val result = LocationResult.extractResult(intent) ?: return
         val loc = result.lastLocation ?: return
         val app = context.applicationContext as? ForjaApp ?: return

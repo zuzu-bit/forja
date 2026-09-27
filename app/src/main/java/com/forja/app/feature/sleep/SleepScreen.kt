@@ -77,7 +77,8 @@ fun SleepScreen() {
         SleepTrackService.start(context)
         startSleepExtras()
         toast.show(
-            if (granted) "Noapte bună. Microfonul ascultă local — nimic nu pleacă de pe telefon."
+            if (granted && app.forjaApi.available) "Noapte bună. Înregistrarea este activă, cu analiză și salvare pe serverul FORJA."
+            else if (granted) "Noapte bună. Înregistrarea rămâne pe telefon."
             else "Noapte bună. Fără microfon: doar mișcarea se analizează."
         )
     }
@@ -195,7 +196,7 @@ fun SleepScreen() {
                 Text("Sesiune de somn activă", style = BodyStrong)
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "De la ${Fmt.clock(active!!.startAt)} · ${if (hasMic) "microfon + mișcare, analizate local" else "doar mișcare (fără microfon)"}.",
+                    "De la ${Fmt.clock(active!!.startAt)} · ${if (hasMic && app.forjaApi.available) "microfon + mișcare, cu analiză online" else if (hasMic) "microfon + mișcare, analizate local" else "doar mișcare (fără microfon)"}.",
                     style = BodySmall.copy(color = SleepTextDim)
                 )
                 Spacer(Modifier.height(12.dp))
@@ -209,6 +210,13 @@ fun SleepScreen() {
                 )
             }
         } else {
+            if (app.forjaApi.available) {
+                Text(
+                    "Cu microfonul pornit, clipurile sunt analizate online, iar înregistrarea nopții se salvează pe serverul FORJA pentru până la 24 de ore. Pornești și oprești sesiunea de aici.",
+                    style = BodySmall.copy(color = SleepTextDim),
+                    modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 12.dp)
+                )
+            }
             PrimaryButton(
                 text = "Încep să dorm",
                 onClick = {
@@ -528,7 +536,7 @@ fun SleepScreen() {
             Spacer(Modifier.width(8.dp))
             InfoDot(
                 title = "Despre somn",
-                text = "FORJA nu pune diagnostice. Sunetul se analizează local, clipurile rămân pe telefon și le ștergi tu. Dacă sforăitul revine des, vorbește cu un medic — ai istoricul aici."
+                text = "FORJA nu pune diagnostice. Când serviciul online este activ, sunetul poate fi trimis pentru analiză, iar înregistrarea nopții se păstrează pe server până la 24 de ore. Dacă sforăitul revine des, vorbește cu un medic — ai istoricul aici."
             )
         }
     }

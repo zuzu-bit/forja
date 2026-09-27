@@ -9,16 +9,26 @@ import com.google.firebase.firestore.SetOptions
 /**
  * Sincronizarea în baza de date a companiei (Firestore-ul FORJA):
  * jurnalele urcă la contul fiecărui utilizator — users/{uid}/meals|sleep|activities.
- * Pozele și clipurile audio NU se stochează nicăieri: se analizează și dispar.
+ * This class uploads journal fields; audio storage is handled separately by ForjaApi.
  * Scrierile folosesc cache-ul offline Firestore — fără net, se trimit la revenire.
  */
 object CloudSync {
     private val db get() = FirebaseFirestore.getInstance()
+    private var ids = CloudRecordIds(null)
+
+    fun configureCopy(context: android.content.Context) {
+        val prefs = context.getSharedPreferences("online_copy", android.content.Context.MODE_PRIVATE)
+        val id = prefs.getString("installation", null) ?: java.util.UUID.randomUUID().toString()
+            .replace("-", "").take(16).also { prefs.edit().putString("installation", it).apply() }
+        ids = CloudRecordIds(id)
+    }
+
+    fun recordingId(localId: Long): String = ids.record("s", localId)
 
     fun meal(uid: String?, m: MealEntity) {
         uid ?: return
         try {
-            db.collection("users").document(uid).collection("meals").document("m${m.id}").set(
+            db.collection("users").document(uid).collection("meals").document(ids.record("m", m.id)).set(
                 mapOf(
                     "name" to m.name,
                     "kcal" to m.kcal,
@@ -40,14 +50,14 @@ object CloudSync {
     fun deleteMeal(uid: String?, localId: Long) {
         uid ?: return
         try {
-            db.collection("users").document(uid).collection("meals").document("m$localId").delete()
+            db.collection("users").document(uid).collection("meals").document(ids.record("m", localId)).delete()
         } catch (_: Exception) { }
     }
 
     fun sleep(uid: String?, s: SleepSessionEntity, snoreCount: Int, talkCount: Int, soundCount: Int) {
         uid ?: return
         try {
-            db.collection("users").document(uid).collection("sleep").document("s${s.id}").set(
+            db.collection("users").document(uid).collection("sleep").document(ids.record("s", s.id)).set(
                 mapOf(
                     "startAt" to s.startAt,
                     "endAt" to (s.endAt ?: 0L),
@@ -69,7 +79,7 @@ object CloudSync {
     fun activity(uid: String?, a: ActivityEntity) {
         uid ?: return
         try {
-            db.collection("users").document(uid).collection("activities").document("a${a.id}").set(
+            db.collection("users").document(uid).collection("activities").document(ids.record("a", a.id)).set(
                 mapOf(
                     "type" to a.type,
                     "distanceM" to a.distanceM,
