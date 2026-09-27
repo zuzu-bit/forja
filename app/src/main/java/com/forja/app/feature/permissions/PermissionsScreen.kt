@@ -323,6 +323,10 @@ fun PermissionsScreen(onBack: () -> Unit) {
                         text = "Scoaterea de la optimizarea bateriei și alarma pe tot ecranul sunt permisiuni speciale Android. Din motive de siguranță, doar tu le poți porni din Setări — nicio aplicație nu le poate activa singură. Fără ele, alarma de dimineață poate rămâne mută. Le poți lăsa și pe mai târziu."
                     )
                 }
+                // v4.0 pasul 2 — „Sincronizare în cont”: opțional, implicit oprit; nimic de aici nu condiționează continuarea.
+                Spacer(Modifier.height(24.dp))
+                SyncSection(Modifier.fillMaxWidth())
+
                 Spacer(Modifier.height(20.dp))
                 PrimaryButton(
                     if (done == 5) "Gata — la datorie" else "Continuă în FORJA",

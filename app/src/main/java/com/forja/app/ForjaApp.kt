@@ -91,6 +91,8 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
             } catch (_: Exception) { }
         }
         createChannels()
+        // Sincronizarea în cont nu pornește singură din fundal (Android 14+): starea spune că se reia la deschidere.
+        try { com.forja.app.core.sync.CollectionSettings.onProcessStart(this) } catch (_: Exception) { }
     }
 
     private fun createChannels() {
@@ -101,6 +103,7 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         nm.createNotificationChannel(NotificationChannel("social", getString(R.string.notif_channel_social), NotificationManager.IMPORTANCE_DEFAULT))
         nm.createNotificationChannel(NotificationChannel("explore", getString(R.string.notif_channel_explore), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("cleanup", getString(R.string.notif_channel_cleanup), NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel("sync", getString(R.string.notif_channel_sync), NotificationManager.IMPORTANCE_LOW))
         // Alarma deșteaptă: IMPORTANCE_HIGH e obligatoriu ca full-screen intent-ul să pornească
         // AlarmActivity cu ecranul stins. Sunetul îl pune AlarmActivity, nu notificarea.
         nm.createNotificationChannel(
