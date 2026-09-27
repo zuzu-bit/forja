@@ -124,9 +124,12 @@ fun CleanupScreen(onBack: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                // Ștampila postului deasupra titlului; titlul rămâne numele modulului, cu elipsă la nevoie.
+                StampLabel("INVENTAR", rotationDeg = -4f)
+                Spacer(Modifier.height(6.dp))
                 Text("Curățenie de azi", style = TitleModule.copy(fontSize = 24.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "TELEFON MAI UȘOR, MINTE MAI LIMPEDE",
+                    "TELEFON UȘOR · MINTE LIMPEDE",
                     style = monoLabel(9, 0.14f).copy(color = Accent2),
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )

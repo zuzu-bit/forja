@@ -93,7 +93,13 @@ fun ProfileScreen(
             Avatar(name = name.ifBlank { "F" }, size = 76.dp, ring = true)
             Spacer(Modifier.width(16.dp))
             Column {
-                Text(name.ifBlank { "Sportiv FORJA" }, style = TitleModule.copy(fontSize = 24.sp))
+                // Livretul: ștampila deasupra numelui — fără animație, profilul se redeschide des.
+                ModuleHeader(
+                    stamp = "LIVRET",
+                    title = name.ifBlank { "Sportiv FORJA" },
+                    titleStyle = TitleModule.copy(fontSize = 24.sp),
+                    reveal = false
+                )
                 Text("CU FORJA DIN $since", style = monoLabel(9, 0.14f))
             }
         }
@@ -144,6 +150,10 @@ fun ProfileScreen(
                 style = BodySmall.copy(color = TextSecondary)
             )
         }
+
+        // Singurul citat cald al ecranului — din fondul comun, cu alt „salt” decât panoul, ca să nu se repete în aceeași zi.
+        Spacer(Modifier.height(18.dp))
+        WarmQuote(Tone.ofDay(Tone.general, salt = 1), Modifier.fillMaxWidth())
 
         Spacer(Modifier.height(22.dp))
         SectionLabel("Setări")
@@ -258,7 +268,7 @@ fun ProfileScreen(
             when {
                 serverOn -> "prin serverul FORJA ✓ — fără chei la tine"
                 geminiKey.isBlank() -> "neactivată — cheie gratuită Gemini, 2 minute"
-                else -> "cu cheia ta · serverul FORJA vine în curând"
+                else -> "cu cheia ta · analiză cu model Gemini"
             },
             onClick = { if (!serverOn) aiKeyOpen = true }
         ) {

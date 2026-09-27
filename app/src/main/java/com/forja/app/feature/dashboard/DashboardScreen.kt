@@ -151,10 +151,9 @@ fun DashboardScreen(
         ) {
             Column {
                 Text("${Fmt.greeting()}, ${name.split(' ').firstOrNull() ?: ""}".trim(), style = BodyStrong.copy(fontSize = 16.sp))
-                Text(
-                    if (evening) "SEARA TA" else "ZIUA TA",
-                    style = monoLabel(9, 0.16f).copy(color = Accent2)
-                )
+                Spacer(Modifier.height(6.dp))
+                // Ștampila postului: raportul zilei sau al serii — fără animație, fila revine des în ecran.
+                StampLabel(if (evening) "RAPORT DE SEARĂ" else "RAPORT DE ZI", rotationDeg = -4f, appear = false)
             }
             Box(Modifier.pressable(onOpenProfile)) {
                 Avatar(name = name, size = 40.dp, ring = true)
@@ -246,10 +245,10 @@ fun DashboardScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp)
             ) {
-                Text("Încă nimeni aici.", style = BodyStrong)
+                Text("Încă niciun camarad.", style = BodyStrong)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Invită un prieten cu codul tău din Profil — apăreți unul altuia pe hartă.",
+                    "Trimite codul tău din Profil unui prieten. Apăreți unul altuia pe hartă.",
                     style = BodySmall
                 )
             }
@@ -310,13 +309,17 @@ fun DashboardScreen(
 /** Motivația zilei: o singură carte curată — imagine în fundal, salut + citat, cu ghidul care „dansează". */
 @Composable
 private fun MotivationCard(name: String) {
-    val items = listOf(
-        "Disciplina cântărește kilograme; regretul cântărește tone." to "https://t4.ftcdn.net/jpg/06/22/38/57/500_F_622385753_VgquhCDAoHqLCGy3w8Q9zUEpxDLGfX54.jpg",
-        "Un pas mic azi bate un plan mare mâine." to "https://t4.ftcdn.net/jpg/04/30/39/81/500_F_430398119_8X2LMR6p3pWYrpsvH3DYgYUz32PfnxXl.jpg",
-        "Corpul realizează ce mintea crede." to "https://t3.ftcdn.net/jpg/03/30/19/86/500_F_330198627_aQsy9t5HhOn7TIsd6FEB0FJvKz4IqdhH.jpg",
-        "Nu trebuie să fii extraordinar ca să începi, dar trebuie să începi ca să fii extraordinar." to "https://t3.ftcdn.net/jpg/05/62/79/66/500_F_562796663_NJKtdLr9EatSHwup53J47QNnYOCr0ZZ8.jpg"
+    // Fundalurile rămân; citatul vine din fondul comun (Tone.general) și e același toată ziua, altul mâine.
+    // Imaginea urmează indexul citatului (modulo lista de imagini), deci e și ea stabilă pe zi.
+    val images = listOf(
+        "https://t4.ftcdn.net/jpg/06/22/38/57/500_F_622385753_VgquhCDAoHqLCGy3w8Q9zUEpxDLGfX54.jpg",
+        "https://t4.ftcdn.net/jpg/04/30/39/81/500_F_430398119_8X2LMR6p3pWYrpsvH3DYgYUz32PfnxXl.jpg",
+        "https://t3.ftcdn.net/jpg/03/30/19/86/500_F_330198627_aQsy9t5HhOn7TIsd6FEB0FJvKz4IqdhH.jpg",
+        "https://t3.ftcdn.net/jpg/05/62/79/66/500_F_562796663_NJKtdLr9EatSHwup53J47QNnYOCr0ZZ8.jpg"
     )
-    val picked = remember { items.random() }
+    val quote = remember { Tone.ofDay(Tone.general) }
+    val image = remember(quote) { images[Math.floorMod(Tone.general.indexOf(quote), images.size)] }
+    val hour = remember { java.time.LocalTime.now().hour }
     val mascot = remember { com.forja.app.core.media.Media.mediaUrl("guide.jpg") }
     val infinite = rememberInfiniteTransition(label = "dance")
     val rot by infinite.animateFloat(-7f, 7f, infiniteRepeatable(tween(1300), RepeatMode.Reverse), label = "rot")
@@ -325,7 +328,7 @@ private fun MotivationCard(name: String) {
         Modifier.fillMaxWidth().padding(horizontal = 20.dp).height(160.dp)
             .clip(RoundedCornerShape(Radii.card)).border(1.dp, StrokeCard, RoundedCornerShape(Radii.card))
     ) {
-        AsyncImage(model = picked.second, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         Box(
             Modifier.fillMaxSize().background(
                 androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0x40000000), Color(0xF20A0A0B)))
@@ -343,11 +346,12 @@ private fun MotivationCard(name: String) {
         }
         Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
             Text(
-                "Bună, ${name.split(' ').firstOrNull() ?: ""}! Hai să facem ziua asta să conteze.".trim(),
+                Tone.report(name.split(' ').firstOrNull() ?: "", hour),
                 style = BodySmall.copy(color = Accent2)
             )
             Spacer(Modifier.height(4.dp))
-            Text("„${picked.first}”", style = TitleModule.copy(fontSize = 16.sp, lineHeight = 22.sp))
+            // Singurul citat cald al ecranului.
+            WarmQuote(quote)
         }
     }
 }
