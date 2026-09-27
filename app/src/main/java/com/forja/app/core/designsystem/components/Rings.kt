@@ -139,6 +139,7 @@ fun KcalRing(
 /**
  * Bară orizontală de macro: etichetă + grame la stânga, valoarea față de reper la dreapta.
  * `target` = null → bara se umple față de `max` (folosit la componente), fără text de reper.
+ * `flagOver` = false → depășirea reperului nu se colorează ca eroare (reperul e orientativ, nu o limită).
  */
 @Composable
 fun MacroBar(
@@ -149,10 +150,12 @@ fun MacroBar(
     target: Int? = null,
     max: Int? = null,
     height: Dp = 7.dp,
-    key: Any? = null
+    key: Any? = null,
+    flagOver: Boolean = true
 ) {
     val denom = (target ?: max ?: grams).coerceAtLeast(1)
     val ratio = grams.toFloat() / denom
+    val over = flagOver && ratio > 1f
     val p = animatedFill(ratio, key)
     Column(modifier) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
@@ -164,7 +167,7 @@ fun MacroBar(
             if (target != null) {
                 Text(
                     if (grams > target) "peste reper cu ${grams - target} g" else "reper $target g",
-                    style = BodyTiny.copy(color = if (grams > target) Error else TextDim)
+                    style = BodyTiny.copy(color = if (over) Error else TextDim)
                 )
             }
         }
@@ -182,7 +185,7 @@ fun MacroBar(
                         .fillMaxWidth(p)
                         .fillMaxHeight()
                         .clip(CircleShape)
-                        .background(if (ratio > 1f) Error.copy(alpha = 0.85f) else color)
+                        .background(if (over) Error.copy(alpha = 0.85f) else color)
                 )
             }
         }

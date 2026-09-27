@@ -11,6 +11,7 @@ import com.forja.app.core.network.MealApi
 import com.forja.app.core.network.MealCheck
 import com.forja.app.core.network.MealItem
 import com.forja.app.core.network.MealReport
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -44,6 +45,20 @@ data class AnalyzeStages(
 object MealAnalyze {
     private var mealApi: MealApi? = null
     private fun api(app: ForjaApp): MealApi = mealApi ?: MealApi(app.forjaApi).also { mealApi = it }
+
+    /** Cât rămâne panoul „Analiză” după un răspuns v2, ca pasul 3 să fie văzut; mai mult când are ceva de citit. */
+    private const val VERIFY_BEAT_MS = 700L
+    private const val VERIFY_BEAT_LONG_MS = 1400L
+
+    /**
+     * Pasul 3 („Verific porțiile”) se încheie în aceeași clipă cu rezultatul: fără o pauză, cel care apelează
+     * ascunde panoul înainte de primul cadru care l-ar desena, iar pasul nu se vede niciodată.
+     * Ține starea finală o bătaie — nimic fals, doar timp de văzut ce s-a întâmplat. La v1 nu așteaptă.
+     */
+    suspend fun holdVerifyStep(outcome: AnalyzeOutcome) {
+        if (outcome !is AnalyzeOutcome.Ok || !outcome.report.isV2) return
+        delay(if (MealCheck.coherent(outcome.report.componente)) VERIFY_BEAT_MS else VERIFY_BEAT_LONG_MS)
+    }
 
     /**
      * Server (cheile companiei) sau, ca rezervă, cheia Gemini proprie — aceeași logică peste tot.
@@ -148,7 +163,7 @@ object MealAnalyze {
         )
         val id = app.db.mealDao().insert(meal)
         com.forja.app.core.data.CloudSync.meal(app.auth.currentUid, meal.copy(id = id))
-        try { NutritionPrefs.of(app).noteMeal(day) } catch (_: Exception) { }
+        NutritionPrefs.of(app).noteMeal(day) // nu aruncă: scrierile din NutritionPrefs înghit IOException
         return meal.copy(id = id)
     }
 }

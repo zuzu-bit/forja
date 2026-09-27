@@ -44,7 +44,11 @@ fun MealResultSheet(
     onRetake: (() -> Unit)? = null,
     dayTarget: Int = NutritionPrefs.DEFAULT_KCAL
 ) {
-    var components by remember(report) { mutableStateOf(report.componente) }
+    // Fiecare linie ține și baza din care se scalează (răspunsul modelului sau ultima corectură manuală):
+    // gramajul nou se calculează mereu din bază, nu din valorile deja rotunjite — altfel rotunjirile se adună
+    // la fiecare pas de slider și 150 g → 5 g → 150 g nu s-ar mai întoarce la valorile de plecare.
+    var rows by remember(report) { mutableStateOf(report.componente.map { EditableItem(base = it, item = it) }) }
+    val components = rows.map { it.item }
     var mealType by remember { mutableStateOf(initialMealType) }
     var manual by remember(report) { mutableStateOf(false) }
 
@@ -119,14 +123,16 @@ fun MealResultSheet(
             // ── Componentele, editabile ──
             SectionLabel("Ce e în farfurie")
             Spacer(Modifier.height(8.dp))
-            components.forEachIndexed { i, c ->
+            rows.forEachIndexed { i, row ->
                 Reveal(index = 3 + i, staggerMs = 60, key = report) {
                     ComponentCard(
-                        item = c,
+                        base = row.base,
+                        item = row.item,
                         showFibre = report.hasFibre,
                         manual = manual,
-                        onChange = { updated -> components = components.mapIndexed { j, cc -> if (j == i) updated else cc } },
-                        onRemove = { components = components.filterIndexed { j, _ -> j != i } }
+                        onScale = { g -> rows = rows.mapIndexed { j, r -> if (j == i) r.copy(item = r.base.scaledTo(g)) else r } },
+                        onEdit = { edited -> rows = rows.mapIndexed { j, r -> if (j == i) EditableItem(base = edited, item = edited) else r } },
+                        onRemove = { rows = rows.filterIndexed { j, _ -> j != i } }
                     )
                 }
             }
@@ -236,6 +242,9 @@ fun MealResultSheet(
     }
 }
 
+/** O linie editabilă: `base` = referința de scalare (modelul sau ultima corectură manuală), `item` = ce se vede acum. */
+private data class EditableItem(val base: MealItem, val item: MealItem)
+
 /** Un bloc scurt de text sub o etichetă mono — sfat, observații, porție. */
 @Composable
 private fun InsightBlock(label: String, text: String) {
@@ -247,19 +256,22 @@ private fun InsightBlock(label: String, text: String) {
 }
 
 /**
- * O componentă: nume + valori, stepper −10/+10 și slider fin pe gramaj (recalcul proporțional),
- * iar în modul manual câmpuri numerice pentru kcal/P/C/G.
+ * O componentă: nume + valori, stepper −10/+10 și slider fin pe gramaj — recalcul proporțional din `base`
+ * ([onScale] primește gramajul nou, foaia scalează baza), iar în modul manual câmpuri numerice pentru kcal/P/C/G
+ * ([onEdit]: valoarea scrisă devine noua bază, la gramajul de acum).
  */
 @Composable
 private fun ComponentCard(
+    base: MealItem,
     item: MealItem,
     showFibre: Boolean,
     manual: Boolean,
-    onChange: (MealItem) -> Unit,
+    onScale: (grams: Int) -> Unit,
+    onEdit: (MealItem) -> Unit,
     onRemove: () -> Unit
 ) {
-    // Capătul sliderului: de trei ori porția estimată, cel puțin 300 g, rotunjit la 50.
-    val sliderMax = remember(item.nume) { (maxOf(300, item.grame * 3) / 50 * 50).toFloat() }
+    // Capătul sliderului: de trei ori porția de bază, cel puțin 300 g, rotunjit la 50.
+    val sliderMax = remember(item.nume) { (maxOf(300, base.grame * 3) / 50 * 50).toFloat() }
     ForjaCard(Modifier.fillMaxWidth().padding(bottom = 8.dp), fill = Surface2, padding = 12.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -275,11 +287,11 @@ private fun ComponentCard(
                     Text("încredere $it", style = monoLabel(8, 0.10f).copy(color = TextDim))
                 }
             }
-            SecondaryButton("−10g", padV = 6.dp, onClick = { onChange(item.scaledTo((item.grame - 10).coerceAtLeast(5))) })
+            SecondaryButton("−10g", padV = 6.dp, onClick = { onScale((item.grame - 10).coerceAtLeast(5)) })
             Spacer(Modifier.width(6.dp))
             Text("${item.grame}g", style = heroNumeral(16))
             Spacer(Modifier.width(6.dp))
-            SecondaryButton("+10g", padV = 6.dp, onClick = { onChange(item.scaledTo(item.grame + 10)) })
+            SecondaryButton("+10g", padV = 6.dp, onClick = { onScale(item.grame + 10) })
             Spacer(Modifier.width(6.dp))
             Text(
                 "×",
@@ -291,7 +303,7 @@ private fun ComponentCard(
             value = item.grame.toFloat().coerceIn(0f, sliderMax),
             onValueChange = { v ->
                 val g = ((v / 5f).roundToInt() * 5).coerceAtLeast(5)
-                if (g != item.grame) onChange(item.scaledTo(g))
+                if (g != item.grame) onScale(g)
             },
             valueRange = 0f..sliderMax,
             colors = SliderDefaults.colors(
@@ -303,13 +315,13 @@ private fun ComponentCard(
         if (manual) {
             Spacer(Modifier.height(6.dp))
             Row {
-                NumField(item.kcal, "kcal", Modifier.weight(1f)) { onChange(item.copy(kcal = it)) }
+                NumField(item.kcal, "kcal", Modifier.weight(1f)) { onEdit(item.copy(kcal = it)) }
                 Spacer(Modifier.width(6.dp))
-                NumField(item.proteine, "P", Modifier.weight(1f)) { onChange(item.copy(proteine = it)) }
+                NumField(item.proteine, "P", Modifier.weight(1f)) { onEdit(item.copy(proteine = it)) }
                 Spacer(Modifier.width(6.dp))
-                NumField(item.carbo, "C", Modifier.weight(1f)) { onChange(item.copy(carbo = it)) }
+                NumField(item.carbo, "C", Modifier.weight(1f)) { onEdit(item.copy(carbo = it)) }
                 Spacer(Modifier.width(6.dp))
-                NumField(item.grasimi, "G", Modifier.weight(1f)) { onChange(item.copy(grasimi = it)) }
+                NumField(item.grasimi, "G", Modifier.weight(1f)) { onEdit(item.copy(grasimi = it)) }
             }
             Spacer(Modifier.height(4.dp))
             Text("Valorile pe care le scrii rămân la gramajul de acum.", style = BodyTiny.copy(color = TextDim))

@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -85,7 +86,9 @@ fun MealCameraScreen(onClose: () -> Unit) {
                             return@launch
                         }
                         lastBytes = bytes
-                        when (val res = MealAnalyze.analyzeJpeg(app, bytes) { stages = it }) {
+                        val res = MealAnalyze.analyzeJpeg(app, bytes) { stages = it }
+                        MealAnalyze.holdVerifyStep(res) // pasul 3 (v2) rămâne pe ecran o bătaie înainte de foaia de rezultat
+                        when (res) {
                             is AnalyzeOutcome.Ok -> { analyzing = false; report = res.report }
                             is AnalyzeOutcome.Fail -> { analyzing = false; toast.show(res.message) }
                         }
@@ -164,10 +167,15 @@ fun MealCameraScreen(onClose: () -> Unit) {
                     }
                 }
             }
-            // Ecranul „Analiză…”: mascota + pașii reali, peste previzualizare.
+            // Ecranul „Analiză…”: mascota + pașii reali, peste previzualizare. Vălul oprește atingerile
+            // (declanșatorul de sub el nu mai primește nimic); „Înapoi” e desenat deasupra și rămâne activ.
             if (analyzing) {
                 Box(
-                    Modifier.fillMaxSize().background(Color(0x99000000)).padding(horizontal = 20.dp),
+                    Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) { }
+                        .background(Color(0x99000000))
+                        .padding(horizontal = 20.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     AnalyzeStagePanel(stages, Modifier.fillMaxWidth())

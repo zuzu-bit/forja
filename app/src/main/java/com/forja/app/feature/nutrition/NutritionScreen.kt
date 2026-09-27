@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -89,7 +90,9 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                     return@launch
                 }
                 galleryBytes = bytes
-                when (val res = MealAnalyze.analyzeJpeg(app, bytes) { galleryStages = it }) {
+                val res = MealAnalyze.analyzeJpeg(app, bytes) { galleryStages = it }
+                MealAnalyze.holdVerifyStep(res) // pasul 3 (v2) rămâne pe ecran o bătaie înainte de foaia de rezultat
+                when (res) {
                     is AnalyzeOutcome.Ok -> { galleryAnalyzing = false; galleryReport = res.report }
                     is AnalyzeOutcome.Fail -> { galleryAnalyzing = false; toast.show(res.message) }
                 }
@@ -239,10 +242,15 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
             WarmQuote(Tone.ofDay(Tone.nutrition), Modifier.padding(horizontal = 20.dp))
         }
 
-        // Ecranul „Analiză…” pentru poza din galerie: mascota + pașii reali.
+        // Ecranul „Analiză…” pentru poza din galerie: mascota + pașii reali. Vălul oprește atingerile,
+        // ca nimic de dedesubt (tile-uri, „șterge”, foi) să nu se deschidă peste analiză.
         if (galleryAnalyzing) {
             Box(
-                Modifier.fillMaxSize().background(Color(0x99000000)).padding(horizontal = 20.dp),
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) { }
+                    .background(Color(0x99000000))
+                    .padding(horizontal = 20.dp),
                 contentAlignment = Alignment.Center
             ) {
                 AnalyzeStagePanel(galleryStages, Modifier.fillMaxWidth())
@@ -333,7 +341,8 @@ private fun DayCard(
     val protein = meals.sumOf { it.protein }
     val carbs = meals.sumOf { it.carbs }
     val fat = meals.sumOf { it.fat }
-    // Repere orientative din obiectivul zilnic: 25 % P · 45 % C · 30 % G (nu prescripție).
+    // Repere orientative derivate din obiectivul zilnic (25 % P · 45 % C · 30 % G) — spuse ca atare sub bare
+    // și fără roșu la depășire: nu sunt o prescripție, iar „peste reper” la proteine nu e o problemă.
     val pTarget = (target * 0.25 / 4).toInt().coerceAtLeast(1)
     val cTarget = (target * 0.45 / 4).toInt().coerceAtLeast(1)
     val fTarget = (target * 0.30 / 9).toInt().coerceAtLeast(1)
@@ -349,14 +358,19 @@ private fun DayCard(
             KcalRing(kcal = kcal, target = target, ringSize = 124.dp, key = target)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                MacroBar("PROTEINE", protein, MacroProteinColor, target = pTarget)
+                MacroBar("PROTEINE", protein, MacroProteinColor, target = pTarget, flagOver = false)
                 Spacer(Modifier.height(8.dp))
-                MacroBar("CARBO", carbs, MacroCarbColor, target = cTarget)
+                MacroBar("CARBO", carbs, MacroCarbColor, target = cTarget, flagOver = false)
                 Spacer(Modifier.height(8.dp))
-                MacroBar("GRĂSIMI", fat, MacroFatColor, target = fTarget)
+                MacroBar("GRĂSIMI", fat, MacroFatColor, target = fTarget, flagOver = false)
             }
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Reperele P/C/G vin din obiectivul de $target kcal (25 · 45 · 30 %). Orientare, nu prescripție.",
+            style = BodyTiny.copy(color = TextDim)
+        )
+        Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 if (kcal <= target) "mai ai ${target - kcal} kcal" else "peste cu ${kcal - target} kcal",

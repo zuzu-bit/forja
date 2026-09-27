@@ -11,8 +11,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,8 +30,22 @@ import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.media.Media
 
-/** Mascota modulului: bucătarul (`mascot_chef.jpg`), cu ghidul ca rezervă. */
-internal fun mascotUrl(): String? = Media.mediaUrl("mascot_chef.jpg") ?: Media.mediaUrl("guide.jpg")
+private const val CHEF_KEY = "mascot_chef.jpg"
+private const val GUIDE_KEY = "guide.jpg"
+
+/**
+ * Mascota modulului: bucătarul (`mascot_chef.jpg`), cu ghidul (`guide.jpg`) ca rezervă REALĂ.
+ * `Media.mediaUrl` întoarce un URL pentru orice cheie (null doar fără server), deci rezerva se decide după
+ * manifestul serverului (`/media/_list`, încărcat la pornire): până e generat fișierul bucătarului, ghidul.
+ * Manifest gol (încă neîncărcat sau server mut) → încercăm bucătarul, iar la eroare [ChefMascot] trece pe ghid.
+ */
+@Composable
+internal fun rememberMascotUrl(): String? {
+    val manifest by Media.manifest.collectAsState()
+    return remember(manifest) {
+        if (manifest.isEmpty() || CHEF_KEY in manifest) Media.mediaUrl(CHEF_KEY) else Media.mediaUrl(GUIDE_KEY)
+    }
+}
 
 /**
  * Mascota într-un cerc olive, cu „dans” subtil (ca în cardul de motivație din panou).
@@ -39,8 +56,10 @@ fun ChefMascot(
     modifier: Modifier = Modifier,
     size: Dp = 56.dp,
     dance: Boolean = true,
-    url: String? = remember { mascotUrl() }
+    url: String? = rememberMascotUrl()
 ) {
+    // Rezerva la încărcare: 404 pe bucătar → ghidul; dacă pică și ghidul, rămâne ștampila.
+    var shown by remember(url) { mutableStateOf(url) }
     val reduced = LocalReducedMotion.current
     val animate = dance && !reduced
     var rot = 0f
@@ -60,10 +79,14 @@ fun ChefMascot(
             .border(1.dp, Color(0x4D6F855A), CircleShape),
         contentAlignment = Alignment.Center
     ) {
-        if (url != null) {
+        if (shown != null) {
             AsyncImage(
-                model = url, contentDescription = "Bucătarul",
+                model = shown, contentDescription = "Bucătarul",
                 contentScale = ContentScale.Crop,
+                onError = {
+                    val guide = Media.mediaUrl(GUIDE_KEY)
+                    shown = if (shown != guide) guide else null
+                },
                 modifier = Modifier.fillMaxSize().clip(CircleShape)
             )
         } else {

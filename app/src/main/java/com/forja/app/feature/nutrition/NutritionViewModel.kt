@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -42,8 +43,8 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
     val kcalTarget: StateFlow<Int> = nutritionPrefs.kcalTarget
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), NutritionPrefs.DEFAULT_KCAL)
 
-    /** Zile la rând cu cel puțin o masă notată (local, onest). */
-    val streak: StateFlow<Int> = nutritionPrefs.streak(Fmt.epochDay())
+    /** Zile la rând cu cel puțin o masă notată (local, onest); „azi” e calculat în flux, nu prins la crearea modelului. */
+    val streak: StateFlow<Int> = nutritionPrefs.streak()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     fun setKcalTarget(v: Int) { viewModelScope.launch { nutritionPrefs.setKcalTarget(v) } }
@@ -143,10 +144,13 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Șterge masa; dacă ziua ei rămâne fără mese, seria nu o mai numără (o masă adăugată din greșeală nu face „zi”). */
     fun deleteMeal(id: Long) {
+        val day = meals.value.firstOrNull { it.id == id }?.epochDay ?: Fmt.epochDay()
         viewModelScope.launch {
             dao.delete(id)
             com.forja.app.core.data.CloudSync.deleteMeal(forja.auth.currentUid, id)
+            if (dao.mealsForDay(day).first().isEmpty()) nutritionPrefs.noteMealRemoved(day)
         }
     }
 }
