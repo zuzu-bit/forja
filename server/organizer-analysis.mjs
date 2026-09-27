@@ -1,12 +1,22 @@
 import {bad,idPattern} from './phone-schema.mjs';
 import {pathName} from './organizer-selection.mjs';
 import {ORGANIZER_DELETION_REVIEW_SCHEMA,noDeletionReview,validateDeletionReview} from './organizer-review.mjs';
+import {GEMINI_MODEL,geminiAvailable,geminiGenerate as geminiCall,geminiParts,geminiSchema} from './gemini.mjs';
 
 export const ORGANIZER_MODELS = Object.freeze({
   legacy: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
   kimi: '@cf/moonshotai/kimi-k2.6',
   scout: '@cf/meta/llama-4-scout-17b-16e-instruct',
+  gemini: GEMINI_MODEL,
 });
+/** Gemini 2.5 Flash when a key exists, otherwise the configured Workers AI model (Scout by default). */
+export function organizerModel(env) {
+  return geminiAvailable(env)?ORGANIZER_MODELS.gemini:(env?.ORGANIZER_ANALYSIS_MODEL||ORGANIZER_MODELS.scout);
+}
+/** Gemini contract: {system, parts, schema}; resolves {response:text} so parseResponse() works unchanged. Throws on any provider error. */
+export function geminiGenerate(env,input,fetcher=fetch) {
+  return geminiCall(env,{system:input.system,parts:input.parts,schema:input.schema,maxTokens:2000,temperature:0.1},fetcher);
+}
 export const ORGANIZER_VISION_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct';
 const MAX_FILE = 25 * 1024 * 1024, MAX_IMAGE = 4 * 1024 * 1024, MAX_TEXT = 32000;
 const DIRECT_IMAGE_TYPES = new Set(['image/png','image/jpeg','image/webp']);
@@ -153,6 +163,20 @@ export function organizerModelInput(model,messages,sources) {
   if(model===ORGANIZER_MODELS.kimi)return {messages,reasoning_effort:'none',max_completion_tokens:2000,
     response_format:{type:'json_schema',json_schema:{name:'organizer_proposal',strict:true,schema}}};
   if(model===ORGANIZER_MODELS.scout)return {messages,guided_json:schema,max_tokens:2000,temperature:0.1};
+  if(model===ORGANIZER_MODELS.gemini) {
+    // Relaxed schema (one evidence item over all ids, one deletion_review object instead of two constant-pinned branches, no const/oneOf/additionalProperties);
+    // Gemini's enum accepts only strings, so booleans stay plain typed fields. validateOrganizerProposal() stays the hard gate.
+    const ids=sources.map(s=>s.id);
+    const relaxed={...schema,properties:{...schema.properties,evidence:{type:'array',minItems:1,maxItems:6,items:{type:'object',required:['source_id','quote','observation'],properties:{
+      source_id:{type:'string',enum:ids},quote:{type:'string',maxLength:240},observation:{type:'string',maxLength:400}}}},
+      deletion_review:{type:'object',required:['suggested','basis','reason','evidence_ids'],properties:{
+        suggested:{type:'boolean',description:'Implicit false; true numai pentru conținut foarte redus.'},basis:{type:'string',enum:['none','low_information']},
+        reason:{type:'string',maxLength:300,description:'Șirul gol când suggested este false.'},
+        evidence_ids:{type:'array',maxItems:6,items:{type:'string',enum:['e1','e2','e3','e4','e5','e6']}}}}}};
+    const system=messages.filter(m=>m.role==='system').map(m=>String(m.content)).join('\n');
+    const parts=messages.filter(m=>m.role!=='system').flatMap(m=>geminiParts(m.content));
+    return {system,parts,schema:geminiSchema(relaxed)};
+  }
   return {messages,response_format:{type:'json_schema',json_schema:schema},max_tokens:2000,temperature:0.1};
 }
 
@@ -219,13 +243,15 @@ export async function analyzeOrganizerContent({env,file,bytes,extraction,prefere
     return {...base,status:'unsupported',destination:'De verificat',reason:'Conținutul acestei copii nu este disponibil pentru clasificare.',confidence:'low',evidence:[],model:null,
       deletion:noDeletionReview(prefs.protected)};
   }
-  if(!env?.AI||typeof env.AI.run!=='function')bad('Serviciul de analiză nu este disponibil.',503);
-  const model=env.ORGANIZER_ANALYSIS_MODEL||ORGANIZER_MODELS.legacy;
+  const workersAI=typeof env?.AI?.run==='function';
+  if(!workersAI&&!geminiAvailable(env))bad('Serviciul de analiză nu este disponibil.',503);
+  let model=organizerModel(env);
   if(!Object.values(ORGANIZER_MODELS).includes(model))bad('Modelul de organizare nu este configurat corect.',503);
   let visionModel=null,visualDescription='';
+  const provider=(id,input)=>id===ORGANIZER_MODELS.gemini&&geminiAvailable(env)?geminiGenerate(env,input):workersAI?env.AI.run(id,input):Promise.reject(new Error('provider_unavailable'));
   const call=async(id,input)=>{
     await guard();
-    let result;try{result=await deadline(env.AI.run(id,input),45000);}catch{bad('Analiza AI nu a reușit. Copia rămâne disponibilă.',503);}
+    let result;try{result=await deadline(provider(id,input),45000);}catch{bad('Analiza AI nu a reușit. Copia rămâne disponibilă.',503);}
     await guard();return result;
   };
   if(model===ORGANIZER_MODELS.legacy&&prepared.image) {
@@ -239,7 +265,15 @@ export async function analyzeOrganizerContent({env,file,bytes,extraction,prefere
   const context=JSON.stringify({file_id:file.id,source_sha256:file.sha256,evidence,coverage:prepared.coverage,user_preferences:prefs});
   let content=context;
   if(model!==ORGANIZER_MODELS.legacy&&prepared.image)content=[{type:'text',text:context},{type:'image_url',image_url:{url:`data:${prepared.image.media_type};base64,${base64(prepared.image.bytes)}`}}];
-  const result=await call(model,organizerModelInput(model,[{role:'system',content:ORGANIZER_ANALYSIS_SYSTEM},{role:'user',content}],prepared.sources));
+  const messages=[{role:'system',content:ORGANIZER_ANALYSIS_SYSTEM},{role:'user',content}];
+  let result;
+  if(model===ORGANIZER_MODELS.gemini&&geminiAvailable(env)&&workersAI) {
+    // Any Gemini error (HTTP, timeout, safety block, empty answer) falls back to Workers AI Scout; the 503 stays only when both fail.
+    await guard();
+    try{result=await deadline(geminiGenerate(env,organizerModelInput(model,messages,prepared.sources)),45000);}
+    catch{model=ORGANIZER_MODELS.scout;result=await call(model,organizerModelInput(model,messages,prepared.sources));}
+    await guard();
+  } else result=await call(model,organizerModelInput(model,messages,prepared.sources));
   const proposal=validateOrganizerProposal(parseResponse(result),file,prepared,prefs);
   await guard();
   return {...base,status:prepared.coverage.status==='complete'?'complete':'partial',...proposal,model,vision_model:visionModel};

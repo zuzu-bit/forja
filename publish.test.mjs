@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {publish} from './publish.mjs';
-const old={service:'forja-insights',version:5,files_sync:1},current={service:'forja-insights',version:16,organizer_jobs:4,journey:1,map3d:1,content_ai:1,sleep_audio:1,visual_ui:1,lost_phone:1,partners:1,contacts:1,social:1,organizer_modes:1,files_sync:1,cleanup_schedule:1,background_audio:1,organizer:1};
+const old={service:'forja-insights',version:5,files_sync:1},current={service:'forja-insights',version:16,organizer_jobs:4,journey:1,map3d:1,content_ai:2,sleep_audio:1,visual_ui:1,lost_phone:1,partners:1,contacts:1,social:1,organizer_modes:1,files_sync:1,cleanup_schedule:1,background_audio:1,organizer:1};
 test('already published needs no installation, new grant or redeployment',async()=>{const result=await publish({health:async()=>current,exec:async()=>assert.fail('must not publish'),log:()=>{}});assert.equal(result,'already-current');});
 test('a newer incompatible site is never overwritten',async()=>{await assert.rejects(publish({health:async()=>({version:17}),exec:async()=>assert.fail('must not run'),log:()=>{}}),/mai noua/);});
 for(const failStep of ['test','login','deployments'])test('failure at '+failStep+' prevents publishing',async()=>{
