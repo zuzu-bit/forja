@@ -45,7 +45,9 @@ aplicația „3.7-online” de pe telefon, cu același cont și aceleași date l
   Numele și numerele nu se scriu pe server și nu apar în jurnale. Comutatorul „Pot fi găsit după număr” (Profil) oprit =
   DELETE pe site + lucrătorul anulat + potrivirile șterse local. Site-ul e versiunea 17 (`contacts:2`).
 - **Familie mereu pornită**: cu cineva în familie, locația în fundal pornește chiar fără „Locație în fundal” (doar `familyLoc`
-  se scrie), la 120 s în loc de 180 s; „Prietenii tăi” arată un rând cald cu „Permite tot timpul” când lipsește locația „Tot timpul”.
+  se scrie — nici prietenii, nici Explorarea), la 120 s în loc de 180 s; cererea de poziții se oprește singură când nici familia,
+  nici „Locație în fundal” nu o mai cer (`BgLocation.registerIfReady` reconciliază). „Prietenii tăi” arată un rând cald cu
+  „Permite tot timpul” când lipsește locația „Tot timpul”.
 
 ## Cum obții aplicația (APK)
 

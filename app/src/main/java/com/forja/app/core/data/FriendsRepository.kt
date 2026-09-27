@@ -3,6 +3,7 @@ package com.forja.app.core.data
 import com.forja.app.core.data.db.PlaceEntity
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
@@ -70,12 +71,7 @@ class FriendsRepository(
         val otherUid = inv.getString("uid")
             ?: return Result.failure(IllegalArgumentException("Cod necunoscut. Verifică-l cu prietenul tău."))
         if (otherUid == myUid) return Result.failure(IllegalArgumentException("Acesta e chiar codul tău."))
-        val id = friendshipId(myUid, otherUid)
-        val existing = db.collection("friendships").document(id).get().await()
-        if (existing.exists()) return Result.failure(IllegalArgumentException("Sunteți deja prieteni."))
-        db.collection("friendships").document(id).set(
-            mapOf("members" to listOf(myUid, otherUid).sorted(), "since" to System.currentTimeMillis())
-        ).await()
+        if (!createFriendship(myUid, otherUid)) return Result.failure(IllegalArgumentException("Sunteți deja prieteni."))
         val other = db.collection("users").document(otherUid).get().await()
         return Result.success(other.getString("name") ?: "Prieten nou")
     }
@@ -86,11 +82,37 @@ class FriendsRepository(
      */
     suspend fun addFriendDirect(myUid: String, otherUid: String): Boolean {
         if (otherUid.isBlank() || otherUid == myUid) return false
-        val id = friendshipId(myUid, otherUid)
-        val ref = db.collection("friendships").document(id)
-        if (ref.get().await().exists()) return false
-        ref.set(mapOf("members" to listOf(myUid, otherUid).sorted(), "since" to System.currentTimeMillis())).await()
-        return true
+        return createFriendship(myUid, otherUid)
+    }
+
+    /**
+     * Scrie `friendships/{a_b}` FĂRĂ să citească înainte: regulile refuză citirea unui document inexistent
+     * (`resource` e null în `request.auth.uid in resource.data.members`), deci un `get()` ar da PERMISSION_DENIED
+     * tocmai pentru prieteniile noi. Regulile permit `create` membrilor și interzic `update`, așa că
+     * PERMISSION_DENIED la scriere înseamnă „există deja”. Întoarce true când a fost creată acum.
+     */
+    private suspend fun createFriendship(myUid: String, otherUid: String): Boolean = try {
+        db.collection("friendships").document(friendshipId(myUid, otherUid))
+            .set(mapOf("members" to listOf(myUid, otherUid).sorted(), "since" to System.currentTimeMillis()))
+            .await()
+        true
+    } catch (e: FirebaseFirestoreException) {
+        if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) false else throw e
+    }
+
+    /**
+     * Prieteniile mele acum, dintr-o singură interogare completă: celălalt uid → `since` (0 dacă lipsește).
+     * Pentru agendă: ca să anunțăm doar prieteniile cu adevărat noi, nu prietenii vechi regăsiți în agendă.
+     */
+    suspend fun friendshipsSince(myUid: String): Map<String, Long> {
+        val snap = db.collection("friendships").whereArrayContains("members", myUid).get().await()
+        val out = HashMap<String, Long>()
+        for (d in snap.documents) {
+            val members = (d.get("members") as? List<*>)?.mapNotNull { it as? String } ?: continue
+            val since = d.getLong("since") ?: 0L
+            for (m in members) if (m != myUid) out[m] = since
+        }
+        return out
     }
 
     suspend fun removeFriend(myUid: String, otherUid: String) {

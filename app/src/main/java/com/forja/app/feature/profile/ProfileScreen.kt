@@ -31,6 +31,7 @@ import com.forja.app.core.social.Discovery
 import com.forja.app.core.social.PhoneNumbers
 import com.forja.app.core.social.PhoneVerify
 import com.forja.app.core.util.Fmt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -267,9 +268,16 @@ fun ProfileScreen(
                         toast.show("Deschide harta și apasă „Activează” pe cardul galben.")
                     } else {
                         app.prefs.setBgShareOn(on)
-                        if (on) com.forja.app.core.location.BgLocation.registerIfReady(context)
-                        else com.forja.app.core.location.BgLocation.unregister(context)
-                        toast.show(if (on) "Locația în fundal e pornită." else "Locația în fundal e oprită.")
+                        // registerIfReady reconciliază: pornește, ține cadența familiei dacă familia nu e goală, sau oprește
+                        // cererea de poziții când nimic nu o mai cere (oprirea directă ar tăia și familia până la următorul ON_START).
+                        com.forja.app.core.location.BgLocation.registerIfReady(context)
+                        toast.show(
+                            when {
+                                on -> "Locația în fundal e pornită."
+                                familyUids.isNotEmpty() -> "Locația în fundal e oprită. Familia (${familyUids.size}) te vede în continuare."
+                                else -> "Locația în fundal e oprită."
+                            }
+                        )
                     }
                 }
             })
@@ -323,12 +331,16 @@ fun ProfileScreen(
         ) { }
 
         Spacer(Modifier.height(18.dp))
+        // Ieșirea așteaptă cel mult ~1,5 s după site (ștergerea listării după număr): rândul spune că lucrează și nu
+        // primește a doua atingere. Dacă ecranul e tot aici după 8 s (ceva a dat greș), rândul redevine activ.
+        var loggingOut by remember { mutableStateOf(false) }
+        LaunchedEffect(loggingOut) { if (loggingOut) { delay(8_000L); loggingOut = false } }
         Text(
-            "Ieși din cont",
-            style = BodyStrong.copy(color = LogoutText, fontSize = 15.sp),
+            if (loggingOut) "Se deconectează…" else "Ieși din cont",
+            style = BodyStrong.copy(color = if (loggingOut) TextDim else LogoutText, fontSize = 15.sp),
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
-                .pressable(onLogout)
+                .pressable(onClick = { if (!loggingOut) { loggingOut = true; onLogout() } })
                 .padding(10.dp)
         )
         Spacer(Modifier.height(6.dp))
@@ -408,9 +420,13 @@ private fun ContactsRow(onOpenPermissions: () -> Unit) {
                     if (!on) {
                         busy = true
                         scope.launch {
-                            try { ContactsSync.disable(app) } catch (_: Exception) { }
+                            val ok = try { ContactsSync.disable(app) } catch (_: Exception) { false }
                             busy = false
-                            toast.show("Nu mai poți fi găsit după număr. Potrivirile s-au șters de pe telefon.")
+                            // Onest: fără confirmarea site-ului nu spunem că listarea a dispărut — DELETE-ul se reia cu net.
+                            toast.show(
+                                if (ok) "Nu mai poți fi găsit după număr. Potrivirile s-au șters de pe telefon."
+                                else "Site-ul nu a răspuns. Listarea de pe site expiră singură în cel mult 30 de zile; reîncerc când e net."
+                            )
                         }
                         return@ForjaSwitch
                     }
@@ -455,7 +471,7 @@ private fun ContactsRow(onOpenPermissions: () -> Unit) {
                 if (contactsOn) {
                     MonoButton("Sincronizează acum", color = Accent2, onClick = {
                         ContactsSync.runNow(context)
-                        toast.show("Compar agenda. Durează sub un minut cu net.")
+                        toast.show("Compar agenda. Rezultatul apare aici.")
                     })
                     Spacer(Modifier.width(8.dp))
                 }

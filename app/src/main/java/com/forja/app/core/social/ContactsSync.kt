@@ -23,6 +23,7 @@ import com.forja.app.ForjaApp
 import com.forja.app.MainActivity
 import com.forja.app.core.network.InsightsApi
 import com.forja.app.core.network.InsightsFailure
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -67,6 +68,32 @@ class ContactsSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWork
 }
 
 /**
+ * „Pot fi găsit după număr” oprit fără net: DELETE-ul listării de pe site se reia cu net, până reușește.
+ * Se oprește singur dacă între timp ai pornit comutatorul la loc (listarea e din nou dorită) sau nu mai ai cont
+ * (fără token nu există DELETE; site-ul uită listarea singur în cel mult 30 de zile).
+ */
+class ContactsUnregisterWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
+    override suspend fun doWork(): Result {
+        val app = ForjaApp.from(applicationContext)
+        if (app.prefs.contactsOn.first()) return Result.success()
+        if (app.auth.currentUid == null) return Result.failure()
+        return try {
+            InsightsApi.json(Discovery.PATH, null, method = "DELETE", headers = Discovery.headers(app))
+            Result.success()
+        } catch (e: InsightsFailure) {
+            // 401 (token dispărut) sau alt 4xx nu se repară repetând.
+            if (e.code in 400..499 && e.code != 408 && e.code != 429) Result.failure() else again()
+        } catch (_: Exception) {
+            again()
+        }
+    }
+
+    private fun again(): Result = if (runAttemptCount < MAX_ATTEMPTS) Result.retry() else Result.failure()
+
+    private companion object { const val MAX_ATTEMPTS = 12 }
+}
+
+/**
  * „Prieteni din agendă” (ca la Telegram): comparăm numerele din agendă cu amprentele de pe site. Reciprocitatea
  * (eu îl am pe el, el mă are pe mine) creează prietenia singură; restul apar la „Din agendă” cu „Trimite-i codul tău”.
  * Numele și numerele NU se scriu pe server și nu apar în jurnale; pe server rămân doar amprente HMAC.
@@ -76,6 +103,7 @@ object ContactsSync {
 
     const val WORK_PERIODIC = "contacts-sync"
     const val WORK_NOW = "contacts-sync-now"
+    const val WORK_UNREGISTER = "contacts-unregister"
     private const val PATH_MATCH = "/v2/social/contacts/match"
     private const val BATCH = 200
     private const val PERIOD_H = 24L
@@ -102,6 +130,8 @@ object ContactsSync {
         app.appScope.launch {
             try {
                 if (!ready(app)) { cancel(app); return@launch }
+                // Comutatorul e pornit, deci listarea e dorită: nicio ștergere amânată nu mai are voie să ruleze.
+                cancelUnregisterRetry(app)
                 val req = PeriodicWorkRequestBuilder<ContactsSyncWorker>(PERIOD_H, TimeUnit.HOURS)
                     .setConstraints(connected())
                     .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
@@ -122,6 +152,7 @@ object ContactsSync {
         } catch (_: Exception) { }
     }
 
+    /** Anulează lucrătorii de sincronizare (nu și ștergerea amânată a listării — aceea rămâne până reușește). */
     fun cancel(context: Context) {
         try {
             val wm = WorkManager.getInstance(context)
@@ -130,30 +161,67 @@ object ContactsSync {
         } catch (_: Exception) { }
     }
 
-    /** Comutatorul închis: DELETE discovery pe site, lucrătorul anulat, potrivirile șterse local. Prieteniile deja făcute rămân. */
-    suspend fun disable(app: ForjaApp) {
-        cancel(app)
-        app.prefs.setContactsOn(false)
-        app.prefs.setContactMatches("")
-        app.prefs.setContactsSyncedAt(0L)
-        app.prefs.setContactsStatus("")
-        Discovery.unregister(app)
+    /** DELETE-ul listării se reia cu net (backoff exponențial), o singură coadă. */
+    private fun scheduleUnregisterRetry(context: Context) {
+        try {
+            val req = OneTimeWorkRequestBuilder<ContactsUnregisterWorker>()
+                .setConstraints(connected())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(WORK_UNREGISTER, ExistingWorkPolicy.REPLACE, req)
+        } catch (_: Exception) { }
     }
 
-    /** La ieșirea din cont: DELETE pe site (cât timp mai există token, cel mult 4 s), apoi totul uitat local — și numărul. */
-    suspend fun logout(app: ForjaApp) {
-        cancel(app)
-        if (app.prefs.contactsOn.first()) withTimeoutOrNull(4_000L) { Discovery.unregister(app) }
+    private fun cancelUnregisterRetry(context: Context) {
+        try { WorkManager.getInstance(context).cancelUniqueWork(WORK_UNREGISTER) } catch (_: Exception) { }
+    }
+
+    /** Uită comutatorul, potrivirile, momentul și starea ultimei sincronizări (numărul rămâne — se șterge doar la ieșirea din cont). */
+    private suspend fun forgetLocal(app: ForjaApp) {
         app.prefs.setContactsOn(false)
         app.prefs.setContactMatches("")
         app.prefs.setContactsSyncedAt(0L)
         app.prefs.setContactsStatus("")
+    }
+
+    /**
+     * DELETE-ul listării, așteptat cel mult [maxWaitMs]: cererea continuă în fundal și după (pe site e idempotentă),
+     * dar ecranul nu stă după o rețea care nu răspunde. false = neconfirmat.
+     */
+    private suspend fun unregisterWithin(app: ForjaApp, maxWaitMs: Long): Boolean {
+        val delete = app.appScope.async { Discovery.unregister(app) }
+        return withTimeoutOrNull(maxWaitMs) { delete.await() } ?: false
+    }
+
+    /**
+     * Comutatorul închis: lucrătorul anulat, potrivirile șterse local, DELETE discovery pe site. Prieteniile deja făcute rămân.
+     * Întoarce false când site-ul nu a confirmat ștergerea — atunci DELETE-ul se reia singur cu net ([ContactsUnregisterWorker])
+     * și, oricum, listarea expiră pe site în cel mult 30 de zile. Apelantul spune adevărul în funcție de rezultat.
+     */
+    suspend fun disable(app: ForjaApp): Boolean {
+        cancel(app)
+        forgetLocal(app)
+        val ok = unregisterWithin(app, 8_000L)
+        if (ok) cancelUnregisterRetry(app) else scheduleUnregisterRetry(app)
+        return ok
+    }
+
+    /**
+     * La ieșirea din cont: DELETE pe site cât timp mai există token (așteptat cel mult 1,5 s — după signOut nu se mai
+     * poate reîncerca, listarea expiră singură în 30 de zile), apoi totul uitat local — și numărul.
+     */
+    suspend fun logout(app: ForjaApp) {
+        cancel(app)
+        cancelUnregisterRetry(app)
+        if (app.prefs.contactsOn.first()) unregisterWithin(app, 1_500L)
+        forgetLocal(app)
         app.prefs.setPhoneDeclared("")
     }
 
     /**
      * Sincronizarea propriu-zisă. Fără READ_CONTACTS nu citește nimic; fără număr nu pornește.
-     * Pentru `mutual`/`friend` creează prietenia Firestore (idempotent) și anunță o singură dată pe prieten.
+     * Pentru `mutual`/`friend` creează prietenia Firestore (idempotent) și anunță o singură dată pe prieten NOU —
+     * un prieten vechi regăsit în agendă primește doar eticheta „din agendă”, nu o notificare.
      */
     suspend fun sync(app: ForjaApp): Outcome {
         if (!app.prefs.contactsOn.first()) return Outcome.SKIPPED
@@ -175,6 +243,7 @@ object ContactsSync {
             return Outcome.DONE
         }
         val previous = decode(app.prefs.contactMatches.first()).associateBy { it.uid }
+        val lastSync = app.prefs.contactsSyncedAt.first()
         val found = LinkedHashMap<String, ContactMatch>()
         val now = System.currentTimeMillis()
         var reregistered = false
@@ -221,9 +290,14 @@ object ContactsSync {
             i++
         }
         // Reciprocitate → prietenia în Firestore (ambii o văd prin friendsFlow), o notificare per prieten nou.
+        // „Nou” = creată acum de mine, sau apărută (de la el) după ultima mea sincronizare. La prima sincronizare (sau
+        // fără instantaneu) prieteniile deja existente sunt vechi: nimeni nu află că „X e pe FORJA” după luni de prietenie.
+        val before = try { withTimeoutOrNull(5_000L) { app.friends.friendshipsSince(uid) } } catch (_: Exception) { null }
         for (m in found.values.filter { it.mutual }) {
             val created = try { app.friends.addFriendDirect(uid, m.uid) } catch (_: Exception) { false }
-            if (created || previous[m.uid]?.mutual != true) notifyNewFriend(app, m)
+            val since = before?.get(m.uid)
+            val appeared = before != null && (since == null || (lastSync > 0 && since > lastSync))
+            if (previous[m.uid]?.mutual != true && (created || appeared)) notifyNewFriend(app, m)
         }
         app.prefs.setContactMatches(encode(found.values.toList()))
         app.prefs.setContactsSyncedAt(now)

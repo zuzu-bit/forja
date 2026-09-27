@@ -24,9 +24,10 @@ import kotlinx.coroutines.launch
  * Locația în FUNDAL, à la Zenly/Bump: prietenii te văd oriunde, oricând —
  * cu o singură excepție, aleasă de tine: modul fantomă (familia te vede și atunci).
  * Merge și cu aplicația închisă (updates livrate unui receiver), repornit la boot.
- * Același fix hrănește și Explorarea (zone + locuri).
+ * Același fix hrănește și Explorarea (zone + locuri) — doar cu „Locație în fundal” pornită.
  * Familia e „mereu pornită”: cu familyUids nevid cadența urcă la 120 s și urmărirea pornește chiar și cu
  * „Locație în fundal” oprită (prietenii obișnuiți tot nu te văd — doar familyLoc se scrie).
+ * [registerIfReady] e singurul care decide: pornește când e cazul și oprește cererea când nimic nu o mai cere.
  */
 object BgLocation {
 
@@ -51,15 +52,19 @@ object BgLocation {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
         )
 
-    /** Pornește urmărirea în fundal dacă totul e la locul lui: cont + setare + permisiuni. */
+    /**
+     * Reconciliază urmărirea în fundal: pornește dacă totul e la locul lui (cont + „Locație în fundal” sau familie +
+     * permisiuni) și o OPREȘTE când nici setarea, nici familia nu o mai cer — altfel cererea către fused location
+     * (PendingIntent) ar supraviețui procesului și ar consuma baterie cu ambele opțiuni oprite.
+     */
     @SuppressLint("MissingPermission")
     fun registerIfReady(context: Context) {
         val app = context.applicationContext as? ForjaApp ?: return
         CoroutineScope(Dispatchers.Default).launch {
             try {
-                if (app.auth.currentUid == null) return@launch
+                if (app.auth.currentUid == null) { unregister(context); return@launch }
                 val family = app.prefs.familyUids.first().isNotEmpty()
-                if (!app.prefs.bgShareOn.first() && !family) return@launch
+                if (!app.prefs.bgShareOn.first() && !family) { unregister(context); return@launch }
                 if (!(hasFine(context) || hasCoarse(context)) || !hasBackground(context)) return@launch
                 val interval = if (family) FAMILY_INTERVAL_MS else DEFAULT_INTERVAL_MS
                 val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, interval)
@@ -72,6 +77,7 @@ object BgLocation {
         }
     }
 
+    /** Oprește cererea de poziții. Idempotentă, fără permisiune necesară; [registerIfReady] o apelează singură când e cazul. */
     fun unregister(context: Context) {
         try {
             LocationServices.getFusedLocationProviderClient(context)
@@ -117,16 +123,19 @@ class BgLocationReceiver : BroadcastReceiver() {
                 if (fam.isNotEmpty()) {
                     app.friends.writeFamilyLoc(uid, loc.latitude, loc.longitude, speed, state, fam, now)
                 }
-                // Explorarea: așteptăm prelucrarea, receiverul are fereastra goAsync.
-                try {
-                    app.explore.ingest(
-                        lat = loc.latitude, lng = loc.longitude,
-                        accuracyM = if (loc.hasAccuracy()) loc.accuracy else 999f,
-                        speedMps = if (loc.hasSpeed()) loc.speed else 0f,
-                        atMs = loc.time.takeIf { it > 0 } ?: now,
-                        source = "bg"
-                    )
-                } catch (_: Exception) { }
+                // Explorarea: doar cu „Locație în fundal” pornită — pe calea familiei se scrie numai familyLoc.
+                // Așteptăm prelucrarea, receiverul are fereastra goAsync.
+                if (app.prefs.bgShareOn.first()) {
+                    try {
+                        app.explore.ingest(
+                            lat = loc.latitude, lng = loc.longitude,
+                            accuracyM = if (loc.hasAccuracy()) loc.accuracy else 999f,
+                            speedMps = if (loc.hasSpeed()) loc.speed else 0f,
+                            atMs = loc.time.takeIf { it > 0 } ?: now,
+                            source = "bg"
+                        )
+                    } catch (_: Exception) { }
+                }
             } catch (_: Exception) {
             } finally {
                 pending.finish()

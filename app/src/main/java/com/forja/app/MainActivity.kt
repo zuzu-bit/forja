@@ -54,8 +54,10 @@ import com.forja.app.feature.splash.SplashScreen
 import com.forja.app.feature.workout.WorkoutLiveScreen
 import com.forja.app.feature.workout.WorkoutScreen
 import com.forja.app.navigation.Route
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     /** Crește la fiecare intent nou (notificare atinsă cât activitatea trăiește) — MainNav recitește extra-urile. */
@@ -384,13 +386,17 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                         // Oprește sincronizarea și uită alegerile cât timp contul încă e cel legat (înainte de signOut).
                         try { com.forja.app.core.sync.CollectionSettings.logout(app) } catch (_: Exception) { }
                         navScope.launch {
-                            // Prieteni din agendă: numărul, comutatorul și potrivirile sunt ale ACESTUI cont — nu trec la următorul.
-                            // DELETE-ul pe site are nevoie de token, deci înainte de signOut (cel mult 4 s; altfel expiră singur în 30 de zile).
-                            try { com.forja.app.core.social.ContactsSync.logout(app) } catch (_: Exception) { }
-                            app.auth.logout()
-                            // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni.
-                            app.prefs.resetFirstRun()
-                            nav.navigate(Route.ONBOARDING) { popUpTo(Route.DASHBOARD) { inclusive = true } }
+                            // Contul se închide întreg chiar dacă ecranul dispare între timp (recreare): niciodată
+                            // „potriviri șterse, dar încă conectat”. Profilul arată „Se deconectează…” cât durează.
+                            withContext(NonCancellable) {
+                                // Prieteni din agendă: numărul, comutatorul și potrivirile sunt ale ACESTUI cont — nu trec la următorul.
+                                // DELETE-ul pe site are nevoie de token, deci înainte de signOut (cel mult 1,5 s; altfel expiră singur în 30 de zile).
+                                try { com.forja.app.core.social.ContactsSync.logout(app) } catch (_: Exception) { }
+                                app.auth.logout()
+                                // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni.
+                                app.prefs.resetFirstRun()
+                            }
+                            try { nav.navigate(Route.ONBOARDING) { popUpTo(Route.DASHBOARD) { inclusive = true } } } catch (_: Exception) { }
                         }
                     },
                     onOpenMapGhost = { nav.navigate(Route.MAP) },
