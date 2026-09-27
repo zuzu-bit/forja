@@ -112,10 +112,12 @@ object ForjaTiles {
         tiles.loadingLineColor = 0xFF1A1A1E.toInt()
     }
 
-    /** Aplică sursa + filtrul pe firul principal. */
+    /** Aplică sursa + filtrul pe firul principal — fără să reseteze provider-ul dacă sursa e deja cea aleasă. */
     private fun apply(map: MapView, source: OnlineTileSourceBase, filter: ColorMatrixColorFilter) {
-        map.setTileSource(source)
-        map.overlayManager.tilesOverlay.setColorFilter(filter)
+        if (map.tileProvider.tileSource !== source) {
+            map.setTileSource(source)
+            map.overlayManager.tilesOverlay.setColorFilter(filter)
+        }
         map.setUseDataConnection(true)
         map.invalidate()
     }

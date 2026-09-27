@@ -145,6 +145,9 @@ class ExploreTracker(private val app: ForjaApp) {
             mirror = true
         } else {
             val revisit = atMs - existing.lastAt > REVISIT_MS
+            // Fără vizită nouă, scriem cel mult o dată pe minut: altfel fiecare fix (la 5 s) ar re-emite
+            // allCells() în hartă și ar redesena overlay-ul degeaba.
+            if (!revisit && atMs - existing.lastAt < CELL_WRITE_MIN_MS) return
             updated = existing.copy(
                 lastAt = maxOf(existing.lastAt, atMs),
                 visits = existing.visits + if (revisit) 1 else 0
@@ -322,6 +325,7 @@ class ExploreTracker(private val app: ForjaApp) {
         const val MAX_DWELL_SPEED = 2.5f
         const val MAX_GAP_MS = 5 * 60_000L
         const val REVISIT_MS = 30 * 60_000L
+        const val CELL_WRITE_MIN_MS = 60_000L
         const val MIN_GAP_MS = 5_000L
         const val PLACE_SYNC_MS = 5 * 60_000L
         private const val NOTIF_BASE = 4100
