@@ -565,7 +565,13 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
         } else emptyMap()
         val result = try { engine.moveToFolder(chunk, folder) } finally { setBusy(false) }
         if (jobId != null && tracked.isNotEmpty()) {
-            val outcomes = tracked.keys.associateWith { uri -> if (chunk.any { it.uri.toString() == uri && it.id in result.movedIds }) uri else null }
+            // Cele mutate primesc chitanța „moved"; cele oprite de dialogul Android (API 29) rămân „applying" până la reluare.
+            val pendingRetry = if (result.recoverable != null) result.remaining.map { it.uri.toString() }.toSet() else emptySet()
+            val outcomes = HashMap<String, String?>()
+            for (uri in tracked.keys) {
+                val movedNow = chunk.any { it.uri.toString() == uri && it.id in result.movedIds }
+                if (movedNow) outcomes[uri] = uri else if (uri !in pendingRetry) outcomes[uri] = null
+            }
             try { OrganizerJobs.afterUserMove(forja, jobId, tracked, outcomes) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
         }
         removeFromReport(result.movedIds)
@@ -628,7 +634,16 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
                 else toast("Curat! Ai eliberat ${fmtBytes(freed)}. Telefon mai ușor.")
             }
             is Pending.Move -> {
-                if (!ok) { toast("Mutarea a fost refuzată."); return }
+                if (!ok) {
+                    toast("Mutarea a fost refuzată.")
+                    // Reluare refuzată (API 29): intenția a plecat deja pe site — elementele devin de verificat acolo.
+                    val jobId = (_state.value as? CleanupUiState.Results)?.jobId
+                    if (jobId != null) viewModelScope.launch {
+                        try { OrganizerJobs.reportUnmoved(forja, jobId, p.items.map { it.uri.toString() }, "Ai refuzat acordul Android pentru această mutare.") }
+                        catch (e: CancellationException) { throw e } catch (_: Exception) { }
+                    }
+                    return
+                }
                 viewModelScope.launch { performMove(p.items, p.folder, p.rest, p.movedSoFar) }
             }
             is Pending.SiteMove -> {
@@ -782,17 +797,22 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
                 catch (e: CancellationException) { throw e } catch (_: Exception) { emptyMap() }
             } else emptyMap()
             val outcomes = HashMap<String, String?>()
+            val copiedKeys = HashSet<String>()
             try {
                 for (item in items) {
                     when (val out = organizer.move(tree, item, category)) {
                         is MoveOutcome.Moved -> { moved++; gone += item.key; outcomes[item.key] = out.newUri.toString() }
-                        is MoveOutcome.Copied -> { copied++; if (!out.originalKept) gone += item.key; outcomes[item.key] = if (out.originalKept) null else out.newUri.toString() }
+                        is MoveOutcome.Copied -> {
+                            copied++; if (!out.originalKept) gone += item.key
+                            outcomes[item.key] = out.newUri.toString()
+                            if (out.originalKept) copiedKeys += item.key   // copie verificată, originalul rămâne → copied_pending_removal
+                        }
                         is MoveOutcome.Failed -> { failed = failed ?: out.reason; outcomes[item.key] = null }
                     }
                 }
             } finally {
                 if (jobId != null && tracked.isNotEmpty()) {
-                    try { OrganizerJobs.afterUserMove(forja, jobId, tracked, outcomes) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+                    try { OrganizerJobs.afterUserMove(forja, jobId, tracked, outcomes, copiedKeys) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
                 }
                 val now = _docs.value
                 _docs.value = now.copy(

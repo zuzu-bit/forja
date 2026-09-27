@@ -464,9 +464,20 @@ object OrganizerJobs {
             } else throw e
         }
         job.remoteRevision = remote.int("revision")
-        val cmd = InsightsApi.json("${jobPath(job)}/command", buildJsonObject {
-            put("request_id", job.commandId); put("revision", job.remoteRevision); put("action", "continue"); put("count", job.count)
-        })
+        val cmd = try {
+            InsightsApi.json("${jobPath(job)}/command", buildJsonObject {
+                put("request_id", job.commandId); put("revision", job.remoteRevision); put("action", "continue"); put("count", job.count)
+            })
+        } catch (e: InsightsFailure) {
+            // Reluare după un răspuns pierdut: comanda există deja pe site (același request_id, altă revizie),
+            // sau site-ul a trimis între timp propriul „continue" — o adoptăm în loc să blocăm lucrarea.
+            if (e.code != 409) throw e
+            val r = InsightsApi.json(jobPath(job))
+            val c = r.obj("command")
+            if (c == null || c.str("action") != "continue" || c.str("status") == "complete") throw e
+            if (c.str("request_id") != job.commandId) { job.commandId = c.str("request_id"); job.count = c.int("count") }
+            r
+        }
         job.remoteRevision = cmd.int("revision")
         job.syncRevision = cmd.long("sync_revision")
         job.registered = true
@@ -480,6 +491,7 @@ object OrganizerJobs {
             throw e
         }
         job.remoteRevision = r.int("revision")
+        if (r.long("sync_revision") > 0) job.syncRevision = r.long("sync_revision")
         r.obj("counters")?.let { job.remoteReady = it.int("ready") }
         when (r.str("state")) {
             "paused" -> { job.state = "paused"; job.message = "Pusă pe pauză din site."; ledger.saveJob(job); throw Stopped() }
@@ -1102,10 +1114,11 @@ object OrganizerJobs {
                 if (!screenVisible && !job.touchNotified) { notifyTouch(app, photos.size); job.touchNotified = true; ledger.saveJob(job) }
             }
         }
-        for (d in docs) {
+        docs.forEachIndexed { i, d ->
             currentCoroutineContext().ensureActive()
             mutex.withLock {
-                remoteCheck(ledger, job)
+                // Starea de pe site (pauză/anulare) se reverifică la fiecare 10 documente, nu la fiecare mutare.
+                if (i % 10 == 0) remoteCheck(ledger, job)
                 trackedMove(app, ledger, job, d.id)
             }
         }
@@ -1168,11 +1181,13 @@ object OrganizerJobs {
             val job = ledger.job(jobId) ?: return@withLock emptyMap()
             if (!job.registered || job.stopped) return@withLock emptyMap()
             val dest = cleanPath("${job.destination}/$folder", 200) ?: return@withLock emptyMap()
-            val items = uris.mapNotNull { ledger.itemByUri(jobId, it) }.filter { it.batched && !it.terminal && !it.intentSaved && it.error.isBlank() }
+            // Elementele cu intenția deja trimisă (reluare după dialogul Android) rămân urmărite pentru chitanța finală.
+            val items = uris.mapNotNull { ledger.itemByUri(jobId, it) }.filter { it.batched && !it.terminal && it.error.isBlank() }
             try {
-                val approvable = items.filter { evidenceOk(job, it) && !(it.approved && it.destination == dest) }
+                val fresh = items.filter { !it.intentSaved }
+                val approvable = fresh.filter { evidenceOk(job, it) && !(it.approved && it.destination == dest) }
                 if (approvable.isNotEmpty()) approve(ledger, job, approvable, dest)
-                val tracked = items.filter { it.approved && it.destination == dest }
+                val tracked = fresh.filter { it.approved && it.destination == dest }
                 for (t in tracked) {
                     var cur = ledger.item(jobId, t.id) ?: continue
                     if (!cur.sent.containsKey("ready")) {
@@ -1194,7 +1209,7 @@ object OrganizerJobs {
                 job.message = cleanText(e.message, 200, "Site-ul nu a răspuns; mutarea rămâne locală.")
                 ledger.saveJob(job)
             }
-            items.mapNotNull { ledger.item(jobId, it.id) }.filter { it.intentSaved }.associateBy { it.uri }
+            items.mapNotNull { ledger.item(jobId, it.id) }.filter { it.intentSaved && it.destination == dest && !it.terminal }.associateBy { it.uri }
         }
     }
 
@@ -1221,18 +1236,48 @@ object OrganizerJobs {
         }
     }
 
-    /** După mutarea locală: chitanțe moved (cu amprenta țintei) sau needs_review. `results`: uri → uri-ul nou (null = nu s-a mutat). */
-    suspend fun afterUserMove(app: ForjaApp, jobId: String, tracked: Map<String, OrgItem>, results: Map<String, String?>) = withContext(Dispatchers.IO) {
+    /**
+     * După mutarea locală: chitanțe moved (cu amprenta țintei), copied_pending_removal sau needs_review.
+     * `results`: uri → uri-ul nou (null = nu s-a mutat); un uri absent nu are încă verdict (ex. așteaptă
+     * acordul Android și va fi reluat) și rămâne „applying". `copied`: uri-uri copiate, cu originalul păstrat.
+     */
+    suspend fun afterUserMove(
+        app: ForjaApp, jobId: String, tracked: Map<String, OrgItem>, results: Map<String, String?>, copied: Set<String> = emptySet()
+    ) = withContext(Dispatchers.IO) {
         if (tracked.isEmpty()) return@withContext
         val ledger = OrganizerLedger.get(app)
         mutex.withLock {
             val job = ledger.job(jobId) ?: return@withLock
             try {
                 for ((uri, t) in tracked) {
+                    if (!results.containsKey(uri)) continue
                     val cur = ledger.item(jobId, t.id) ?: continue
+                    if (cur.terminal || cur.state == "copied_pending_removal") continue
                     val newUri = results[uri]
-                    val outcome = if (newUri != null) Physical.Moved(newUri) else Physical.Failed("Mutarea locală nu a reușit.")
+                    val outcome = when {
+                        newUri == null -> Physical.Failed("Mutarea locală nu a reușit.")
+                        uri in copied -> Physical.Copied(newUri)
+                        else -> Physical.Moved(newUri)
+                    }
                     recordOutcome(app, ledger, job, cur, outcome)
+                }
+                finish(ledger, job)
+            } catch (e: Stopped) { } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                job.message = cleanText(e.message, 200, "Chitanțele se trimit la următoarea sincronizare."); ledger.saveJob(job)
+            }
+        }
+    }
+
+    /** Acordul Android refuzat după ce intenția a plecat: elementele rămase „applying" devin de verificat pe site. */
+    suspend fun reportUnmoved(app: ForjaApp, jobId: String, uris: List<String>, reason: String) = withContext(Dispatchers.IO) {
+        val ledger = OrganizerLedger.get(app)
+        mutex.withLock {
+            val job = ledger.job(jobId) ?: return@withLock
+            try {
+                for (uri in uris) {
+                    val cur = ledger.itemByUri(jobId, uri) ?: continue
+                    if (!cur.intentSaved || cur.state != "applying") continue
+                    recordOutcome(app, ledger, job, cur, Physical.Failed(reason))
                 }
                 finish(ledger, job)
             } catch (e: Stopped) { } catch (e: CancellationException) { throw e } catch (e: Exception) {
