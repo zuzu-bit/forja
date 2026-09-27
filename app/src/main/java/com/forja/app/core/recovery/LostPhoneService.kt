@@ -122,6 +122,9 @@ class LostPhoneService : Service(), LocationListener {
             ServiceCompat.startForeground(this, ID, notification(READY), type)
             running = true
         } catch (_: Exception) {
+            // Android 14+: o repornire din fundal (START_STICKY) poate fi refuzată — ecranul explică, nu cade.
+            LostPhoneRecovery.prefs(this).edit()
+                .putString("status", "Deschide FORJA pentru a reconecta găsirea telefonului.").apply()
             stopSelf()
             return START_NOT_STICKY
         }

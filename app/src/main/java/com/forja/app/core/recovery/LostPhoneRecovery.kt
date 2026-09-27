@@ -213,9 +213,11 @@ class RecoveryRevokeWorker(c: Context, p: WorkerParameters) : CoroutineWorker(c,
         val secret = inputData.getString("secret") ?: return Result.failure()
         val action = inputData.getString("action") ?: return Result.failure()
         val command = inputData.getString("command")
+        // „stop” fără comandă nu are ce opri (serverul ar răspunde 400 la nesfârșit).
+        if (action == "stop" && command == null) return Result.failure()
         val body = buildJsonObject {
             put("secret", secret)
-            if (action == "stop" && command != null) put("command", command)
+            if (action == "stop") put("command", command)
         }
         return try {
             withTimeout(60_000) { InsightsApi.json("/v2/recovery/devices/$id/$action", body, "POST") }
@@ -223,7 +225,11 @@ class RecoveryRevokeWorker(c: Context, p: WorkerParameters) : CoroutineWorker(c,
         } catch (e: CancellationException) {
             throw e
         } catch (e: InsightsFailure) {
-            if (e.code in listOf(401, 403, 404, 409)) Result.success() else Result.retry()
+            when (e.code) {
+                401, 403, 404, 409 -> Result.success()   // deja făcut / înrolare schimbată
+                400 -> Result.failure()                  // cerere respinsă definitiv — reîncercarea nu ajută
+                else -> Result.retry()
+            }
         } catch (_: Exception) {
             Result.retry()
         }
