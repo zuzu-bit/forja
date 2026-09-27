@@ -32,6 +32,7 @@ import com.forja.app.core.network.OrganizeItem
 import com.forja.app.core.network.OrganizeSuggestion
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -142,9 +143,15 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     // ─────────────────────────── Permisiuni ───────────────────────────
 
+    /**
+     * Pe 33+ cerem și READ_MEDIA_VIDEO (același grup „Poze și videoclipuri" — un singur dialog), altfel
+     * „Include videoclipurile" n-ar întoarce niciun videoclip; pe 34+ și „Selectează poze" e acces valid.
+     */
     fun photoPermissions(): Array<String> = when {
-        Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-        Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+        Build.VERSION.SDK_INT >= 34 -> arrayOf(
+            Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        )
+        Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
         else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 
@@ -261,12 +268,15 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pause() {
         val cur = _state.value as? CleanupUiState.Scanning ?: return
-        scanJob?.cancel()
+        val job = scanJob
         scanJob = null
+        _state.value = cur.copy(paused = true)
         viewModelScope.launch {
+            // Așteptăm ca motorul să-și scrie cursorul (NonCancellable) înainte să-l citim, altfel afișăm un număr vechi.
+            job?.cancelAndJoin()
             val resume = engine.resumePoint(cur.scope)
             val now = _state.value
-            if (now is CleanupUiState.Scanning) _state.value = now.copy(paused = true, resume = resume)
+            if (now is CleanupUiState.Scanning && now.paused) _state.value = now.copy(resume = resume)
         }
     }
 
