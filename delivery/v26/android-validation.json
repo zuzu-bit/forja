@@ -1,0 +1,48 @@
+{
+  "version": "3.7-online.26",
+  "version_code": 56,
+  "sha256": "917d24c066a7811e81ef5e85525303da46c8ed0e79920bea384ae5c77490a103",
+  "base_sha256": "b569e767f88de7f3a7825580313efe4f0f9594a9340f994524e146bf566a0ecd",
+  "bytes": 304766657,
+  "signed": true,
+  "signer_matches": true,
+  "unchanged_dex": 20,
+  "original_assets_preserved": true,
+  "new_permissions": [],
+  "new_components": [
+    "com.forja.app.feature.cleanup.JourneyLocationService"
+  ],
+  "android_device_tested": false,
+  "live_account_tested": false,
+  "signer_sha256": "6fc56c1ff164d46b4994fdbfa3e38c786e804c191897ccad581d278aa8feed74",
+  "unit_tests": {
+    "passed": 85,
+    "failures": 0,
+    "errors": 0
+  },
+  "abi_verification": {
+    "dex_files": 23,
+    "unique_classes": 58779,
+    "duplicate_classes": 0,
+    "new_app_dependency_calls": 24592,
+    "new_feature_abi_references": 109,
+    "cleanup_abi_references": 7396,
+    "new_static_calls": 17995
+  },
+  "compiled_feature_sha256": "9bc50314216717304c793ae0462e03923900e6f4d57a145df04d9423c80eba68",
+  "emulator_smoke": {
+    "system": "AOSP Android 11 / API 30 x86_64, software rendering",
+    "upgrade_from_v25": "adb install -r: Success",
+    "installed_version_code": 56,
+    "installed_version_name": "3.7-online.26",
+    "main_activity_rendered": true,
+    "screen": "Existing sign-in gate retained",
+    "fatal_exceptions_observed": 0,
+    "initial_am_start_wait": "timeout; activity subsequently displayed after 26.710 seconds on software emulator",
+    "uiautomator_verified": true,
+    "physical_device_tested": false,
+    "authenticated_flows_tested": false,
+    "gps_or_original_file_mutations_tested": false,
+    "screenshot_sha256": "e3394870be200b6ba416f88612f49cb325ae46bffa96e27ec3152f31d6388231"
+  }
+}

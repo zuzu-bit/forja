@@ -27,11 +27,21 @@ dependencies {
     implementation("com.google.firebase:firebase-auth")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
     testImplementation("org.json:json:20240303")
 }
 
 tasks.register("exportCompileClasspath") {
     doLast {
         layout.buildDirectory.file("compile-classpath.txt").get().asFile.writeText(configurations.getByName("debugCompileClasspath").files.joinToString("\n") { it.absolutePath })
+    }
+}
+
+// Robolectric resolves its instrumented Android runtime in the test JVM.
+// Honor the build runner's proxy configuration without embedding credentials.
+tasks.withType<Test>().configureEach {
+    systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+    listOf("http.proxyHost", "http.proxyPort", "https.proxyHost", "https.proxyPort").forEach { key ->
+        System.getProperty(key)?.let { systemProperty(key, it) }
     }
 }

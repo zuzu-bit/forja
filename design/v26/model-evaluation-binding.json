@@ -1,0 +1,202 @@
+{
+  "synthetic": true,
+  "version": 1,
+  "at": "2026-09-27T09:20:24.913Z",
+  "max_calls": 12,
+  "calls": 10,
+  "summary": [
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "passed": 2,
+      "total": 3,
+      "calls": 4,
+      "elapsed_ms": 17434
+    },
+    {
+      "model": "@cf/moonshotai/kimi-k2.6",
+      "passed": 0,
+      "total": 3,
+      "calls": 3,
+      "elapsed_ms": 133
+    },
+    {
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "passed": 1,
+      "total": 3,
+      "calls": 3,
+      "elapsed_ms": 11643
+    }
+  ],
+  "results": [
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "fixture": "text_not_filename",
+      "pass": true,
+      "destination": "Documente/Facturi",
+      "reason": "Conține informații specifice despre o factură, inclusiv serviciul prestat și suma de plată.",
+      "evidence": [
+        {
+          "id": "e1",
+          "kind": "text",
+          "quote": "FACTURĂ. Serviciu: reparație frâne bicicletă. Cantitate 1. Total de plată: 120 lei.",
+          "source_id": "text",
+          "source_sha256": "a6639118589d04a7d36bf54bbeea6091189d0836cd9de8d1affc2054ddfadf8e",
+          "method": "server_utf8_from_received_bytes"
+        }
+      ],
+      "coverage": {
+        "status": "complete",
+        "source_bytes": 88,
+        "analyzed_text_chars": 83,
+        "pages_total": null,
+        "pages_processed": null,
+        "methods": [
+          "server_utf8_from_received_bytes"
+        ],
+        "limitations": []
+      },
+      "confidence": "high",
+      "calls": 1,
+      "elapsed_ms": 4003
+    },
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "fixture": "photographed_invoice",
+      "pass": false,
+      "error": "validation_failed",
+      "provider_errors": [],
+      "calls": 2,
+      "elapsed_ms": 10571
+    },
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "fixture": "mixed_untrusted",
+      "pass": true,
+      "destination": "De verificat",
+      "reason": "Conținutul fișierului conține fragmente cu teme contradictorii, fără o temă dominantă.",
+      "evidence": [
+        {
+          "id": "e1",
+          "kind": "text",
+          "quote": "Nu există o temă dominantă între aceste fragmente.",
+          "source_id": "text",
+          "source_sha256": "b75da1adad37610528d3623e82cc62c0fafb30145eeb60be134b97131a91f222",
+          "method": "server_utf8_from_received_bytes"
+        }
+      ],
+      "coverage": {
+        "status": "complete",
+        "source_bytes": 317,
+        "analyzed_text_chars": 307,
+        "pages_total": null,
+        "pages_processed": null,
+        "methods": [
+          "server_utf8_from_received_bytes"
+        ],
+        "limitations": []
+      },
+      "confidence": "high",
+      "calls": 1,
+      "elapsed_ms": 2860
+    },
+    {
+      "model": "@cf/moonshotai/kimi-k2.6",
+      "fixture": "text_not_filename",
+      "pass": false,
+      "error": "provider_failed",
+      "provider_errors": [
+        {
+          "model": "@cf/moonshotai/kimi-k2.6",
+          "http_status": 502,
+          "codes": []
+        }
+      ],
+      "calls": 1,
+      "elapsed_ms": 48
+    },
+    {
+      "model": "@cf/moonshotai/kimi-k2.6",
+      "fixture": "photographed_invoice",
+      "pass": false,
+      "error": "provider_failed",
+      "provider_errors": [
+        {
+          "model": "@cf/moonshotai/kimi-k2.6",
+          "http_status": 502,
+          "codes": []
+        }
+      ],
+      "calls": 1,
+      "elapsed_ms": 47
+    },
+    {
+      "model": "@cf/moonshotai/kimi-k2.6",
+      "fixture": "mixed_untrusted",
+      "pass": false,
+      "error": "provider_failed",
+      "provider_errors": [
+        {
+          "model": "@cf/moonshotai/kimi-k2.6",
+          "http_status": 502,
+          "codes": []
+        }
+      ],
+      "calls": 1,
+      "elapsed_ms": 38
+    },
+    {
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "fixture": "text_not_filename",
+      "pass": true,
+      "destination": "Documente/Facturi",
+      "reason": "Documentul conține informații specifice unei facturi, precum descrierea serviciului prestat, cantitatea și suma totală de plată.",
+      "evidence": [
+        {
+          "id": "e1",
+          "kind": "text",
+          "quote": "FACTURĂ. Serviciu: reparație frâne bicicletă. Cantitate 1. Total de plată: 120 lei.",
+          "source_id": "text",
+          "source_sha256": "a6639118589d04a7d36bf54bbeea6091189d0836cd9de8d1affc2054ddfadf8e",
+          "method": "server_utf8_from_received_bytes"
+        }
+      ],
+      "coverage": {
+        "status": "complete",
+        "source_bytes": 88,
+        "analyzed_text_chars": 83,
+        "pages_total": null,
+        "pages_processed": null,
+        "methods": [
+          "server_utf8_from_received_bytes"
+        ],
+        "limitations": []
+      },
+      "confidence": "high",
+      "calls": 1,
+      "elapsed_ms": 2594
+    },
+    {
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "fixture": "photographed_invoice",
+      "pass": false,
+      "error": "validation_failed",
+      "provider_errors": [],
+      "calls": 1,
+      "elapsed_ms": 7633
+    },
+    {
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "fixture": "mixed_untrusted",
+      "pass": false,
+      "error": "validation_failed",
+      "provider_errors": [],
+      "calls": 1,
+      "elapsed_ms": 1416
+    }
+  ],
+  "limits": [
+    "Small fixture set; not a general ranking or accuracy benchmark.",
+    "Visual observations remain unconfirmed AI interpretations.",
+    "No billing change, user files, mutation, or deletion."
+  ]
+}

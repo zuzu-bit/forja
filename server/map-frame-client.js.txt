@@ -1,0 +1,5 @@
+(function(){
+ const send=(type,value)=>{if(window.ForjaMapHost?.event)window.ForjaMapHost.event(JSON.stringify({type,...value}));};
+ try{window.ForjaMap=ForjaMapRenderer.create('map',{onReady:()=>send('ready',{}),onError:message=>send('error',{message}),onPick:item=>send('pick',{item}),onMove:point=>send('move',{point})});}
+ catch(e){send('error',{message:'Harta vectorială nu este disponibilă.'});}
+})();

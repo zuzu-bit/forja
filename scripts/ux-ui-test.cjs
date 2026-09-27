@@ -48,7 +48,7 @@ w.L = {
 };
 const fixture = createFixture();
 installMockFetch(w, fixture);
-w.eval(clientSource() + '\nwindow.__ux = {page, logout, refresh, refreshSocial, socialChat, expireSocialMarkers, socialUI, refreshRecovery, recoveryUI, refreshPhones, refreshSleepReports, openSleepReport, localTimeInput, phoneWindows, phoneDurations, sleepUI};');
+w.eval(clientSource() + '\nwindow.__ux = {page, logout, refresh, refreshCleanup, refreshOrganizerJobs, openOrganizerJobItems, sendOrganizerCommand, approveOrganizerItems, deleteOrganizerJob, organizerV4, refreshFiles, moveVaultFile, vault, refreshSocial, socialChat, expireSocialMarkers, socialUI, refreshRecovery, recoveryUI, refreshPhones, refreshSleepReports, openSleepReport, localTimeInput, phoneWindows, phoneDurations, sleepUI, openVisibility, journeyShared, journeyUI, startJourney, stopJourney, journeyFlush};');
 const $ = id => {const node = w.document.getElementById(id); assert(node, `Missing #${id}`); return node;};
 const tick = () => new Promise(resolve => setTimeout(resolve, 15));
 const checks = [];
@@ -360,19 +360,158 @@ const callFor = (suffix, method) => fixture.calls.findLast(c => c.route.endsWith
       assert.equal(played, 0, 'Deleted reports must not begin playback');
     } finally {w.fetch = fetch; w.URL.createObjectURL = createURL; w.HTMLMediaElement.prototype.play = play;}
   });
+  await check('v4 organizes the whole gallery with an explicit grant and a queued phone command', async () => {
+    const d=fixture.cleanup.devices[0];d.protocol=4;d.grant.sources=[{id:randomUUID(),source:'files',folder:'Documente',label:'Documentele mele'}];
+    w.__ux.page('files');await tick();await w.__ux.refreshCleanup(true);await tick();
+    assert(!$('organizer-workspace').hidden);assert.equal($('organizer-requests').children.length,0,'v4 must not duplicate the legacy form');
+    $('organizer-workspace').querySelector('[data-organizer-count="0"]').click();
+    $('organizer-start').click();await tick();await tick();
+    const create=fixture.calls.findLast(c=>c.route.endsWith('/jobs')&&c.method==='POST');
+    assert.equal(create.body.source,'photos');assert.equal(create.body.scope.folder,'');assert.equal(create.body.auto_apply,true);assert.equal(create.body.ai_consent,false);
+    const command=callFor('/command','POST');assert.equal(command.body.count,0);assert.equal(command.body.action,'continue');
+    assert.match($('organizer-jobs').textContent,/Așteaptă telefonul/);assert(!$('organizer-jobs').textContent.includes('Gata'));
+    assert(!$('organizer-jobs').querySelector('progress'),'Unknown/empty inventory must not show invented progress');
+    assert.equal([...$('organizer-jobs').querySelectorAll('button')].filter(b=>/^Continuă$|^Următoarele/.test(b.textContent)).length,0);
+  });
+  await check('v4 document selection preserves the authorized tree and exact next-N count', async () => {
+    $('organizer-workspace').querySelector('[data-organizer-source="files"]').click();
+    assert.equal($('organizer-source-id').selectedOptions[0].textContent,'Documentele mele');
+    $('organizer-scope').value='folder';$('organizer-scope').dispatchEvent(new w.Event('change'));
+    $('organizer-folder').value='Facturi';$('organizer-folder').dispatchEvent(new w.Event('input'));
+    $('organizer-workspace').querySelector('[data-organizer-count="-1"]').click();$('organizer-count').value='75';$('organizer-count').dispatchEvent(new w.Event('input'));
+    $('organizer-start').click();await tick();await tick();
+    const create=fixture.calls.findLast(c=>c.route.endsWith('/jobs')&&c.method==='POST');
+    assert.equal(create.body.source,'files');assert.equal(create.body.source_id,fixture.cleanup.devices[0].grant.sources[0].id);assert.equal(create.body.scope.folder,'Facturi');
+    assert.equal(callFor('/command','POST').body.count,75);
+    const before=fixture.calls.filter(c=>c.route.endsWith('/jobs')&&c.method==='POST').length;
+    $('organizer-mode').value='online';$('organizer-mode').dispatchEvent(new w.Event('change'));$('organizer-start').click();await tick();
+    assert.equal(fixture.calls.filter(c=>c.route.endsWith('/jobs')&&c.method==='POST').length,before,'Online content consent is required');
+    $('organizer-mode').value='local';$('organizer-mode').dispatchEvent(new w.Event('change'));
+  });
+  await check('v4 progress and verified copies stay distinct from moved originals', async () => {
+    const job=fixture.organizer.jobs[0];job.state='partial';job.inventory_unavailable=2;job.counters={total:8,moved:2,uploaded:1,needs_review:1,failed_retryable:1,copied_pending_removal:1};
+    const id=randomUUID(),file={...fixture.files.items[0],id:randomUUID(),expires_at:Date.now()+86400000};
+    fixture.organizer.items[job.id]={items:[{id,name:'<img onerror=bad()> factură',state:'uploaded',destination:'FORJA/Facturi',reason:'<script>bad()</script>',received:true,file,file_id:file.id},{id:randomUUID(),name:'Original mutat',state:'moved',destination:'FORJA/Poze',received:false,file:null,file_id:randomUUID()}],next_cursor:null,total:2};
+    await w.__ux.refreshOrganizerJobs();const card=$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"]');
+    assert.match(card.textContent,/2 din 8 mutate/);assert.match(card.textContent,/2 inaccesibile pe telefon/);assert.match(card.textContent,/originalele încă așteaptă/);
+    const detail=card.querySelector('.organizer-job-detail');detail.open=true;await tick();
+    assert.equal(detail.querySelectorAll('img,script').length,0);assert.equal([...detail.querySelectorAll('button')].filter(b=>b.textContent==='Vezi copia').length,1);
+    assert.match(detail.textContent,/Progresul originalului este păstrat/);
+    const checkbox=detail.querySelector('input[type=checkbox]');checkbox.checked=true;checkbox.dispatchEvent(new w.Event('change'));
+    const before=fixture.calls.filter(c=>c.route.endsWith('/approve')).length;
+    await clickText(detail,/^Aprobă mutările$/);assert.equal(fixture.calls.filter(c=>c.route.endsWith('/approve')).length,before,'Move approval is separate');
+    const confirm=[...detail.querySelectorAll('input[type=checkbox]')].at(-1);confirm.checked=true;await clickText(detail,/^Aprobă mutările$/);
+    assert.equal(callFor('/approve','POST').body.items[0].id,id);assert.equal(callFor('/approve','POST').body.confirm,true);
+  });
+  await check('v4 command response defeats an older overlapping poll', async () => {
+    const job=fixture.organizer.jobs[0];job.state='paused';await w.__ux.refreshOrganizerJobs();
+    const old=structuredClone(fixture.organizer.jobs),fetch=w.fetch;let resolve;
+    w.fetch=(url,options)=>String(url).endsWith('/jobs')&&(!options?.method||options.method==='GET')?new Promise(r=>resolve=r):fetch(url,options);
+    try{const poll=w.__ux.refreshOrganizerJobs();await tick();await w.__ux.sendOrganizerCommand(w.__ux.organizerV4.jobs.get(job.id),'continue',50);resolve(Response.json({jobs:old}));await poll;
+      assert.equal(w.__ux.organizerV4.jobs.get(job.id).state,'awaiting_phone');assert.equal(callFor('/command','POST').body.count,50);
+    }finally{w.fetch=fetch;}
+  });
+  await check('v4 lost command responses retry the same request and original revision', async () => {
+    const job=fixture.organizer.jobs[0];job.state='paused';await w.__ux.refreshOrganizerJobs();
+    const fetch=w.fetch;let failed=false;w.fetch=async(url,options)=>{const response=await fetch(url,options);if(String(url).endsWith('/command')&&!failed){failed=true;throw new Error('Connection lost after server acceptance');}return response;};
+    try{await assert.rejects(w.__ux.sendOrganizerCommand(w.__ux.organizerV4.jobs.get(job.id),'continue',100));await w.__ux.refreshOrganizerJobs();await w.__ux.sendOrganizerCommand(w.__ux.organizerV4.jobs.get(job.id),'continue',100);
+      const requests=fixture.calls.filter(c=>c.route.endsWith('/command')&&c.body.count===100).slice(-2);assert.equal(requests.length,2);assert.deepEqual(requests[0].body,requests[1].body);
+    }finally{w.fetch=fetch;}
+  });
+  await check('v4 completed finite batches offer the next N without pretending the job finished', async () => {
+    const job=fixture.organizer.jobs[0];job.state='running';job.command={action:'continue',count:50,status:'complete',selected:50,finished:50};await w.__ux.refreshOrganizerJobs();
+    const card=$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"]'),choice=card.querySelector('select[aria-label="Mărimea următorului lot"]');assert(choice);
+    choice.value='100';choice.dispatchEvent(new w.Event('change'));await clickText(card,/^Organizează următorul lot$/);
+    assert.equal(callFor('/command','POST').body.count,100);assert.match(card.textContent,/Așteaptă telefonul/);
+  });
+  await check('local analyzed items permit explicit approval without claiming a cloud copy', async () => {
+    const job=fixture.organizer.jobs[0];job.mode='local';job.state='partial';job.updated_at=Date.now();const id=randomUUID();
+    fixture.organizer.items[job.id]={items:[{id,version:'local-1',sha256:'a'.repeat(64),name:'Document local',state:'analyzed',destination:'FORJA/Facturi',received:false,file:null}],total:1,next_cursor:null};
+    await w.__ux.refreshOrganizerJobs();const body=$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"] .organizer-items');await w.__ux.openOrganizerJobItems(job.id,body);
+    assert.equal([...body.querySelectorAll('button')].filter(b=>b.textContent==='Vezi copia').length,0);const choice=body.querySelector('input[type=checkbox]');assert(!choice.disabled);choice.checked=true;choice.dispatchEvent(new w.Event('change'));
+    const fetch=w.fetch;let lost=false;w.fetch=async(url,options)=>{const response=await fetch(url,options);if(String(url).endsWith('/approve')&&!lost){lost=true;throw Error('Lost approval response');}return response;};
+    try{await assert.rejects(w.__ux.approveOrganizerItems(job.id,body,true));await w.__ux.refreshOrganizerJobs();await w.__ux.approveOrganizerItems(job.id,body,true);
+      const requests=fixture.calls.filter(c=>c.route.endsWith('/approve')).slice(-2);assert.deepEqual(requests[0].body,requests[1].body);
+    }finally{w.fetch=fetch;}
+  });
+  await check('original moves require confirmation and retain queued status until a phone receipt', async () => {
+    const job=fixture.organizer.jobs[0],item=fixture.files.items[0];Object.assign(item,{device_id:job.device,organizer_job:job.id,organizer_item:randomUUID(),folder:'Documente'});await w.__ux.refreshFiles();
+    const oldPrompt=w.prompt,oldConfirm=w.confirm;w.prompt=()=> 'FORJA/Facturi';w.confirm=()=>false;
+    try{const before=fixture.calls.length;await w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id));assert(!fixture.calls.slice(before).some(c=>c.method==='PATCH'));
+      w.confirm=()=>true;await w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id));let card=$('vault-grid').querySelector('[data-file="'+item.id+'"]');assert.equal(card.querySelector('.vault-folder').textContent,'Documente');assert.match(card.textContent,/Mutare cerută → FORJA\/Facturi/);
+      await w.__ux.refreshFiles(false,true);assert.match(card.textContent,/așteaptă telefonul/);
+      item.folder='FORJA/Facturi';delete item.pending_folder;item.sync_state='applied';await w.__ux.refreshFiles(false,true);assert.equal(card.querySelector('.vault-folder').textContent,'FORJA/Facturi');assert(card.querySelector('.vault-sync').hidden);assert(card.querySelector('[data-vault-move]').disabled);
+    }finally{w.prompt=oldPrompt;w.confirm=oldConfirm;}
+  });
+  await check('lost original-move responses preserve their approval request and revision', async () => {
+    const item=fixture.files.items[0],job=fixture.organizer.jobs[0],fetch=w.fetch,oldPrompt=w.prompt;w.prompt=()=> 'FORJA/Arhivă';let lost=false;
+    w.fetch=async(url,options)=>{const response=await fetch(url,options);if(options?.method==='PATCH'&&!lost){lost=true;job.revision++;throw Error('Lost move response');}return response;};
+    try{await assert.rejects(w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id)));await w.__ux.refreshFiles(false,true);await w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id));const requests=fixture.calls.filter(c=>c.route.endsWith('/'+item.id)&&c.method==='PATCH').slice(-2);assert.deepEqual(requests[0].body,requests[1].body);}
+    finally{w.fetch=fetch;w.prompt=oldPrompt;}
+  });
+  await check('a stale gallery poll cannot undo a newly queued original move', async () => {
+    const item=fixture.files.items[0],fetch=w.fetch,old=structuredClone(fixture.files),oldPrompt=w.prompt;let resolve;w.prompt=()=> 'FORJA/Documente';
+    w.fetch=(url,options)=>String(url).startsWith('/v2/files?')?new Promise(r=>resolve=r):fetch(url,options);
+    try{const poll=w.__ux.refreshFiles(false,true);await tick();await w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id));resolve(Response.json(old));await poll;assert.equal(w.__ux.vault.rows.get(item.id).pending_folder,'FORJA/Documente');assert.match($('vault-grid').querySelector('[data-file="'+item.id+'"] .vault-sync').textContent,/FORJA\/Documente/);}
+    finally{w.fetch=fetch;w.prompt=oldPrompt;}
+  });
+  await check('AI evidence is escaped and review-only deletion never selects or deletes originals', async () => {
+    const job=fixture.organizer.jobs[0],entry=fixture.organizer.items[job.id].items[0];entry.analysis={coverage:{status:'partial',pages_processed:1,pages_total:4},evidence:[{id:'e1',kind:'text',quote:'<img src=x onerror=bad()>',page:1}],deletion:{suggested:true,basis:'low_information',reason:'Scanare fără informație lizibilă.',evidence_ids:['e1'],requires_confirmation:true,review_only:true}};job.updated_at=Date.now();
+    await w.__ux.refreshOrganizerJobs();const body=$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"] .organizer-items');await w.__ux.openOrganizerJobItems(job.id,body);
+    assert.match(body.textContent,/1 din 4 pagini analizate/);assert.match(body.textContent,/De verificat pentru ștergere/);assert.equal(body.querySelectorAll('img,script').length,0);assert.equal([...body.querySelectorAll('button')].filter(b=>/^Șterge original/.test(b.textContent)).length,0);
+  });
+  await check('forgetting a job preserves its copies and removes only returned progress', async () => {
+    const job=fixture.organizer.jobs.at(-1),count=fixture.files.items.length;await w.__ux.deleteOrganizerJob(job.id);assert.equal(fixture.files.items.length,count);assert(!w.__ux.organizerV4.jobs.has(job.id));assert(!$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"]'));
+  });
+  await check('visibility scopes remain independent per friend and need explicit consent', async () => {
+    w.__ux.page('social');await tick();await w.__ux.openVisibility();const form=$('social-visibility-form'),save=[...form.querySelectorAll('button')].find(b=>b.textContent==='Salvează');assert(save.disabled);
+    const first=[...form.querySelector('fieldset').querySelectorAll('input')];assert(first[1].disabled);first[0].checked=true;first[0].dispatchEvent(new w.Event('change'));assert(!first[1].disabled);first[1].checked=true;first[2].checked=true;
+    const second=[...form.querySelectorAll('fieldset')][1].querySelectorAll('input');second[2].checked=true;
+    const consent=[...form.querySelectorAll(':scope>label input')].at(-1);consent.checked=true;consent.dispatchEvent(new w.Event('change'));await clickText(form,/^Salvează$/);
+    const request=callFor('/visibility','POST');assert.deepEqual(request.body.grants[0],{id:fixture.social.friends[0].id,current:true,ghost:true,history:true});assert.deepEqual(request.body.grants[1],{id:fixture.social.friends[1].id,current:false,ghost:false,history:true});assert.equal(request.body.consent,true);
+    await w.__ux.openVisibility();await clickText($('social-visibility-form'),/^Oprește toate partajările$/);assert(callFor('/social/session','DELETE'));assert.equal(fixture.visibility.grants.length,0);
+  });
+  await check('stale visibility consent cannot restore sharing after stop-all', async () => {
+    fixture.visibility.grants=[{id:fixture.social.friends[0].id,current:true,ghost:true,history:true}];await w.__ux.openVisibility();const form=$('social-visibility-form');const consent=[...form.querySelectorAll(':scope>label input')].at(-1);consent.checked=true;consent.dispatchEvent(new w.Event('change'));
+    fixture.visibility={ghost:true,grants:[],updated_at:Date.now(),revision:fixture.visibility.revision+1};const before=fixture.calls.filter(c=>c.route.endsWith('/visibility')&&c.method==='POST').length;
+    await clickText(form,/^Salvează$/);await tick();assert($('visibility-dialog').open);assert([...form.querySelectorAll('fieldset input')].every(input=>!input.checked));assert(![...form.querySelectorAll(':scope>label input')].at(-1).checked);assert([...form.querySelectorAll('button')].find(b=>b.textContent==='Salvează').disabled);
+    assert.equal(fixture.calls.filter(c=>c.route.endsWith('/visibility')&&c.method==='POST').length,before+1,'Never retry previously granted scopes automatically');$('visibility-dialog').close();
+  });
+  await check('exploration starts only after consent and remains separate from social sharing', async () => {
+    let watched=0,cleared=0;Object.defineProperty(w.navigator,'geolocation',{configurable:true,value:{watchPosition(){watched++;return 42;},clearWatch(){cleared++;}}});
+    $('journey-start').click();assert($('journey-consent-dialog').open);assert($('journey-confirm').disabled);assert.equal(watched,0);
+    $('journey-consent').checked=true;$('journey-consent').dispatchEvent(new w.Event('change'));$('journey-confirm').click();await tick();assert.equal(watched,1);assert.equal(callFor('/journey/session','POST').body.consent,true);assert.equal(fixture.visibility.grants.length,0);
+    await w.__ux.stopJourney();assert(cleared>0);assert(callFor('/journey/session','DELETE'));assert.equal(w.__ux.journeyUI.recording,null);
+  });
+  await check('exploration queue survives history switching and stop waits for the active upload', async () => {
+    await w.__ux.startJourney();const id=w.__ux.journeyUI.recording;assert(id);w.__ux.journeyUI.queue.push({id:randomUUID(),session:id,points:[{at:Date.now(),lat:44.4,lon:26.1,accuracy:10,speed:0}]});
+    const fetch=w.fetch;let resolve;w.fetch=(url,options)=>String(url).endsWith('/journey/samples')?new Promise(r=>resolve=r):fetch(url,options);
+    try{const flush=w.__ux.journeyFlush();await tick();await w.__ux.journeyShared(fixture.social.friends[0].id);assert(w.__ux.journeyUI.sending);const before=fixture.calls.filter(c=>c.route.endsWith('/journey/session')&&c.method==='DELETE').length;const stop=w.__ux.stopJourney();await tick();assert.equal(fixture.calls.filter(c=>c.route.endsWith('/journey/session')&&c.method==='DELETE').length,before);
+      resolve(Response.json({ok:true}));await flush;await stop;assert.equal(w.__ux.journeyUI.queue.length,0);assert.equal(w.__ux.journeyUI.sending,false);assert.equal(w.__ux.journeyUI.recording,null);assert.equal(fixture.calls.filter(c=>c.route.endsWith('/journey/session')&&c.method==='DELETE').length,before+1);
+    }finally{w.fetch=fetch;await w.__ux.journeyShared(null);}
+  });
+  await check('denied shared history clears prior map data and place details', async () => {
+    const visit={id:randomUUID(),name:'Loc privat',lat:44.4,lon:26.1,observed_ms:19000000};fixture.journey.visits=[visit];await w.__ux.journeyShared(fixture.social.friends[0].id);assert.match($('journey-visits').textContent,/Loc privat/);
+    await clickText($('journey-visits'),/^Vezi locul$/);assert.match($('journey-selection').textContent,/Loc privat/);
+    const fetch=w.fetch;w.fetch=(url,options)=>String(url).includes('/journey/state')?Promise.resolve(Response.json({error:'Istoric indisponibil.'},{status:403})):fetch(url,options);
+    try{await w.__ux.journeyShared(fixture.social.friends[1].id);assert.equal(w.__ux.journeyUI.data,null);assert.equal($('journey-selection').textContent,'');assert.equal($('journey-visits').textContent,'');}
+    finally{w.fetch=fetch;fixture.journey.visits=[];await w.__ux.journeyShared(null);}
+  });
   await check('logout clears private content and pending social data', async () => {
     w.__ux.page('social'); await tick();
-    const fetch = w.fetch; let resolve, resolveSleep;
-    w.fetch = (url, options) => String(url).endsWith('/v2/recovery/devices') ? new Promise(r => {resolve = r;}) : String(url).endsWith('/v2/sleep/sessions') ? new Promise(r => {resolveSleep = r;}) : fetch(url, options);
-    const pending = w.__ux.refreshRecovery(), pendingSleep = w.__ux.refreshSleepReports(); await tick(); w.__ux.logout();
+    const fetch = w.fetch; let resolve, resolveSleep, resolveJobs;
+    w.fetch = (url, options) => String(url).endsWith('/v2/recovery/devices') ? new Promise(r => {resolve = r;}) : String(url).endsWith('/v2/sleep/sessions') ? new Promise(r => {resolveSleep = r;}) : String(url).endsWith('/jobs') ? new Promise(r=>resolveJobs=r) : fetch(url, options);
+    const pending = w.__ux.refreshRecovery(), pendingSleep = w.__ux.refreshSleepReports(), pendingJobs=w.__ux.refreshOrganizerJobs(); await tick(); w.__ux.logout();
     resolve(Response.json({devices: fixture.recovery})); await pending;
     resolveSleep(Response.json({sessions:[{id:randomUUID(),state:'complete',started_at:Date.now()}]})); await pendingSleep;
+    resolveJobs(Response.json({jobs:fixture.organizer.jobs}));await pendingJobs;
     w.fetch = fetch;
     assert($('app').hidden); assert(!$('login').hidden);
     assert.equal(w.__ux.socialUI.data, null); assert.equal(w.__ux.recoveryUI.data, null);
     assert.equal($('social-friends').childNodes.length, 0); assert.equal($('recovery-devices').childNodes.length, 0);
     assert.equal($('vault-grid').childNodes.length, 0);
     assert.equal($('sleep-reports').childNodes.length, 0); assert.equal(w.__ux.sleepUI.owner, null);
+    assert.equal($('organizer-jobs').childNodes.length,0);assert.equal(w.__ux.organizerV4.device,null);
   });
   await check('privacy opened during sign in stays the only visible screen', async () => {
     const fetch = w.fetch; let resolve;
