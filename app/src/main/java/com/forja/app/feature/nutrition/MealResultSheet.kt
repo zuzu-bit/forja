@@ -49,7 +49,7 @@ fun MealResultSheet(
                 SourceBadge("ESTIMARE AI", tone = Accent2)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Încredere: ${analysis.incredere} — o poți corecta oricând.",
+                    "Încredere: ${analysis.incredere}. Corectează ce nu se potrivește.",
                     style = BodyTiny.copy(color = TextSecondary)
                 )
             }

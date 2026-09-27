@@ -33,7 +33,7 @@ object MealAnalyze {
             }
         } else {
             val key = app.prefs.geminiKey.first()
-            if (key.isBlank()) return AnalyzeOutcome.Fail("Activează analiza AI din Profil.")
+            if (key.isBlank()) return AnalyzeOutcome.Fail("Activează analiza pozelor din Profil.")
             when (val res = app.geminiFood.analyze(key, bytes)) {
                 is GeminiFood.Result.Ok -> AnalyzeOutcome.Ok(res.analysis)
                 is GeminiFood.Result.Fail -> AnalyzeOutcome.Fail(res.message)
