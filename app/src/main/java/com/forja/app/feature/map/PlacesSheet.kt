@@ -52,7 +52,9 @@ fun PlacesSheet(
     onDelete: (PlaceEntity) -> Unit,
     onRecommend: (PlaceEntity) -> Unit,
     onPick: (Double, Double) -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    syncSite: Boolean = false,
+    onSyncSite: (Boolean) -> Unit = {}
 ) {
     ModalBottomSheet(
         onDismissRequest = onClose,
@@ -103,6 +105,29 @@ fun PlacesSheet(
                 Spacer(Modifier.height(8.dp))
                 Text(
                     "Un loc = ai STAT aici cel puțin atât. Mersul pe stradă nu e vizită.",
+                    style = BodyTiny.copy(color = TextDim)
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // „Și pe site”: opt-in explicit, implicit oprit. Spunem clar ce pleacă din telefon.
+            ForjaCard(Modifier.fillMaxWidth(), fill = Surface2) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Și pe site", style = BodyStrong.copy(fontSize = 14.sp))
+                        Text(
+                            "Zonele și locurile tale apar și în panoul online, cu același cont.",
+                            style = BodyTiny.copy(color = TextDim)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    ForjaSwitch(checked = syncSite, onCheckedChange = onSyncSite)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    if (syncSite) "Pleacă din telefon: celulele de 150 m și locurile, cu nume, stele și notă. Atât. „Harta ta te așteaptă și pe laptop.”"
+                    else "Oprit. Nimic din explorare nu pleacă din telefon.",
                     style = BodyTiny.copy(color = TextDim)
                 )
             }

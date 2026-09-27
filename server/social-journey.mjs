@@ -26,6 +26,85 @@ async function read(req,names,required=names){const {value}=await readJSON(req,3
 async function page(s,id,kind,cursor){if(cursor==='-')return{values:[],next:'-'};const p=prefix(id,kind);if(cursor&&(!cursor.startsWith(p)||cursor.length>300))bad('Pagina nu este validă.');const rows=[...await s.list({prefix:p,limit:PAGE+1,...(cursor?{startAfter:cursor}:{})})];return{values:rows.slice(0,PAGE).map(([,v])=>v),next:rows.length>PAGE?rows[PAGE-1][0]:'-'};}
 function decodeCursor(value){if(!value)return{};try{const c=JSON.parse(atob(value));keys(c,['route','zone','visit']);for(const v of Object.values(c))if(typeof v!=='string'||v.length>300)throw Error();return c;}catch{bad('Pagina nu este validă.');}}
 
+/* v4.0: the phone's 150 m explore cells + places (stars/notes) mirrored on the site map. The phone stays the source of truth. */
+export const EXPLORE_RULES=Object.freeze({cells:500,places:100,page:200,bytes:65536,span:0.01,grid_min:100,grid_max:500});
+const MAX_AT=253402300799999, cellId=/^-?\d{1,9}_-?\d{1,9}$/, placeId=/^[A-Za-z0-9_-]{1,64}$/;
+const eprefix=(id,kind)=>'explore:'+id+':'+kind+':';
+const emeta=id=>'explore-meta:'+id;
+const int=(v,a,b,msg='Valoare invalidă.')=>{if(!Number.isSafeInteger(v)||v<a||v>b)bad(msg);return v;};
+const label=(v,n)=>{if(v===undefined||v===null)return '';if(typeof v!=='string'||v.length>n||/[\x00-\x1f\x7f]/.test(v))bad('Text invalid.');return v.trim();};
+const live=v=>!!v&&v.deleted!==true;
+function cellFeature(c){return feature({type:'Polygon',coordinates:[[[c.min_lng,c.min_lat],[c.max_lng,c.min_lat],[c.max_lng,c.max_lat],[c.min_lng,c.max_lat],[c.min_lng,c.min_lat]]]},{id:c.id,first_at:c.first_at,last_at:c.last_at,visits:c.visits,kind:'explored'});}
+function publicPlace(v){return {id:v.id,lat:v.lat,lon:v.lng,lng:v.lng,name:v.name,stars:v.stars,note:v.note,recommended:v.recommended,stay_ms:v.stay_ms,first_at:v.first_at,last_at:v.last_at,updated_at:v.updated_at};}
+function validCell(c){
+ keys(c,['id','min_lat','min_lng','max_lat','max_lng','first_at','last_at','visits']);
+ if(typeof c.id!=='string'||!cellId.test(c.id))bad('Celulă invalidă.');
+ finite(c.min_lat,-85,85);finite(c.max_lat,-85,85);finite(c.min_lng,-180,180);finite(c.max_lng,-180,180);
+ if(c.max_lat<=c.min_lat||c.max_lng<=c.min_lng||c.max_lat-c.min_lat>EXPLORE_RULES.span||c.max_lng-c.min_lng>EXPLORE_RULES.span)bad('Celulă invalidă.');
+ int(c.first_at,0,MAX_AT,'Celulă invalidă.');int(c.last_at,c.first_at,MAX_AT,'Celulă invalidă.');int(c.visits,1,1000000,'Celulă invalidă.');
+ return {id:c.id,min_lat:c.min_lat,min_lng:c.min_lng,max_lat:c.max_lat,max_lng:c.max_lng,first_at:c.first_at,last_at:c.last_at,visits:c.visits};
+}
+function validPlace(v,p){
+ keys(v,['id','lat','lng','first_at','last_at','stay_ms','name','stars','note','recommended','visible_to','updated_at','deleted'],['id','updated_at']);
+ if(typeof v.id!=='string'||!placeId.test(v.id))bad('Loc invalid.');
+ int(v.updated_at,0,MAX_AT,'Loc invalid.');
+ if(v.deleted!==undefined&&typeof v.deleted!=='boolean')bad('Loc invalid.');
+ if(v.deleted===true)return {id:v.id,deleted:true,updated_at:v.updated_at};
+ finite(v.lat,-85,85);finite(v.lng,-180,180);
+ const first_at=v.first_at===undefined?0:int(v.first_at,0,MAX_AT,'Loc invalid.'),last_at=v.last_at===undefined?first_at:int(v.last_at,0,MAX_AT,'Loc invalid.');
+ const stay_ms=v.stay_ms===undefined?0:int(v.stay_ms,0,MAX_AT,'Loc invalid.'),stars=v.stars===undefined?0:int(v.stars,0,5,'Stele invalide.');
+ if(v.recommended!==undefined&&typeof v.recommended!=='boolean')bad('Loc invalid.');
+ if(v.visible_to!==undefined&&(!Array.isArray(v.visible_to)||v.visible_to.length>100||v.visible_to.some(x=>typeof x!=='string'||!uid.test(x))))bad('Loc invalid.');
+ // Only accepted, unblocked friends may see a place; anyone else is dropped silently (same rule as places.visibleTo).
+ const visible_to=[...new Set(v.visible_to||[])].filter(x=>x!==p.id&&p.friends.includes(x)&&!p.blocked.includes(x));
+ return {id:v.id,lat:v.lat,lng:v.lng,first_at,last_at,stay_ms,name:label(v.name,80),stars,note:label(v.note,300),recommended:v.recommended===true,visible_to,updated_at:v.updated_at};
+}
+async function wipeExplore(s,id){for(const kind of ['cell','place']){let rows;do{rows=await s.list({prefix:eprefix(id,kind),limit:500});for(const key of rows.keys())await s.delete(key);}while(rows.size===500);}await s.delete(emeta(id));}
+async function handleExplore(req,graph,p,path,method,url,now){
+ const s=graph.s;
+ if(path==='/explore/sync'&&method==='POST'){
+  const {value:v}=await readJSON(req,EXPLORE_RULES.bytes);keys(v,['device','grid_m','revision','reset','cells','places'],['device']);
+  if(typeof v.device!=='string'||!idPattern.test(v.device))bad('Dispozitiv invalid.');
+  const grid=v.grid_m===undefined?150:int(v.grid_m,EXPLORE_RULES.grid_min,EXPLORE_RULES.grid_max,'Grilă invalidă.');
+  const revision=v.revision===undefined?null:int(v.revision,0,Number.MAX_SAFE_INTEGER,'Revizie invalidă.');
+  if(v.reset!==undefined&&typeof v.reset!=='boolean')bad('Resetare invalidă.');
+  const cells=v.cells===undefined?[]:v.cells,places=v.places===undefined?[]:v.places;
+  if(!Array.isArray(cells)||cells.length>EXPLORE_RULES.cells||!Array.isArray(places)||places.length>EXPLORE_RULES.places)bad('Lot prea mare.');
+  const cellRows=cells.map(validCell),placeRows=places.map(x=>validPlace(x,p));
+  if(v.reset===true)await wipeExplore(s,p.id);
+  const meta={cells:0,places:0,revision:0,grid_m:grid,...(v.reset===true?null:await s.get(emeta(p.id)))};
+  const writes=new Map(),get=async key=>writes.has(key)?writes.get(key):await s.get(key);
+  for(const c of cellRows){const key=eprefix(p.id,'cell')+c.id,old=await get(key);if(!old)meta.cells++;writes.set(key,old?{...c,first_at:Math.min(old.first_at,c.first_at),last_at:Math.max(old.last_at,c.last_at),visits:Math.max(old.visits,c.visits)}:c);}
+  for(const r of placeRows){const key=eprefix(p.id,'place')+r.id,old=await get(key);if(old&&old.updated_at>r.updated_at)continue;if(live(old)&&!live(r))meta.places--;if(!live(old)&&live(r))meta.places++;writes.set(key,r);}
+  meta.places=Math.max(0,meta.places);meta.grid_m=grid;meta.device=v.device;if(revision!==null)meta.revision=revision;meta.updated_at=now;writes.set(emeta(p.id),meta);
+  await s.transaction(async tx=>{for(const [key,value] of writes)await tx.put(key,value);});
+  return reply({ok:true,cells:meta.cells,places:meta.places,revision:meta.revision||0,server_at:now});
+ }
+ if(path==='/explore/state'&&method==='GET'){
+  const owner=url.searchParams.get('owner')||p.id;let target=p;
+  if(owner!==p.id){if(!uid.test(owner))bad('Persoană invalidă.');target=await graph.friend(p,owner);if(!permitted(target,p.id,'history'))bad('Istoricul nu este partajat cu tine.',403);}
+  const cursor=url.searchParams.get('cursor')||'';if(cursor&&!cellId.test(cursor))bad('Pagina nu este validă.');
+  const cp=eprefix(owner,'cell'),rows=[...await s.list({prefix:cp,limit:EXPLORE_RULES.page+1,...(cursor?{startAfter:cp+cursor}:{})})];
+  const cells=rows.slice(0,EXPLORE_RULES.page).map(([,c])=>cellFeature(c)),next=rows.length>EXPLORE_RULES.page?rows[EXPLORE_RULES.page-1][1].id:null;
+  const places=[...await s.list({prefix:eprefix(owner,'place'),limit:1000})].map(([,v])=>v).filter(v=>live(v)&&(owner===p.id||(v.visible_to||[]).includes(p.id))).sort((a,b)=>b.last_at-a.last_at).map(publicPlace);
+  const meta=await s.get(emeta(owner));
+  return reply({owner,grid_m:meta?.grid_m||150,cells:fc(cells),places,next_cursor:next,updated_at:meta?.updated_at||0});
+ }
+ const match=path.match(/^\/explore\/places\/([A-Za-z0-9_-]{1,64})$/);
+ if(match&&method==='PATCH'){
+  const key=eprefix(p.id,'place')+match[1],place=await s.get(key);if(!live(place))bad('Loc indisponibil.',404);
+  const v=await read(req,['name','stars','note'],[]);if(!Object.keys(v).length)bad('Alege un nume, stele sau o notă.');
+  if(v.name!==undefined)place.name=label(v.name,80);if(v.note!==undefined)place.note=label(v.note,300);if(v.stars!==undefined)place.stars=int(v.stars,0,5,'Stele invalide.');
+  // Strictly newer than any phone edit already received, so the phone's last-writer-wins pull applies it.
+  place.updated_at=Math.max(now,(place.updated_at||0)+1);
+  const meta=await s.get(emeta(p.id))||{cells:0,places:1,revision:0,grid_m:150};meta.updated_at=now;
+  await s.transaction(async tx=>{await tx.put(key,place);await tx.put(emeta(p.id),meta);});
+  return reply(publicPlace(place));
+ }
+ if(path==='/explore/history'&&method==='DELETE'){await wipeExplore(s,p.id);return reply({ok:true});}
+ bad('Acțiune indisponibilă.',404);
+}
+
 export async function handleJourney(req,graph,p,path){
  const method=req.method,s=graph.s,url=new URL(req.url),now=Date.now();
  if(path==='/visibility'&&method==='GET')return reply(p.visibility||{ghost:false,grants:[],configured:false,revision:0,updated_at:0});
@@ -36,6 +115,7 @@ export async function handleJourney(req,graph,p,path){
   const seen=new Set();for(const g of v.grants){keys(g,['id','current','ghost','history']);if(!uid.test(g.id||'')||seen.has(g.id)||[g.current,g.ghost,g.history].some(x=>typeof x!=='boolean')||g.ghost&&!g.current)bad('Alege separat locația și istoricul.');seen.add(g.id);await graph.friend(p,g.id);}
   p.visibility={ghost:v.ghost,grants:v.grants.filter(g=>g.current||g.history),configured:true,revision:v.revision+1,updated_at:now};await graph.save(p);return reply(p.visibility);
  }
+ if(path.startsWith('/explore/'))return handleExplore(req,graph,p,path,method,url,now);
  if(!path.startsWith('/journey/'))return null;
  if(path==='/journey/state'&&method==='GET'){
   const owner=url.searchParams.get('owner')||p.id;let target=p;

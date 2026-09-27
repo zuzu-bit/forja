@@ -45,6 +45,7 @@ import com.forja.app.core.data.RecommendedPlace
 import com.forja.app.core.data.db.PlaceEntity
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
+import com.forja.app.core.explore.ExploreSync
 import com.forja.app.core.location.BgLocation
 import com.forja.app.core.location.GoTrackService
 import com.forja.app.core.map.ForjaTiles
@@ -145,6 +146,11 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
     val showExplore by app.prefs.showExplore.collectAsState(initial = true)
     val map3d by app.prefs.map3d.collectAsState(initial = false)
     val thresholdMin by app.prefs.placeThresholdMin.collectAsState(initial = 300)
+    // „Și pe site”: la deschiderea hărții preluăm editările făcute din laptop (doar cu comutatorul pornit).
+    val syncSite by app.prefs.exploreSyncSite.collectAsState(initial = false)
+    LaunchedEffect(syncSite) {
+        if (syncSite) try { ExploreSync.pull(app) } catch (_: Exception) { }
+    }
     var tileState by remember { mutableStateOf(TileState.CARTO) }
     var placesOpen by remember { mutableStateOf(false) }
     var selectedPlace by remember { mutableStateOf<PlaceSel?>(null) }
@@ -1058,7 +1064,21 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                 mapRef.value?.controller?.setZoom(16.0)
                 mapRef.value?.controller?.animateTo(GeoPoint(lat, lng))
             },
-            onClose = { placesOpen = false }
+            onClose = { placesOpen = false },
+            syncSite = syncSite,
+            onSyncSite = { on ->
+                scope.launch {
+                    app.prefs.setExploreSyncSite(on)
+                    if (on) {
+                        ExploreSync.schedule(context)
+                        ExploreSync.kick(context)
+                        toast.show("Explorarea merge și pe site. Intră în panoul online cu același cont.")
+                    } else {
+                        ExploreSync.cancel(context)
+                        toast.show("Oprit. Explorarea rămâne doar în telefon.")
+                    }
+                }
+            }
         )
     }
 }
