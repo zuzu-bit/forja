@@ -15,3 +15,6 @@ node_modules/
 
 __pycache__/
 *.pyc
+
+# Reassembled from the two Git-tracked, SHA-256-pinned model parts by sleep-update/build.py.
+android-updates/visual-update/assets/forja/yamnet.onnx

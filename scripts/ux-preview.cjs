@@ -3,9 +3,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const {server, createFixture, installMockFetch, clientSource} = require('./ux-fixture.cjs');
-const output = path.resolve(process.argv[2] || path.join(__dirname, '../../forja-ux-preview.html'));
 const script = value => '<script>' + value.replace(/<\/script/gi, '<\\/script') + '</script>';
-const fixture = createFixture();
+function buildPreview({fixture = createFixture(), defaultPage = 'overview'} = {}) {
 let html = fs.readFileSync(path.join(server, 'insights.html'), 'utf8')
   .replace(/<script\b[^>]*src=["'][^"']+["'][^>]*><\/script>/g, '')
   .replace(/<link\b[^>]*href=["']\/insights\/leaflet.css["'][^>]*>/g, '')
@@ -30,13 +29,19 @@ if(reviewParams.get('view')!=='login'){
   const reviewTimer=setInterval(()=>{
     if(document.getElementById('app').hidden)return;
     clearInterval(reviewTimer);
-    const name=reviewParams.get('page')||'overview';
+    const name=reviewParams.get('page')||${JSON.stringify(defaultPage)};
     document.querySelector('[data-page="'+name.replace(/[^a-z]/g,'')+'"]')?.click();
   },30);
   setTimeout(()=>clearInterval(reviewTimer),3000);
 }
 `;
 html = html.replace('</body>', '<div class="ux-demo-badge"><b>DEMO · date sintetice</b>Previzualizare locală</div>' + script(leafletJS) + script(setup) + script(clientSource()) + script(boot) + '</body>');
-fs.mkdirSync(path.dirname(output), {recursive: true});
-fs.writeFileSync(output, html);
-console.log(output);
+return html;
+}
+if (require.main === module) {
+  const output = path.resolve(process.argv[2] || path.join(__dirname, '../../forja-ux-preview.html'));
+  fs.mkdirSync(path.dirname(output), {recursive: true});
+  fs.writeFileSync(output, buildPreview());
+  console.log(output);
+}
+module.exports = {buildPreview};

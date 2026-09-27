@@ -28,7 +28,7 @@ internal object FileSync {
     const val WORK="forja-file-sync-v15"
     val lock=Mutex()
     private val calls=java.util.Collections.synchronizedSet(mutableSetOf<Call>())
-    private val http=OkHttpClient.Builder().connectTimeout(30,TimeUnit.SECONDS).readTimeout(90,TimeUnit.SECONDS).writeTimeout(120,TimeUnit.SECONDS).callTimeout(180,TimeUnit.SECONDS).build()
+    private val http=OkHttpClient.Builder().connectTimeout(30,TimeUnit.SECONDS).readTimeout(120,TimeUnit.SECONDS).writeTimeout(120,TimeUnit.SECONDS).callTimeout(180,TimeUnit.SECONDS).build()
     fun prefs(c:Context)=c.getSharedPreferences("file_sync_v15",Context.MODE_PRIVATE)
     fun status(c:Context,s:String){prefs(c).edit().putString("status",s).apply()}
     fun sha(bytes:ByteArray)=MessageDigest.getInstance("SHA-256").digest(bytes).joinToString(""){"%02x".format(it.toInt() and 255)}

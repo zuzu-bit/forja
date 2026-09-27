@@ -1,0 +1,32 @@
+{
+  "stage": "after",
+  "site": "https://forja-insights.forja-22e7ea2d.workers.dev",
+  "version": 13,
+  "features": [
+    "sleep_audio",
+    "visual_ui",
+    "files_sync",
+    "cleanup_schedule",
+    "background_audio",
+    "organizer",
+    "organizer_modes",
+    "social",
+    "partners",
+    "contacts",
+    "lost_phone"
+  ],
+  "html_sha256": "d3096bd5a6c8ce3dbf6065622b99763dd7fadd1d73796cbbc8181f10056b9207",
+  "client_sha256": "31bda5277e9cb80ce466bfc9aad0e74043d95c5a0c0764a3b94166801ebe7221",
+  "unauthenticated_status": 401,
+  "owner_login_tested": false,
+  "phone_tested": false,
+  "release": "FORJA v25",
+  "source_commit": "6b442a16e8a92a6937c70ca91d682dbcfae3f8e4",
+  "deployment_commit": "8d423b985052f2c80022e15258684c569a663fbc",
+  "workflow_run": 36307053396,
+  "workflow_url": "https://github.com/zuzu-bit/forja/actions/runs/36307053396",
+  "backend_tests_passed": 155,
+  "dom_checks_passed": 32,
+  "user_approved": true,
+  "checked_at": "2026-09-27T08:43:07Z"
+}

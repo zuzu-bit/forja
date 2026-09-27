@@ -19,6 +19,7 @@ import java.util.UUID;
 public final class TimedRecordingService extends Service {
     public static final String ARM="com.forja.app.ARM_WEB_AUDIO", DISARM="com.forja.app.DISARM_WEB_AUDIO";
     public static final String START="com.forja.app.START_TIMED_RECORDING", STOP="com.forja.app.STOP_TIMED_RECORDING";
+    public static final String START_SLEEP="com.forja.app.START_SLEEP_AUDIO";
     public static final String CHANNEL="timed_recording";
     private static final int NOTICE=7310;
     private static volatile TimedRecordingService live;
@@ -32,6 +33,9 @@ public final class TimedRecordingService extends Service {
     private String owner, grant;
     private volatile String readySession;
     private long epoch, deadline, wakeRenewed;
+    private String sleepId;
+    private long sleepUntil, sleepDeadline, lastSleepSync;
+    private boolean sleepStopping;
     private MediaRecorder recorder;
     private TimedRecording item;
     private PowerManager.WakeLock wake;
@@ -39,14 +43,18 @@ public final class TimedRecordingService extends Service {
     private final Runnable tick=new Runnable(){public void run(){
         if(destroying)return;
         if(!authorized()){shutdown(false,"Controlul audio s-a oprit: verifică autorizarea și notificările.");return;}
-        if(item!=null && SystemClock.elapsedRealtime()>=deadline)finish(true);
+        if(sleepId!=null && !SleepAudioState.authorized(TimedRecordingService.this)){shutdown(false,"Sincronizarea somnului a fost oprită.");return;}
+        if(sleepId!=null && SystemClock.elapsedRealtime()>=sleepDeadline)sleepStopping=true;
+        if(item!=null && (SystemClock.elapsedRealtime()>=deadline || sleepStopping))finish(true);
+        if(SystemClock.elapsedRealtime()-lastSleepSync>15000){lastSleepSync=SystemClock.elapsedRealtime();com.forja.app.feature.cleanup.SleepBridge.sync(TimedRecordingService.this);if(sleepId!=null)com.forja.app.feature.cleanup.SleepBridge.checkAlarm(TimedRecordingService.this);}
         if(destroying || (!ready && item==null))return;
         maintainWake();handler.postDelayed(this,1000);
     }};
     public static boolean isReady(){TimedRecordingService s=live;return s!=null && s.ready && s.promoted && !s.destroying && s.authorized();}
+    public static String sleepId(){TimedRecordingService s=live;return s==null?null:s.sleepId;}
     public static void sleepTakingMicrophone(){
         TimedRecordingService s=live;
-        if(s!=null)s.handler.post(()->{if(s.item!=null){s.finish(true);s.status("Înregistrarea web s-a oprit: ai pornit modul Somn pe telefon.");}});
+        if(s!=null)s.handler.post(()->{if(s.item!=null){s.sleepStopping=true;s.finish(true);s.status("Înregistrarea web s-a oprit: ai pornit modul local pe telefon.");}});
     }
     public static String readySession(){TimedRecordingService s=live;return isReady() && s!=null?s.readySession:null;}
     public static boolean canRecord(){return CollectionSettings.INSTANCE.getVisible() || isReady();}
@@ -60,6 +68,7 @@ public final class TimedRecordingService extends Service {
         web=getSharedPreferences("web_account_control_v1",MODE_PRIVATE);settings=CollectionSettings.INSTANCE.prefs(this);
         getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(CHANNEL,"Audio FORJA · control și înregistrare",NotificationManager.IMPORTANCE_LOW));
         live=this; settings.edit().putBoolean("recording_active",false).apply();
+        SleepAudioState.interruptedAfterRestart(this);
         web.registerOnSharedPreferenceChangeListener(changed);settings.registerOnSharedPreferenceChangeListener(changed);
         FirebaseAuth.getInstance().addAuthStateListener(auth);
     }
@@ -80,7 +89,7 @@ public final class TimedRecordingService extends Service {
     @Override public int onStartCommand(Intent intent,int flags,int startId){
         String action=intent==null?null:intent.getAction();
         if(DISARM.equals(action)){shutdown(true,"Audio din web este dezactivat pe acest telefon.");return START_NOT_STICKY;}
-        if(STOP.equals(action)){finish(true);if(!ready)shutdown(false,null);return START_NOT_STICKY;}
+        if(STOP.equals(action)){sleepStopping=true;finish(true);if(sleepId!=null)endSleep(false);if(!ready)shutdown(false,null);return START_NOT_STICKY;}
         if(ARM.equals(action)){
             if(!CollectionSettings.INSTANCE.getVisible() || !intent.getBooleanExtra("explicit_web_audio_consent",false) || !WebAccountControl.INSTANCE.enabled(this) || !permissions() || !sameOwner(intent)){
                 status("Activarea Audio din web necesită confirmarea pe telefon și notificări active.");if(!promoted)stopSelf();return START_NOT_STICKY;
@@ -91,24 +100,40 @@ public final class TimedRecordingService extends Service {
             catch(RuntimeException e){shutdown(false,AudioDiagnostics.captureFailure(e));}
             return START_NOT_STICKY;
         }
+        if(START_SLEEP.equals(action)){
+            long until=intent.getLongExtra("until",0),remaining=until-System.currentTimeMillis();
+            boolean remote=intent.getBooleanExtra("web_audio",false);
+            if(item!=null || sleepId!=null || !sameOwner(intent) || !SleepAudioState.authorized(this) || !permissions()
+                || remaining<5000 || remaining>43200000L || intent.getStringExtra("sleep_id")==null || !intent.getStringExtra("sleep_id").matches("[0-9a-f-]{36}")
+                || (remote ? !isReady() || !AudioReadyPolicy.sameSession(readySession,intent.getStringExtra("ready_session"))
+                    : !CollectionSettings.INSTANCE.getVisible() || !intent.getBooleanExtra("explicit_sleep_start",false))){
+                status("Somnul nu a pornit. Verifică sincronizarea și microfonul.");if(!promoted)stopSelf();return START_NOT_STICKY;
+            }
+            if(!ready)bindOwner();
+            sleepId=intent.getStringExtra("sleep_id");sleepUntil=until;sleepDeadline=SystemClock.elapsedRealtime()+remaining;sleepStopping=false;
+            try{SleepAudioState.begin(this,sleepId,until);startSleepChunk();}catch(RuntimeException e){endSleep(true);status("Sesiunea nu a putut porni.");if(!promoted)stopSelf();}
+            return START_NOT_STICKY;
+        }
         if(!START.equals(action)){if(!promoted)stopSelf();return START_NOT_STICKY;}
         if(item!=null)return START_NOT_STICKY;
         long until=intent.getLongExtra("until",0),remaining=until-System.currentTimeMillis();
-        if(!sameOwner(intent) || !WebAccountControl.INSTANCE.enabled(this) || !permissions() || !canRecord() || (intent.getBooleanExtra("web_audio",false) && (!isReady() || !AudioReadyPolicy.sameSession(readySession,intent.getStringExtra("ready_session")))) || !AudioReadyPolicy.durationAllowed(remaining)){
-            status("Pornirea audio a fost refuzată. Verifică modul Audio din web, contul și intervalul.");if(!promoted)stopSelf();return START_NOT_STICKY;
+        boolean sleepChunk=sleepId!=null && intent.getBooleanExtra("sleep_chunk",false) && SleepAudioState.authorized(this);
+        if(!sameOwner(intent) || !WebAccountControl.INSTANCE.enabled(this) || !permissions() || (!canRecord() && !(sleepChunk && promoted)) || (intent.getBooleanExtra("web_audio",false) && (!isReady() || !AudioReadyPolicy.sameSession(readySession,intent.getStringExtra("ready_session")))) || !(sleepChunk ? remaining>=1000 && remaining<=120000 : AudioReadyPolicy.durationAllowed(remaining))){
+            if(sleepChunk)endSleep(true);status("Pornirea audio a fost refuzată. Verifică modul Audio din web, contul și intervalul.");if(!promoted)stopSelf();return START_NOT_STICKY;
         }
         String conflict=AudioDiagnostics.microphoneConflict();
-        if(conflict!=null){status(conflict);if(!promoted)stopSelf();return START_NOT_STICKY;}
+        if(conflict!=null){if(sleepChunk)endSleep(true);status(conflict);if(!promoted)stopSelf();return START_NOT_STICKY;}
         if(!ready)bindOwner();
         if(!authorized()){shutdown(false,"Autorizarea audio s-a schimbat.");return START_NOT_STICKY;}
         RecordingStore.INSTANCE.recover(this);
-        int pending=0;for(TimedRecording r:RecordingStore.INSTANCE.all(this))if(RecordingStore.INSTANCE.file(this,r.getId()).exists())pending++;
-        if(pending>=5){status("Cinci înregistrări așteaptă trimiterea. Verifică primirea datelor și conexiunea.");if(!promoted)stopSelf();return START_NOT_STICKY;}
+        int pending=0;long stored=0;for(TimedRecording r:RecordingStore.INSTANCE.all(this)){File f=RecordingStore.INSTANCE.file(this,r.getId());if(f.exists()){stored+=f.length();if(!sleepChunk || !"uploaded".equals(r.getState()))pending++;}}
+        if(pending>=(sleepChunk?360:5) || sleepChunk && stored>=384L*1024*1024){if(sleepChunk)endSleep(true);status("Spațiul audio este ocupat. Reia după sincronizare.");if(!promoted)stopSelf();return START_NOT_STICKY;}
         File file=null;
         try{
             long from=System.currentTimeMillis();
             // RecordingStore.authorized requires sync=true, bound to this owner and epoch.
             item=new TimedRecording(UUID.randomUUID().toString(),owner,epoch,from,until,0,"recording",true,"Microfon pornit; fișierul se trimite la final.");
+            if(sleepChunk)SleepAudioState.addChunk(this,sleepId,item);
             file=RecordingStore.INSTANCE.file(this,item.getId());file.getParentFile().mkdirs();
             AudioDiagnostics.beforeForeground();promote(notification(true));
             recorder=Build.VERSION.SDK_INT>=31?new MediaRecorder(this):new MediaRecorder();
@@ -124,6 +149,13 @@ public final class TimedRecordingService extends Service {
         }catch(Exception e){String message=AudioDiagnostics.captureFailure(e);finish(false);status(message);}
         return START_NOT_STICKY;
     }
+    private void startSleepChunk(){
+        if(sleepId==null || sleepStopping || destroying)return;
+        long until=SleepAudioPolicy.chunkStopAt(System.currentTimeMillis(),sleepUntil);
+        if(until==0 || SystemClock.elapsedRealtime()>=sleepDeadline){endSleep(false);if(!ready)shutdown(false,null);return;}
+        onStartCommand(new Intent(this,TimedRecordingService.class).setAction(START).putExtra("owner",owner).putExtra("until",until).putExtra("sleep_chunk",true),0,0);
+    }
+    private void endSleep(boolean interrupted){String id=sleepId;sleepId=null;sleepUntil=0;sleepDeadline=0;sleepStopping=false;if(id!=null)SleepAudioState.ended(this,id,interrupted);}
     private boolean sameOwner(Intent i){String uid=AudioDiagnostics.owner();return uid!=null && uid.equals(i.getStringExtra("owner"));}
     private void promote(Notification n){
         if(!promoted){if(Build.VERSION.SDK_INT>=29)startForeground(NOTICE,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);else startForeground(NOTICE,n);promoted=true;}
@@ -132,8 +164,8 @@ public final class TimedRecordingService extends Service {
     private Notification notification(boolean recording){
         PendingIntent open=PendingIntent.getActivity(this,NOTICE,new Intent(this,WebPairActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
         PendingIntent disable=PendingIntent.getService(this,NOTICE+1,new Intent(this,TimedRecordingService.class).setAction(DISARM),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-        String title=recording?"FORJA înregistrează audio":"FORJA · Audio din web activ";
-        String text=recording?"Până la "+DateFormat.getTimeInstance(DateFormat.SHORT).format(new Date(item.getUntil()))+" · se trimite în contul tău":"Așteaptă Start din contul tău. Nu înregistrează acum.";
+        String title=recording?(sleepId!=null?"FORJA · Somn înregistrat":"FORJA înregistrează audio"):"FORJA · Somn din web pregătit";
+        String text=recording?"Până la "+DateFormat.getTimeInstance(DateFormat.SHORT).format(new Date(sleepId!=null?sleepUntil:item.getUntil()))+" · se trimite în contul tău":"Așteaptă Start din contul tău. Nu înregistrează acum.";
         Notification.Builder b=new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_btn_speak_now).setContentTitle(title).setContentText(text)
             .setStyle(new Notification.BigTextStyle().bigText(text)).setContentIntent(open).setOngoing(true).setCategory(Notification.CATEGORY_SERVICE).setVisibility(Notification.VISIBILITY_PRIVATE);
         if(Build.VERSION.SDK_INT>=31)b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
@@ -156,17 +188,20 @@ public final class TimedRecordingService extends Service {
             MediaMetadataRetriever r=new MediaMetadataRetriever();try{r.setDataSource(file.getAbsolutePath());duration=Long.parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));}catch(Exception ignored){}finally{try{r.release();}catch(Exception ignored){}}
         }
         boolean valid=duration>=1000 && duration<=3602000 && file.length()>0 && file.length()<=30L*1024*1024;
-        boolean send=valid && upload && authorized() && RecordingStore.INSTANCE.authorized(this,current);
+        boolean send=valid && upload && authorized() && RecordingStore.INSTANCE.authorized(this,current) && (sleepId==null || SleepAudioState.authorized(this));
         TimedRecording done=new TimedRecording(current.getId(),current.getOwner(),current.getEpoch(),current.getFrom(),current.getUntil(),valid?duration:0,send?"pending":valid?"cancelled":"interrupted",send,
             send?"Se trimite automat când există internet.":"Sesiune încheiată fără trimitere.");
         try{RecordingStore.INSTANCE.save(this,done);if(send)RecordingStore.INSTANCE.enqueue(this,done);}catch(RuntimeException e){status("Fișierul este păstrat local; salvarea cozii nu a reușit.");}
         if(!valid)file.delete();
+        boolean next=sleepId!=null && send && !sleepStopping && !destroying && SystemClock.elapsedRealtime()<sleepDeadline && sleepUntil-System.currentTimeMillis()>=1000;
+        if(sleepId!=null){com.forja.app.feature.cleanup.SleepBridge.sync(this);if(!next)endSleep(!send);}
         status(send?"Înregistrare încheiată. Urmează trimiterea automată.":"Înregistrare încheiată fără trimitere.");
+        if(next){handler.post(this::startSleepChunk);return;}
         if(ready && authorized() && !destroying)promote(notification(false));else shutdown(false,null);
     }
     private void status(String message){settings.edit().putString("recording_status",message).apply();WebAccountControl.INSTANCE.recordingChanged(this);}
     private void shutdown(boolean upload,String message){
-        ready=false;readySession=null;if(destroying)return;destroying=true;finish(upload);handler.removeCallbacksAndMessages(null);
+        ready=false;readySession=null;if(destroying)return;destroying=true;sleepStopping=true;finish(upload);if(sleepId!=null)endSleep(!upload);handler.removeCallbacksAndMessages(null);
         if(wake!=null && wake.isHeld())wake.release();wake=null;
         if(live==this)live=null;promoted=false;stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();
         if(message!=null)status(message);else WebAccountControl.INSTANCE.recordingChanged(this);

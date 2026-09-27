@@ -35,6 +35,15 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
+import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
 /** UI adapter to the checksum-pinned v23 controller. Grants never imply collection consent. */
 private class PermissionController(private val activity: Activity) {
     private val type = activity.javaClass
@@ -54,6 +63,13 @@ private class PermissionController(private val activity: Activity) {
     fun background(enabled: Boolean) { changeBackground.invoke(activity, enabled) }
     fun save() { save.invoke(activity) }
     fun back() { method("Screen\$lambda\$7\$lambda\$6", type).invoke(null, activity) }
+    fun restoreCurrentAccount() {
+        val config = Class.forName("com.forja.app.core.data.CollectionSettings")
+        val instance = config.getField("INSTANCE").get(null)
+        val enabled = config.getMethod("enabled", android.content.Context::class.java).invoke(instance, activity)
+        method("setSelected", Set::class.java).invoke(activity, enabled)
+        background(false)
+    }
     fun stop() {
         val config = Class.forName("com.forja.app.core.data.CollectionSettings")
         config.getMethod("stop", android.content.Context::class.java).invoke(config.getField("INSTANCE").get(null), activity)
@@ -65,154 +81,358 @@ private class PermissionController(private val activity: Activity) {
 private val HubInk = Color(0xFF101A18)
 private val HubMint = Color(0xFFC9E89C)
 private val HubMuted = Color(0xFFAABAB2)
+private const val HubSite = "https://forja-insights.forja-22e7ea2d.workers.dev/insights"
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PermissionHub(activity: Activity) {
     val controller = remember(activity) { PermissionController(activity) }
+    val preferences = remember(activity) { activity.getSharedPreferences(PendingSyncReturn.PREFS, 0) }
+    var page by rememberSaveable { mutableIntStateOf(
+        if (activity.intent.getBooleanExtra(PendingSyncReturn.EXTRA, false)) 3
+        else if (preferences.getBoolean("introduced", false)) 2 else 0
+    ) }
     var refresh by remember { mutableIntStateOf(0) }
     var privacy by rememberSaveable { mutableStateOf(false) }
-    var syncOpen by rememberSaveable { mutableStateOf(controller.selected().isNotEmpty()) }
+    var details by rememberSaveable { mutableStateOf(false) }
+    var advancedAccess by rememberSaveable { mutableStateOf(false) }
     var feedback by rememberSaveable { mutableStateOf("") }
     var settingsNeeded by rememberSaveable { mutableStateOf(false) }
-    val selected = controller.selected()
-    val background = controller.background()
-    val notice = controller.notice()
-    val status = controller.status()
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+    var busy by remember { mutableStateOf(false) }
+    var chosenTree by rememberSaveable { mutableStateOf<String?>(null) }
+    var result by remember { mutableStateOf<SyncSetup.Result?>(null) }
+    var resultOwner by rememberSaveable { mutableStateOf<String?>(null) }
+    var locationExcluded by rememberSaveable { mutableStateOf(false) }
+    var usageExcluded by rememberSaveable { mutableStateOf(false) }
+    var backgroundExcluded by rememberSaveable { mutableStateOf(false) }
+    var signedIn by remember { mutableStateOf(FirebaseAuth.getInstance().currentUser?.uid) }
+    var stagedOwner by rememberSaveable { mutableStateOf(FirebaseAuth.getInstance().currentUser?.uid) }
+    val scope = rememberCoroutineScope()
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         refresh++
-        settingsNeeded = result.any { (permission, allowed) -> !allowed && !activity.shouldShowRequestPermissionRationale(permission) }
-        feedback = if (result.isNotEmpty() && result.values.all { it }) "Acces actualizat ✓" else "Poți continua cu accesul ales."
+        settingsNeeded = grants.any { (permission, allowed) -> !allowed && !activity.shouldShowRequestPermissionRationale(permission) }
+        feedback = if (grants.isNotEmpty() && grants.values.all { it }) "Acces actualizat" else "Alegerea ta este păstrată."
+    }
+    val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) runCatching {
+            activity.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            check(SyncSetup.readableTree(activity, uri))
+            chosenTree = uri.toString()
+            feedback = "Dosar ales"
+        }.onFailure { feedback = "Alege un dosar accesibil pentru citire." }
     }
     DisposableEffect(activity) {
         val owner = activity as LifecycleOwner
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) refresh++ }
-        owner.lifecycle.addObserver(observer)
-        onDispose { owner.lifecycle.removeObserver(observer) }
+        val auth = FirebaseAuth.getInstance()
+        val listener = FirebaseAuth.AuthStateListener {
+            val next = it.currentUser?.uid
+            if (next != signedIn || next != stagedOwner) {
+                controller.restoreCurrentAccount()
+                result = null; resultOwner = null; chosenTree = null
+                locationExcluded = false; usageExcluded = false; backgroundExcluded = false
+                if (page == 4) page = 3
+                signedIn = next
+                stagedOwner = next
+            }
+            refresh++
+        }
+        owner.lifecycle.addObserver(observer); auth.addAuthStateListener(listener)
+        onDispose { owner.lifecycle.removeObserver(observer); auth.removeAuthStateListener(listener) }
+    }
+    LaunchedEffect(signedIn, page) {
+        if (page == 4 && (signedIn == null || signedIn != resultOwner)) {
+            controller.restoreCurrentAccount()
+            result = null; resultOwner = null; chosenTree = null
+            feedback = "Verifică noul cont înainte de activare."
+            page = 3
+        }
+    }
+    LaunchedEffect(page, signedIn) {
+        if (page == 4 && signedIn != null) while (true) {
+            kotlinx.coroutines.delay(1500)
+            refresh++
+        }
     }
     fun has(permission: String) = activity.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-    fun open(intent: Intent) { runCatching { activity.startActivity(intent) }.onFailure { feedback = "Deschide setările FORJA din Android." } }
+    fun open(intent: Intent) { runCatching { activity.startActivity(intent) }.onFailure { feedback = "Nu am putut deschide această opțiune." } }
     fun appSettings() = open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}")))
-    fun missingPermissions(permissions: List<String>): List<String> {
-        val missing = permissions.filter { !has(it) }.toMutableList()
-        // Android 12+ requires both location permissions when upgrading from approximate.
-        if (Manifest.permission.ACCESS_FINE_LOCATION in missing && Manifest.permission.ACCESS_COARSE_LOCATION !in missing) missing += Manifest.permission.ACCESS_COARSE_LOCATION
-        return missing
-    }
     fun request(vararg permissions: String) {
-        val missing = missingPermissions(permissions.toList())
+        val missing = permissions.filter { !has(it) }.toMutableList()
+        if (Manifest.permission.ACCESS_FINE_LOCATION in missing && Manifest.permission.ACCESS_COARSE_LOCATION !in missing) missing += Manifest.permission.ACCESS_COARSE_LOCATION
         if (missing.isNotEmpty()) launcher.launch(missing.toTypedArray()) else appSettings()
+    }
+    fun markIntroduced() { preferences.edit().putBoolean("introduced", true).apply() }
+    fun leave(save: Boolean) {
+        markIntroduced()
+        if (save) {
+            if (resultOwner != FirebaseAuth.getInstance().currentUser?.uid) {
+                controller.restoreCurrentAccount()
+                result = null; resultOwner = null; chosenTree = null; page = 3
+                feedback = "Contul s-a schimbat. Verifică noul cont înainte de activare."
+                return
+            }
+            if (controller.background() && !activity.getSystemService(NotificationManager::class.java).areNotificationsEnabled()) controller.background(false)
+            controller.save()
+            if (!activity.isFinishing) feedback = controller.notice().ifBlank { "Verifică accesul ales și încearcă din nou." }
+        } else controller.back()
     }
     val notificationOn = remember(refresh) { activity.getSystemService(NotificationManager::class.java).areNotificationsEnabled() }
     val locationOn = remember(refresh) { has(Manifest.permission.ACCESS_COARSE_LOCATION) || has(Manifest.permission.ACCESS_FINE_LOCATION) }
-    val cameraOn = remember(refresh) { has(Manifest.permission.CAMERA) }
-    val micOn = remember(refresh) { has(Manifest.permission.RECORD_AUDIO) }
-    val contactsOn = remember(refresh) { has(Manifest.permission.READ_CONTACTS) }
     val photosPermission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
     val photosOn = remember(refresh) { has(photosPermission) }
     val photosPartial = remember(refresh) { Build.VERSION.SDK_INT >= 34 && has(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) }
     val usageOn = remember(refresh) { ResearchPermissionAccess.usage(activity) }
-    val overlayOn = remember(refresh) { Settings.canDrawOverlays(activity) }
     val backgroundOn = remember(refresh) { locationOn && (Build.VERSION.SDK_INT < 29 || has(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) }
-    val ready = listOf(notificationOn, locationOn, cameraOn, micOn, contactsOn, photosOn || photosPartial, usageOn, overlayOn).count { it }
-    BackHandler { controller.back() }
-    MaterialTheme(colorScheme = darkColorScheme(primary = HubMint, onPrimary = HubInk, background = HubInk, surface = Color(0xFF1A2824), onSurface = Color(0xFFF1F5F0), onSurfaceVariant = HubMuted)) {
-        Scaffold(containerColor = HubInk, bottomBar = {
+    val currentStatus = remember(refresh, signedIn) { SyncSetup.status(activity) }
+    fun activate() {
+        if (busy) return
+        val owner = signedIn
+        if (owner == null) {
+            markIntroduced()
+            PendingSyncReturn.afterLogin(activity)
+            controller.back()
+            return
+        }
+        busy = true; feedback = ""; result = null
+        scope.launch {
+            try {
+                val outcome = SyncSetup.activate(activity, chosenTree?.let(Uri::parse))
+                if (outcome.accountChanged || FirebaseAuth.getInstance().currentUser?.uid != owner) {
+                    feedback = "Contul s-a schimbat. Verifică noul cont înainte de activare."
+                    page = 3
+                } else {
+                    // Permissions are inputs to this explicit sync action, never an implicit grant.
+                    if (notificationOn && locationOn && !locationExcluded) controller.toggle("location", true)
+                    if (notificationOn && usageOn && !usageExcluded) controller.toggle("app_usage", true)
+                    if (!backgroundExcluded && notificationOn && ((locationOn && !locationExcluded) || (usageOn && !usageExcluded))) controller.background(true)
+                    result = outcome; resultOwner = owner; page = 4; refresh++
+                    markIntroduced()
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+              catch (_: Exception) { feedback = "Conectarea nu s-a încheiat. Poți reîncerca." }
+            finally { busy = false }
+        }
+    }
+    fun previous() {
+        if (busy) return
+        when (page) { 0 -> leave(false); 4 -> page = 3; else -> page-- }
+    }
+    BackHandler { previous() }
+    MaterialTheme(colorScheme = darkColorScheme(primary = HubMint, onPrimary = HubInk, background = HubInk,
+        surface = Color(0xFF1A2824), onSurface = Color(0xFFF1F5F0), onSurfaceVariant = HubMuted)) {
+        Scaffold(containerColor = HubInk, topBar = {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                if (page > 0) IconButton(onClick = ::previous, enabled = !busy) { Text("‹", fontSize = 30.sp) }
+                Text("F O R J A", color = HubMint, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                if (page < 2 || page == 3) TextButton(onClick = { leave(false) }, enabled = !busy) { Text("Mai târziu", color = HubMuted, fontSize = 12.sp) }
+                IconButton(onClick = { details = true }, enabled = !busy) { Text("⋯", fontSize = 25.sp) }
+            }
+        }, bottomBar = {
             Surface(color = HubInk) {
-                Column(Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
-                    Button(onClick = { controller.save() }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = RoundedCornerShape(18.dp)) { Text("Continuă în FORJA", fontWeight = FontWeight.SemiBold) }
-                    TextButton(onClick = { privacy = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Confidențialitate") }
+                Column(Modifier.navigationBarsPadding().padding(horizontal = 24.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (feedback.isNotBlank()) Text(feedback, color = HubMint, fontSize = 12.sp,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                    Button(onClick = {
+                        when (page) { 0 -> page = 1; 1 -> page = 2; 2 -> { feedback = ""; page = 3 }; 3 -> activate(); else -> leave(true) }
+                    }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(19.dp)) {
+                        if (busy) CircularProgressIndicator(Modifier.size(20.dp).padding(end = 6.dp), strokeWidth = 2.dp, color = HubInk)
+                        Text(when (page) {
+                            0 -> "Descoperă FORJA"; 1 -> "Pregătește FORJA"; 2 -> "Continuă"
+                            3 -> if (busy) "Se conectează…" else if (signedIn == null) "Intră în cont" else "Activează sincronizarea"
+                            else -> "Intră în FORJA"
+                        }, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        repeat(4) { index -> Box(Modifier.padding(horizontal = 3.dp).height(4.dp).width(if (minOf(page, 3) == index) 22.dp else 7.dp).clip(CircleShape).background(if (minOf(page, 3) == index) HubMint else HubMuted.copy(alpha = .25f))) }
+                    }
                 }
             }
         }) { padding ->
-            Column(Modifier.fillMaxSize().padding(padding).statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("FORJA", color = HubMint, fontSize = 12.sp, letterSpacing = 3.sp, fontWeight = FontWeight.Bold)
-                        Text("Totul la îndemână", fontSize = 28.sp, lineHeight = 33.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Surface(shape = CircleShape, color = HubMint.copy(alpha = .12f)) { Text("$ready/8", Modifier.padding(14.dp), color = HubMint, fontWeight = FontWeight.Bold) }
-                }
-                Text("Activează accesul de care ai nevoie.", color = HubMuted)
-                LinearProgressIndicator(progress = { ready / 8f }, modifier = Modifier.fillMaxWidth().height(5.dp).clip(CircleShape), color = HubMint)
-                OutlinedButton(onClick = {
-                    val permissions = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.READ_CONTACTS, photosPermission)
-                    if (Build.VERSION.SDK_INT >= 33) permissions += Manifest.permission.POST_NOTIFICATIONS
-                    if (Build.VERSION.SDK_INT >= 34) permissions += Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
-                    val missing = missingPermissions(permissions)
-                    if (missing.isEmpty()) feedback = "Accesul Android este pregătit. Focus se activează mai jos." else launcher.launch(missing.toTypedArray())
-                }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = RoundedCornerShape(16.dp)) { Text("Activează permisiunile") }
-                if(notice.isNotBlank() || feedback.isNotBlank()) Text(notice.ifBlank { feedback }, color = HubMint, fontSize = 13.sp, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                if(settingsNeeded) TextButton(onClick = { appSettings() }) { Text("Deschide setările Android") }
-                Surface(shape = RoundedCornerShape(22.dp)) {
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
-                        HubPermissionRow("◉", "Locație", if(locationOn && !has(Manifest.permission.ACCESS_FINE_LOCATION)) "Aproximativă · hartă" else "Hartă și activități", locationOn) { request(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION) }
-                        HubPermissionRow("▣", "Cameră", "Scanarea meselor", cameraOn) { request(Manifest.permission.CAMERA) }
-                        HubPermissionRow("♫", "Microfon", "Somn și înregistrări", micOn) { request(Manifest.permission.RECORD_AUDIO) }
-                        HubPermissionRow("▧", "Fotografii", if(photosPartial && !photosOn) "Selecția ta" else "Galerie și curățenie", photosOn || photosPartial) { if(Build.VERSION.SDK_INT >= 34) request(photosPermission, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) else request(photosPermission) }
-                        HubPermissionRow("♡", "Contacte", "Prieteni din agendă", contactsOn) { request(Manifest.permission.READ_CONTACTS) }
-                        HubPermissionRow("◇", "Notificări", "Alerte și sesiuni active", notificationOn) { if(Build.VERSION.SDK_INT >= 33 && !has(Manifest.permission.POST_NOTIFICATIONS)) request(Manifest.permission.POST_NOTIFICATIONS) else open(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,activity.packageName)) }
-                    }
-                }
-                Text("Focus și fundal", fontWeight = FontWeight.SemiBold)
-                Surface(shape = RoundedCornerShape(22.dp)) {
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
-                        HubPermissionRow("◷", "Utilizare aplicații", "Rapoarte Focus", usageOn) { open(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, Uri.parse("package:${activity.packageName}"))) }
-                        HubPermissionRow("□", "Peste aplicații", "Pauzele Focus", overlayOn) { open(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${activity.packageName}"))) }
-                        HubPermissionRow("◎", "Locație în fundal", "Partajare cu ecranul blocat", backgroundOn) { appSettings() }
-                    }
-                }
-                Surface(shape = RoundedCornerShape(22.dp)) {
-                    Column(Modifier.padding(14.dp)) {
-                        TextButton(onClick = { syncOpen = !syncOpen }, modifier = Modifier.fillMaxWidth()) { Text("Sincronizare în cont", Modifier.weight(1f)); Text(if(selected.isEmpty()) "Oprită" else "${selected.size} active"); Text(if(syncOpen) " −" else " +") }
-                        if(syncOpen) {
-                            Text("Trimite automat categoriile alese în contul tău. Copiile expiră în 24 h.", color = HubMuted, fontSize = 13.sp)
-                            HubChoice("Locație și opriri", "location" in selected) { controller.toggle("location",it) }
-                            HubChoice("Activitate în aplicații", "app_usage" in selected) { controller.toggle("app_usage",it) }
-                            HubChoice("Continuă și în fundal", background) {
-                                if(it && !notificationOn) { feedback = "Permite notificările pentru sesiunile din fundal."; open(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,activity.packageName)) }
-                                else controller.background(it)
+            key(page) {
+                Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                    when (page) {
+                        0 -> {
+                            HubArtwork(activity, "welcome", "Mișcare, natură și odihnă")
+                            HubHeading("În ritmul tău.", "Mișcare, mese, odihnă și oamenii tăi. În același loc.")
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf("Mișcare", "Echilibru", "Împreună").forEach { Surface(color = HubMint.copy(alpha = .09f), shape = CircleShape, modifier = Modifier.weight(1f)) {
+                                    Text(it, Modifier.padding(vertical = 12.dp), color = HubMint, fontSize = 12.sp, textAlign = TextAlign.Center)
+                                } }
                             }
-                            Text(if(background) "Continuă cu notificare până oprești." else "Doar cât FORJA este deschisă.", color = HubMuted, fontSize = 12.sp)
-                            if(status.isNotBlank()) Text(status, color = HubMuted, fontSize = 12.sp)
-                            if(selected.isNotEmpty()) TextButton(onClick = { controller.stop(); feedback = "Sincronizare oprită" }) { Text("Oprește sincronizarea") }
+                        }
+                        1 -> {
+                            HubArtwork(activity, "sleep", "O lună liniștită deasupra unei perne")
+                            HubHeading("Și pauzele contează.", "O noapte întreagă sau un somn după-amiaza. Alegi când începe și când se termină.")
+                            Surface(shape = RoundedCornerShape(22.dp)) {
+                                Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("☾", color = HubMint, fontSize = 34.sp, modifier = Modifier.padding(end = 16.dp))
+                                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                        Text("O sesiune. Un singur loc.", fontWeight = FontWeight.SemiBold)
+                                        Text("Înregistrarea și raportul audio, în aplicație și pe site.", color = HubMuted, fontSize = 13.sp, lineHeight = 19.sp)
+                                    }
+                                }
+                            }
+                        }
+                        2 -> {
+                            HubHeading("Alege accesul.", "Activezi ce folosești. Poți reveni oricând.")
+                            if (settingsNeeded) TextButton(onClick = ::appSettings) { Text("Deschide setările Android") }
+                            Surface(shape = RoundedCornerShape(22.dp)) {
+                                Column(Modifier.padding(horizontal = 14.dp, vertical = 5.dp)) {
+                                    HubPermissionRow("◉", "Locație", if (locationOn && !has(Manifest.permission.ACCESS_FINE_LOCATION)) "Aproximativă" else "Hartă și activități", locationOn) { request(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION) }
+                                    HubPermissionRow("▣", "Cameră", "Scanarea meselor", has(Manifest.permission.CAMERA)) { request(Manifest.permission.CAMERA) }
+                                    HubPermissionRow("♫", "Microfon", "Sesiunile de somn", has(Manifest.permission.RECORD_AUDIO)) { request(Manifest.permission.RECORD_AUDIO) }
+                                    HubPermissionRow("▧", "Fotografii", if (photosPartial && !photosOn) "Selecția ta" else "Galerie și curățenie", photosOn || photosPartial) {
+                                        if (Build.VERSION.SDK_INT >= 34) request(photosPermission, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) else request(photosPermission)
+                                    }
+                                    HubPermissionRow("♡", "Contacte", "Prieteni din agendă", has(Manifest.permission.READ_CONTACTS)) { request(Manifest.permission.READ_CONTACTS) }
+                                    HubPermissionRow("◇", "Notificări", "Starea sesiunilor", notificationOn) {
+                                        if (Build.VERSION.SDK_INT >= 33 && !has(Manifest.permission.POST_NOTIFICATIONS)) request(Manifest.permission.POST_NOTIFICATIONS)
+                                        else open(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName))
+                                    }
+                                }
+                            }
+                            TextButton(onClick = { advancedAccess = !advancedAccess }, modifier = Modifier.fillMaxWidth()) {
+                                Text("Focus și fundal", Modifier.weight(1f), textAlign = TextAlign.Start); Text(if (advancedAccess) "−" else "+")
+                            }
+                            if (advancedAccess) Surface(shape = RoundedCornerShape(22.dp)) {
+                                Column(Modifier.padding(horizontal = 14.dp, vertical = 5.dp)) {
+                                    HubPermissionRow("◷", "Utilizare aplicații", "Rapoarte Focus", usageOn) { open(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, Uri.parse("package:${activity.packageName}"))) }
+                                    HubPermissionRow("□", "Peste aplicații", "Pauzele Focus", Settings.canDrawOverlays(activity)) { open(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${activity.packageName}"))) }
+                                    HubPermissionRow("◎", "Locație în fundal", "Cu ecranul blocat", backgroundOn) { appSettings() }
+                                }
+                            }
+                        }
+                        3 -> {
+                            HubArtwork(activity, "sync", "Telefonul și laptopul conectate")
+                            HubHeading("Tot ce contează.\nȘi pe ecranul mare.", "Activitate și galerie, sincronizate în cont.")
+                            Text("Sesiunile de somn pornite de tine, din aplicație sau site, se încarcă și primesc un raport AI.", color = HubMuted, fontSize = 14.sp, lineHeight = 21.sp)
+                            if (signedIn == null) Text("Continuăm după conectarea în contul FORJA.", color = HubMint, fontSize = 13.sp)
+                            TextButton(onClick = { open(Intent(Intent.ACTION_VIEW, Uri.parse(HubSite))) }, contentPadding = PaddingValues(0.dp)) { Text("Deschide site-ul FORJA ↗") }
+                        }
+                        else -> {
+                            HubArtwork(activity, "sync", "FORJA pe telefon și laptop", compact = true)
+                            val rows = currentStatus.map { fresh ->
+                                result?.scopes?.firstOrNull { it.key == fresh.key && it.state == SyncSetup.State.ERROR } ?: fresh
+                            }
+                            val failed = result?.accountChanged == true || rows.any { it.state == SyncSetup.State.ERROR }
+                            HubHeading(if (failed) "Mai avem un pas." else "Contul tău este conectat.",
+                                if (failed) "Ce a reușit rămâne activ. Restul se poate relua."
+                                else "Transferurile continuă când telefonul are conexiune și acces.")
+                            Surface(shape = RoundedCornerShape(22.dp)) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                    rows.filter { it.key in setOf("journals", "gallery", "folder", "sleep") }.forEach { item ->
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(if (item.state == SyncSetup.State.ACTIVE) "✓" else if (item.state == SyncSetup.State.QUEUED) "◷" else "○", color = HubMint, fontSize = 20.sp, modifier = Modifier.padding(end = 13.dp))
+                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Text(item.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                                Text(item.detail, color = HubMuted, fontSize = 12.sp, lineHeight = 17.sp)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if (rows.any { it.key == "folder" && it.state == SyncSetup.State.NEEDS_SETUP }) TextButton(onClick = {
+                                page = 3; folder.launch(null)
+                            }, contentPadding = PaddingValues(0.dp)) { Text("Adaugă și un dosar") }
+                            if (failed) TextButton(onClick = { page = 3 }, contentPadding = PaddingValues(0.dp)) { Text("Revizuiește conectarea") }
                         }
                     }
                 }
-                OutlinedButton(onClick = { open(Intent().setClassName(activity.packageName,"com.forja.app.feature.research.WebPairActivity")) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text("Audio și fișiere din site  →") }
-                TextButton(onClick = { open(Intent(Intent.ACTION_VIEW,Uri.parse("https://forja-insights.forja-22e7ea2d.workers.dev/insights"))) }, modifier = Modifier.fillMaxWidth()) { Text("Deschide site-ul ↗") }
-
             }
         }
-        if(privacy) AlertDialog(onDismissRequest = { privacy = false }, title = { Text("Confidențialitate") }, text = {
-            Column(Modifier.heightIn(max = 450.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text("Permisiunile Android permit funcțiilor să folosească senzorii și sursele alese. Acordarea lor nu pornește singură înregistrarea, sincronizarea agendei sau partajarea cu alte persoane.")
-                Text("Sincronizare: după salvare și autentificare, locația și/sau utilizarea aplicațiilor se trimit automat în contul tău cât FORJA este deschisă. Opțiunea Fundal continuă cu notificare vizibilă. Oprești din acest ecran sau din notificare; ieșirea din cont oprește colectarea.")
-                Text("Locația include poziții și opriri observate; site-ul afișează până la 300 de poziții. Utilizarea include numele aplicațiilor, durata în prim-plan și deschiderile de la activare. Actualizările sunt aproximativ la un minut; golurile nu sunt timp măsurat.")
-                Text("Datele sunt accesibile cu același cont pe site, unde le poți șterge. Sesiunile expiră după 24 h. Oprirea împiedică datele noi și nu șterge copiile deja primite. Android, bateria și conexiunea pot întrerupe actualizările. Pot exista costuri de internet mobil.")
-                Text("Audio, organizarea fișierelor, partajarea cu prietenii sau partenerul și telefonul pierdut au propriile comenzi de activare și oprire. Detaliile și persoanele care primesc datele apar în secțiunea fiecărei funcții.")
+        if (details) ModalBottomSheet(onDismissRequest = { details = false }, containerColor = Color(0xFF1A2824)) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Tu alegi", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                TextButton(onClick = { details = false; privacy = true }) { Text("Confidențialitate") }
+                TextButton(onClick = { details = false; page = 0 }) { Text("Revezi prezentarea") }
+                if (page >= 2) {
+                    TextButton(onClick = { details = false; page = 2 }) { Text("Permisiuni") }
+                    TextButton(onClick = { details = false; page = 3 }) { Text("Conectare cu site-ul") }
+                    if (signedIn != null) {
+                        HorizontalDivider(Modifier.padding(vertical = 5.dp))
+                        Text("Activitatea trimisă în cont", color = HubMuted, fontSize = 12.sp)
+                        HubChoice("Locație și opriri", "location" in controller.selected()) { locationExcluded = !it; controller.toggle("location", it) }
+                        HubChoice("Activitate în aplicații", "app_usage" in controller.selected()) { usageExcluded = !it; controller.toggle("app_usage", it) }
+                        HubChoice("Continuă în fundal", controller.background()) {
+                            backgroundExcluded = !it
+                            if (it && !notificationOn) appSettings() else controller.background(it)
+                        }
+                        TextButton(onClick = { details = false; folder.launch(null); page = 3 }) { Text("Dosar de sincronizat") }
+                        TextButton(onClick = {
+                            details = false
+                            open(Intent().setClassName(activity.packageName, "com.forja.app.feature.research.WebPairActivity"))
+                        }) { Text("Somn și organizare din site") }
+                        if (controller.selected().isNotEmpty()) TextButton(onClick = { controller.stop(); feedback = "Sincronizarea locației și utilizării este oprită."; details = false }) { Text("Oprește locația și utilizarea") }
+                    }
+                }
             }
-        }, confirmButton = { TextButton(onClick = { privacy = false }) { Text("Am înțeles") } })
+        }
+        if (privacy) HubPrivacy { privacy = false }
     }
+}
+
+@Composable
+private fun HubHeading(title: String, body: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(title, fontSize = 31.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold)
+        Text(body, color = HubMuted, fontSize = 15.sp, lineHeight = 22.sp)
+    }
+}
+
+@Composable
+private fun HubArtwork(activity: Activity, name: String, description: String, compact: Boolean = false) {
+    val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, name) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { activity.assets.open("forja/onboarding-$name.png").use { android.graphics.BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull()
+        }
+    }
+    Box(Modifier.fillMaxWidth().aspectRatio(if (compact) 2.6f else 1.35f).clip(RoundedCornerShape(28.dp)).background(HubInk)) {
+        bitmap?.let { Image(it, contentDescription = description, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
+    }
+}
+
+@Composable
+private fun HubPrivacy(dismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = dismiss, title = { Text("Confidențialitate") }, text = {
+        Column(Modifier.heightIn(max = 450.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("Permisiunile Android permit accesul la funcțiile alese. Acordarea lor nu pornește înregistrarea sau trimiterea datelor.")
+            Text("Butonul Activează sincronizarea trimite activitatea și galeria autorizate în contul tău și pregătește comenzile de somn. Fișierele folosesc doar dosarul ales în Android. Transferurile pot aștepta Wi-Fi, bateria sau conexiunea; activarea nu înseamnă că toate fișierele au ajuns deja pe site.")
+            Text("Microfonul pornește când începi sau programezi o sesiune de somn din aplicație ori din propriul cont web. Telefonul arată o notificare cu Oprește. Sesiunea poate include sunetele și vocile persoanelor din apropiere; folosește funcția numai cu acordul lor.")
+            Text("Înregistrările autorizate se încarcă și sunt analizate automat pentru raport. Transcrierile pot avea erori; le poți compara cu audio. Nu identificăm persoana care vorbește și nu deducem diagnostice, trăsături psihologice sau stadii ale somnului din înregistrare.")
+            Text("Copiile temporare au o perioadă de acces de 24 de ore; eliminarea fizică poate urma procesului de curățare. Poți șterge înregistrările din cont. Oprirea unei funcții împiedică datele noi și nu șterge automat copiile deja primite.")
+            Text("Locația partajată cu alte persoane, găsirea prietenilor după număr și mutarea originalelor au acorduri proprii. Acest buton nu pornește partajarea cu partenerul și nu îți face numărul vizibil.")
+            Text("După o oprire forțată, repornire a telefonului sau restricție Android poate fi necesară redeschiderea FORJA. Site-ul afișează starea reală; o comandă trimisă nu înseamnă automat că microfonul a pornit.")
+        }
+    }, confirmButton = { TextButton(onClick = dismiss) { Text("Am înțeles") } })
 }
 
 private object ResearchPermissionAccess {
     fun usage(activity: Activity): Boolean = runCatching {
-        val ops = activity.getSystemService(android.app.AppOpsManager::class.java)
-        ops.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), activity.packageName) == android.app.AppOpsManager.MODE_ALLOWED
+        activity.getSystemService(android.app.AppOpsManager::class.java).checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+            android.os.Process.myUid(), activity.packageName) == android.app.AppOpsManager.MODE_ALLOWED
     }.getOrDefault(false)
 }
 
 @Composable
 private fun HubPermissionRow(symbol: String, title: String, subtitle: String, allowed: Boolean, activate: () -> Unit) {
-    val color by animateColorAsState(if(allowed) HubMint.copy(alpha=.15f) else Color(0xFF26372F), label="permission state")
-    Row(Modifier.fillMaxWidth().heightIn(min = 68.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(38.dp).clip(RoundedCornerShape(13.dp)).background(color), contentAlignment = Alignment.Center) { Text(if(allowed) "✓" else symbol, color = HubMint, fontSize = 20.sp) }
-        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) { Text(title,fontWeight=FontWeight.SemiBold,fontSize=14.sp); Text(subtitle,color=HubMuted,fontSize=12.sp) }
-        TextButton(onClick=activate) { Text(if(allowed) "Activ" else "Permite",fontSize=12.sp) }
+    Row(Modifier.fillMaxWidth().heightIn(min = 66.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(HubMint.copy(alpha = if (allowed) .15f else .06f)), contentAlignment = Alignment.Center) {
+            Text(if (allowed) "✓" else symbol, color = HubMint, fontSize = 20.sp)
+        }
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(subtitle, color = HubMuted, fontSize = 12.sp)
+        }
+        TextButton(onClick = activate) { Text(if (allowed) "Activ" else "Permite", fontSize = 12.sp) }
     }
 }
 
 @Composable
 private fun HubChoice(title: String, checked: Boolean, changed: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min=56.dp),verticalAlignment=Alignment.CenterVertically) { Text(title,Modifier.weight(1f),fontSize=14.sp); Switch(checked=checked,onCheckedChange=changed) }
+    Row(Modifier.fillMaxWidth().heightIn(min = 50.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, Modifier.weight(1f), fontSize = 14.sp); Switch(checked = checked, onCheckedChange = changed)
+    }
 }
