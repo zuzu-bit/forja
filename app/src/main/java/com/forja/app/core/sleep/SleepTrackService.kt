@@ -1,12 +1,15 @@
 package com.forja.app.core.sleep
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -14,8 +17,11 @@ import android.hardware.SensorManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.forja.app.ForjaApp
 import com.forja.app.MainActivity
@@ -26,6 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -57,7 +64,7 @@ class SleepTrackService : Service(), SensorEventListener {
 
     // Audio — 32 kHz pentru claritate; clipurile Whisper se reduc la 16 kHz.
     private var audioRecord: AudioRecord? = null
-    private var audioJob: kotlinx.coroutines.Job? = null
+    private var audioJob: Job? = null
     private val sampleRate = 32000
     private val ringSeconds = 6
     private val ring = ShortArray(sampleRate * ringSeconds)
@@ -79,24 +86,127 @@ class SleepTrackService : Service(), SensorEventListener {
 
     private var sessionId: Long = 0
     private var sessionStartAt: Long = 0
-    private var alarmFired = false
+    @Volatile private var alarmFired = false
+    private var alarmJob: Job? = null
+    /** Amânare: după „Încă 10 minute” alarma revine la această oră (0 = fără amânare). */
+    @Volatile private var snoozeUntil = 0L
     private var wakeLock: android.os.PowerManager.WakeLock? = null
+
+    // Promovarea în prim-plan: tipul se decide după permisiuni, niciodată 0 pe Android 14+.
+    private var promoted = false
+    /** true doar dacă am fost promovați cu tipul MICROPHONE — altfel nu pornim AudioRecord. */
+    private var micType = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val app = ForjaApp.from(this)
         when (intent?.action) {
             ACTION_STOP -> {
+                if (!running) {
+                    // Cursă rară: comanda a venit prin startForegroundService fără sesiune vie.
+                    // Onorăm contractul (promovăm), închidem sesiunea rămasă și ne oprim.
+                    closeStaleSession(this)
+                    cancelAlarmNotification()
+                    leaveForegroundAndStop()
+                    return START_NOT_STICKY
+                }
                 finishSession()
                 return START_NOT_STICKY
             }
-            else -> startSession()
+            ACTION_SNOOZE -> {
+                if (!running) {
+                    AlarmRinger.stop()
+                    cancelAlarmNotification()
+                    leaveForegroundAndStop()
+                    return START_NOT_STICKY
+                }
+                snoozeAlarm(app)
+                return START_STICKY
+            }
+            else -> {
+                if (intent == null) {
+                    // Repornire START_STICKY după moartea procesului: datele nopții s-au pierdut,
+                    // închidem onest sesiunea rămasă deschisă și nu ne prefacem că veghem.
+                    closeStaleSession(this)
+                    leaveForegroundAndStop()
+                    return START_NOT_STICKY
+                }
+                if (!promote()) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                startSession(app)
+                return START_STICKY
+            }
         }
-        return START_STICKY
     }
 
-    private fun startSession() {
-        startForeground(NOTIF_ID, buildNotification())
+    private fun micGranted() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Promovare în prim-plan cu tipul derivat din permisiuni:
+     * · 34+: MICROPHONE dacă avem RECORD_AUDIO, altfel SPECIAL_USE (niciodată 0 → MissingForegroundServiceTypeException)
+     * · 30–33: MICROPHONE sau MANIFEST
+     * · <30: tipul e ignorat.
+     * Întoarce false dacă nu am putut deveni prim-plan — apelantul trebuie să oprească serviciul.
+     */
+    private fun promote(): Boolean {
+        if (promoted) return true
+        val notif = buildNotification()
+        val mic = micGranted()
+        return try {
+            when {
+                Build.VERSION.SDK_INT >= 34 -> {
+                    if (mic) {
+                        try {
+                            ServiceCompat.startForeground(this, NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                            micType = true
+                        } catch (_: Exception) {
+                            // SecurityException / ForegroundServiceStartNotAllowedException (pornire din fundal)
+                            ServiceCompat.startForeground(this, NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                            micType = false
+                        }
+                    } else {
+                        ServiceCompat.startForeground(this, NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                        micType = false
+                    }
+                }
+                Build.VERSION.SDK_INT >= 30 -> {
+                    ServiceCompat.startForeground(
+                        this, NOTIF_ID, notif,
+                        if (mic) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST
+                    )
+                    micType = mic
+                }
+                else -> {
+                    ServiceCompat.startForeground(this, NOTIF_ID, notif, 0)
+                    micType = mic
+                }
+            }
+            promoted = true
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Ieșire curată: notificarea de veghe dispare odată cu serviciul. */
+    private fun leaveForegroundAndStop() {
+        if (!promoted) promote()
+        try { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE) } catch (_: Exception) { }
+        promoted = false
+        stopSelf()
+    }
+
+    private fun cancelAlarmNotification() {
+        try { NotificationManagerCompat.from(this).cancel(ALARM_NOTIF_ID) } catch (_: Exception) { }
+    }
+
+    private fun startSession(app: ForjaApp) {
+        if (running) return
+        running = true
         // WakeLock parțial: fără el, Doze amână bucla de veghe și alarma inteligentă
         // ar dormi odată cu tine. Limită de 12h ca plasă de siguranță pentru baterie.
         try {
@@ -106,7 +216,6 @@ class SleepTrackService : Service(), SensorEventListener {
                 acquire(12 * 3600_000L)
             }
         } catch (_: Exception) { }
-        val app = ForjaApp.from(this)
         app.presence.manualState = "sleep"
         app.auth.currentUid?.let { app.presence.publishState(it, "sleep") }
         sessionStartAt = System.currentTimeMillis()
@@ -123,9 +232,15 @@ class SleepTrackService : Service(), SensorEventListener {
                 dir.listFiles()?.forEach {
                     if (System.currentTimeMillis() - it.lastModified() > 24 * 3600_000) it.delete()
                 }
-                val f = File(dir, "$sessionId.m4a")
-                fullFile = f
-                fullRecorder = AacRecorder(sampleRate, f)
+                // Clipurile de 5 s se păstrează 7 zile, apoi pleacă singure.
+                File(filesDir, "sleep_clips").listFiles()?.forEach {
+                    if (System.currentTimeMillis() - it.lastModified() > 7 * 24 * 3600_000L) it.delete()
+                }
+                if (micType) {
+                    val f = File(dir, "$sessionId.m4a")
+                    fullFile = f
+                    fullRecorder = AacRecorder(sampleRate, f)
+                }
             } catch (_: Exception) { }
         }
         // Mișcare
@@ -133,8 +248,9 @@ class SleepTrackService : Service(), SensorEventListener {
         sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
             sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
-        // Microfon — doar dacă permisiunea există; altfel somn fără audio, onest.
-        startAudio()
+        // Microfon — doar dacă am fost promovați cu tipul MICROPHONE; altfel somn fără audio, onest
+        // (pe Android 14+ înregistrarea sub SPECIAL_USE din fundal e refuzată de sistem).
+        if (micType) startAudio()
         // Alarma deșteaptă
         startAlarmWatcher(app)
     }
@@ -323,10 +439,21 @@ class SleepTrackService : Service(), SensorEventListener {
      * · ora-limită — niciodată mai târziu.
      */
     private fun startAlarmWatcher(app: ForjaApp) {
-        scope.launch {
+        alarmJob?.cancel()
+        alarmJob = scope.launch {
             while (isActive && !alarmFired) {
                 delay(20_000)
                 try {
+                    val now = System.currentTimeMillis()
+                    // Amânare activă: singura regulă e ora la care revine alarma.
+                    if (snoozeUntil > 0) {
+                        if (now >= snoozeUntil) {
+                            snoozeUntil = 0L
+                            alarmFired = true
+                            fireAlarm()
+                        }
+                        continue
+                    }
                     val enabled = app.prefs.alarmEnabled.first()
                     if (!enabled) continue
                     val h = app.prefs.alarmHour.first()
@@ -337,7 +464,6 @@ class SleepTrackService : Service(), SensorEventListener {
                     if (deadline <= sessionStartAt) {
                         deadline = LocalDate.now().plusDays(1).atTime(h, m).atZone(zone).toInstant().toEpochMilli()
                     }
-                    val now = System.currentTimeMillis()
                     val windowStart = deadline - windowMs
 
                     // Granițele ciclurilor: adormire ~15 min + k × 90 min.
@@ -349,7 +475,7 @@ class SleepTrackService : Service(), SensorEventListener {
                     }
 
                     val inWindow = now in windowStart until deadline
-                    val recentMovement = movementTimes.any { now - it < 3 * 60_000 }
+                    val recentMovement = synchronized(movementTimes) { movementTimes.any { now - it < 3 * 60_000 } }
                     val atCycleEnd = cycleTarget in 1..now
                     if (now >= deadline || (inWindow && (recentMovement || atCycleEnd))) {
                         alarmFired = true
@@ -360,10 +486,30 @@ class SleepTrackService : Service(), SensorEventListener {
         }
     }
 
+    /** „Încă 10 minute”: alarma tace și revine peste 10 minute, fără să oprească veghea. */
+    private fun snoozeAlarm(app: ForjaApp) {
+        AlarmRinger.stop()
+        cancelAlarmNotification()
+        alarmFired = false
+        snoozeUntil = System.currentTimeMillis() + SNOOZE_MS
+        startAlarmWatcher(app)
+    }
+
+    /**
+     * Alarma nu tace niciodată: notificare cu full-screen intent + pornire directă a activității;
+     * dacă notificările sunt oprite sau Android 14+ nu ne lasă alarma pe tot ecranul,
+     * sună chiar serviciul. Dacă AlarmActivity nu apare în câteva secunde, tot serviciul sună.
+     */
+    @SuppressLint("MissingPermission")
     private fun fireAlarm() {
         val i = Intent(this, AlarmActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+        val nmc = NotificationManagerCompat.from(this)
+        val notificationsOn = try { nmc.areNotificationsEnabled() } catch (_: Exception) { false }
+        val fullScreenOk = if (Build.VERSION.SDK_INT >= 34) {
+            try { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent() } catch (_: Exception) { false }
+        } else true
         try {
             val pi = PendingIntent.getActivity(this, 7, i, PendingIntent.FLAG_IMMUTABLE)
             val notif = NotificationCompat.Builder(this, "alarm")
@@ -372,18 +518,26 @@ class SleepTrackService : Service(), SensorEventListener {
                 .setContentText("E fereastra ta de trezire.")
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setContentIntent(pi)
                 .setFullScreenIntent(pi, true)
+                .setOngoing(true)
                 .setAutoCancel(true)
                 .build()
-            val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-            nm.notify(34, notif)
-            startActivity(i)
-        } catch (_: Exception) {
-            try { startActivity(i) } catch (_: Exception) { }
+            if (notificationsOn) nmc.notify(ALARM_NOTIF_ID, notif)
+        } catch (_: Exception) { }
+        try { startActivity(i) } catch (_: Exception) { }
+        if (!notificationsOn || !fullScreenOk) AlarmRinger.start(this)
+        scope.launch {
+            delay(4_000)
+            if (alarmFired && !AlarmActivity.visible) AlarmRinger.start(this@SleepTrackService)
         }
     }
 
     private fun finishSession() {
+        running = false
+        AlarmRinger.stop()
+        cancelAlarmNotification()
+        alarmJob?.cancel()
         try { wakeLock?.release() } catch (_: Exception) { }
         sensorManager?.unregisterListener(this)
         audioJob?.cancel()
@@ -398,7 +552,7 @@ class SleepTrackService : Service(), SensorEventListener {
         app.presence.manualState = null
         app.auth.currentUid?.let { app.presence.publishState(it, "idle") }
         val moves = movements
-        val moveTimes = movementTimes.toList()
+        val moveTimes = synchronized(movementTimes) { movementTimes.toList() }
         scope.launch {
             val dao = app.db.sleepDao()
             dao.activeSessionOnce()?.let { s ->
@@ -454,6 +608,8 @@ class SleepTrackService : Service(), SensorEventListener {
                     )
                 } catch (_: Exception) { }
             }
+            try { ServiceCompat.stopForeground(this@SleepTrackService, ServiceCompat.STOP_FOREGROUND_REMOVE) } catch (_: Exception) { }
+            promoted = false
             stopSelf()
         }
     }
@@ -510,8 +666,10 @@ class SleepTrackService : Service(), SensorEventListener {
         if (delta > 1.2f && now - lastMovementAt > 20_000) {
             lastMovementAt = now
             movements++
-            movementTimes.add(now)
-            if (movementTimes.size > 2000) movementTimes.removeAt(0)
+            synchronized(movementTimes) {
+                movementTimes.add(now)
+                if (movementTimes.size > 2000) movementTimes.removeAt(0)
+            }
         }
     }
 
@@ -531,6 +689,7 @@ class SleepTrackService : Service(), SensorEventListener {
     }
 
     override fun onDestroy() {
+        running = false
         try { wakeLock?.release() } catch (_: Exception) { }
         sensorManager?.unregisterListener(this)
         audioJob?.cancel()
@@ -545,15 +704,63 @@ class SleepTrackService : Service(), SensorEventListener {
 
     companion object {
         const val NOTIF_ID = 31
+        const val ALARM_NOTIF_ID = 34
         const val ACTION_STOP = "com.forja.app.sleep.STOP"
+        const val ACTION_SNOOZE = "com.forja.app.sleep.SNOOZE"
+        const val SNOOZE_MS = 10 * 60_000L
+
+        /** true cât timp o sesiune de somn e vie în ACEST proces. */
+        @Volatile
+        var running: Boolean = false
+            private set
 
         fun start(context: Context) {
-            context.startForegroundService(Intent(context, SleepTrackService::class.java))
+            ContextCompat.startForegroundService(context, Intent(context, SleepTrackService::class.java))
         }
-        fun stop(context: Context) {
-            context.startForegroundService(
-                Intent(context, SleepTrackService::class.java).setAction(ACTION_STOP)
-            )
+        fun stop(context: Context) = send(context, ACTION_STOP)
+        fun snooze(context: Context) = send(context, ACTION_SNOOZE)
+
+        /**
+         * STOP/SNOOZE sigure: dacă serviciul nu rulează (procesul a murit peste noapte),
+         * nu-l mai pornim doar ca să-l oprim — închidem sesiunea direct în baza de date.
+         */
+        private fun send(context: Context, action: String) {
+            val i = Intent(context, SleepTrackService::class.java).setAction(action)
+            if (!running) {
+                if (action == ACTION_STOP) closeStaleSession(context)
+                AlarmRinger.stop()
+                try { NotificationManagerCompat.from(context).cancel(ALARM_NOTIF_ID) } catch (_: Exception) { }
+                return
+            }
+            try {
+                context.startService(i)
+            } catch (_: Exception) {
+                // IllegalStateException din fundal: serviciul e deja prim-plan, deci e permis.
+                try { ContextCompat.startForegroundService(context, i) } catch (_: Exception) { }
+            }
+        }
+
+        /** Închide sesiunea rămasă deschisă fără serviciu: scor 0, onest — noaptea s-a pierdut. */
+        fun closeStaleSession(context: Context) {
+            val app = ForjaApp.from(context)
+            app.appScope.launch {
+                try {
+                    val dao = app.db.sleepDao()
+                    dao.activeSessionOnce()?.let { s ->
+                        dao.update(
+                            s.copy(
+                                endAt = System.currentTimeMillis(),
+                                score = 0,
+                                summary = "Veghea s-a întrerupt peste noapte — telefonul a oprit FORJA. Scoate-o de la optimizarea bateriei."
+                            )
+                        )
+                    }
+                } catch (_: Exception) { }
+                try {
+                    app.presence.manualState = null
+                    app.auth.currentUid?.let { app.presence.publishState(it, "idle") }
+                } catch (_: Exception) { }
+            }
         }
 
         /** WAV PCM16 mono — header standard de 44 de octeți. */

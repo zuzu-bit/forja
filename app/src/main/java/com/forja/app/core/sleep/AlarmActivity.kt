@@ -1,12 +1,9 @@
 package com.forja.app.core.sleep
 
-import android.media.MediaPlayer
-import android.media.RingtoneManager
+import android.app.KeyguardManager
 import android.os.Build
 import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.RepeatMode
@@ -28,42 +25,36 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationManagerCompat
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.PrimaryButton
+import com.forja.app.core.designsystem.components.SecondaryButton
 import com.forja.app.core.util.Fmt
 
 /** Alarma deșteaptă — te prinde în somn ușor, nu în adânc. Sună până spui tu. */
 class AlarmActivity : ComponentActivity() {
 
-    private var player: MediaPlayer? = null
-    private var vibrator: Vibrator? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setShowWhenLocked(true)
-        setTurnScreenOn(true)
-
-        try {
-            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            player = MediaPlayer().apply {
-                setDataSource(this@AlarmActivity, uri)
-                isLooping = true
-                prepare()
-                start()
-            }
-        } catch (_: Exception) { }
-        try {
-            vibrator = if (Build.VERSION.SDK_INT >= 31) {
-                (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                getSystemService(VIBRATOR_SERVICE) as Vibrator
-            }
-            vibrator?.vibrate(
-                VibrationEffect.createWaveform(longArrayOf(0, 600, 500), 0)
+        // Peste ecranul blocat, cu ecranul aprins: API 27+ are metode; pe 26 rămân flag-urile de fereastră.
+        if (Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
             )
+        }
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        try {
+            getSystemService(KeyguardManager::class.java)?.requestDismissKeyguard(this, null)
         } catch (_: Exception) { }
+
+        // Sunetele de adormit tac; sună alarma (un singur player pentru serviciu + activitate).
+        SleepSounds.stop()
+        AlarmRinger.start(this)
 
         setContent {
             ForjaTheme {
@@ -77,12 +68,14 @@ class AlarmActivity : ComponentActivity() {
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.padding(horizontal = 28.dp)
                     ) {
+                        val reduced = LocalReducedMotion.current
                         val infinite = rememberInfiniteTransition(label = "wake")
-                        val breath by infinite.animateFloat(
+                        val breathAnim by infinite.animateFloat(
                             0.9f, 1.1f,
                             infiniteRepeatable(tween(1800), RepeatMode.Reverse),
                             label = "s"
                         )
+                        val breath = if (reduced) 1f else breathAnim
                         Box(
                             Modifier
                                 .size(170.dp)
@@ -116,20 +109,46 @@ class AlarmActivity : ComponentActivity() {
                             },
                             modifier = Modifier.fillMaxWidth()
                         )
+                        Spacer(Modifier.height(12.dp))
+                        SecondaryButton(
+                            text = "Încă 10 minute",
+                            onClick = {
+                                stopAlarm()
+                                SleepTrackService.snooze(this@AlarmActivity)
+                                finish()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        visible = true
+    }
+
+    override fun onStop() {
+        visible = false
+        super.onStop()
+    }
+
     private fun stopAlarm() {
-        try { player?.stop(); player?.release() } catch (_: Exception) { }
-        player = null
-        try { vibrator?.cancel() } catch (_: Exception) { }
+        AlarmRinger.stop()
+        try { NotificationManagerCompat.from(this).cancel(SleepTrackService.ALARM_NOTIF_ID) } catch (_: Exception) { }
     }
 
     override fun onDestroy() {
         stopAlarm()
         super.onDestroy()
+    }
+
+    companion object {
+        /** true cât timp ecranul alarmei e la vedere — serviciul verifică asta ca să nu rămână alarma mută. */
+        @Volatile
+        var visible: Boolean = false
+            private set
     }
 }

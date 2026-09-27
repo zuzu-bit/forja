@@ -1,8 +1,15 @@
 package com.forja.app.feature.sleep
 
 import android.Manifest
+import android.app.NotificationManager
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -30,8 +37,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.forja.app.ForjaApp
 import com.forja.app.core.data.db.SleepEventEntity
+import com.forja.app.core.data.db.SleepSessionEntity
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.sleep.SleepTrackService
@@ -39,6 +50,10 @@ import com.forja.app.core.util.Fmt
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /** Somn à la Sleep as Android: microfon local, hipnogramă pe cicluri, alarmă deșteaptă. */
 @Composable
@@ -51,10 +66,64 @@ fun SleepScreen() {
     val week by app.db.sleepDao().finishedSince(Fmt.startOfDayMillis(6)).collectAsState(initial = emptyList())
     val toast = LocalToast.current
 
+    val nights by app.db.sleepDao().recent(14).collectAsState(initial = emptyList())
+
     val alarmEnabled by app.prefs.alarmEnabled.collectAsState(initial = false)
     val alarmHour by app.prefs.alarmHour.collectAsState(initial = 7)
     val alarmMinute by app.prefs.alarmMinute.collectAsState(initial = 0)
     val alarmWindow by app.prefs.alarmWindowMin.collectAsState(initial = 40)
+
+    // Veghea de noapte: FORJA trebuie scoasă de la optimizarea bateriei și, pe Android 14+,
+    // lăsată să pornească alarma pe tot ecranul. Re-verificăm la fiecare revenire în ecran.
+    var refresh by remember { mutableStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) refresh++ }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+    val batteryExempt = remember(refresh) {
+        try {
+            context.getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(context.packageName) ?: true
+        } catch (_: Exception) { true }
+    }
+    val fullScreenOk = remember(refresh) {
+        if (Build.VERSION.SDK_INT >= 34) {
+            try {
+                context.getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() ?: true
+            } catch (_: Exception) { true }
+        } else true
+    }
+    fun requestVigil() {
+        if (!batteryExempt) {
+            try {
+                context.startActivity(
+                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            } catch (_: ActivityNotFoundException) {
+                try {
+                    context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (_: Exception) { toast.show("Nu am găsit setarea bateriei pe acest telefon.") }
+            } catch (_: Exception) { toast.show("Nu am găsit setarea bateriei pe acest telefon.") }
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 34 && !fullScreenOk) {
+            try {
+                context.startActivity(
+                    Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:${context.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            } catch (_: Exception) {
+                try {
+                    context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) { toast.show("Deschide setările aplicației și permite alarma pe tot ecranul.") }
+            }
+        }
+    }
 
     fun startSleepExtras() {
         // Plasa de siguranță (ca Gemini): alarma de sistem la ora-limită.
@@ -67,19 +136,33 @@ fun SleepScreen() {
         }
     }
 
-    var hasMic by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        )
+    fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
+    var hasMic by remember { mutableStateOf(granted(Manifest.permission.RECORD_AUDIO)) }
+    /** Microfon + notificări (33+), cerute împreună; serviciul pornește oricum — își alege tipul după ce a primit. */
+    fun missingSleepPermissions(): List<String> {
+        val need = mutableListOf<String>()
+        if (!granted(Manifest.permission.RECORD_AUDIO)) need.add(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) need.add(Manifest.permission.POST_NOTIFICATIONS)
+        return need
     }
-    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        hasMic = granted
+    fun beginSleep(micOn: Boolean, notificationsDenied: Boolean) {
         SleepTrackService.start(context)
         startSleepExtras()
         toast.show(
-            if (granted) "Noapte bună. Microfonul ascultă local — nimic nu pleacă de pe telefon."
-            else "Noapte bună. Fără microfon: doar mișcarea se analizează."
+            when {
+                notificationsDenied -> "Fără notificări, alarma nu poate porni ecranul."
+                alarmEnabled && !fullScreenOk -> "Permite alarma pe tot ecranul din cardul „Veghea de noapte”."
+                micOn -> "Noapte bună. Microfonul ascultă local — nimic nu pleacă de pe telefon."
+                else -> "Noapte bună. Fără microfon: doar mișcarea se analizează."
+            }
         )
+    }
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        val mic = result[Manifest.permission.RECORD_AUDIO] ?: granted(Manifest.permission.RECORD_AUDIO)
+        hasMic = mic
+        val notifDenied = Build.VERSION.SDK_INT >= 33 &&
+            !(result[Manifest.permission.POST_NOTIFICATIONS] ?: granted(Manifest.permission.POST_NOTIFICATIONS))
+        beginSleep(mic, notifDenied)
     }
 
     Column(
@@ -212,16 +295,58 @@ fun SleepScreen() {
             PrimaryButton(
                 text = "Încep să dorm",
                 onClick = {
-                    if (hasMic) {
+                    val need = missingSleepPermissions()
+                    if (need.isEmpty()) {
+                        hasMic = true
                         SleepTrackService.start(context)
                         startSleepExtras()
-                        toast.show("Noapte bună. Lasă telefonul lângă tine, cu fața în jos.")
+                        toast.show(
+                            if (alarmEnabled && !fullScreenOk) "Permite alarma pe tot ecranul din cardul „Veghea de noapte”."
+                            else "Noapte bună. Lasă telefonul lângă tine, cu fața în jos."
+                        )
                     } else {
-                        micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        permLauncher.launch(need.toTypedArray())
                     }
                 },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
             )
+        }
+
+        // Veghea de noapte — fără scutirea de baterie, OEM-urile omoară serviciul; fără alarma pe
+        // tot ecranul (Android 14+), dimineața rămâne doar o notificare.
+        if (!batteryExempt || !fullScreenOk) {
+            Spacer(Modifier.height(12.dp))
+            ForjaCard(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                fill = SleepCard, stroke = SleepStroke
+            ) {
+                Text("Veghea de noapte", style = BodyStrong)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "FORJA trebuie să rămână trează cât dormi tu. Scoate-o de la optimizarea bateriei și permite alarma pe tot ecranul.",
+                    style = BodySmall.copy(color = SleepTextDim)
+                )
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    Text(
+                        if (batteryExempt) "BATERIE · OK" else "BATERIE · LIPSĂ",
+                        style = monoLabel(8, 0.12f).copy(color = if (batteryExempt) Accent2 else SleepRem)
+                    )
+                    if (Build.VERSION.SDK_INT >= 34) {
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            if (fullScreenOk) "ALARMĂ PE ECRAN · OK" else "ALARMĂ PE ECRAN · LIPSĂ",
+                            style = monoLabel(8, 0.12f).copy(color = if (fullScreenOk) Accent2 else SleepRem)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                PrimaryButton(
+                    text = "Permite veghea",
+                    onClick = { requestVigil() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
 
         Spacer(Modifier.height(20.dp))
@@ -310,7 +435,10 @@ fun SleepScreen() {
                 ForjaSwitch(checked = alarmEnabled, onCheckedChange = { on ->
                     scope.launch {
                         app.prefs.setAlarmEnabled(on)
-                        if (on) toast.show("La culcare setez și alarma din Ceas la %02d:%02d — plasă de siguranță.".format(alarmHour, alarmMinute))
+                        if (on) toast.show(
+                            if (!fullScreenOk) "Permite alarma pe tot ecranul din cardul „Veghea de noapte”, altfel dimineața rămâne doar o notificare."
+                            else "La culcare setez și alarma din Ceas la %02d:%02d — plasă de siguranță.".format(alarmHour, alarmMinute)
+                        )
                     }
                 })
             }
@@ -519,6 +647,29 @@ fun SleepScreen() {
             )
         }
 
+        Spacer(Modifier.height(20.dp))
+
+        // Istoricul compact — ultimele 14 nopți: dată, durată, scor, sforăituri.
+        SectionLabel("Nopțile tale", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
+        Spacer(Modifier.height(10.dp))
+        ForjaCard(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            fill = SleepCard, stroke = SleepStroke
+        ) {
+            if (nights.isEmpty()) {
+                Text("Prima noapte apare aici, mâine dimineață.", style = BodySmall.copy(color = SleepTextDim))
+            } else {
+                nights.forEachIndexed { idx, s ->
+                    key(s.id) { NightRow(s, app) }
+                    if (idx < nights.lastIndex) {
+                        Spacer(Modifier.height(8.dp))
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(SleepStroke))
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.height(16.dp))
         Row(
             Modifier.padding(horizontal = 20.dp),
@@ -529,6 +680,58 @@ fun SleepScreen() {
             InfoDot(
                 title = "Despre somn",
                 text = "FORJA nu pune diagnostice. Sunetul se analizează local, clipurile rămân pe telefon și le ștergi tu. Dacă sforăitul revine des, vorbește cu un medic — ai istoricul aici."
+            )
+        }
+    }
+}
+
+/** Un rând din „Nopțile tale”: data, durata, scorul și numărul de sforăituri. */
+@Composable
+private fun NightRow(s: SleepSessionEntity, app: ForjaApp) {
+    val events by app.db.sleepDao().eventsForSession(s.id).collectAsState(initial = emptyList())
+    val snores = events.count { it.type == "snore" }
+    val minutes = (((s.endAt ?: s.startAt) - s.startAt) / 60000).toInt()
+    val dateLabel = remember(s.startAt) {
+        val fmt = DateTimeFormatter.ofPattern("EEE d MMM", Locale("ro"))
+        Instant.ofEpochMilli(s.startAt).atZone(ZoneId.systemDefault()).format(fmt).replace(".", "").uppercase()
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(dateLabel, style = monoLabel(8, 0.12f).copy(color = SleepTextDim))
+            Spacer(Modifier.height(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(Fmt.durationHm(minutes), style = BodyStrong)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${Fmt.clock(s.startAt)} → ${Fmt.clock(s.endAt ?: s.startAt)}",
+                    style = BodyTiny.copy(color = SleepTextDim)
+                )
+            }
+            Text(
+                when (snores) {
+                    0 -> "fără sforăit"
+                    1 -> "1 sforăit"
+                    else -> "$snores sforăituri"
+                },
+                style = BodyTiny.copy(color = SleepTextDim)
+            )
+        }
+        Box(
+            Modifier
+                .clip(ChipShape)
+                .background(Color(0x1A7896BE))
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+        ) {
+            Text(
+                if (s.score > 0) "${s.score}" else "—",
+                style = BodyStrong.copy(
+                    fontSize = 13.sp,
+                    color = when {
+                        s.score >= 80 -> Accent2
+                        s.score > 0 -> SleepRem
+                        else -> SleepTextDim
+                    }
+                )
             )
         }
     }

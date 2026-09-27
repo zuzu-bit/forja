@@ -59,7 +59,8 @@ object CloudSync {
                     "snoreEvents" to snoreCount,
                     "talkEvents" to talkCount,
                     "soundEvents" to soundCount,
-                    "summary" to s.summary
+                    "summary" to s.summary,
+                    "measurement" to "estimated"
                 ),
                 SetOptions.merge()
             )
