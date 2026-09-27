@@ -54,16 +54,17 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
             .statusBarsPadding()
             .padding(bottom = 120.dp)
     ) {
-        Row(
-            Modifier
+        // Antetul modulului: ștampila postului, numele filei, ordinul scurt.
+        ModuleHeader(
+            stamp = "INSTRUCȚIE",
+            title = "Antrenament",
+            order = "Alege planul. Ajustează seriile. Începe sesiunea.",
+            modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Bottom
-        ) {
-            Text("Antrenament", style = TitleModule)
-            SectionLabel("Planul tău")
-        }
+                .padding(horizontal = 20.dp, vertical = 16.dp)
+        )
+        SectionLabel("Planul tău", Modifier.padding(horizontal = 20.dp))
+        Spacer(Modifier.height(10.dp))
 
         // Carduri plan 150×188, stroke amber pe selecție, badge ACTIV
         LazyRow(contentPadding = PaddingValues(horizontal = 20.dp)) {
@@ -116,6 +117,10 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
             }
         }
 
+        // Un singur citat cald pe ecran — același toată ziua, altul mâine.
+        Spacer(Modifier.height(18.dp))
+        WarmQuote(Tone.ofDay(Tone.workout), Modifier.padding(horizontal = 20.dp))
+
         Spacer(Modifier.height(22.dp))
         val plan = plans.getOrNull(planIdx)
         Row(
@@ -159,7 +164,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
                                 style = monoLabel(9, 0.10f).copy(color = TextSecondary)
                             )
                             Spacer(Modifier.height(3.dp))
-                            Text("ATINGE ✎ CA SĂ EDITEZI", style = monoLabel(8, 0.12f).copy(color = Accent2))
+                            Text("ATINGE CREIONUL · AJUSTEAZĂ", style = monoLabel(8, 0.12f).copy(color = Accent2))
                         }
                         Icon(
                             Icons.Filled.Edit, contentDescription = "Editează",
@@ -174,7 +179,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
                         )
                         Spacer(Modifier.width(8.dp))
                         Icon(
-                            Icons.Filled.PlayArrow, contentDescription = "Pornește",
+                            Icons.Filled.PlayArrow, contentDescription = "Începe de aici",
                             tint = OnAccent,
                             modifier = Modifier
                                 .size(34.dp)
@@ -227,7 +232,7 @@ private fun ExerciseEditSheet(
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             Text(exercise.name, style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(4.dp))
-            Text("Ajustează-le pe ale tale — se salvează.", style = BodySmall)
+            Text("Pune valorile tale. Se salvează în plan.", style = BodySmall)
             Spacer(Modifier.height(18.dp))
 
             @Composable

@@ -120,7 +120,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         val done = s.totalSetsDone + 1
         if (s.setNo < ex.sets) {
             _live.value = s.copy(resting = true, restLeft = 90, totalSetsDone = done)
-            toast("Serie salvată. Încă ${ex.sets - s.setNo} și ai terminat.")
+            toast("Serie salvată. Încă ${ex.sets - s.setNo} la acest exercițiu.")
             startRestTimer()
         } else {
             advance(done)
@@ -172,7 +172,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
             val min = durS / 60
             val sec = durS % 60
             _live.value = s.copy(resting = false, finished = true, totalSetsDone = done)
-            toast("Sesiune încheiată. %d:%02d · bravo.".format(min, sec))
+            toast("Sesiune încheiată în %d:%02d. Misiune îndeplinită.".format(min, sec))
             viewModelScope.launch {
                 dao.session(sessionId)?.let {
                     dao.updateSession(it.copy(endedAt = System.currentTimeMillis(), totalSets = done))

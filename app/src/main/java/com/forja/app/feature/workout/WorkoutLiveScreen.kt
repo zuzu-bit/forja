@@ -62,7 +62,7 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
     val ex = live.current
     if (ex == null) {
         Box(Modifier.fillMaxSize().background(Surface0), contentAlignment = Alignment.Center) {
-            Text("Alege un plan din hub.", style = Body)
+            Text("Nicio sesiune pornită. Alege un plan.", style = Body)
         }
         return
     }
@@ -223,7 +223,7 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text(
-                        live.next?.name ?: "Stretching & respirație · 5 min",
+                        live.next?.name ?: "Stretching și respirație · 5 min",
                         style = BodyStrong.copy(fontSize = 14.sp)
                     )
                     live.next?.let {
