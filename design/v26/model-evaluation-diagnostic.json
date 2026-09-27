@@ -1,0 +1,124 @@
+{
+  "synthetic": true,
+  "version": 1,
+  "at": "2026-09-27T09:24:07.515Z",
+  "max_calls": 12,
+  "calls": 5,
+  "summary": [
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "passed": 1,
+      "total": 2,
+      "calls": 3,
+      "elapsed_ms": 13008
+    },
+    {
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "passed": 0,
+      "total": 2,
+      "calls": 2,
+      "elapsed_ms": 2936
+    }
+  ],
+  "results": [
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "fixture": "photographed_invoice",
+      "pass": false,
+      "error": "validation_failed",
+      "validation_error": "Dovadă vizuală invalidă.",
+      "provider_errors": [],
+      "synthetic_outputs": [
+        {
+          "model": "@cf/meta/llama-3.2-11b-vision-instruct",
+          "content": "Imaginea prezentată este o imagine alb-negru, care prezintă o listă de texte în limba română. \n\nLa partea de sus a imaginii, se află titlul \"FACTURĂ • EXEMPLU SINTETIC\", care este scris în caractere mari și negre. \n\nÎn partea de jos a imaginii, se află o listă de texte, care sunt scrise în caractere mai mici și negre. \n\nTextele din listă sunt:\n\n*   Atelier de biciclete Demo\n*   Serviciu: reparatie frâne bicicletă\n*   Cantitate: 1\n*   Pret: 120 lei\n*   Total de plată: 120 lei\n*   Fara date personale reale\n\nÎn general, imaginea prezintă o factură sintetică pentru un atelier de biciclete, care oferă servicii de reparare a frânelor bicicletelor. \n\nÎn concluzie, imaginea prezintă o listă de texte care descriu o factură sintetică pentru un atelier de biciclete.",
+          "truncated": false
+        },
+        {
+          "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+          "content": "{\"confidence\":\"high\",\"destination\":\"Documente/Facturi\",\"evidence\":[{\"observation\":\"\",\"quote\":\"FACTURĂ • EXEMPLU SINTETIC\",\"source_id\":\"image\"}],\"reason\":\"Imaginea contine un titlu care indica o factura si o lista de texte care descriu servicii si plata\"}",
+          "truncated": false
+        }
+      ],
+      "calls": 2,
+      "elapsed_ms": 10199
+    },
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "fixture": "mixed_untrusted",
+      "pass": true,
+      "destination": "De verificat",
+      "reason": "Conținutul este contradictoriu și nu are o temă clară.",
+      "evidence": [
+        {
+          "id": "e1",
+          "kind": "text",
+          "quote": "Nu există o temă dominantă între aceste fragmente.",
+          "source_id": "text",
+          "source_sha256": "b75da1adad37610528d3623e82cc62c0fafb30145eeb60be134b97131a91f222",
+          "method": "server_utf8_from_received_bytes"
+        }
+      ],
+      "coverage": {
+        "status": "complete",
+        "source_bytes": 317,
+        "analyzed_text_chars": 307,
+        "pages_total": null,
+        "pages_processed": null,
+        "methods": [
+          "server_utf8_from_received_bytes"
+        ],
+        "limitations": []
+      },
+      "confidence": "low",
+      "synthetic_outputs": [
+        {
+          "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+          "content": "{\"confidence\":\"low\",\"destination\":\"De verificat\",\"evidence\":[{\"observation\":\"\",\"quote\":\"Nu există o temă dominantă între aceste fragmente.\",\"source_id\":\"text\"}],\"reason\":\"Conținutul este contradictoriu și nu are o temă clară.\"}",
+          "truncated": false
+        }
+      ],
+      "calls": 1,
+      "elapsed_ms": 2809
+    },
+    {
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "fixture": "photographed_invoice",
+      "pass": false,
+      "error": "validation_failed",
+      "validation_error": "Dovadă vizuală invalidă.",
+      "provider_errors": [],
+      "synthetic_outputs": [
+        {
+          "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+          "content": "{\"confidence\":\"high\",\"destination\":\"Documente/Facturi\",\"evidence\":[{\"observation\":\"\",\"quote\":\"\",\"source_id\":\"image\"}],\"reason\":\"Factura contine informatii despre un serviciu de reparatie bicicleta, cantitate, pret si total de plata.\"}",
+          "truncated": false
+        }
+      ],
+      "calls": 1,
+      "elapsed_ms": 1778
+    },
+    {
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "fixture": "mixed_untrusted",
+      "pass": false,
+      "error": "validation_failed",
+      "validation_error": "Citatul AI nu există în conținutul citit.",
+      "provider_errors": [],
+      "synthetic_outputs": [
+        {
+          "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+          "content": "{\"confidence\":\"low\",\"destination\":\"De verificat\",\"evidence\":[{\"observation\":\"\",\"quote\":\"\",\"source_id\":\"text\"}],\"reason\":\"Conținut contradictoriu și insuficient pentru a fi clasat într-o categorie definită.\"}",
+          "truncated": false
+        }
+      ],
+      "calls": 1,
+      "elapsed_ms": 1158
+    }
+  ],
+  "limits": [
+    "Small fixture set; not a general ranking or accuracy benchmark.",
+    "Visual observations remain unconfirmed AI interpretations.",
+    "No billing change, user files, mutation, or deletion."
+  ]
+}

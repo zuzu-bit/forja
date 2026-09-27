@@ -11,7 +11,8 @@ const text=(v,max)=>typeof v==='string'&&v.length<=max&&!/[\u0000-\u001f\u007f]/
 const jobKey=id=>'org4-job:'+id, itemKey=(j,id)=>`org4-item:${j}:${id}`, queueKey=(j,id)=>`org4-queue:${j}:${id}`;
 const originalKey=(d,o,v)=>`org4-original:${d}:${o}:${v}`;
 const lockKey=(d,o)=>`org4-lock:${d}:${o}`;
-const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
+const equal=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
 const counters=()=>Object.fromEntries(['total',...ITEM_STATES].map(k=>[k,0]));
 function under(path,root,recursive=true){return !root||path===root||recursive&&path.startsWith(root+'/');}
 function destination(job,value){const p=pathName(value,200);if(!p||!under(p,job.destination))bad('Dosarul nu este în destinația autorizată.',403);return p;}
@@ -33,7 +34,7 @@ async function publicItem(storage,item,peers=[]){
  let duplicate=null;
  if(received){
   const originals=new Map();for(const p of peers.filter(p=>p.organizer_job===item.job_id&&p.sha256===item.sha256&&p.bytes===f.bytes&&p.expires_at>Date.now()).sort((a,b)=>a.received_at-b.received_at||a.original_id.localeCompare(b.original_id))){if(!originals.has(p.original_id))originals.set(p.original_id,p);}
-  if(originals.size>1){const keeper=[...originals.values()][0];duplicate={kind:'exact_bytes',sha256:item.sha256,original_count:originals.size,keeper_original_id:keeper.original_id,keeper_item_id:keeper.organizer_item,keeper_file_id:keeper.id,is_keeper:keeper.original_id===item.original_id,verified_received_bytes:true,requires_confirmation:true,review_only:true};}
+  if(originals.size>1){const keeper=[...originals.values()][0];duplicate={kind:'exact_bytes',sha256:item.sha256,original_count:originals.size,keeper_original_id:keeper.original_id,keeper_item_id:keeper.organizer_item,keeper_file_id:keeper.id,is_keeper:keeper.original_id===item.original_id,expires_at:Math.min(...[...originals.values()].map(p=>p.expires_at)),verified_received_bytes:true,requires_confirmation:true,review_only:true};}
  }
  const {lease,receipts,...out}=item;return {...out,analysis,duplicate,coverage:analysis?.coverage??null,partial:analysis?.status==='partial',received,file:received?Object.fromEntries(['id','name','media_type','preview','expires_at','thumbnail','sha256','bytes','folder'].map(k=>[k,f[k]])):null};
 }
@@ -48,17 +49,18 @@ async function putItem(storage,job,item,previous){
 function progressState(job){
  if(['cancelled','paused'].includes(job.state))return;
  const c=job.counters,finished=c.moved+c.skipped;
- job.state=job.inventory_complete&&finished===c.total?'complete':c.needs_review||c.failed_retryable||c.copied_pending_removal?'partial':c.total?'running':'awaiting_phone';
+ job.state=job.inventory_complete&&finished===c.total&&!job.inventory_unavailable?'complete':job.inventory_unavailable||c.needs_review||c.failed_retryable||c.copied_pending_removal?'partial':c.total?'running':'awaiting_phone';
  if(job.command?.action==='continue'&&job.command.status!=='complete'){
   const selected=job.command.selected||0,settled=job.command.finished||0;
   if(selected===settled&&(job.command.count>0&&selected>=job.command.count||job.inventory_complete&&['pending','analyzed','upload_pending','uploaded','ready','applying','copied_pending_removal','failed_retryable'].every(k=>c[k]===0)))job.command.status='complete';
   else job.command.status=selected?'running':'pending';
  }
 }
-export async function validateOrganizerUpload(storage,device,jobId,itemId,original,version,sha,kind){
+export async function validateOrganizerUpload(storage,device,jobId,itemId,original,version,sha,kind,copyId){
  const {job}=await requireOrganizerJob(storage,device,jobId),item=await storage.get(itemKey(jobId,itemId));
  if(!item||item.original_id!==original||item.version!==version||item.sha256!==sha||job.source!==(kind==='photo'?'photos':'files'))bad('Copia nu corespunde originalului selectat.',409);
- if(!item.batch_id||terminal.has(item.state))bad('Elementul nu mai așteaptă un transfer.',409);
+ if(!item.batch_id||terminal.has(item.state)&&item.file_id!==copyId)bad('Elementul nu mai așteaptă un transfer.',409);
+ if((['applying','copied_pending_removal'].includes(item.state)||item.reconciliation_required)&&item.file_id!==copyId)bad('Reconciliază mutarea începută înainte de alt transfer.',409);
  return {job,item};
 }
 export async function bindOrganizerFile(storage,file){
@@ -66,8 +68,14 @@ export async function bindOrganizerFile(storage,file){
  const {job}=await requireOrganizerJob(storage,file.device_id,file.organizer_job),old=await storage.get(itemKey(job.id,file.organizer_item));
  if(!old||old.sha256!==file.sha256)bad('Original modificat.',409);
  const item={...old,file_id:file.id,updated_at:Date.now()};
+ if(old.file_id&&old.file_id!==file.id){item.receipts={...old.receipts};for(const state of ['upload_pending','uploaded','ready'])delete item.receipts[state];}
  if(['pending','analyzed','upload_pending'].includes(item.state))item.state='uploaded';
  await storage.transaction(async tx=>{await putItem(tx,job,item,old);progressState(job);await tx.put(jobKey(job.id),job);});
+}
+export async function invalidateOrganizerFile(storage,file){
+ if(!file.organizer_job)return;
+ const job=await storage.get(jobKey(file.organizer_job));if(!job||job.deleting)return;
+ job.sync_revision=(job.sync_revision||0)+1;job.updated_at=Date.now();await storage.put(jobKey(job.id),job);
 }
 export async function queueOrganizerFolder(storage,file,value){
  keys(value,['folder','request_id','revision']);if(!idPattern.test(value.request_id))bad('Identificator de mutare invalid.');
@@ -76,16 +84,20 @@ export async function queueOrganizerFolder(storage,file,value){
  if(old){if(!equal(old,spec))bad('Comandă de mutare modificată.',409);return file;}
  if(value.revision!==job.revision||!device.grant.organize)bad('Actualizează organizarea și permite mutarea pe telefon.',409);
  const item=await storage.get(itemKey(job.id,file.organizer_item));
- if(!item||['applying','moved','copied_pending_removal'].includes(item.state))bad('Acest original nu mai poate fi mutat prin planul curent.',409);
+ if(!item||item.reconciliation_required||['applying','moved','copied_pending_removal'].includes(item.state))bad('Acest original nu mai poate fi mutat prin planul curent.',409);
  await copyFor(storage,job,item);
  const pending={...file,pending_folder:path,sync_state:'awaiting_phone'};
- await storage.transaction(async tx=>{await putItem(tx,job,{...item,destination:path,state:'ready',approval:{grant_id:job.grant_id,revision:job.revision},updated_at:Date.now()},item);await tx.put('cloud-file:'+file.id,pending);await tx.put(key,spec);await tx.put(jobKey(job.id),job);});
+ await storage.transaction(async tx=>{await putItem(tx,job,approvedItem(item,job,path),item);await tx.put('cloud-file:'+file.id,pending);await tx.put(key,spec);await tx.put(jobKey(job.id),job);});
  return pending;
 }
 async function copyFor(storage,job,item){
  const file=item.file_id?await storage.get('cloud-file:'+item.file_id):null;
  if(!file||file.expires_at<=Date.now()||file.organizer_job!==job.id||file.organizer_item!==item.id||file.sha256!==item.sha256)bad('Încarcă din nou copia verificată înainte de mutare.',409);
  return file;
+}
+function approvedItem(item,job,path){
+ const receipts={...item.receipts};if(item.destination!==path||item.approval?.revision!==job.revision)delete receipts.ready;
+ return {...item,state:'ready',destination:path,receipts,approval:{grant_id:job.grant_id,revision:job.revision},updated_at:Date.now()};
 }
 async function moveEvidence(storage,job,item){
  if(job.mode==='local'){
@@ -153,7 +165,7 @@ export async function handleOrganizerJobs(request,account,readJSON){
   if(v.revision!==d.revision)bad('Accesul s-a schimbat. Actualizează.',409);
   if([...(await storage.list({prefix:'org4-job:'})).values()].filter(j=>j.device===device&&!['cancelled','complete'].includes(j.state)).length>=10)bad('Maximum zece organizări active.',429);
   if((await storage.list({prefix:'org4-job:',limit:100})).size>=100)bad('Șterge un proiect vechi înainte de a începe altul (maximum 100).',429);
-  const now=Date.now(),job={id:v.id,...spec,spec,revision:1,state:'awaiting_phone',command:null,inventory_complete:false,inventory_total:null,counters:counters(),created_at:now,updated_at:now};
+  const now=Date.now(),job={id:v.id,...spec,spec,revision:1,state:'awaiting_phone',command:null,inventory_complete:false,inventory_total:null,inventory_unavailable:0,counters:counters(),created_at:now,updated_at:now};
   await storage.put(jobKey(job.id),job);return json(publicJob(job,d,intake),201);
  }
  const {job}=await requireOrganizerJob(storage,device,id,{mutate:false});
@@ -188,10 +200,11 @@ export async function handleOrganizerJobs(request,account,readJSON){
  // Final facts from an already authorized move remain recordable after pause/revoke.
  if(action!=='receipts')await requireOrganizerJob(storage,device,id);
  if(action==='items'&&request.method==='POST'){
-  const {value:v}=await readJSON(request,512*1024);keys(v,['grant_id','items','inventory_complete','inventory_total'],['grant_id','items']);
+  const {value:v}=await readJSON(request,512*1024);keys(v,['grant_id','items','inventory_complete','inventory_total','inventory_unavailable'],['grant_id','items']);
   if(v.grant_id!==job.grant_id||!Array.isArray(v.items)||v.items.length>100||new Set(v.items.map(i=>i.id)).size!==v.items.length)bad('Inventar invalid.');
   if(!job.command||job.command.action!=='continue')bad('Pornește sau continuă organizarea.',409);
   if(v.inventory_complete!==undefined&&typeof v.inventory_complete!=='boolean')bad('Inventar invalid.');if(v.inventory_total!==undefined&&v.inventory_total!==null)n(v.inventory_total,0,10000000);
+  if(v.inventory_unavailable!==undefined){if(v.inventory_complete!==true||!Number.isSafeInteger(v.inventory_total))bad('Raportează elementele inaccesibile cu inventarul final.');n(v.inventory_unavailable,0,v.inventory_total);}
   const clean=v.items.map(i=>{
    keys(i,['id','original_id','version','sha256','name','folder','media_type','bytes','modified_at','extraction'],['id','original_id','version','sha256','name','folder','media_type','bytes','modified_at']);
    if(!idPattern.test(i.id)||!idPattern.test(i.original_id)||!shaPattern.test(i.sha256)||i.version!==i.sha256||!text(i.name,200)||!i.name.trim()||!text(i.media_type,120))bad('Identitate de fișier invalidă.');n(i.bytes,1,2**40);n(i.modified_at);
@@ -212,6 +225,7 @@ export async function handleOrganizerJobs(request,account,readJSON){
    }
    if(v.inventory_complete!==undefined)job.inventory_complete=v.inventory_complete;
    if(v.inventory_total!==undefined)job.inventory_total=v.inventory_total;
+   if(v.inventory_unavailable!==undefined)job.inventory_unavailable=v.inventory_unavailable;
    progressState(job);await tx.put(jobKey(id),job);
   });
   await account.sweep();return json(publicJob(job,d,intake));
@@ -243,7 +257,7 @@ export async function handleOrganizerJobs(request,account,readJSON){
   if(!idPattern.test(v.request_id)||v.confirm!==true||!Array.isArray(v.items)||!v.items.length||v.items.length>100||new Set(v.items.map(i=>i.id)).size!==v.items.length)bad('Aprobare invalidă.');
   const key=`org4-approval:${id}:${v.request_id}`,old=await storage.get(key);if(old){if(!equal(old,v))bad('Aprobare modificată.',409);return json(publicJob(job,d,intake));}
   if(v.revision!==job.revision||!d.grant.organize)bad('Activează mutarea pe telefon și actualizează.',409);
-  const selected=[];for(const i of v.items){keys(i,['id','destination']);const item=await storage.get(itemKey(id,i.id));if(!item||['applying','moved','copied_pending_removal'].includes(item.state))bad('Elementul nu poate fi aprobat.',409);await moveEvidence(storage,job,item);selected.push({old:item,next:{...item,state:'ready',destination:destination(job,i.destination),approval:{grant_id:job.grant_id,revision:job.revision},updated_at:Date.now()}});}
+  const selected=[];for(const i of v.items){keys(i,['id','destination']);const item=await storage.get(itemKey(id,i.id));if(!item||item.reconciliation_required||['applying','moved','copied_pending_removal'].includes(item.state))bad('Elementul nu poate fi aprobat.',409);await moveEvidence(storage,job,item);selected.push({old:item,next:approvedItem(item,job,destination(job,i.destination))});}
   await storage.transaction(async tx=>{for(const p of selected)await putItem(tx,job,p.next,p.old);await tx.put(key,v);progressState(job);await tx.put(jobKey(id),job);});return json(publicJob(job,d,intake));
  }
  if(action==='receipts'&&request.method==='POST'){
@@ -269,6 +283,7 @@ export async function handleOrganizerJobs(request,account,readJSON){
     if(r.state==='ready'){
      if(!d.grant.organize||!job.auto_apply&&!item.approval)bad('Aprobă mai întâi mutarea.',403);
      if(!item.destination)bad('Lipsește destinația.');
+     if(old.state==='ready'&&old.approval&&item.destination!==old.destination)bad('Folosește destinația aprobată curentă.',409);
      if(job.auto_apply)item.approval={grant_id:job.grant_id,revision:job.revision};
     }
     if(r.state==='applying'){

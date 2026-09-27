@@ -1,6 +1,6 @@
 import {runLimit} from './organizer-selection.mjs';
 import {requireCleanupRun} from './cleanup-schedule.mjs';
-import {validateOrganizerUpload,bindOrganizerFile,queueOrganizerFolder} from './organizer-jobs.mjs';
+import {validateOrganizerUpload,bindOrganizerFile,queueOrganizerFolder,invalidateOrganizerFile} from './organizer-jobs.mjs';
 import { bad, keys, idPattern, TTL } from './phone-schema.mjs';
 
 export const FILE_MAX_BYTES = 25 * 1024 * 1024;
@@ -24,6 +24,7 @@ async function eraseFile(storage,bucket,item) {
   await storage.put('file-gone:'+item.id,Date.now()+7*TTL);
   await bucket.delete([item.key,item.key+'.thumb']);
   await storage.delete('cloud-file:'+item.id);
+  await invalidateOrganizerFile(storage,item);
 }
 export async function sweepFiles(storage,bucket,now=Date.now()) {
   let next=Infinity;
@@ -118,7 +119,7 @@ export async function handleFiles(request,account,uid,bytes,readJSON) {
   if(bytes.length>FILE_MAX_BYTES)bad('Fișier mai mare de 25 MB.',413);
   const sha256=await hash(bytes),claimed=request.headers.get('x-file-sha256');
   if(claimed!==sha256)bad('Transfer incomplet: amprenta fișierului nu corespunde.',422);
-  if(organizerJob)await validateOrganizerUpload(storage,device,organizerJob,organizerItem,original,version,sha256,kind);
+  if(organizerJob)await validateOrganizerUpload(storage,device,organizerJob,organizerItem,original,version,sha256,kind,id);
   else if(organizerItem||original||version)bad('Lipsește organizarea copiei.');
   if(old) {
     if((old.organizer_job||null)!==(organizerJob||null)||(old.organizer_item||null)!==(organizerItem||null)||(old.original_id||null)!==(original||null)||(old.original_version||null)!==(version||null))bad('Copia aparține altei organizări.',409);

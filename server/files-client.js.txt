@@ -1,8 +1,8 @@
-const vault={rows:new Map(),cursor:null,serial:0,thumbs:new Map(),preview:null,loading:false,offset:0,moves:new Map()};
+const vault={rows:new Map(),cursor:null,serial:0,thumbs:new Map(),preview:null,loading:false,offset:0,moves:new Map(),busy:new Set(),epoch:0};
 const vaultNow=()=>Date.now()+vault.offset;
 function vaultURL(blob){return URL.createObjectURL(blob);}
 function closeFilePreview(){if(vault.preview?.renderTask)vault.preview.renderTask.cancel();if(vault.preview?.pdfTask)vault.preview.pdfTask.destroy().catch(()=>{});vault.preview?.urls.forEach(URL.revokeObjectURL);vault.preview=null;$('vault-preview').replaceChildren();$('vault-title').textContent='';$('vault-preview-info').textContent='';if($('vault-dialog').open)$('vault-dialog').close();}
-function clearFiles(){vaultObserver.disconnect();vault.serial++;vault.loading=false;closeFilePreview();vault.thumbs.forEach(URL.revokeObjectURL);vault.thumbs.clear();vault.rows.clear();vault.moves.clear();vault.cursor=null;$('vault-grid').replaceChildren();$('vault-devices').replaceChildren();$('vault-count').textContent='';$('vault-search').value='';$('vault-kind').value='all';$('vault-more').hidden=true;}
+function clearFiles(){vaultObserver.disconnect();vault.serial++;vault.loading=false;closeFilePreview();vault.thumbs.forEach(URL.revokeObjectURL);vault.thumbs.clear();vault.rows.clear();vault.moves.clear();vault.busy.clear();vault.epoch++;vault.cursor=null;$('vault-grid').replaceChildren();$('vault-devices').replaceChildren();$('vault-count').textContent='';$('vault-search').value='';$('vault-kind').value='all';$('vault-more').hidden=true;}
 function removeVaultFile(id){const u=vault.thumbs.get(id);if(u)URL.revokeObjectURL(u);vault.thumbs.delete(id);vault.rows.delete(id);$('vault-grid').querySelector('[data-file="'+id+'"]')?.remove();if(vault.preview?.id===id)closeFilePreview();}
 async function refreshFileDevices(){
   const current=auth;const data=await api('/v2/files/settings');if(auth!==current)return;
@@ -14,10 +14,10 @@ async function refreshFileDevices(){
 }
 async function refreshFiles(more=false,liveUpdate=false){
   if(!auth)return;if(more&&vault.loading)return;
-  const current=auth,serial=++vault.serial;vault.loading=true;$('vault-refresh').disabled=true;$('vault-more').disabled=true;
+  const current=auth,serial=++vault.serial,epoch=vault.epoch;vault.loading=true;$('vault-refresh').disabled=true;$('vault-more').disabled=true;
   try{
     const params=new URLSearchParams({kind:$('vault-kind').value,q:$('vault-search').value});if(more&&vault.cursor)params.set('after',vault.cursor);
-    const data=await api('/v2/files?'+params);if(auth!==current||serial!==vault.serial)return;
+    const data=await api('/v2/files?'+params);if(auth!==current||serial!==vault.serial||epoch!==vault.epoch)return;
     vault.offset=data.server_at-Date.now();
     if(!more&&!liveUpdate){vaultObserver.disconnect();vault.thumbs.forEach(URL.revokeObjectURL);vault.thumbs.clear();vault.rows.clear();$('vault-grid').replaceChildren();}
     for(const item of liveUpdate?[...data.items].reverse():data.items){const prior=vault.rows.get(item.id);if(prior){for(const key of ['pending_folder','sync_state'])if(!(key in item))delete prior[key];Object.assign(prior,item);updateVaultCard($('vault-grid').querySelector('[data-file="'+item.id+'"]'),prior);continue;}vault.rows.set(item.id,item);if(liveUpdate)$('vault-grid').prepend(vaultCard(item));else $('vault-grid').append(vaultCard(item));}
@@ -37,11 +37,11 @@ function vaultCard(item){
   const pending=el('p',undefined,'vault-sync small muted');copy.append(pending);const expiry=el('p',undefined,'vault-expiry');expiry.dataset.expiry=item.expires_at;expiry.textContent=vaultExpiry(item.expires_at);copy.append(expiry);
   const actions=el('div',undefined,'vault-actions');
   if(item.preview!=='download')actions.append(button('Previzualizează',()=>previewFile(item)));
-  const move=el('button',item.organizer_job?'Mută pe telefon':'Dosar online','small');move.type='button';move.dataset.vaultMove='yes';move.onclick=async()=>{move.disabled=true;try{await moveVaultFile(item);}catch(e){if(e.name!=='AbortError')notice(e.message);}finally{if(card.isConnected)updateVaultCard(card,item);}};actions.append(button('Descarcă',()=>downloadFile(item)),move,button('Șterge copia',async()=>{if(!confirm('Ștergi copia online a fișierului „'+item.name+'”? Originalul rămâne pe telefon.'))return;await api('/v2/files/'+item.id,{method:'DELETE'});removeVaultFile(item.id);await refreshFiles();}));
+  const move=el('button',item.organizer_job?'Mută pe telefon':'Dosar online','small');move.type='button';move.dataset.vaultMove='yes';move.onclick=async()=>{if(vault.busy.has(item.id))return;const current=auth;vault.busy.add(item.id);move.disabled=true;try{await moveVaultFile(item);}catch(e){if(e.name!=='AbortError')notice(e.message);}finally{if(auth===current){vault.busy.delete(item.id);const live=vault.rows.get(item.id);if(live)updateVaultCard($('vault-grid').querySelector('[data-file="'+item.id+'"]'),live);}}};actions.append(button('Descarcă',()=>downloadFile(item)),move,button('Șterge copia',async()=>{if(!confirm('Ștergi copia online a fișierului „'+item.name+'”? Originalul rămâne pe telefon.'))return;await api('/v2/files/'+item.id,{method:'DELETE'});removeVaultFile(item.id);await refreshFiles();}));
   copy.append(actions);card.append(copy);updateVaultCard(card,item);return card;
 }
 function updateVaultCard(card,item){
- if(!card)return;const move=card.querySelector('[data-vault-move]');if(move){move.disabled=['applied','copied_pending_removal'].includes(item.sync_state);move.textContent=item.sync_state==='applied'?'Mutat pe telefon':item.sync_state==='copied_pending_removal'?'Se verifică mutarea':item.organizer_job?'Mută pe telefon':'Dosar online';}card.querySelector('.vault-folder').textContent=item.folder||'Fără dosar online';const pending=card.querySelector('.vault-sync');pending.hidden=!item.pending_folder;pending.textContent=item.pending_folder?'Mutare cerută → '+item.pending_folder+' · '+({copied_pending_removal:'originalul așteaptă finalizarea',needs_review:'necesită verificare',failed_retryable:'mutarea trebuie reluată'}[item.sync_state]||'așteaptă telefonul'):'';const expiry=card.querySelector('[data-expiry]');expiry.dataset.expiry=item.expires_at;expiry.textContent=vaultExpiry(item.expires_at);
+ if(!card)return;const move=card.querySelector('[data-vault-move]');if(move){move.disabled=vault.busy.has(item.id)||['applied','copied_pending_removal'].includes(item.sync_state);move.textContent=item.sync_state==='applied'?'Mutat pe telefon':item.sync_state==='copied_pending_removal'?'Se verifică mutarea':item.organizer_job?'Mută pe telefon':'Dosar online';}card.querySelector('.vault-folder').textContent=item.folder||'Fără dosar online';const pending=card.querySelector('.vault-sync');pending.hidden=!item.pending_folder;pending.textContent=item.pending_folder?'Mutare cerută → '+item.pending_folder+' · '+({copied_pending_removal:'originalul așteaptă finalizarea',needs_review:'necesită verificare',failed_retryable:'mutarea trebuie reluată'}[item.sync_state]||'așteaptă telefonul'):'';const expiry=card.querySelector('[data-expiry]');expiry.dataset.expiry=item.expires_at;expiry.textContent=vaultExpiry(item.expires_at);
 }
 async function moveVaultFile(item){
  const current=auth,phoneMove=!!item.organizer_job;
@@ -53,7 +53,7 @@ async function moveVaultFile(item){
   const job=await api('/v2/organizer/devices/'+encodeURIComponent(item.device_id)+'/jobs/'+encodeURIComponent(item.organizer_job));if(auth!==current||!vault.rows.has(item.id))return;
   request={folder,request_id:crypto.randomUUID(),revision:job.revision};vault.moves.set(item.id,request);
  }
- try{const updated=await api('/v2/files/'+item.id,{method:'PATCH',body:JSON.stringify(phoneMove?request:{folder})});if(auth!==current||!vault.rows.has(item.id))return;vault.moves.delete(item.id);Object.assign(item,updated);updateVaultCard($('vault-grid').querySelector('[data-file="'+item.id+'"]'),item);}
+ vault.epoch++;try{const updated=await api('/v2/files/'+item.id,{method:'PATCH',body:JSON.stringify(phoneMove?request:{folder})});if(auth!==current||!vault.rows.has(item.id))return;vault.epoch++;vault.moves.delete(item.id);const live=vault.rows.get(item.id);Object.assign(live,updated);updateVaultCard($('vault-grid').querySelector('[data-file="'+item.id+'"]'),live);}
  catch(error){if(auth===current&&error.status>=400&&error.status<500)vault.moves.delete(item.id);throw error;}
 }
 function vaultExpiry(at){const mins=Math.max(0,Math.ceil((at-vaultNow())/60000));return mins>60?'Expiră în '+Math.floor(mins/60)+' h '+mins%60+' min':'Expiră în '+mins+' min';}
@@ -64,6 +64,7 @@ async function downloadFile(item){
   const url=vaultURL(blob),a=el('a');a.href=url;a.download=item.name;document.body.append(a);a.click();a.remove();const timer=setTimeout(()=>{URL.revokeObjectURL(url);urls=urls.filter(u=>u!==url);},30000);urls.push(url);
 }
 async function previewFile(item){
+  if(item.expires_at<=vaultNow())throw Error('Copia a expirat.');
   closeFilePreview();const current=auth,preview={id:item.id,expires:item.expires_at,urls:[]};vault.preview=preview;
   $('vault-title').textContent=item.name;$('vault-preview-info').textContent='Copia expiră la '+dt(item.expires_at)+'.';$('vault-preview').append(el('p','Se încarcă…','muted'));$('vault-dialog').showModal();
   try{

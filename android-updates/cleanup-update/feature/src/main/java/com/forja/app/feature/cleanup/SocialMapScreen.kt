@@ -20,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -145,7 +146,7 @@ private fun icon(c:Context,name:String,own:Boolean):BitmapDrawable {
  MaterialTheme(colorScheme=darkColorScheme(primary=green,onPrimary=dark,background=dark,surface=Color(0xFF20332A),onSurface=Color(0xFFF1F5E9))){
   Box(Modifier.fillMaxSize().background(dark)){
    AndroidView(factory={map.apply{doOnLayout{if(!centered){controller.setZoom(7.0);controller.setCenter(GeoPoint(45.8,24.9))}}}},modifier=Modifier.fillMaxSize())
-   if(!vectorError)AndroidView(factory={vector},update={it.visibility=if(vectorReady)android.view.View.VISIBLE else android.view.View.INVISIBLE},modifier=Modifier.fillMaxSize())
+   if(!vectorError)AndroidView(factory={vector},modifier=Modifier.fillMaxSize().zIndex(if(vectorReady)0f else -1f))
    Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(horizontal=16.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
      Surface(onClick={openSheet("menu")},shape=CircleShape,color=dark,shadowElevation=3.dp){
@@ -163,7 +164,7 @@ private fun icon(c:Context,name:String,own:Boolean):BitmapDrawable {
       }
      }
     }
-    me?.optJSONObject("visibility")?.takeIf{it.optBoolean("ghost")}?.let{v->val recipients=v.rows("grants").filter{it.optBoolean("current")&&it.optBoolean("ghost")}.mapNotNull{g->friends.find{it.optString("id")==g.optString("id")}?.optString("name")};Surface(onClick={openSheet("visibility")},shape=RoundedCornerShape(12.dp),color=dark){Text(if(recipients.isEmpty())"Fantomă · locație privată"else"Fantomă · vizibil pentru "+recipients.joinToString(", "),Modifier.padding(10.dp),fontSize=12.sp,maxLines=2,overflow=TextOverflow.Ellipsis)}}
+    me?.optJSONObject("visibility")?.takeIf{it.optBoolean("ghost")}?.let{v->val recipients=v.rows("grants").filter{it.optBoolean("current")&&it.optBoolean("ghost")}.mapNotNull{g->friends.find{it.optString("id")==g.optString("id")}?.optString("name")};Surface(onClick={openSheet("visibility")},shape=RoundedCornerShape(12.dp),color=dark){Text(if(recipients.isEmpty())"Fantomă · locație privată"else"Fantomă · "+(if(ownFresh)"vizibil pentru "else"acces pentru ")+recipients.joinToString(", "),Modifier.padding(10.dp),fontSize=12.sp,maxLines=2,overflow=TextOverflow.Ellipsis)}}
     if(error.isNotBlank()&&sheet==null)Surface(onClick={openSheet("status")},shape=RoundedCornerShape(16.dp),color=Color(0xFF582F25)){
      Row(Modifier.fillMaxWidth().padding(12.dp),verticalAlignment=Alignment.CenterVertically){Text(error,Modifier.weight(1f),fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis);Text(" ›",fontSize=18.sp)}
     }

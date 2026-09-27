@@ -11,13 +11,13 @@ export async function organizeJobAI(request,env,uid,stub){
  const path=`/v2/organizer/devices/${v.device}/jobs/${v.job}/analysis`,selection=path+'?ids='+v.ids.join(','),initial=await(await call(selection)).json();
  const authorize=async()=>{const current=await(await call(selection)).json();if(current.token!==initial.token)bad('Aprobarea analizei s-a schimbat.',409);return current.token;};
  const pending=initial.items.filter(row=>!row.analysis);
- if(pending.length)await call('/internal/organizer-ai-budget','POST',{units:pending.reduce((n,row)=>n+(row.file.kind==='photo'?2:1),0)});
+ if(pending.length)await call('/internal/organizer-ai-budget','POST',{units:pending.reduce((n,row)=>n+(row.file.media_type.startsWith('image/')?2:1),0)});
  const results=[];
  for(const row of initial.items){
   if(row.analysis){results.push(row.analysis);continue;}
   await authorize();const bytes=await readBytes(await call('/v2/files/'+row.file.id),FILE_MAX_BYTES);
   const extraction={...(row.extraction||{})};
-  if(row.file.kind==='photo'&&bytes.length>4*1024*1024&&row.file.thumbnail){const thumb=await readBytes(await call('/v2/files/'+row.file.id+'/thumbnail'),THUMB_MAX_BYTES);extraction.visual={bytes:thumb,media_type:'image/jpeg',source_sha256:row.file.sha256,representation:'thumbnail'};}
+  if(row.file.media_type.startsWith('image/')&&row.file.thumbnail){const thumb=await readBytes(await call('/v2/files/'+row.file.id+'/thumbnail'),THUMB_MAX_BYTES);extraction.visual={bytes:thumb,media_type:'image/jpeg',source_sha256:row.file.sha256,representation:'thumbnail'};}
   const file={...row.file,job_id:v.job,item_id:row.item.id};
   const result=await analyzeOrganizerContent({env,file,bytes,extraction,preferences:initial.job.preferences,authorize});
   if(result.item_id!==row.item.id||result.source_sha256!==row.item.sha256)bad('Analiza nu corespunde originalului.',502);

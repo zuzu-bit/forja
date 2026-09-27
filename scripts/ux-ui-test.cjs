@@ -48,7 +48,7 @@ w.L = {
 };
 const fixture = createFixture();
 installMockFetch(w, fixture);
-w.eval(clientSource() + '\nwindow.__ux = {page, logout, refresh, refreshCleanup, refreshOrganizerJobs, openOrganizerJobItems, sendOrganizerCommand, approveOrganizerItems, deleteOrganizerJob, organizerV4, refreshFiles, moveVaultFile, vault, refreshSocial, socialChat, expireSocialMarkers, socialUI, refreshRecovery, recoveryUI, refreshPhones, refreshSleepReports, openSleepReport, localTimeInput, phoneWindows, phoneDurations, sleepUI, openVisibility, journeyShared, journeyUI, startJourney, stopJourney};');
+w.eval(clientSource() + '\nwindow.__ux = {page, logout, refresh, refreshCleanup, refreshOrganizerJobs, openOrganizerJobItems, sendOrganizerCommand, approveOrganizerItems, deleteOrganizerJob, organizerV4, refreshFiles, moveVaultFile, vault, refreshSocial, socialChat, expireSocialMarkers, socialUI, refreshRecovery, recoveryUI, refreshPhones, refreshSleepReports, openSleepReport, localTimeInput, phoneWindows, phoneDurations, sleepUI, openVisibility, journeyShared, journeyUI, startJourney, stopJourney, journeyFlush};');
 const $ = id => {const node = w.document.getElementById(id); assert(node, `Missing #${id}`); return node;};
 const tick = () => new Promise(resolve => setTimeout(resolve, 15));
 const checks = [];
@@ -389,11 +389,11 @@ const callFor = (suffix, method) => fixture.calls.findLast(c => c.route.endsWith
     $('organizer-mode').value='local';$('organizer-mode').dispatchEvent(new w.Event('change'));
   });
   await check('v4 progress and verified copies stay distinct from moved originals', async () => {
-    const job=fixture.organizer.jobs[0];job.state='partial';job.counters={total:8,moved:2,uploaded:1,needs_review:1,failed_retryable:1,copied_pending_removal:1};
+    const job=fixture.organizer.jobs[0];job.state='partial';job.inventory_unavailable=2;job.counters={total:8,moved:2,uploaded:1,needs_review:1,failed_retryable:1,copied_pending_removal:1};
     const id=randomUUID(),file={...fixture.files.items[0],id:randomUUID(),expires_at:Date.now()+86400000};
     fixture.organizer.items[job.id]={items:[{id,name:'<img onerror=bad()> factură',state:'uploaded',destination:'FORJA/Facturi',reason:'<script>bad()</script>',received:true,file,file_id:file.id},{id:randomUUID(),name:'Original mutat',state:'moved',destination:'FORJA/Poze',received:false,file:null,file_id:randomUUID()}],next_cursor:null,total:2};
     await w.__ux.refreshOrganizerJobs();const card=$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"]');
-    assert.match(card.textContent,/2 din 8 mutate/);assert.match(card.textContent,/originalele încă așteaptă/);
+    assert.match(card.textContent,/2 din 8 mutate/);assert.match(card.textContent,/2 inaccesibile pe telefon/);assert.match(card.textContent,/originalele încă așteaptă/);
     const detail=card.querySelector('.organizer-job-detail');detail.open=true;await tick();
     assert.equal(detail.querySelectorAll('img,script').length,0);assert.equal([...detail.querySelectorAll('button')].filter(b=>b.textContent==='Vezi copia').length,1);
     assert.match(detail.textContent,/Progresul originalului este păstrat/);
@@ -449,6 +449,12 @@ const callFor = (suffix, method) => fixture.calls.findLast(c => c.route.endsWith
     try{await assert.rejects(w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id)));await w.__ux.refreshFiles(false,true);await w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id));const requests=fixture.calls.filter(c=>c.route.endsWith('/'+item.id)&&c.method==='PATCH').slice(-2);assert.deepEqual(requests[0].body,requests[1].body);}
     finally{w.fetch=fetch;w.prompt=oldPrompt;}
   });
+  await check('a stale gallery poll cannot undo a newly queued original move', async () => {
+    const item=fixture.files.items[0],fetch=w.fetch,old=structuredClone(fixture.files),oldPrompt=w.prompt;let resolve;w.prompt=()=> 'FORJA/Documente';
+    w.fetch=(url,options)=>String(url).startsWith('/v2/files?')?new Promise(r=>resolve=r):fetch(url,options);
+    try{const poll=w.__ux.refreshFiles(false,true);await tick();await w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id));resolve(Response.json(old));await poll;assert.equal(w.__ux.vault.rows.get(item.id).pending_folder,'FORJA/Documente');assert.match($('vault-grid').querySelector('[data-file="'+item.id+'"] .vault-sync').textContent,/FORJA\/Documente/);}
+    finally{w.fetch=fetch;w.prompt=oldPrompt;}
+  });
   await check('AI evidence is escaped and review-only deletion never selects or deletes originals', async () => {
     const job=fixture.organizer.jobs[0],entry=fixture.organizer.items[job.id].items[0];entry.analysis={coverage:{status:'partial',pages_processed:1,pages_total:4},evidence:[{id:'e1',kind:'text',quote:'<img src=x onerror=bad()>',page:1}],deletion:{suggested:true,basis:'low_information',reason:'Scanare fără informație lizibilă.',evidence_ids:['e1'],requires_confirmation:true,review_only:true}};job.updated_at=Date.now();
     await w.__ux.refreshOrganizerJobs();const body=$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"] .organizer-items');await w.__ux.openOrganizerJobItems(job.id,body);
@@ -476,6 +482,13 @@ const callFor = (suffix, method) => fixture.calls.findLast(c => c.route.endsWith
     $('journey-start').click();assert($('journey-consent-dialog').open);assert($('journey-confirm').disabled);assert.equal(watched,0);
     $('journey-consent').checked=true;$('journey-consent').dispatchEvent(new w.Event('change'));$('journey-confirm').click();await tick();assert.equal(watched,1);assert.equal(callFor('/journey/session','POST').body.consent,true);assert.equal(fixture.visibility.grants.length,0);
     await w.__ux.stopJourney();assert(cleared>0);assert(callFor('/journey/session','DELETE'));assert.equal(w.__ux.journeyUI.recording,null);
+  });
+  await check('exploration queue survives history switching and stop waits for the active upload', async () => {
+    await w.__ux.startJourney();const id=w.__ux.journeyUI.recording;assert(id);w.__ux.journeyUI.queue.push({id:randomUUID(),session:id,points:[{at:Date.now(),lat:44.4,lon:26.1,accuracy:10,speed:0}]});
+    const fetch=w.fetch;let resolve;w.fetch=(url,options)=>String(url).endsWith('/journey/samples')?new Promise(r=>resolve=r):fetch(url,options);
+    try{const flush=w.__ux.journeyFlush();await tick();await w.__ux.journeyShared(fixture.social.friends[0].id);assert(w.__ux.journeyUI.sending);const before=fixture.calls.filter(c=>c.route.endsWith('/journey/session')&&c.method==='DELETE').length;const stop=w.__ux.stopJourney();await tick();assert.equal(fixture.calls.filter(c=>c.route.endsWith('/journey/session')&&c.method==='DELETE').length,before);
+      resolve(Response.json({ok:true}));await flush;await stop;assert.equal(w.__ux.journeyUI.queue.length,0);assert.equal(w.__ux.journeyUI.sending,false);assert.equal(w.__ux.journeyUI.recording,null);assert.equal(fixture.calls.filter(c=>c.route.endsWith('/journey/session')&&c.method==='DELETE').length,before+1);
+    }finally{w.fetch=fetch;await w.__ux.journeyShared(null);}
   });
   await check('denied shared history clears prior map data and place details', async () => {
     const visit={id:randomUUID(),name:'Loc privat',lat:44.4,lon:26.1,observed_ms:19000000};fixture.journey.visits=[visit];await w.__ux.journeyShared(fixture.social.friends[0].id);assert.match($('journey-visits').textContent,/Loc privat/);

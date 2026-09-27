@@ -1,12 +1,13 @@
 import {bad} from './phone-schema.mjs';
 
 /** Review labels only. This module has no file/storage/network/mutation capability. */
-export const ORGANIZER_DELETION_REVIEW_SCHEMA={type:'object',additionalProperties:false,
+const branch=suggested=>({type:'object',additionalProperties:false,
   required:['suggested','basis','reason','evidence_ids'],properties:{
-    suggested:{type:'boolean'},basis:{type:'string',enum:['none','low_information']},
-    reason:{type:'string',maxLength:300},
-    evidence_ids:{type:'array',maxItems:6,items:{type:'string',enum:['e1','e2','e3','e4','e5','e6']}}
-  }};
+    suggested:{type:'boolean',const:suggested},basis:{type:'string',const:suggested?'low_information':'none'},
+    reason:suggested?{type:'string',minLength:2,maxLength:300}:{type:'string',const:''},
+    evidence_ids:{type:'array',minItems:suggested?1:0,maxItems:suggested?6:0,items:{type:'string',enum:['e1','e2','e3','e4','e5','e6']}}
+  }});
+export const ORGANIZER_DELETION_REVIEW_SCHEMA={oneOf:[branch(false),branch(true)]};
 
 export function noDeletionReview(protectedFile=false) {
   return {suggested:false,basis:null,reason:protectedFile?'Fișier protejat.':'',evidence_ids:[],requires_confirmation:true,review_only:true};

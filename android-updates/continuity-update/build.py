@@ -5,7 +5,10 @@ ROOT=pathlib.Path(__file__).resolve().parent
 BASE='b569e767f88de7f3a7825580313efe4f0f9594a9340f994524e146bf566a0ecd'
 SIGNER='6fc56c1ff164d46b4994fdbfa3e38c786e804c191897ccad581d278aa8feed74'
 STUBS={'CleanFile','ContentFinding','CleanReport','CleanupViewModel','VisualPrint','CleanupScreenLegacyKt','Placement','CleanupOutcome','CleanupScan','CleanupOperations','DuplicateGroup','SimilarGroup','SleepScreenKt'}
-def run(*args):subprocess.run([str(x)for x in args],check=True)
+def run(*args):
+ executable=pathlib.Path(args[0])
+ if executable.is_file():executable.chmod(executable.stat().st_mode|0o100)
+ subprocess.run([str(x)for x in args],check=True)
 def signature(n):return n.startswith('META-INF/') and n.endswith(('.RSA','.DSA','.EC','.SF','MANIFEST.MF'))
 def main():
  p=argparse.ArgumentParser();p.add_argument('--base',type=pathlib.Path,required=True);p.add_argument('--tools',type=pathlib.Path,required=True);p.add_argument('--compiled',type=pathlib.Path,required=True);p.add_argument('--output',type=pathlib.Path,required=True);p.add_argument('--keystore',type=pathlib.Path,required=True);p.add_argument('--store-pass-env',default='FORJA_KEYSTORE_PASSWORD');a=p.parse_args()

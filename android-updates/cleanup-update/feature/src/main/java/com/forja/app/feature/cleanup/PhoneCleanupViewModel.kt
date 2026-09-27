@@ -190,7 +190,7 @@ class PhoneCleanupViewModel(app:Application):AndroidViewModel(app) {
                 val sender=operations.writeRequest(uris)
                 check(sender!=null){"Mutarea în Galerie cere Android 11 sau mai nou. Poți folosi dosarul din Fișiere."}
                 pendingOrganizer=id;pendingOrganizerOwner=owner;launch(sender)
-            }else{withContext(Dispatchers.IO){OrganizerJobs.continueJob(c,id)};refreshOrganizer();busy=false}
+            }else{val resumed=withContext(Dispatchers.IO){OrganizerJobs.continueJob(c,id)};check(FileSync.owner()==owner){"Contul s-a schimbat."};organizerId=resumed;refreshOrganizer();busy=false}
         }catch(e:CancellationException){throw e}catch(e:Exception){if(epoch==organizerEpoch){notice=e.message.orEmpty();busy=false}}finally{if(epoch==organizerEpoch)organizerWork=null}}
     }
     private fun resetReport(){webPlan=null;report=null;plan=emptyList();selected=emptySet();notice="";issues=emptyList()}
@@ -305,7 +305,8 @@ class PhoneCleanupViewModel(app:Application):AndroidViewModel(app) {
             if(owner!=FileSync.owner()){busy=false;notice="Contul s-a schimbat. Aprobarea nu a fost aplicată.";return}
             val epoch=++organizerEpoch
             organizerWork=viewModelScope.launch{try{
-                withContext(Dispatchers.IO){OrganizerJobs.allowGallery(c,id,ok);if(ok)OrganizerJobs.continueJob(c,id)}
+                val resumed=withContext(Dispatchers.IO){OrganizerJobs.allowGallery(c,id,ok);if(ok)OrganizerJobs.continueJob(c,id)else id}
+                check(FileSync.owner()==owner){"Contul s-a schimbat."};organizerId=resumed
                 refreshOrganizer();if(!ok)notice="Mutările așteaptă confirmarea ta în Android."
             }catch(e:CancellationException){throw e}catch(e:Exception){if(epoch==organizerEpoch)notice=e.message.orEmpty()}finally{if(epoch==organizerEpoch){busy=false;organizerWork=null}}}
             return

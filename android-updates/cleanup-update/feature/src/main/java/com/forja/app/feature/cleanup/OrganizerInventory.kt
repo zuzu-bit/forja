@@ -22,12 +22,15 @@ internal object OrganizerInventory {
     fun inScope(path:String,folder:String,recursive:Boolean):Boolean {val p=path.trim('/');val f=folder.trim('/');return p==f || recursive&&(f.isBlank()||p.startsWith("$f/"))}
     private suspend fun accept(c:Context,db:OrganizerLedger,j:JSONObject,f:CleanFile,guard:()->Unit){
         if(!inScope(f.path,j.getString("folder"),j.getBoolean("recursive"))||f.name.startsWith(".forja-"))return
+        val excluded=j.optJSONArray("excluded_roots")?:org.json.JSONArray()
+        if((0 until excluded.length()).any{inScope(f.path,excluded.getString(it),true)})return
         val previous=db.known(j.getString("owner"),f.uri)
         val verify=if(previous!=null&&previous.optString("stamp")!=OrganizerLedger.stamp(f)&&previous.optString("sha").isNotBlank())hash(c,f.uri,guard)else null
         val row=db.observe(j.getString("owner"),f,verify);db.inventory(j.getString("id"),row)
     }
     suspend fun scan(c:Context,db:OrganizerLedger,j:JSONObject,guard:()->Unit)=withContext(Dispatchers.IO){
         if(j.optBoolean("inventory_done"))return@withContext
+        j.put("excluded_roots",org.json.JSONArray(db.destinationRoots(j.getString("owner"),j.getString("source"),j.getString("tree"))))
         if(j.getString("source")=="photos")gallery(c,db,j,guard)else documents(c,db,j,guard)
         j.put("inventory_done",true);db.save(j)
     }

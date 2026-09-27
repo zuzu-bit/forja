@@ -1,0 +1,21 @@
+# Harta v26 — implementare și limite verificate
+
+Clientul Android și site-ul folosesc același `server/map-renderer.js.txt`, MapLibre GL JS 5.10.0 inclus în depozit și stilul Liberty OpenFreeMap. Android încarcă doar pagina fixă `/insights/map-frame` într-un WebView fără tokenul contului, acces la fișiere sau API-uri sociale. Datele GeoJSON trec din clientul nativ în renderer; acțiunile rămân native. Fallback-ul osmdroid/Leaflet păstrează interacțiunile 2D dacă WebGL sau sursa vectorială nu funcționează.
+
+3D folosește sursa vectorială `https://tiles.openfreemap.org/planet`, stratul `building`, înălțimile `render_height` și bazele `render_min_height`. Clădirile fără înălțime disponibilă nu sunt înlocuite cu blocuri inventate. Comutarea modifică extrudarea și camera, păstrând aceleași coordonate, trasee, zone și selecții. Atribuirea OpenFreeMap/OpenMapTiles/OpenStreetMap rămâne în renderer.
+
+MapLibre este BSD-3-Clause; licența inclusă este în `server/vendor/maplibre-LICENSE.txt`. OpenFreeMap permite utilizare comercială a instanței publice fără cheie. Documentația consultată: [OpenFreeMap](https://openfreemap.org/quick_start/), [clădiri MapLibre](https://maplibre.org/maplibre-gl-js/docs/examples/display-buildings-in-3d/). Serviciul public nu promite SLA. Stilurile, fonturile, sprite-urile și tile-urile vin de la `tiles.openfreemap.org`; scripturile vin din aceeași origine FORJA. CSP permite worker-ul blob al MapLibre.
+
+## Înregistrare și acorduri
+
+- Explorarea are propriul acord. Android folosește un serviciu de locație cu notificare și o coadă SQLite persistentă, separată pe cont și sesiune. O sesiune nouă necesită confirmarea serverului înaintea primului punct. Numai o sesiune confirmată poate continua local fără conexiune după reluare. La revenirea în aplicație/restart, acordul anterior este respectat; Android poate limita pornirea în fundal.
+- Punctele folosesc ID-uri stabile pentru retry. Precizia, vechimea monotonică, timestampul după începutul confirmat și limitele geografice sunt verificate înaintea cozii. Un punct respins definitiv nu blochează coada. Serverul acceptă puncte de cel mult șapte zile. Browserul are o coadă în memorie și cere explicit menținerea paginii deschise; nu pretinde continuitate cu ecranul blocat.
+- Locația curentă, excepția în Fantomă și istoricul se acordă separat fiecărui prieten. Revizia formularului împiedică un formular vechi să refacă acorduri după Stop all. Un răspuns 409 reîncarcă destinatarii și cere reconfirmare.
+- Oprește toate partajările revocă accesul social, inclusiv istoricul. Explorarea poate continua în privat. Ștergerea istoricului oprește sesiunea serverului înaintea ștergerii, astfel încât punctele vechi aflate în coadă să nu o recreeze.
+- Jurnalul oferă paginare; paginile deja încărcate rămân încărcate și sunt reverificate la refresh. Refuzul accesului la istoric golește harta și detaliile vizitei partajate. Ratingul și recomandarea sunt acțiuni explicite; mesajul primit are navigare, afișare pe hartă și salvare pentru mai târziu.
+
+## Verificări
+
+`server/map-renderer.test.mjs` verifică proprietățile geografice reale folosite de 3D, aceleași date în 2D/3D, coordonatele selecțiilor, reduced motion, fallback-ul și exporturile bibliotecii vendorizate reale. `JourneySamplePolicyTest.kt` verifică filtrarea punctelor pre-start, timestampurile viitoare/vechi, precizia, coordonatele și intervalul minim. `scripts/ux-ui-test.cjs` folosește clienții reali cu rețeaua simulată și verifică acordurile independente, Stop all, formularul vechi respins, pornirea explicită a explorării și golirea istoricului revocat.
+
+Aceste teste nu dovedesc singure randarea tile-urilor live sau execuția GPS pe un telefon. Fetch-ul direct OpenFreeMap din mediul de dezvoltare a returnat HTTP 403; verificarea live a providerului și a WebView-ului trebuie inclusă în QA de dispozitiv înaintea afirmației că 3D a fost validat în producție. Datele sintetice din fixture rămân exclusiv în testele locale și nu sunt livrate ca explorare personală.

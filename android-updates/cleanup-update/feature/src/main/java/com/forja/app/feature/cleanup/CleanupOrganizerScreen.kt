@@ -298,9 +298,45 @@ import org.json.JSONObject
                 Text(OrganizerUiPolicy.itemLabel(item.optString("state")),fontSize=12.sp)
                 item.optString("destination").takeIf{it.isNotBlank()}?.let{Text("→ $it",fontSize=13.sp)}
                 item.optString("error").takeIf{it.isNotBlank()}?.let{Text(it,fontSize=12.sp,color=MaterialTheme.colorScheme.error)}
+                OrganizerItemEvidence(item)
             }}
             if(items.size>100)item{Text("Primele 100 de rezultate. Progresul de mai sus include întregul lot.",fontSize=12.sp)}
             item{Spacer(Modifier.height(16.dp))}
+        }
+    }
+}
+
+@Composable private fun OrganizerItemEvidence(item:JSONObject){
+    val finding=item.optJSONObject("finding")?:item.optJSONObject("analysis")?:JSONObject()
+    val evidence=OrganizerEvidencePolicy.evidence(finding)
+    val deletion=OrganizerEvidencePolicy.deletionReview(finding)
+    val duplicates=OrganizerEvidencePolicy.duplicateCount(item.optJSONObject("duplicate"))
+    val reason=finding.optString("reason")
+    val coverage=finding.optJSONObject("coverage")
+    var expanded by rememberSaveable(item.optString("id")){mutableStateOf(false)}
+    if(deletion!=null)Text("De verificat pentru ștergere",fontSize=12.sp,fontWeight=FontWeight.Medium,color=MaterialTheme.colorScheme.tertiary)
+    if(duplicates>1)Text("Copii identice la analiză · $duplicates originale",fontSize=12.sp,color=MaterialTheme.colorScheme.tertiary)
+    if(reason.isNotBlank()||evidence.isNotEmpty()||duplicates>1){
+        TextButton(onClick={expanded=!expanded},contentPadding=PaddingValues(0.dp)){
+            Text(if(expanded)"Închide detaliile"else "Motiv și dovezi",fontSize=12.sp)
+        }
+        if(expanded){
+            if(reason.isNotBlank())Text(reason.take(600),fontSize=13.sp)
+            val partial=finding.optBoolean("partial")||coverage?.optString("status") in setOf("partial","unsupported")
+            if(partial)Text("Analiză parțială · verifică fișierul complet",fontSize=12.sp,color=MaterialTheme.colorScheme.tertiary)
+            else if(coverage?.optString("status")=="complete")Text("Conținut analizat integral",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            for(proof in evidence){
+                val page=proof.optInt("page").takeIf{it>0}?.let{" · pagina $it"}.orEmpty()
+                val visual=proof.optString("kind")=="visual"
+                Text((if(visual)"Observație AI, de confirmat"else "Fragment din fișier")+page,fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if(visual)proof.optString("observation").take(400)else "„${proof.optString("quote").take(240)}”",fontSize=12.sp)
+            }
+            if(deletion!=null){
+                Text(deletion.optString("reason").take(300),fontSize=12.sp)
+                val refs=deletion.getJSONArray("evidence_ids")
+                val labels=(0 until refs.length()).map{refs.optString(it)}.mapNotNull{id->evidence.indexOfFirst{it.optString("id")==id}.takeIf{it>=0}?.plus(1)}
+                Text("Se bazează pe dovezile ${labels.joinToString(", ")}. Tu decizi ce păstrezi; nimic nu este selectat sau șters automat.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }else if(duplicates>1)Text("Conținut identic verificat pentru copii distincte. Originalele sunt păstrate; alegerea rămâne în instrumentele manuale.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

@@ -36,3 +36,12 @@ tasks.register("exportCompileClasspath") {
         layout.buildDirectory.file("compile-classpath.txt").get().asFile.writeText(configurations.getByName("debugCompileClasspath").files.joinToString("\n") { it.absolutePath })
     }
 }
+
+// Robolectric resolves its instrumented Android runtime in the test JVM.
+// Honor the build runner's proxy configuration without embedding credentials.
+tasks.withType<Test>().configureEach {
+    systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+    listOf("http.proxyHost", "http.proxyPort", "https.proxyHost", "https.proxyPort").forEach { key ->
+        System.getProperty(key)?.let { systemProperty(key, it) }
+    }
+}

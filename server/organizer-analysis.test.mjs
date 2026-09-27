@@ -87,6 +87,17 @@ test('large original photo uses only a source-bound real thumbnail and reports r
   assert.equal(p.coverage.status,'partial');assert.equal(p.image.representation,'thumbnail');assert(p.coverage.limitations.includes('reduced_resolution_image'));
   const none=await prepareOrganizerEvidence(f.file,f.bytes);assert.equal(none.coverage.status,'unavailable');
 });
+test('HEIF and AVIF require real source-bound JPEG renditions, never opaque-original vision',async()=>{
+  for(const brand of ['heic','mif1','avif']) {
+    const original=new Uint8Array(24);new DataView(original.buffer).setUint32(0,24);original.set(new TextEncoder().encode('ftyp'+brand),4);original.set(new TextEncoder().encode(brand),16);
+    const f=source(original,brand==='avif'?'image/avif':'image/heic');
+    const unavailable=await prepareOrganizerEvidence(f.file,f.bytes);assert.equal(unavailable.coverage.status,'unavailable');assert.equal(unavailable.image,null);
+    const thumb=new Uint8Array([255,216,255,224,1,2,3]);const extraction={visual:{bytes:thumb,source_sha256:f.file.sha256,media_type:'image/jpeg',representation:'thumbnail'}};
+    const ready=await prepareOrganizerEvidence(f.file,f.bytes,extraction);
+    assert.equal(ready.image.media_type,'image/jpeg');assert.deepEqual(ready.image.bytes,thumb);assert.equal(ready.coverage.status,'partial');assert(ready.coverage.limitations.includes('image_format_rendition'));
+    await assert.rejects(()=>prepareOrganizerEvidence(f.file,f.bytes,{visual:{...extraction.visual,source_sha256:'c'.repeat(64)}}));
+  }
+});
 test('candidate contracts use actual data URL and supported structured-output options',async()=>{
   const bytes=new Uint8Array(await readFile(new URL('./fixtures/organizer/invoice.png',import.meta.url))),f=source(bytes,'image/png');
   for(const model of [ORGANIZER_MODELS.kimi,ORGANIZER_MODELS.scout]) {

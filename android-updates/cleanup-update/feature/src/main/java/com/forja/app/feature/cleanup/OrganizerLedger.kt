@@ -12,16 +12,25 @@ import java.util.UUID
 
 /** Independent of expiring cloud copies. One original may have several immutable versions. */
 internal class OrganizerLedger(c:Context):SQLiteOpenHelper(c,"organizer_v4.db",null,1) {
+    init { setWriteAheadLoggingEnabled(true) }
     override fun onCreate(db:SQLiteDatabase){
         db.execSQL("CREATE TABLE jobs(id TEXT PRIMARY KEY,owner TEXT NOT NULL,created INTEGER NOT NULL,phase TEXT NOT NULL,payload TEXT NOT NULL)")
         db.execSQL("CREATE INDEX jobs_owner ON jobs(owner,created)")
         db.execSQL("CREATE TABLE originals(id TEXT PRIMARY KEY,owner TEXT NOT NULL,current_id TEXT NOT NULL)")
         db.execSQL("CREATE TABLE aliases(owner TEXT NOT NULL,identity TEXT NOT NULL,original_id TEXT NOT NULL,PRIMARY KEY(owner,identity))")
         db.execSQL("CREATE TABLE versions(id TEXT PRIMARY KEY,original_id TEXT NOT NULL,owner TEXT NOT NULL,stamp TEXT NOT NULL,sha TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'pending',lease TEXT NOT NULL DEFAULT '',modified INTEGER NOT NULL,payload TEXT NOT NULL)")
+        db.execSQL("CREATE INDEX original_leases ON versions(original_id,lease,state)")
         db.execSQL("CREATE INDEX eligible_versions ON versions(owner,lease,state,modified)")
         db.execSQL("CREATE TABLE manifest(job TEXT NOT NULL,item TEXT NOT NULL,PRIMARY KEY(job,item))")
         db.execSQL("CREATE TABLE job_items(job TEXT NOT NULL,item TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL,analyzed INTEGER NOT NULL DEFAULT 0,uploaded INTEGER NOT NULL DEFAULT 0,published INTEGER NOT NULL DEFAULT 0,reported INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(job,item))")
         db.execSQL("CREATE TABLE directories(job TEXT NOT NULL,uri TEXT NOT NULL,path TEXT NOT NULL,depth INTEGER NOT NULL,done INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(job,uri))")
+    }
+    override fun onOpen(db:SQLiteDatabase){
+        super.onOpen(db)
+        val now=System.currentTimeMillis();val last=lastPrune.get();if(now-last<60000||!lastPrune.compareAndSet(last,now))return
+        val expired=mutableListOf<Pair<String,String>>()
+        db.rawQuery("SELECT job,item,payload FROM job_items WHERE payload LIKE '%content_expires_at%'",null).use{q->while(q.moveToNext()){val row=JSONObject(q.getString(2));if(row.optLong("content_expires_at",Long.MAX_VALUE)<=System.currentTimeMillis()){row.remove("extraction");row.remove("content_expires_at");if(row.has("finding"))row.put("finding",JSONObject().put("reason","Analiză încheiată; conținutul temporar a expirat."));expired+=q.getString(0) to row.toString()}}}
+        for((job,payload) in expired){val row=JSONObject(payload);db.execSQL("UPDATE job_items SET payload=? WHERE job=? AND item=?",arrayOf(payload,job,row.getString("id")));db.execSQL("UPDATE versions SET payload=? WHERE id=?",arrayOf(payload,row.getString("id")))}
     }
     override fun onUpgrade(db:SQLiteDatabase,old:Int,new:Int)=Unit
     private fun query(sql:String,args:Array<String>)=readableDatabase.rawQuery(sql,args)
@@ -36,6 +45,7 @@ internal class OrganizerLedger(c:Context):SQLiteOpenHelper(c,"organizer_v4.db",n
     fun save(job:JSONObject,control:Boolean=false){job.put("revision",job.optLong("revision")+1);check(writableDatabase.update("jobs",ContentValues().apply{put("phase",job.getString("phase"));put("payload",job.toString())},if(control)"id=?"else "id=? AND (phase NOT IN ('cancelled','paused') OR phase=?)",if(control)arrayOf(job.getString("id"))else arrayOf(job.getString("id"),job.getString("phase")))==1){"Jobul a fost oprit între timp."};CleanupAuto.changed.value++}
     fun mutate(id:String,block:(JSONObject)->Unit):JSONObject {val db=writableDatabase;db.beginTransaction();try{val j=checkNotNull(job(id));block(j);save(j);db.setTransactionSuccessful();return j}finally{db.endTransaction()}}
     companion object {
+        private val lastPrune=java.util.concurrent.atomic.AtomicLong(0)
         fun identity(uri:String):String=runCatching{val u=Uri.parse(uri);if(u.pathSegments.contains("document"))u.authority+":"+DocumentsContract.getDocumentId(u)else uri}.getOrDefault(uri)
         fun stamp(f:CleanFile)="${f.bytes}:${f.modified}"
         val terminal=setOf("moved","skipped")
@@ -44,7 +54,8 @@ internal class OrganizerLedger(c:Context):SQLiteOpenHelper(c,"organizer_v4.db",n
     fun observe(owner:String,f:CleanFile,verifiedSha:String?=null):JSONObject {
         val db=writableDatabase;db.beginTransaction();try{
             val previous=known(owner,f.uri);
-            val same=previous!=null&&(stamp(f)==previous.optString("stamp") || verifiedSha!=null&&verifiedSha==previous.optString("sha"))
+            if(previous!=null){val leased=query("SELECT lease,state FROM versions WHERE id=?",arrayOf(previous.getString("id"))).use{it.moveToFirst()&&it.getString(0).isNotBlank()&&it.getString(1) in setOf("applying","copied_pending_removal") || previous.optBoolean("intent_saved")&&previous.optString("state")=="needs_review"};if(leased){db.setTransactionSuccessful();return previous}}
+            val same=previous!=null&&if(verifiedSha!=null&&previous.optString("sha").isNotBlank())verifiedSha==previous.optString("sha")else stamp(f)==previous.optString("stamp")
             val row=if(same)previous!! else JSONObject().put("id",UUID.randomUUID().toString()).put("original_id",previous?.getString("original_id")?:UUID.randomUUID().toString()).put("owner",owner).put("state","pending").put("sha",verifiedSha?:"")
             row.put("file",CleanupReportCodec.file(f)).put("stamp",stamp(f))
             val id=row.getString("id");val original=row.getString("original_id")
@@ -60,12 +71,20 @@ internal class OrganizerLedger(c:Context):SQLiteOpenHelper(c,"organizer_v4.db",n
         val db=writableDatabase;db.beginTransaction();try{
             val id=job.getString("id");val requested=job.getInt("count")
             val existing=count(id);if(job.optBoolean("selection_frozen")){db.setTransactionSuccessful();return existing}
-            val candidates=query("SELECT v.id,v.payload FROM manifest m JOIN versions v ON v.id=m.item JOIN originals o ON o.current_id=v.id WHERE m.job=? AND v.owner=? AND v.lease='' AND v.state NOT IN ('moved','skipped') ORDER BY v.modified DESC,v.id LIMIT ?",arrayOf(id,job.getString("owner"),if(requested==0)"-1"else requested.toString()))
-            candidates.use{q->while(q.moveToNext()){
-                val item=q.getString(0);val row=JSONObject(q.getString(1)).put("state","pending").put("operation_id",UUID.randomUUID().toString()).put("copy_id",UUID.randomUUID().toString())
-                db.execSQL("UPDATE versions SET lease=? WHERE id=? AND lease=''",arrayOf(id,item))
-                db.execSQL("INSERT OR IGNORE INTO job_items(job,item,state,payload) VALUES(?,?,?,?)",arrayOf(id,item,"pending",row.toString()))
-            }}
+            var remaining=if(requested==0)Int.MAX_VALUE else requested
+            while(remaining>0){
+                // Close each bounded cursor before changing its indexed lease predicate.
+                // Mutating an open multi-window cursor can skip rows once CursorWindow refills.
+                val candidates=query("SELECT v.payload FROM manifest m JOIN versions v ON v.id=m.item JOIN originals o ON o.current_id=v.id WHERE m.job=? AND v.owner=? AND v.lease='' AND v.state NOT IN ('moved','skipped') AND NOT EXISTS (SELECT 1 FROM versions busy WHERE busy.original_id=v.original_id AND busy.id<>v.id AND busy.lease<>'' AND busy.state NOT IN ('moved','skipped')) ORDER BY v.modified DESC,v.id LIMIT ?",arrayOf(id,job.getString("owner"),minOf(remaining,500).toString())).use{q->buildList{while(q.moveToNext())add(JSONObject(q.getString(0)))}}
+                if(candidates.isEmpty())break
+                for(previous in candidates){
+                    val row=JSONObject();for(key in listOf("id","original_id","owner","file","stamp","sha"))if(previous.has(key))row.put(key,previous.get(key))
+                    val item=row.getString("id");row.put("state","pending").put("operation_id",UUID.randomUUID().toString()).put("copy_id",UUID.randomUUID().toString())
+                    db.execSQL("UPDATE versions SET lease=? WHERE id=? AND lease=''",arrayOf(id,item))
+                    db.execSQL("INSERT OR IGNORE INTO job_items(job,item,state,payload) VALUES(?,?,?,?)",arrayOf<Any>(id,item,"pending",row.toString()))
+                }
+                remaining-=candidates.size
+            }
             job.put("selection_frozen",true).put("phase","analyzing");save(job);db.setTransactionSuccessful();return count(id)
         }finally{db.endTransaction()}
     }
@@ -73,7 +92,8 @@ internal class OrganizerLedger(c:Context):SQLiteOpenHelper(c,"organizer_v4.db",n
     fun count(job:String)=query("SELECT COUNT(*) FROM job_items WHERE job=?",arrayOf(job)).use{it.moveToFirst();it.getInt(0)}
     fun items(job:String,limit:Int=1000):List<JSONObject> =query("SELECT payload FROM job_items WHERE job=? ORDER BY rowid LIMIT ?",arrayOf(job,limit.toString())).use{q->buildList{while(q.moveToNext())add(JSONObject(q.getString(0)))}}
     fun states(job:String,states:Set<String>,limit:Int=10):List<JSONObject> =query("SELECT payload FROM job_items WHERE job=? AND state IN ("+states.joinToString(","){"?"}+") ORDER BY rowid LIMIT ?",arrayOf(job,*states.toTypedArray(),limit.toString())).use{q->buildList{while(q.moveToNext())add(JSONObject(q.getString(0)))}}
-    fun receipts(job:String):List<JSONObject> =query("SELECT payload FROM job_items WHERE job=? AND state IN ('moved','copied_pending_removal','needs_review') AND reported=0 AND published=1 ORDER BY rowid LIMIT 50",arrayOf(job)).use{q->buildList{while(q.moveToNext())add(JSONObject(q.getString(0)))}}
+    fun receipts(job:String):List<JSONObject> =query("SELECT payload FROM job_items WHERE job=? AND state IN ('moved','copied_pending_removal','needs_review','skipped') AND reported=0 AND published=1 ORDER BY rowid LIMIT 50",arrayOf(job)).use{q->buildList{while(q.moveToNext())add(JSONObject(q.getString(0)))}}
+    fun unavailable(job:String)=query("SELECT COUNT(*) FROM job_items WHERE job=? AND published=0 AND state IN ('needs_review','skipped')",arrayOf(job)).use{it.moveToFirst();it.getInt(0)}
     fun allPublished(job:String)=query("SELECT COUNT(*) FROM job_items WHERE job=? AND published=0 AND state NOT IN ('needs_review','skipped')",arrayOf(job)).use{it.moveToFirst();it.getInt(0)==0}
     fun unfinished(job:String,limit:Int=10):List<JSONObject> =query("SELECT payload FROM job_items WHERE job=? AND state NOT IN ('moved','needs_review','skipped') ORDER BY rowid LIMIT ?",arrayOf(job,limit.toString())).use{q->buildList{while(q.moveToNext())add(JSONObject(q.getString(0)))}}
     fun item(job:String,id:String):JSONObject?=query("SELECT payload FROM job_items WHERE job=? AND item=?",arrayOf(job,id)).use{if(it.moveToFirst())JSONObject(it.getString(0))else null}
@@ -85,6 +105,15 @@ internal class OrganizerLedger(c:Context):SQLiteOpenHelper(c,"organizer_v4.db",n
     fun alias(owner:String,original:String,uri:String){writableDatabase.execSQL("INSERT OR REPLACE INTO aliases(owner,identity,original_id) VALUES(?,?,?)",arrayOf(owner,identity(uri),original))}
     fun counts(job:String):Map<String,Int> =query("SELECT state,COUNT(*) FROM job_items WHERE job=? GROUP BY state",arrayOf(job)).use{q->buildMap{while(q.moveToNext())put(q.getString(0),q.getInt(1))}}
     fun release(job:String){writableDatabase.execSQL("UPDATE versions SET lease='' WHERE lease=? AND state NOT IN ('applying','copied_pending_removal','moved','needs_review')",arrayOf(job))}
+    fun destinationRoots(owner:String,source:String,tree:String):Set<String> =query("SELECT payload FROM jobs WHERE owner=?",arrayOf(owner)).use{q->buildSet{while(q.moveToNext()){val j=JSONObject(q.getString(0));if(j.optString("source")==source&&(source!="files"||j.optString("tree")==tree)){val path=j.optString("destination").trim('/');if(path.isNotBlank()){add(path);if(source=="photos"&&!path.startsWith("Pictures/"))add("Pictures/$path")}}}}}
+    fun seedRemaining(previous:String,next:JSONObject){
+        writableDatabase.execSQL("INSERT OR IGNORE INTO manifest(job,item) SELECT ?,item FROM job_items WHERE job=? AND state IN ('pending','analyzed','upload_pending','uploaded','ready','awaiting_review','failed_retryable')",arrayOf(next.getString("id"),previous))
+        next.put("inventory_done",true);save(next)
+    }
+    fun resetInventory(job:JSONObject){
+        val id=job.getString("id");writableDatabase.delete("manifest","job=?",arrayOf(id));writableDatabase.delete("directories","job=?",arrayOf(id))
+        job.keys().asSequence().filter{it.startsWith("cursor:")||it in setOf("inventory_done","selection_frozen","inventory_sent","gallery_grants","requested_gallery")}.toList().forEach{job.remove(it)}
+    }
     fun directory(job:String,uri:String,path:String,depth:Int){writableDatabase.execSQL("INSERT OR IGNORE INTO directories(job,uri,path,depth) VALUES(?,?,?,?)",arrayOf(job,uri,path,depth))}
     fun nextDirectory(job:String):Triple<String,String,Int>?=query("SELECT uri,path,depth FROM directories WHERE job=? AND done=0 ORDER BY rowid LIMIT 1",arrayOf(job)).use{if(it.moveToFirst())Triple(it.getString(0),it.getString(1),it.getInt(2))else null}
     fun directoryDone(job:String,uri:String){writableDatabase.execSQL("UPDATE directories SET done=1 WHERE job=? AND uri=?",arrayOf(job,uri))}

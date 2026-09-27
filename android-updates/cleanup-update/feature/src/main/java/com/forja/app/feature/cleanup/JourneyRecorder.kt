@@ -35,16 +35,17 @@ internal object JourneyRecorder {
   if(Build.VERSION.SDK_INT>=33&&ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
   try{ContextCompat.startForegroundService(c,Intent(c,JourneyLocationService::class.java).setAction("RESUME"))}catch(_:Exception){status.value="Deschide FORJA pentru a relua explorarea."}
  }
- fun stop(c:Context,message:String="Explorarea s-a oprit. Sincronizez punctele deja înregistrate."){val p=prefs(c);val who=p.getString("owner",null);val id=p.getString("session",null);p.edit().putBoolean("active",false).commit();if(who!=null&&id!=null)JourneyQueue(c).use{it.end(who,id)};c.stopService(Intent(c,JourneyLocationService::class.java));schedule(c);status.value=message}
+ fun stop(c:Context,message:String="Explorarea s-a oprit. Sincronizez punctele deja înregistrate."){val p=prefs(c);val who=p.getString("owner",null);val id=p.getString("session",null);p.edit().putBoolean("active",false).commit();if(who!=null&&id!=null)runCatching{JourneyQueue(c).use{it.end(who,id)}};c.stopService(Intent(c,JourneyLocationService::class.java));runCatching{schedule(c)};status.value=message}
  fun schedule(c:Context){WorkManager.getInstance(c).enqueueUniqueWork("journey-sync-v26",ExistingWorkPolicy.APPEND_OR_REPLACE,OneTimeWorkRequestBuilder<JourneySyncWorker>().setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS).build())}
  suspend fun sync(c:Context)=lock.withLock {
   val owner=FileSync.owner()?:return@withLock
   withContext(Dispatchers.IO){JourneyQueue(c).use{db->
+   val state=prefs(c);if(!state.getBoolean("active",false)&&state.getString("owner",null)==owner)state.getString("session",null)?.let{db.end(owner,it)}
    repeat(200){if(FileSync.owner()!=owner)return@withContext;val item=db.first(owner)?:return@repeat
     try{SocialApi.call(c,"journey/samples",SocialApi.obj("session" to item.getString("session"),"id" to item.getString("id"),"points" to JSONArray().put(item.getJSONObject("point"))),owner=owner);db.ack(item.getString("id"))}
     catch(e:FileSync.Failure){if(e.code in listOf(400,403,404,409)){status.value=if(e.code==400)"Un punct invalid sau mai vechi de 7 zile a fost omis; sincronizarea continuă." else "Unele puncte nu au fost acceptate: sesiune închisă sau acces revocat.";db.ack(item.getString("id"))}else throw e}
    }
-   for(id in db.ended(owner)){if(db.hasSamples(owner,id))continue;if(FileSync.owner()!=owner)return@withContext;try{SocialApi.call(c,"journey/session?session="+android.net.Uri.encode(id),method="DELETE",owner=owner)}catch(e:FileSync.Failure){if(e.code !in listOf(403,404,409))throw e};db.closed(owner,id)}
+   for(id in db.ended(owner)){if(db.hasSamples(owner,id))continue;if(FileSync.owner()!=owner)return@withContext;try{SocialApi.call(c,"journey/session?session="+android.net.Uri.encode(id),method="DELETE",owner=owner)}catch(e:FileSync.Failure){if(e.code !in listOf(403,404,409))throw e};db.closed(owner,id);if(!state.getBoolean("active",false)&&state.getString("owner",null)==owner&&state.getString("session",null)==id)state.edit().remove("session").commit()}
    if(db.first(owner)!=null)throw java.io.IOException("Sincronizarea continuă cu lotul următor.")
   }}
  }
@@ -95,6 +96,7 @@ class JourneyLocationService:Service(),LocationListener {
     if(p.getString("ack_owner",null)==owner&&p.getString("ack_session",null)==id&&p.getLong("started_at",0)>0){
      startedAt=p.getLong("started_at",0)
     }else{
+     withTimeout(20000){JourneyRecorder.sync(this@JourneyLocationService)}
      val result=withTimeout(20000){SocialApi.call(this@JourneyLocationService,"journey/session",SocialApi.obj("id" to id,"consent" to true),owner=owner!!)}
      check(JourneyRecorder.active(this@JourneyLocationService)&&FileSync.owner()==owner&&JourneyRecorder.session(this@JourneyLocationService)==id)
      startedAt=result.getLong("started_at");check(startedAt>0)
@@ -116,7 +118,7 @@ class JourneyLocationService:Service(),LocationListener {
   if(!JourneySamplePolicy.accept(at,startedAt,lastAt,System.currentTimeMillis(),age,location.accuracy.toDouble(),location.hasAccuracy(),location.latitude,location.longitude)){JourneyRecorder.status.value="Aștept o poziție precisă pentru traseu.";return}
   lastAt=at;val uid=owner?:return;val session=id?:return
   val point=SocialApi.obj("at" to at,"lat" to location.latitude,"lon" to location.longitude,"accuracy" to location.accuracy.toDouble(),"speed" to location.speed.toDouble().coerceIn(0.0,100.0))
-  scope.launch{withContext(Dispatchers.IO){JourneyQueue(this@JourneyLocationService).use{it.add(uid,session,point)}};JourneyRecorder.status.value="Poziție salvată · ±${location.accuracy.toInt()} m";try{JourneyRecorder.sync(this@JourneyLocationService)}catch(e:CancellationException){throw e}catch(_:Exception){JourneyRecorder.schedule(this@JourneyLocationService)}}
+  scope.launch{try{withContext(Dispatchers.IO){JourneyQueue(this@JourneyLocationService).use{it.add(uid,session,point)}}}catch(e:CancellationException){throw e}catch(e:Exception){JourneyRecorder.stop(this@JourneyLocationService,"Nu pot salva traseul pe telefon. Verifică spațiul disponibil.");return@launch};JourneyRecorder.status.value="Poziție salvată · ±${location.accuracy.toInt()} m";try{JourneyRecorder.sync(this@JourneyLocationService)}catch(e:CancellationException){throw e}catch(_:Exception){JourneyRecorder.schedule(this@JourneyLocationService)}}
  }
  @Deprecated("Older Android callback") override fun onStatusChanged(provider:String?,status:Int,extras:Bundle?){}
  override fun onProviderEnabled(provider:String){if(confirmed&&allowed())runCatching{locations.requestLocationUpdates(provider,30000,0f,this,Looper.getMainLooper())}}

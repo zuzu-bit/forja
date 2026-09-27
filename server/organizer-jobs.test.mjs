@@ -68,6 +68,17 @@ test('v4 metadata is paginated and does not inherit the legacy 15,000 limit',asy
 const aiRequest=(f,item)=>new Request('https://fixture/insights/api/organizer-analysis',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({device:f.device,job:f.id,ids:[item.id],consent:true})});
 const aiProposal=()=>({response:{destination:'Școală/Matematică',reason:'Exerciții de matematică.',confidence:'high',evidence:[{source_id:'text',quote:'Exerciții de matematică',observation:''}]}});
 test('content AI orchestration reads real owned bytes, saves attributed evidence and reuses the cached result',async()=>{const f=await fixture(),[item]=await selected(f);await f.file(item);let calls=0;const env={AI:{run:async(model,input)=>{calls++;assert.match(input.messages[1].content,/matematică/);return aiProposal();}}};const r=await organizeJobAI(aiRequest(f,item),env,'alice',f.account);assert.equal(r.status,200);const row=(await(await f.call(f.path+'/items')).json()).items[0];assert.equal(row.destination,'FORJA/Școală/Matematică');assert.equal(row.analysis.source_sha256,item.sha256);assert.equal(row.analysis.evidence[0].quote,'Exerciții de matematică');assert.equal(row.coverage.status,'complete');assert.equal(row.state,'uploaded');await organizeJobAI(aiRequest(f,item),env,'alice',f.account);assert.equal(calls,1);assert.equal((await f.storage.get('organizer-ai-budget')).used,1);});
+test('small HEIF selected from Documents uses its actual received JPEG rendition',async()=>{
+ const bytes=new Uint8Array(24);new DataView(bytes.buffer).setUint32(0,24);bytes.set(new TextEncoder().encode('ftypheic'),4);bytes.set(new TextEncoder().encode('heic'),16);
+ const f=await fixture(),[item]=await selected(f,[entry({sha256:hash(bytes),version:hash(bytes),bytes:bytes.length,media_type:'image/heic',name:'Photo.heic'})]);
+ item._bytes=bytes;const copy=await f.file(item);assert.equal(copy.response.status,201);
+ const thumb=new Uint8Array([255,216,255,224,1,2,3]);
+ const uploaded=await f.call('/v2/files/'+copy.id+'/thumbnail','PUT',thumb,'alice',{'x-device-id':f.device,'content-type':'image/jpeg'});assert.equal(uploaded.status,200,await uploaded.clone().text());
+ let image;const env={ORGANIZER_ANALYSIS_MODEL:'@cf/meta/llama-4-scout-17b-16e-instruct',AI:{run:async(_,input)=>{image=input.messages[1].content[1].image_url.url;return {response:{destination:'Fotografii/Obiecte',reason:'Imaginea arată obiecte care pot fi grupate împreună.',confidence:'medium',evidence:[{source_id:'image',quote:'',observation:'În imagine apar mai multe obiecte pe o masă.'}]}};}}};
+ const response=await organizeJobAI(aiRequest(f,item),env,'alice',f.account);assert.equal(response.status,200);
+ assert.equal(image,'data:image/jpeg;base64,'+Buffer.from(thumb).toString('base64'));
+ const row=(await(await f.call(f.path+'/items')).json()).items[0];assert.equal(row.coverage.status,'partial');assert(row.coverage.limitations.includes('image_format_rendition'));
+});
 test('revocation during real content inference discards the result',async()=>{const f=await fixture(),[item]=await selected(f);await f.file(item);const env={AI:{run:async()=>{const d=await f.storage.get('cleanup-device:'+f.device);d.grant.id=randomUUID();await f.storage.put('cleanup-device:'+f.device,d);return aiProposal();}}};await assert.rejects(()=>organizeJobAI(aiRequest(f,item),env,'alice',f.account));assert.equal((await f.storage.list({prefix:'org4-content:'})).size,0);});
 test('deleting the source copy during inference prevents late derived content from being saved',async()=>{const f=await fixture(),[item]=await selected(f),file=await f.file(item);const env={AI:{run:async()=>{await f.call('/v2/files/'+file.id,'DELETE');return aiProposal();}}};await assert.rejects(()=>organizeJobAI(aiRequest(f,item),env,'alice',f.account));assert.equal((await f.storage.list({prefix:'org4-content:'})).size,0);});
 test('an AI response cannot replace a destination already explicitly approved during inference',async()=>{const f=await fixture({spec:{auto_apply:false}}),[item]=await selected(f);await f.file(item);const env={AI:{run:async()=>{const r=await f.call(f.path+'/approve','POST',{request_id:randomUUID(),revision:(await f.job()).revision,confirm:true,items:[{id:item.id,destination:'FORJA/Ales de mine'}]});assert.equal(r.status,200);return aiProposal();}}};await organizeJobAI(aiRequest(f,item),env,'alice',f.account);const row=(await(await f.call(f.path+'/items')).json()).items[0];assert.equal(row.destination,'FORJA/Ales de mine');assert.equal(row.state,'ready');});
@@ -75,3 +86,31 @@ test('forgetting a job never deletes a phone original or allows delayed recreati
 test('forgetting progress is blocked while a move needs reconciliation',async()=>{const f=await fixture(),[item]=await selected(f);await ready(f,item);await f.receipt(item,'applying');assert.equal((await f.call(f.path,'DELETE')).status,409);assert.equal((await f.job()).counters.applying,1);});
 test('ambiguous provider outcomes keep the original locked until the same intent is reconciled',async()=>{const f=await fixture(),[item]=await selected(f);await ready(f,item);await f.receipt(item,'applying');assert.equal((await f.receipt(item,'failed_retryable')).status,409);assert.equal((await f.receipt(item,'needs_review',{message:'Răspuns pierdut după scriere.'})).status,200);assert.equal((await f.job()).unresolved,1);await f.command(0,'cancel');assert.equal((await f.call(f.path,'DELETE')).status,409);assert.equal((await f.storage.list({prefix:'org4-lock:'})).size,1);assert.equal((await f.receipt(item,'moved',{target_sha256:item.sha256})).status,200);assert.equal((await f.job()).unresolved,0);assert.equal((await f.storage.list({prefix:'org4-lock:'})).size,0);});
 test('lost upload binding writes retry without losing uploaded counters',async()=>{const f=await fixture(),[item]=await selected(f);const id=randomUUID();f.storage.fail='org4-job:';assert.equal((await f.file(item,{id})).response.status,500);assert.equal((await f.job()).counters.uploaded,0);assert.equal((await f.file(item,{id})).response.status,200);assert.equal((await f.job()).counters.uploaded,1);});
+test('verified byte-identical copies expose one keeper while retaining two independent originals',async()=>{const f=await fixture(),items=await selected(f,[entry(),entry()]);for(const i of items)await f.file(i);const rows=(await(await f.call(f.path+'/items')).json()).items;assert.equal(rows.length,2);assert.equal(new Set(rows.map(r=>r.original_id)).size,2);assert.equal(rows.filter(r=>r.duplicate.is_keeper).length,1);assert(rows.every(r=>r.duplicate.original_count===2&&r.duplicate.verified_received_bytes&&r.duplicate.review_only));assert.equal((await f.job()).counters.uploaded,2);assert.equal((await f.job()).counters.skipped,0);});
+test('explicit folder override invalidates old ready receipts and never lets a stale phone restore the old destination',async()=>{
+ for(const method of ['approve','vault']){
+  const f=await fixture(),[item]=await selected(f),file=await ready(f,item),destination='FORJA/Ales pe site';
+  const response=method==='approve'?await f.call(f.path+'/approve','POST',{request_id:randomUUID(),revision:(await f.job()).revision,confirm:true,items:[{id:item.id,destination}]}):await f.call('/v2/files/'+file,'PATCH',{request_id:randomUUID(),revision:(await f.job()).revision,folder:destination});
+  assert.equal(response.status,200);assert.equal((await f.receipt(item,'ready',{file_id:file,destination:'FORJA/Școală'})).status,409);
+  assert.equal((await f.receipt(item,'ready',{file_id:file,destination})).status,200);assert.equal((await f.receipt(item,'applying',{destination})).status,200);
+  const stored=await f.storage.get(`org4-item:${f.id}:${item.id}`);assert.equal(stored.intent.destination,destination);
+ }
+});
+test('an expired copy can be rebound before intent without resetting the original identity or receipt counts',async t=>{
+ const f=await fixture(),[item]=await selected(f),first=await ready(f,item),later=Date.now()+TTL+1;
+ t.mock.method(Date,'now',()=>later);await f.account.alarm();assert.equal((await f.receipt(item,'applying')).status,409);
+ const renewed=await f.file(item);assert.equal(renewed.response.status,201);assert.notEqual(renewed.id,first);
+ assert.equal((await f.job()).counters.ready,1);assert.equal((await f.job()).counters.total,1);
+ assert.equal((await f.receipt(item,'ready',{file_id:renewed.id,destination:'FORJA/Școală'})).status,200);
+ assert.equal((await f.receipt(item,'applying')).status,200);assert.equal((await f.file(item)).response.status,409);
+ assert.equal((await f.receipt(item,'moved',{target_sha256:item.sha256})).status,200);
+ assert.equal((await f.job()).counters.moved,1);
+});
+test('unreadable pre-hash originals are an honest unavailable count, never invented items or completed work',async()=>{
+ const f=await fixture({count:50});
+ assert.equal((await f.items([],{inventory_complete:true,inventory_total:2,inventory_unavailable:3})).status,400);
+ assert.equal((await f.items([],{inventory_complete:true,inventory_unavailable:2})).status,400);
+ assert.equal((await f.items([],{inventory_complete:true,inventory_total:2,inventory_unavailable:2})).status,200);
+ const job=await f.job();assert.equal(job.inventory_unavailable,2);assert.equal(job.inventory_total,2);assert.equal(job.counters.total,0);assert.equal(job.counters.moved,0);assert.equal(job.state,'partial');assert.equal(job.command.status,'complete');
+ assert.equal((await(await f.call(f.path+'/items')).json()).items.length,0);
+});
