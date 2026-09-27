@@ -160,11 +160,11 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
                             Text(e.name, style = BodyStrong.copy(fontSize = 14.sp))
                             Spacer(Modifier.height(3.dp))
                             Text(
-                                "${e.sets} SERII × ${e.reps} REP · ${e.load}${if (e.loadLabel == "KG") " KG" else ""}",
+                                "${e.sets} ${if (e.sets == 1) "SERIE" else "SERII"} × ${e.reps} REP · ${e.load}${if (e.loadLabel == "KG") " KG" else ""}",
                                 style = monoLabel(9, 0.10f).copy(color = TextSecondary)
                             )
                             Spacer(Modifier.height(3.dp))
-                            Text("ATINGE CREIONUL · AJUSTEAZĂ", style = monoLabel(8, 0.12f).copy(color = Accent2))
+                            Text("AJUSTEAZĂ CU CREIONUL", style = monoLabel(8, 0.12f).copy(color = Accent2))
                         }
                         Icon(
                             Icons.Filled.Edit, contentDescription = "Editează",
@@ -232,7 +232,7 @@ private fun ExerciseEditSheet(
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             Text(exercise.name, style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(4.dp))
-            Text("Pune valorile tale. Se salvează în plan.", style = BodySmall)
+            Text("Pune-ți valorile. Se salvează în plan.", style = BodySmall)
             Spacer(Modifier.height(18.dp))
 
             @Composable

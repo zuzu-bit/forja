@@ -228,7 +228,7 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
                     )
                     live.next?.let {
                         Text(
-                            "${it.sets} SERII × ${it.reps} REP",
+                            "${it.sets} ${if (it.sets == 1) "SERIE" else "SERII"} × ${it.reps} REP",
                             style = monoLabel(9, 0.10f).copy(color = TextSecondary)
                         )
                     }
