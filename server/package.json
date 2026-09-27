@@ -10,8 +10,8 @@
     "wrangler": "4.131.1"
   },
   "scripts": {
-    "test": "node --test insights.test.mjs files-preview.test.mjs cleanup-schedule.test.mjs organizer.test.mjs social.test.mjs recovery.test.mjs sleep.test.mjs sleep-analysis.test.mjs && npm run test:ui",
-    "test:server": "node --test insights.test.mjs files-preview.test.mjs cleanup-schedule.test.mjs organizer.test.mjs social.test.mjs recovery.test.mjs sleep.test.mjs sleep-analysis.test.mjs",
+    "test": "npm run test:server && npm run test:ui",
+    "test:server": "node --test insights.test.mjs files-preview.test.mjs cleanup-schedule.test.mjs organizer.test.mjs organizer-jobs.test.mjs organizer-analysis.test.mjs organizer-review.test.mjs social.test.mjs social-journey.test.mjs map-renderer.test.mjs recovery.test.mjs sleep.test.mjs sleep-analysis.test.mjs",
     "test:ui": "node ../scripts/ux-ui-test.cjs"
   }
 }

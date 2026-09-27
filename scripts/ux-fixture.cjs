@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const server = path.resolve(__dirname, '../server');
-const clients = ['insights-client.js.txt', 'sleep-client.js.txt', 'files-preview.js.txt', 'files-client.js.txt', 'cleanup-client.js.txt', 'organizer-client.js.txt', 'social-client.js.txt', 'recovery-client.js.txt'];
+const clients = ['insights-client.js.txt', 'sleep-client.js.txt', 'files-preview.js.txt', 'files-client.js.txt', 'cleanup-client.js.txt', 'organizer-client.js.txt', 'social-client.js.txt', 'recovery-client.js.txt', 'journey-client.js.txt'];
 
 function createFixture(now = Date.now()) {
   const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -25,6 +25,8 @@ function createFixture(now = Date.now()) {
       ], incoming: [],
       groups: [{id: id(5), name: 'O tură prin parc', mode: 'walk', at: now + 7200000, place: 'Fântâna din parc', lat: 44.4127, lon: 26.0966, going: ['demo-owner','demo-ana'], members: ['demo-owner','demo-ana','demo-mihai']}]
     },
+    journey: {owner:'self',session:null,last_sample_at:null,routes:{type:'FeatureCollection',features:[]},zones:{type:'FeatureCollection',features:[]},visits:[],next_cursor:null,rules:{gap_ms:300000,radius_m:100,accuracy_m:50,grid_m:200,visit_ms:18000000}},
+    visibility: {ghost:false,grants:[],updated_at:0,revision:0},
     recovery: [{id: deviceId, name: 'Telefonul meu', enabled: true, seen_at: now, online: true, status: 'ready', command: null, position: null}],
     files: {server_at: now, items: [
       {id: id(7), name: 'Lista pentru weekend.txt', kind: 'file', preview: 'text', media_type: 'text/plain', bytes: 1200, received_at: now - 300000, expires_at: now + 86400000, folder: 'Personal'},
@@ -36,6 +38,7 @@ function createFixture(now = Date.now()) {
     phones: [{id: deviceId, name: 'Telefonul meu', online: true, seen_at: now, audio_allowed: true, audio_background_capable: true, audio_ready: true, foreground: false, collection_enabled: true, state: 'idle', revision: 1}],
     campaigns: [],
     sleep: {sessions: [], reports: {}},
+    organizer: {jobs: [], items: {}, commands: {}, approvals: {}, moves: {}},
     messages: [{id: id(11), from: 'demo-ana', text: 'Ne vedem în parc? ☀️', at: now}]
   };
 }
@@ -53,11 +56,14 @@ function installMockFetch(win, fixture) {
     if (route === '/insights/api/state') return response(fixture.state);
     if (route === '/v2/sessions') return response({sessions: fixture.state.sessions});
     if (route === '/v2/social/state') return response(fixture.social);
+    if(route==='/v2/social/journey/state')return response(fixture.journey);
+    if(route==='/v2/social/visibility'){if(method==='POST'){if(body.revision!==(fixture.visibility.revision||0))return response({error:'Vizibilitatea s-a schimbat.'},409);fixture.visibility={...body,updated_at:Date.now(),revision:(fixture.visibility.revision||0)+1};}return response(fixture.visibility);}
+    if(route==='/v2/social/journey/session'){if(method==='POST')fixture.journey.session={id:body.id,started_at:Date.now()};else fixture.journey.session=null;return response(fixture.journey.session||{ok:true});}
     if (route === '/v2/social/chat') {
       if (method === 'POST') fixture.messages.push({...body, from: 'demo-owner', at: Date.now()});
       return response({messages: fixture.messages});
     }
-    if (route === '/v2/social/session' && method === 'DELETE') fixture.social.me.session = null;
+    if (route === '/v2/social/session' && method === 'DELETE') {fixture.social.me.session = null;fixture.visibility={ghost:true,grants:[],updated_at:Date.now(),revision:(fixture.visibility.revision||0)+1};}
     if (route === '/v2/social/contacts/discovery' && method === 'DELETE') fixture.social.me.discoverable = false;
     if (route === '/v2/social/profile') fixture.social.me.name = body.name;
     if (route === '/v2/recovery/devices') return response({devices: fixture.recovery});
@@ -68,8 +74,41 @@ function installMockFetch(win, fixture) {
     }
     if (route === '/v2/files') return response(fixture.files);
     if (route === '/v2/files/settings') return response(fixture.fileSettings);
+    if (route.startsWith('/v2/files/') && method === 'PATCH') {
+      const item=fixture.files.items.find(item=>route.endsWith('/'+item.id));if(!item)return response({error:'Copia nu este disponibilă.'},404);
+      if(item.organizer_job){const job=fixture.organizer.jobs.find(job=>job.id===item.organizer_job),key=item.id+':'+body.request_id;
+        if(!fixture.organizer.moves[key]&&job.revision!==body.revision)return response({error:'Actualizează organizarea.'},409);
+        fixture.organizer.moves[key]=body;Object.assign(item,{pending_folder:body.folder,sync_state:'awaiting_phone'});
+      }else item.folder=body.folder;
+      return response(item);
+    }
     if (route.startsWith('/v2/files/') && method === 'GET') return new win.Response('Plimbare în parc\nApă\nO carte bună', {headers: {'content-type':'text/plain'}});
     if (route === '/v2/cleanup/devices') return response(fixture.cleanup);
+    const organizer = /^\/v2\/organizer\/devices\/([^/]+)\/jobs(?:\/([^/]+)(?:\/(command|items|approve))?)?$/.exec(route);
+    if (organizer) {
+      const [, device, id, action] = organizer, store = fixture.organizer;
+      if (!id && method === 'GET') return response({jobs:store.jobs.filter(job=>job.device===device)});
+      if (!id && method === 'POST') {
+        let job=store.jobs.find(job=>job.id===body.id);
+        if(!job){job={...body,device,revision:1,state:'awaiting_phone',command:null,inventory_total:null,inventory_complete:false,counters:{total:0,pending:0,uploaded:0,moved:0,needs_review:0,failed_retryable:0,copied_pending_removal:0},created_at:Date.now(),updated_at:Date.now()};store.jobs.push(job);}
+        return response(job);
+      }
+      const job=store.jobs.find(job=>job.id===id&&job.device===device);
+      if(!job)return response({error:'Organizare indisponibilă.'},404);
+      if(!action&&method==='DELETE'){store.jobs=store.jobs.filter(row=>row.id!==id);delete store.items[id];return response({deleted:true},202);}
+      if(action==='items'&&method==='GET'){
+        const results=store.items[id]||{items:[],next_cursor:null,total:0};
+        return response(address.searchParams.has('after')?results.pages[address.searchParams.get('after')]:results);
+      }
+      if(action==='command'&&method==='POST'){
+        const key=id+':'+body.request_id;if(store.commands[key])return response(job);
+        if(body.revision!==job.revision)return response({error:'Organizarea s-a schimbat. Actualizează.'},409);
+        store.commands[key]=body;job.revision++;job.command={...body,revision:job.revision,selected:0,status:body.action==='continue'?'pending':body.action==='pause'?'paused':'cancelled'};job.state=body.action==='continue'?'awaiting_phone':body.action==='pause'?'paused':'cancelled';return response(job);
+      }
+      if(action==='approve'&&method==='POST'){const key=id+':'+body.request_id;if(store.approvals[key])return response(job);if(body.revision!==job.revision)return response({error:'Actualizează organizarea.'},409);store.approvals[key]=body;job.revision++;job.state='awaiting_phone';return response(job);}
+      if(method==='GET')return response(job);
+    }
+    if(route==='/insights/api/organizer-analysis'&&method==='POST')return response({saved:true,applied:false});
     if (route === '/insights/api/phones') return response({phones: fixture.phones});
     if (route.startsWith('/insights/api/phones/') && route.endsWith('/command') && method === 'POST') {
       const phone = fixture.phones.find(p => route.includes(p.id));

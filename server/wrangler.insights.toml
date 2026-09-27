@@ -2,6 +2,9 @@ name = "forja-insights"
 main = "insights-worker.mjs"
 compatibility_date = "2025-06-01"
 
+[vars]
+ORGANIZER_ANALYSIS_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
+
 [ai]
 binding = "AI"
 
