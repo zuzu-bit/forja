@@ -24,14 +24,19 @@ aplicația „3.7-online” de pe telefon, cu același cont și aceleași date l
   duplicate (SHA-256), aproape identice (dHash), capturi de ecran, neclare, mici, mari; mutare în
   `Pictures/FORJA Curățenie/<categorie>`; documente prin SAF în `Organizate/<categorie>`.
   **Curățenia online, implicit** (pachetul `cleanup-online`): „Sugestii AI” e pornit din start (DataStore propriu
-  `forja_cleanup_online`, cheia `ai_on`) și analiza cu model pornește singură după scanare — `POST /v1/organize` v2
+  `forja_cleanup_online`, cheia `ai_on`) și analiza cu model pornește singură după scanarea galeriei și când alegi sau
+  rescanezi folderul de documente (nu și la deschiderea aplicației, când folderul e doar reamintit) — `POST /v1/organize` v2
   (`core/network/OrganizeApi.kt`): loturi de ≤ 24 poze (miniaturi ≤ 512 px), ≤ 6 PDF-uri întregi (`pdfB64`, ≤ 4 MB fiecare,
-  cel mult 12 pe rundă), fragmente ≤ 2000 caractere pentru fișierele text, ≤ 30 elemente și ≤ 6 MB per cerere. Răspunsul v2
-  per element: `rezumat`, `categorie`, `dosar` (≤ 24 caractere), `sterge {recomandat, motiv, incredere}`, `duplicatDe`, plus
-  `suggestion/folder/reason/confidence` din v1; în UI apare linia „AI: <rezumat> · dosar: <nume> · <motiv>”, dosarele propuse
-  devin butoane „Mută N în <dosar>” (`Organizate/<dosar>` sau `FORJA Curățenie/<dosar>`), iar ștergerile recomandate sunt doar
-  pre-bifate — nimic nu se șterge fără dialogul de sistem. Linia de stare e onestă: „Trimit 24 poze la analiză…”,
-  „Modelul a răspuns (Claude)”, „Serverul nu răspunde; sugestiile locale rămân.” „Și pe site (copii 24 h)” e și el implicit
+  cel mult 12 pe rundă, citite și codificate base64 abia la scrierea cererii, unul câte unul — nu stau ca text în memorie),
+  fragmente ≤ 2000 caractere pentru fișierele text, ≤ 30 elemente și ≤ 6 MB per cerere. Verdictele primite rămân: după
+  „Următoarele N” pleacă doar pozele noi, verdictele unui folder se țin minte în sesiune și la rescanare pleacă doar fișierele
+  fără verdict. Răspunsul v2 per element: `rezumat`, `categorie`, `dosar` (≤ 24 caractere), `sterge {recomandat, motiv, incredere}`,
+  `duplicatDe`, plus `suggestion/folder/reason/confidence` din v1; în UI apare linia „AI: <rezumat> · dosar: <nume> ·
+  copie a <fișier> · <motiv>”, dosarele propuse devin butoane „Mută N în <dosar>” (`Organizate/<dosar>` sau
+  `FORJA Curățenie/<dosar>`), iar ștergerile recomandate sunt doar pre-bifate — nimic nu se șterge fără dialogul de sistem.
+  Linia de stare e onestă: „Trimit 24 poze la analiză…”, „Modelul a răspuns (Claude)” (furnizorul după prefixul din `provider`:
+  Gemini, Groq, Claude, OpenAI, Cloudflare), „Serverul nu răspunde; sugestiile locale rămân.”, iar când un lot pică după altul:
+  „doar o parte: <motiv>”. „Și pe site (copii 24 h)” e și el implicit
   pornit (`organizer_v4/site_on`, lipsa cheii = pornit) și pornește odată cu curățenia când ești în cont; oprit sau
   neconectat, ecranul spune că analiza rămâne pe telefon. Fără cheie pe server totul merge cu verdictele locale + modelele Cloudflare.
 - **Site-ul FORJA** (`server/insights-worker.mjs`, https://forja-insights.forja-22e7ea2d.workers.dev) e acum în acest repo,

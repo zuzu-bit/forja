@@ -89,7 +89,8 @@ fun CleanupScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) { vm.events.collect { toast.show(it) } }
 
     // Cât timp ecranul e vizibil: mutările aprobate din laptop se cer aici (nu prin notificare) și
-    // site-ul e întrebat la 15 s de comenzi noi. Nimic nu pleacă fără comutatorul „Și pe site”.
+    // site-ul e întrebat la 15 s de comenzi noi. „Și pe site” e implicit pornit: după scanare, copiile urcă
+    // în cont 24 h; oprit, nu mai urcă nimic în cont (analiza cu model are comutatorul ei, „Sugestii AI”).
     DisposableEffect(Unit) {
         vm.setScreenVisible(true)
         onDispose { vm.setScreenVisible(false) }
@@ -170,6 +171,7 @@ fun CleanupScreen(onBack: () -> Unit) {
                             state = s,
                             siteOn = siteOn,
                             loggedIn = vm.loggedIn,
+                            modelSends = aiOn && vm.aiAvailable && vm.loggedIn,
                             siteStatus = siteStatus,
                             onSiteOn = { vm.setSiteOn(it) },
                             onCancelSite = { vm.cancelSiteJob() },
@@ -250,8 +252,9 @@ fun CleanupScreen(onBack: () -> Unit) {
 
     // Sheet: previzualizare (apăsare lungă pe o poză)
     preview?.let { item ->
-        val ai = (state as? CleanupUiState.Results)?.ai?.suggestions?.get("m:${item.id}")
-        val siteHint = (state as? CleanupUiState.Results)?.site?.get(item.uri.toString())
+        val results = state as? CleanupUiState.Results
+        val ai = results?.ai?.suggestions?.get("m:${item.id}")
+        val siteHint = results?.site?.get(item.uri.toString())
         ModalBottomSheet(
             onDismissRequest = { preview = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -274,7 +277,7 @@ fun CleanupScreen(onBack: () -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SuggestionDot(ai)
                         Spacer(Modifier.width(8.dp))
-                        Text(ai.line(), style = BodySmall.copy(color = TextSecondary))
+                        Text(ai.line { id -> results?.report?.scanned?.firstOrNull { "m:${it.id}" == id }?.name }, style = BodySmall.copy(color = TextSecondary))
                     }
                 }
                 if (siteHint != null) {
@@ -306,7 +309,7 @@ private fun PermissionGate(onAsk: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Ca să facem curat, FORJA are nevoie de acces la galerie.", style = Body, modifier = Modifier.padding(bottom = 12.dp), textAlign = TextAlign.Center)
         Text(
-            "Pozele nu pleacă nicăieri — le vezi doar tu, aici, ca să decizi. Pe Android 14 poți alege și doar câteva poze.",
+            "În timpul scanării pozele rămân pe telefon. După, miniaturile pleacă la analiza cu model și copiile în cont, dacă lași cele două comutatoare pornite. Pe Android 14 poți alege și doar câteva poze.",
             style = BodyTiny.copy(color = TextDim), modifier = Modifier.padding(bottom = 12.dp), textAlign = TextAlign.Center
         )
         SecondaryButton("Dă accesul", onClick = onAsk)
@@ -352,17 +355,19 @@ private fun SiteStatusLine(status: OrganizerStatus?, onCancel: (() -> Unit)? = n
 
 /**
  * Rândul cu comutatorul „Și pe site (copii 24 h)" — implicit pornit și parte din pornirea curățeniei.
- * Rămâne vizibil ca informație; oprit sau fără cont, spunem clar că analiza rămâne pe telefon.
+ * Rămâne vizibil ca informație; oprit sau fără cont, spunem exact ce mai pleacă: „Sugestii AI" e alt comutator
+ * (`modelSends` = e pornit și poate trimite), deci „analiza rămâne pe telefon" doar când nici acela nu trimite.
  */
 @Composable
-private fun SiteSwitchRow(siteOn: Boolean, loggedIn: Boolean, onSiteOn: (Boolean) -> Unit) {
+private fun SiteSwitchRow(siteOn: Boolean, loggedIn: Boolean, modelSends: Boolean, onSiteOn: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text("Și pe site (copii 24 h)", style = BodyStrong.copy(fontSize = 13.sp))
             Text(
                 when {
+                    !siteOn && modelSends -> "Oprit: nimic nu urcă în cont. Miniaturile și PDF-urile pleacă totuși la analiza cu model, cât timp „Sugestii AI” e pornit."
                     !siteOn -> "Oprit: analiza rămâne doar pe telefon. Nimic nu pleacă în cont."
-                    !loggedIn -> "Nu ești în cont: analiza rămâne pe telefon. Intră în cont ca lucrarea să pornească odată cu curățenia."
+                    !loggedIn -> "Nu ești în cont: nimic nu urcă în cont și analiza rămâne pe telefon. Intră în cont ca lucrarea să pornească odată cu curățenia."
                     else -> "Copiile analizate se urcă în contul tău 24 h — așa le poți organiza și de pe laptop. Pornește odată cu curățenia."
                 },
                 style = BodyTiny.copy(color = TextDim)
@@ -421,6 +426,7 @@ private fun ScopeChooser(
     state: CleanupUiState.Choose,
     siteOn: Boolean,
     loggedIn: Boolean,
+    modelSends: Boolean,
     siteStatus: OrganizerStatus?,
     onSiteOn: (Boolean) -> Unit,
     onCancelSite: () -> Unit,
@@ -472,7 +478,7 @@ private fun ScopeChooser(
                 ForjaSwitch(scope.includeVideos) { onScope(scope.copy(includeVideos = it)) }
             }
             Spacer(Modifier.height(10.dp))
-            SiteSwitchRow(siteOn, loggedIn, onSiteOn)
+            SiteSwitchRow(siteOn, loggedIn, modelSends, onSiteOn)
             if (siteOn || siteStatus != null) {
                 Spacer(Modifier.height(8.dp))
                 SiteStatusLine(siteStatus, onCancel = onCancelSite)
@@ -553,7 +559,7 @@ private fun ProgressCard(
         }
         Spacer(Modifier.height(14.dp))
         Text(
-            "Scanarea se face pe telefon. Miniaturile pleacă la analiza cu model abia după, dacă „Sugestii AI” e pornit.",
+            "Scanarea se face pe telefon. Abia după: miniaturile pleacă la analiza cu model („Sugestii AI”), copiile în cont („Și pe site”) — ambele se pot opri.",
             style = BodyTiny.copy(color = TextDim), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center
         )
     }
@@ -582,6 +588,8 @@ private fun ResultsView(
     val selectedItems = flagged.filter { it.id in state.selected }
     val selectedBytes = selectedItems.sumOf { it.sizeBytes }
     val nameOf: (String) -> String = { uri -> report.scanned.firstOrNull { it.uri.toString() == uri }?.name ?: "poză" }
+    // „copie a <nume>": id-ul din `duplicatDe` („m:<id>") → numele pozei din raport, calculat o dată pe raport.
+    val aiNames: Map<String, String> = remember(report) { report.scanned.associate { "m:${it.id}" to it.name } }
 
     Column(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -625,7 +633,7 @@ private fun ResultsView(
                     Category.TINY -> items.map { Tile(it, if (it.sizeBytes in 1..CleanupEngine.TINY_BYTES) "mică" else "rezoluție mică", false) }
                     Category.LARGE -> items.map { Tile(it, fmtBytes(it.sizeBytes), false) }
                 }
-                categorySection(vm, state, cat, items, tiles, onPreview)
+                categorySection(vm, state, cat, items, tiles, onPreview, aiNames)
             }
             if (vm.aiAvailable || (siteOn && state.jobId != null)) {
                 item(key = "ai") {
@@ -685,7 +693,8 @@ private fun LazyListScope.categorySection(
     cat: Category,
     items: List<MediaItem>,
     tiles: List<Tile>,
-    onPreview: (MediaItem) -> Unit
+    onPreview: (MediaItem) -> Unit,
+    aiNames: Map<String, String>
 ) {
     val ids = items.map { it.id }
     val bytes = items.sumOf { it.sizeBytes }
@@ -725,7 +734,7 @@ private fun LazyListScope.categorySection(
     }
     val aiLines = tiles.filter { !it.keeper }.mapNotNull { t -> state.ai.suggestions["m:${t.item.id}"]?.let { t.item.name to it } }
     if (aiLines.isNotEmpty()) {
-        item(key = "ai-${cat.name}") { AiLines(aiLines) }
+        item(key = "ai-${cat.name}") { AiLines(aiLines, nameOf = { aiNames[it] }) }
     }
     item(key = "sp-${cat.name}") { Spacer(Modifier.height(14.dp)) }
 }
@@ -803,7 +812,7 @@ private fun SuggestionDot(s: OrganizeVerdictV2) {
 
 /** Liniile „AI: <rezumat> · dosar: <nume> · <motiv>" pentru elementele unei categorii care au verdict. */
 @Composable
-private fun AiLines(lines: List<Pair<String, OrganizeVerdictV2>>, max: Int = 8) {
+private fun AiLines(lines: List<Pair<String, OrganizeVerdictV2>>, nameOf: (String) -> String? = { null }, max: Int = 8) {
     if (lines.isEmpty()) return
     Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
         lines.take(max).forEach { (name, v) ->
@@ -812,7 +821,7 @@ private fun AiLines(lines: List<Pair<String, OrganizeVerdictV2>>, max: Int = 8) 
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Text(name, style = BodyTiny.copy(color = TextDim), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(v.line(), style = BodyTiny.copy(color = TextSecondary), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Text(v.line(nameOf), style = BodyTiny.copy(color = TextSecondary), maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -991,7 +1000,7 @@ private fun DocsTab(
         Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Alege un folder cu documente (ex: Download).", style = Body, modifier = Modifier.padding(bottom = 6.dp), textAlign = TextAlign.Center)
             Text(
-                "Android nu ne lasă la toate fișierele fără riscuri — deci alegi tu folderul. Îl ținem minte. Nimic nu pleacă de pe telefon.",
+                "Android nu ne lasă la toate fișierele fără riscuri — deci alegi tu folderul. Îl ținem minte. PDF-urile ≤ 4 MB și fragmente din fișierele text pleacă la analiza cu model, copiile în cont — doar cât timp lași comutatoarele pornite.",
                 style = BodyTiny.copy(color = TextDim), modifier = Modifier.padding(bottom = 14.dp), textAlign = TextAlign.Center
             )
             SecondaryButton("Alege folderul", onClick = onPickTree)
@@ -999,6 +1008,8 @@ private fun DocsTab(
         return
     }
     val report = docs.report
+    // „copie a <nume>": id-ul din `duplicatDe` („d:<sha>") → numele fișierului, calculat o dată pe raport.
+    val docNames: Map<String, String> = remember(report) { report?.items?.associate { vm.docAiId(it) to it.name } ?: emptyMap() }
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp),
@@ -1040,10 +1051,10 @@ private fun DocsTab(
                     }
                 }
                 val dupRows = report.duplicates.flatMap { g -> listOf(DocRowModel(g.keeper, null, true)) + g.copies.map { DocRowModel(it, "duplicat identic", false) } }
-                docSection(vm, docs, "Duplicate", "Duplicate", report.duplicates.flatMap { it.copies }, dupRows)
-                docSection(vm, docs, "Mari", "Mari", report.large, report.large.map { DocRowModel(it, "mare", false) })
-                docSection(vm, docs, "Vechi", "Vechi", report.old, report.old.map { DocRowModel(it, "vechi (>3 luni)", false) })
-                docSection(vm, docs, "Suspecte", "Duplicate", report.suspects.map { it.first }, report.suspects.map { DocRowModel(it.first, it.second, false) })
+                docSection(vm, docs, "Duplicate", "Duplicate", report.duplicates.flatMap { it.copies }, dupRows, docNames)
+                docSection(vm, docs, "Mari", "Mari", report.large, report.large.map { DocRowModel(it, "mare", false) }, docNames)
+                docSection(vm, docs, "Vechi", "Vechi", report.old, report.old.map { DocRowModel(it, "vechi (>3 luni)", false) }, docNames)
+                docSection(vm, docs, "Suspecte", "Duplicate", report.suspects.map { it.first }, report.suspects.map { DocRowModel(it.first, it.second, false) }, docNames)
                 if (vm.aiAvailable || (siteOn && docs.jobId != null)) {
                     item(key = "ai") {
                         AiPanelCard(
@@ -1091,7 +1102,8 @@ private fun LazyListScope.docSection(
     title: String,
     category: String,
     items: List<DocItem>,
-    rows: List<DocRowModel>
+    rows: List<DocRowModel>,
+    aiNames: Map<String, String>
 ) {
     if (items.isEmpty()) return
     val keys = items.map { it.key }
@@ -1112,7 +1124,8 @@ private fun LazyListScope.docSection(
             item = r.item, selected = r.item.key in docs.selected, reason = r.reason, keeper = r.keeper,
             badge = docs.ai.suggestions[vm.docAiId(r.item)],
             siteHint = docs.site[r.item.key]?.takeIf { it.analysis != null || it.state == "moved" || it.state == "needs_review" },
-            onToggle = { vm.toggleDoc(r.item.key) }
+            onToggle = { vm.toggleDoc(r.item.key) },
+            aiNameOf = { aiNames[it] }
         )
     }
     item(key = "sp-$title") { Spacer(Modifier.height(10.dp)) }
@@ -1121,7 +1134,7 @@ private fun LazyListScope.docSection(
 @Composable
 private fun DocRow(
     item: DocItem, selected: Boolean, reason: String?, keeper: Boolean, badge: OrganizeVerdictV2?,
-    onToggle: () -> Unit, siteHint: SiteHint? = null
+    onToggle: () -> Unit, siteHint: SiteHint? = null, aiNameOf: (String) -> String? = { null }
 ) {
     ForjaCard(
         Modifier.fillMaxWidth().padding(bottom = 8.dp).pressable(onToggle),
@@ -1147,7 +1160,7 @@ private fun DocRow(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SuggestionDot(badge)
                         Spacer(Modifier.width(6.dp))
-                        Text(badge.line(), style = BodyTiny.copy(color = TextSecondary), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Text(badge.line(aiNameOf), style = BodyTiny.copy(color = TextSecondary), maxLines = 3, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 if (siteHint != null) {
