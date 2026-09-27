@@ -141,7 +141,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 Spacer(Modifier.height(6.dp))
                 Text(
                     if (kcal <= target) "mai ai ${target - kcal}"
-                    else "peste cu ${kcal - target} — notat. Mâine ții rândul.",
+                    else "peste cu ${kcal - target} — notat. Mâine ții linia.",
                     style = BodySmall.copy(color = if (kcal <= target) TextSecondary else Error)
                 )
             }
@@ -153,7 +153,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
         ModuleHeader(
             stamp = "RAȚIE",
             title = "Mănânci real. Vezi clar.",
-            order = "Scanezi codul sau fotografiezi farfuria. Codul e exact, poza e estimare. Tu confirmi porția.",
+            order = "Scanezi codul sau fotografiezi masa. Codul e exact, poza e estimare. Tu confirmi porția.",
             modifier = Modifier.padding(horizontal = 20.dp)
         )
 
@@ -300,7 +300,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
             Spacer(Modifier.width(8.dp))
             InfoDot(
                 title = "Cum funcționează",
-                text = "Poza pleacă la analiză cu model — pe serverul FORJA sau, dacă ai pus cheia ta Gemini, direct la Google. Modelul estimează, nu cântărește. Codul de bare dă valori exacte din OpenFoodFacts. Nimic nu se salvează până nu confirmi."
+                text = "Poza pleacă la analiză cu model — prin serverul FORJA sau, dacă serverul lipsește, direct la Google cu cheia ta Gemini. Modelul estimează, nu cântărește. Codul de bare dă valori exacte din OpenFoodFacts. Nimic nu se salvează până nu confirmi."
             )
         }
 
@@ -334,7 +334,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
             source = p.source,
             onConfirm = { mealType, grams ->
                 vm.confirmPending(mealType, grams)
-                toast.show("Salvat. Poți corecta oricând din jurnal.")
+                toast.show("Salvat. Îl poți șterge oricând din jurnal.")
             },
             onDismiss = { vm.dismissPending() }
         )
