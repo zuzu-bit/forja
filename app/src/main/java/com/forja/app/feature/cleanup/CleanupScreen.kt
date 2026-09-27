@@ -53,7 +53,7 @@ import com.forja.app.core.cleanup.ScopeKind
 import com.forja.app.core.cleanup.fmtBytes
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
-import com.forja.app.core.network.OrganizeSuggestion
+import com.forja.app.core.network.OrganizeVerdictV2
 import com.forja.app.core.util.Fmt
 import java.time.Instant
 import java.time.ZoneId
@@ -67,7 +67,9 @@ private fun fmtDate(ms: Long): String =
 
 /**
  * Curățenie de azi — detox digital, v2: alegi scopul, scanarea merge cu pauză și reluare,
- * rezultatele vin grupate pe categorii, tu decizi ce pleacă. Nimic nu urcă nicăieri fără acordul tău.
+ * rezultatele vin grupate pe categorii, tu decizi ce pleacă. Analiza cu model pe serverul FORJA și lucrarea
+ * de cont („Și pe site") pornesc implicit după scanare; ambele comutatoare se pot opri, iar atunci spunem clar că
+ * analiza rămâne pe telefon. Nimic nu se șterge fără dialogul de sistem.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -167,6 +169,7 @@ fun CleanupScreen(onBack: () -> Unit) {
                         ScopeChooser(
                             state = s,
                             siteOn = siteOn,
+                            loggedIn = vm.loggedIn,
                             siteStatus = siteStatus,
                             onSiteOn = { vm.setSiteOn(it) },
                             onCancelSite = { vm.cancelSiteJob() },
@@ -271,13 +274,7 @@ fun CleanupScreen(onBack: () -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SuggestionDot(ai)
                         Spacer(Modifier.width(8.dp))
-                        Text(
-                            buildString {
-                                append(when (ai.suggestion) { "delete" -> "AI: de aruncat"; "move" -> "AI: mută în ${ai.folder ?: "dosar"}"; else -> "AI: păstrează" })
-                                if (ai.reason.isNotBlank()) append(" — ${ai.reason}")
-                            },
-                            style = BodySmall.copy(color = TextSecondary)
-                        )
+                        Text(ai.line(), style = BodySmall.copy(color = TextSecondary))
                     }
                 }
                 if (siteHint != null) {
@@ -353,14 +350,21 @@ private fun SiteStatusLine(status: OrganizerStatus?, onCancel: (() -> Unit)? = n
     }
 }
 
-/** Rândul cu comutatorul „Și pe site (copii 24 h)" — implicit oprit, cu o propoziție onestă despre ce pleacă. */
+/**
+ * Rândul cu comutatorul „Și pe site (copii 24 h)" — implicit pornit și parte din pornirea curățeniei.
+ * Rămâne vizibil ca informație; oprit sau fără cont, spunem clar că analiza rămâne pe telefon.
+ */
 @Composable
-private fun SiteSwitchRow(siteOn: Boolean, onSiteOn: (Boolean) -> Unit) {
+private fun SiteSwitchRow(siteOn: Boolean, loggedIn: Boolean, onSiteOn: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text("Și pe site (copii 24 h)", style = BodyStrong.copy(fontSize = 13.sp))
             Text(
-                "Pozele și documentele analizate urcă în contul tău online pentru 24 h — le vezi și organizezi și din laptop.",
+                when {
+                    !siteOn -> "Oprit: analiza rămâne doar pe telefon. Nimic nu pleacă în cont."
+                    !loggedIn -> "Nu ești în cont: analiza rămâne pe telefon. Intră în cont ca lucrarea să pornească odată cu curățenia."
+                    else -> "Copiile analizate se urcă în contul tău 24 h — așa le poți organiza și de pe laptop. Pornește odată cu curățenia."
+                },
                 style = BodyTiny.copy(color = TextDim)
             )
         }
@@ -416,6 +420,7 @@ private fun SiteHintLine(h: SiteHint) {
 private fun ScopeChooser(
     state: CleanupUiState.Choose,
     siteOn: Boolean,
+    loggedIn: Boolean,
     siteStatus: OrganizerStatus?,
     onSiteOn: (Boolean) -> Unit,
     onCancelSite: () -> Unit,
@@ -467,7 +472,7 @@ private fun ScopeChooser(
                 ForjaSwitch(scope.includeVideos) { onScope(scope.copy(includeVideos = it)) }
             }
             Spacer(Modifier.height(10.dp))
-            SiteSwitchRow(siteOn, onSiteOn)
+            SiteSwitchRow(siteOn, loggedIn, onSiteOn)
             if (siteOn || siteStatus != null) {
                 Spacer(Modifier.height(8.dp))
                 SiteStatusLine(siteStatus, onCancel = onCancelSite)
@@ -548,7 +553,7 @@ private fun ProgressCard(
         }
         Spacer(Modifier.height(14.dp))
         Text(
-            "Totul se calculează pe telefon: nicio poză nu pleacă în timpul scanării.",
+            "Scanarea se face pe telefon. Miniaturile pleacă la analiza cu model abia după, dacă „Sugestii AI” e pornit.",
             style = BodyTiny.copy(color = TextDim), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center
         )
     }
@@ -718,6 +723,10 @@ private fun LazyListScope.categorySection(
             repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
         }
     }
+    val aiLines = tiles.filter { !it.keeper }.mapNotNull { t -> state.ai.suggestions["m:${t.item.id}"]?.let { t.item.name to it } }
+    if (aiLines.isNotEmpty()) {
+        item(key = "ai-${cat.name}") { AiLines(aiLines) }
+    }
     item(key = "sp-${cat.name}") { Spacer(Modifier.height(14.dp)) }
 }
 
@@ -728,7 +737,7 @@ private fun MediaTile(
     selected: Boolean,
     reason: String?,
     keeper: Boolean,
-    badge: OrganizeSuggestion?,
+    badge: OrganizeVerdictV2?,
     onToggle: () -> Unit,
     onLong: () -> Unit,
     modifier: Modifier = Modifier,
@@ -780,23 +789,46 @@ private fun MediaTile(
     }
 }
 
-/** Punctul sugestiei AI: verde = păstrează, roșu = de aruncat, verde-oliv cu dosar = mută. */
+/** Punctul verdictului AI: roșu = ștergere recomandată (doar bifată), dosar = are un dosar propus, verde = păstrează. */
 @Composable
-private fun SuggestionDot(s: OrganizeSuggestion) {
-    when (s.suggestion) {
-        "move" -> Box(
+private fun SuggestionDot(s: OrganizeVerdictV2) {
+    when {
+        s.deleteRecommended -> Box(Modifier.size(10.dp).clip(CircleShape).background(Error).border(1.dp, Color(0x99000000), CircleShape))
+        s.targetFolder != null -> Box(
             Modifier.size(18.dp).clip(CircleShape).background(Color(0xCC0A0A0B)), contentAlignment = Alignment.Center
         ) { Icon(Icons.Outlined.FolderOpen, null, tint = Accent2, modifier = Modifier.size(12.dp)) }
-        "delete" -> Box(Modifier.size(10.dp).clip(CircleShape).background(Error).border(1.dp, Color(0x99000000), CircleShape))
         else -> Box(Modifier.size(10.dp).clip(CircleShape).background(Positive).border(1.dp, Color(0x99000000), CircleShape))
+    }
+}
+
+/** Liniile „AI: <rezumat> · dosar: <nume> · <motiv>" pentru elementele unei categorii care au verdict. */
+@Composable
+private fun AiLines(lines: List<Pair<String, OrganizeVerdictV2>>, max: Int = 8) {
+    if (lines.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        lines.take(max).forEach { (name, v) ->
+            Row(verticalAlignment = Alignment.Top) {
+                Box(Modifier.padding(top = 4.dp)) { SuggestionDot(v) }
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(name, style = BodyTiny.copy(color = TextDim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(v.line(), style = BodyTiny.copy(color = TextSecondary), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+        }
+        if (lines.size > max) {
+            Text("încă ${lines.size - max} cu verdict · apasă lung pe o poză ca să-l vezi", style = BodyTiny.copy(color = TextDim))
+        }
     }
 }
 
 // ─────────────────────────── Panoul AI (poze și documente) ───────────────────────────
 
 /**
- * Panoul AI: sugestiile FORJA AI (/v1/organize, miniaturi/fragmente) și, când „Și pe site” e pornit,
- * analiza contului online pe copiile din 24 h. Sursa e etichetată de fiecare dată: „FORJA AI” vs „Site”.
+ * Panoul AI: analiza cu model pe serverul FORJA (/v1/organize v2: miniaturi, PDF-uri, fragmente — pornește singură
+ * după scanare) și, când „Și pe site” e pornit, analiza contului online pe copiile din 24 h.
+ * Sursa e etichetată de fiecare dată: „FORJA AI” vs „Site”. Linia de stare spune onest ce se întâmplă.
  */
 @Composable
 private fun AiPanelCard(
@@ -822,7 +854,8 @@ private fun AiPanelCard(
             Column(Modifier.weight(1f).padding(end = 12.dp)) {
                 Text("Sugestii AI", style = BodyStrong.copy(fontSize = 15.sp))
                 Text(
-                    "Trimite doar $subject, nimic altceva. AI-ul propune, tu decizi — nimic nu se șterge singur.",
+                    if (aiOn) "Analiză cu model pe serverul FORJA, pornită după scanare. Pleacă doar $subject. Modelul propune, tu decizi — nimic nu se șterge singur."
+                    else "Oprit: rămân verdictele telefonului. Nimic nu pleacă la analiză.",
                     style = BodyTiny.copy(color = TextSecondary)
                 )
             }
@@ -882,10 +915,18 @@ private fun AiPanelCard(
                 SourceBadge("FORJA AI")
                 Spacer(Modifier.width(8.dp))
             }
+            if (ai.status.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    ai.status,
+                    style = BodyTiny.copy(color = if (ai.failed) Error else if (ai.loading) Accent2 else TextSecondary),
+                    maxLines = 3, overflow = TextOverflow.Ellipsis
+                )
+            }
             Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SecondaryButton(
-                    if (ai.loading) "se gândește…" else if (ai.requested) "Cere din nou" else "Cere sugestii pentru selecție",
+                    if (ai.loading) "analizează…" else if (ai.requested || ai.failed) "Cere din nou" else "Cere sugestii pentru selecție",
                     onClick = { if (!ai.loading) onRequest() }, modifier = Modifier.weight(1f)
                 )
                 if (ai.loading) {
@@ -900,7 +941,14 @@ private fun AiPanelCard(
                     Spacer(Modifier.width(6.dp))
                     Box(Modifier.size(8.dp).clip(CircleShape).background(Error)); Text("de aruncat (doar bifat)", style = BodyTiny.copy(color = TextDim))
                     Spacer(Modifier.width(6.dp))
-                    Icon(Icons.Outlined.FolderOpen, null, tint = Accent2, modifier = Modifier.size(12.dp)); Text("mută", style = BodyTiny.copy(color = TextDim))
+                    Icon(Icons.Outlined.FolderOpen, null, tint = Accent2, modifier = Modifier.size(12.dp)); Text("dosar propus", style = BodyTiny.copy(color = TextDim))
+                }
+                if (ai.deleteCount > 0) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "${ai.deleteCount} ${if (ai.deleteCount == 1) "element bifat" else "elemente bifate"} la recomandarea modelului, cu motiv. Verifică și confirmă tu.",
+                        style = BodyTiny.copy(color = TextDim)
+                    )
                 }
                 val folders = ai.moveFolders
                 if (folders.isNotEmpty()) {
@@ -918,7 +966,7 @@ private fun AiPanelCard(
                 }
                 if (ai.provider.isNotBlank()) {
                     Spacer(Modifier.height(4.dp))
-                    Text(ai.provider.uppercase(), style = monoLabel(8, 0.12f).copy(color = TextDim2))
+                    Text("ANALIZĂ CU MODEL · ${ai.provider.uppercase()}", style = monoLabel(8, 0.12f).copy(color = TextDim2))
                 }
             }
         }
@@ -986,7 +1034,7 @@ private fun DocsTab(
                         ForjaCard(Modifier.fillMaxWidth()) {
                             Text("Nimic de aruncat aici. Folder curat.", style = BodyStrong.copy(fontSize = 15.sp))
                             Spacer(Modifier.height(4.dp))
-                            Text("Poți totuși cere sugestii AI de organizare pentru tot folderul.", style = BodySmall.copy(color = TextSecondary))
+                            Text("Modelul poate totuși propune dosare pentru tot folderul — vezi panoul de mai jos.", style = BodySmall.copy(color = TextSecondary))
                         }
                         Spacer(Modifier.height(14.dp))
                     }
@@ -1000,7 +1048,7 @@ private fun DocsTab(
                     item(key = "ai") {
                         AiPanelCard(
                             ai = docs.ai, aiOn = aiOn, aiAvailable = vm.aiAvailable,
-                            subject = "numele fișierelor și fragmente scurte din cele text",
+                            subject = "PDF-urile (≤ 4 MB), fragmente scurte din fișierele text și numele celorlalte",
                             onToggle = { vm.setAiOn(it) },
                             onRequest = { vm.requestDocsAi() },
                             onApplyFolder = { vm.applyDocsAiFolder(it) },
@@ -1072,7 +1120,7 @@ private fun LazyListScope.docSection(
 
 @Composable
 private fun DocRow(
-    item: DocItem, selected: Boolean, reason: String?, keeper: Boolean, badge: OrganizeSuggestion?,
+    item: DocItem, selected: Boolean, reason: String?, keeper: Boolean, badge: OrganizeVerdictV2?,
     onToggle: () -> Unit, siteHint: SiteHint? = null
 ) {
     ForjaCard(
@@ -1099,11 +1147,7 @@ private fun DocRow(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SuggestionDot(badge)
                         Spacer(Modifier.width(6.dp))
-                        Text(
-                            when (badge.suggestion) { "delete" -> "AI: de aruncat"; "move" -> "AI: mută în ${badge.folder ?: "dosar"}"; else -> "AI: păstrează" } +
-                                (if (badge.reason.isNotBlank()) " — ${badge.reason}" else ""),
-                            style = BodyTiny.copy(color = TextSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis
-                        )
+                        Text(badge.line(), style = BodyTiny.copy(color = TextSecondary), maxLines = 3, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 if (siteHint != null) {

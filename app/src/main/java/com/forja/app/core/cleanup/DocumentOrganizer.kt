@@ -277,6 +277,35 @@ class DocumentOrganizer(private val context: Context, private val prefs: Prefs) 
         } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
     }
 
+    /** PDF (după MIME sau extensie) — pleacă întreg la analiza pe server, dacă are ≤ maxBytes. */
+    fun isPdf(item: DocItem): Boolean =
+        item.mime.equals("application/pdf", ignoreCase = true) ||
+            (item.name.substringAfterLast('.', "").equals("pdf", ignoreCase = true) &&
+                (item.mime.isBlank() || item.mime == "application/octet-stream" || item.mime == "*/*"))
+
+    /** Octeții unui PDF ≤ maxBytes (verificați și după antetul „%PDF"); null dacă e prea mare sau nu se poate citi. */
+    suspend fun pdfBytes(item: DocItem, maxBytes: Long): ByteArray? = withContext(Dispatchers.IO) {
+        if (!isPdf(item)) return@withContext null
+        if (item.sizeBytes <= 0 || item.sizeBytes > maxBytes) return@withContext null
+        try {
+            val bytes = cr.openInputStream(item.uri)?.use { s ->
+                val out = java.io.ByteArrayOutputStream(item.sizeBytes.toInt().coerceAtLeast(1024))
+                val buf = ByteArray(64 * 1024)
+                var total = 0L
+                while (true) {
+                    val n = s.read(buf)
+                    if (n < 0) break
+                    total += n
+                    if (total > maxBytes) return@use null
+                    out.write(buf, 0, n)
+                }
+                out.toByteArray()
+            } ?: return@withContext null
+            if (bytes.size < 5 || bytes[0] != '%'.code.toByte() || bytes[1] != 'P'.code.toByte() || bytes[2] != 'D'.code.toByte() || bytes[3] != 'F'.code.toByte()) return@withContext null
+            bytes
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+    }
+
     fun isTextLike(item: DocItem): Boolean {
         val m = item.mime.lowercase()
         if (m.startsWith("text/")) return true
