@@ -151,7 +151,7 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
             Reveal(index = 2, key = isLogin) {
                 Column {
                     Text(
-                        if (isLogin) "Bine ai revenit." else "Hai să te cunoaștem.",
+                        if (isLogin) "Bine ai revenit." else "Înrolarea durează un minut.",
                         style = TitleOnboarding.copy(fontSize = 32.sp, lineHeight = 35.sp)
                     )
                     Spacer(Modifier.height(8.dp))
