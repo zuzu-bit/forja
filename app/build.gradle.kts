@@ -16,8 +16,8 @@ android {
         applicationId = "com.forja.app.research"
         minSdk = 26
         targetSdk = 35
-        versionCode = 60
-        versionName = "4.0"
+        versionCode = 61
+        versionName = "4.0.1"
         vectorDrawables { useSupportLibrary = true }
         // Serverul central FORJA — injectat de CI după deploy; implicit = worker-ul deja publicat.
         val apiUrl = System.getenv("FORJA_API_URL")?.takeIf { it.isNotBlank() } ?: "https://forja-api.forja-22e7ea2d.workers.dev"

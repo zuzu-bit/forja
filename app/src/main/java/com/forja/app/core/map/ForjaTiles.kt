@@ -20,13 +20,17 @@ import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.tan
 
-/** Starea sursei de tile-uri după sondare: CARTO (implicit) → OSM (întunecat) → OFFLINE (doar cache-ul). */
+/**
+ * Starea sursei de tile-uri după sondare: OSM (implicit, fără cheie) → OFFLINE (doar cache-ul).
+ * CARTO a rămas doar ca nume istoric: din septembrie 2026 dale-le lor cer cheie API și vin cu filigran „API KEY REQUIRED”.
+ */
 enum class TileState { CARTO, OSM, OFFLINE }
 
 /**
- * O singură sursă de adevăr pentru hărțile FORJA: CARTO dark cu tenta caldă a casei,
- * cu rezervă OSM (MAPNIK inversat și desaturat) și, în lipsa netului, tile-urile deja văzute.
- * Folosită și de MapScreen, și de detaliul activității — fără copii.
+ * O singură sursă de adevăr pentru hărțile FORJA: OSM standard (fără cheie, UA identificabil) cu tenta caldă a casei
+ * și, în lipsa netului, tile-urile deja văzute. Folosită și de MapScreen, și de detaliul activității — fără copii.
+ * (Remediu provizoriu: CARTO răspunde 200 cu un filigran „API KEY REQUIRED”, deci sondarea nu-l poate exclude.
+ * Harta definitivă e MapLibre + OpenFreeMap, ca pe site.)
  */
 object ForjaTiles {
 
@@ -40,8 +44,11 @@ object ForjaTiles {
         "© OpenStreetMap contributors © CARTO"
     )
 
-    /** Rezerva: OSM standard, întunecat prin filtru — zero dependențe noi. */
-    val OsmFallback: OnlineTileSourceBase = TileSourceFactory.MAPNIK
+    /** Sursa principală: OSM standard — zero dependențe noi, fără cheie. */
+    val Osm: OnlineTileSourceBase = TileSourceFactory.MAPNIK
+
+    /** Numele vechi, păstrat pentru cod care încă îl folosește. */
+    val OsmFallback: OnlineTileSourceBase get() = Osm
 
     private const val PROBE_TIMEOUT_S = 4L
     // Bucureşti — un tile de test la z=14, mereu același.
@@ -96,13 +103,13 @@ object ForjaTiles {
         return ColorMatrixColorFilter(invert)
     }
 
-    /** Configurarea standard a unei hărți FORJA: CARTO + tentă caldă, zoom 3..20, fără butoane de zoom, multitouch. */
+    /** Configurarea standard a unei hărți FORJA: OSM + tentă caldă, zoom 3..19, fără butoane de zoom, multitouch. */
     fun setup(map: MapView) {
-        map.setTileSource(CartoDark)
+        map.setTileSource(Osm)
         map.setMultiTouchControls(true)
         map.zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
         map.minZoomLevel = 3.0
-        map.maxZoomLevel = 20.0
+        map.maxZoomLevel = 19.0
         map.isTilesScaledToDpi = true
         map.setUseDataConnection(true)
         val tiles = map.overlayManager.tilesOverlay
@@ -139,19 +146,13 @@ object ForjaTiles {
     }
 
     /**
-     * Lanțul de rezervă: CARTO → MAPNIK întunecat → OFFLINE (păstrăm sursa curentă și tile-urile din cache,
-     * fără conexiune de date). Returnează starea, ca UI-ul să o poată spune onest.
+     * Lanțul de rezervă: OSM → OFFLINE (păstrăm sursa curentă și tile-urile din cache, fără conexiune de date).
+     * Returnează starea, ca UI-ul să o poată spune onest.
      */
     suspend fun chooseOnline(map: MapView): TileState {
-        if (probe(CartoDark)) {
+        if (probe(Osm)) {
             withContext(Dispatchers.Main) {
-                try { apply(map, CartoDark, warmFilter()) } catch (_: Exception) { }
-            }
-            return TileState.CARTO
-        }
-        if (probe(OsmFallback)) {
-            withContext(Dispatchers.Main) {
-                try { apply(map, OsmFallback, darkFilter()) } catch (_: Exception) { }
+                try { apply(map, Osm, warmFilter()) } catch (_: Exception) { }
             }
             return TileState.OSM
         }

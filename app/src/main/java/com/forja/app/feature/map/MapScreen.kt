@@ -151,7 +151,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
     LaunchedEffect(syncSite) {
         if (syncSite) try { ExploreSync.pull(app) } catch (_: Exception) { }
     }
-    var tileState by remember { mutableStateOf(TileState.CARTO) }
+    var tileState by remember { mutableStateOf(TileState.OSM) }
     var placesOpen by remember { mutableStateOf(false) }
     var selectedPlace by remember { mutableStateOf<PlaceSel?>(null) }
     val cellsState = rememberUpdatedState(cells)
@@ -526,7 +526,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                 MapChip(text = "● ${places.size} locuri", color = PlaceAmber) { placesOpen = true }
                 when (tileState) {
                     TileState.OFFLINE -> MapChip(text = "Hartă offline · doar zonele văzute", color = TextSecondary)
-                    TileState.OSM -> MapChip(text = "Hartă OSM", color = TextSecondary)
+                    TileState.OSM -> {}
                     TileState.CARTO -> {}
                 }
             }
