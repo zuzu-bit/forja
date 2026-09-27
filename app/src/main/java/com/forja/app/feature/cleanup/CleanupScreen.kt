@@ -44,6 +44,10 @@ import com.forja.app.core.cleanup.CleanupScope
 import com.forja.app.core.cleanup.DocItem
 import com.forja.app.core.cleanup.DocumentOrganizer
 import com.forja.app.core.cleanup.MediaItem
+import com.forja.app.core.cleanup.OrgItem
+import com.forja.app.core.cleanup.OrganizerJobs
+import com.forja.app.core.cleanup.OrganizerStatus
+import com.forja.app.core.cleanup.SiteHint
 import com.forja.app.core.cleanup.ScanProgress
 import com.forja.app.core.cleanup.ScopeKind
 import com.forja.app.core.cleanup.fmtBytes
@@ -75,9 +79,25 @@ fun CleanupScreen(onBack: () -> Unit) {
     val state by vm.state.collectAsState()
     val docs by vm.docs.collectAsState()
     val aiOn by vm.aiOn.collectAsState()
+    val siteOn by vm.siteOn.collectAsState()
+    val siteStatus by vm.siteStatus.collectAsState()
+    val pendingTouch by vm.pendingTouch.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) { vm.events.collect { toast.show(it) } }
+
+    // Cât timp ecranul e vizibil: mutările aprobate din laptop se cer aici (nu prin notificare) și
+    // site-ul e întrebat la 15 s de comenzi noi. Nimic nu pleacă fără comutatorul „Și pe site”.
+    DisposableEffect(Unit) {
+        vm.setScreenVisible(true)
+        onDispose { vm.setScreenVisible(false) }
+    }
+    LaunchedEffect(siteOn) {
+        while (siteOn) {
+            vm.tickSite()
+            kotlinx.coroutines.delay(15_000)
+        }
+    }
 
     val intentLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
         vm.onIntentResult(res.resultCode == Activity.RESULT_OK)
@@ -131,6 +151,10 @@ fun CleanupScreen(onBack: () -> Unit) {
         }
         Spacer(Modifier.height(12.dp))
 
+        if (pendingTouch.isNotEmpty()) {
+            PendingTouchCard(items = pendingTouch, busy = (state as? CleanupUiState.Results)?.busy == true, onAllow = { vm.allowPendingMoves() })
+        }
+
         if (tab == 0) {
             when (val s = state) {
                 is CleanupUiState.Choose -> {
@@ -139,6 +163,10 @@ fun CleanupScreen(onBack: () -> Unit) {
                     } else {
                         ScopeChooser(
                             state = s,
+                            siteOn = siteOn,
+                            siteStatus = siteStatus,
+                            onSiteOn = { vm.setSiteOn(it) },
+                            onCancelSite = { vm.cancelSiteJob() },
                             onScope = { vm.setScope(it) },
                             onPickAlbum = { albumSheet = true },
                             onReset = { vm.resetProgress() },
@@ -153,14 +181,14 @@ fun CleanupScreen(onBack: () -> Unit) {
                     onCancel = { vm.backToChoose() }
                 )
                 is CleanupUiState.Results -> ResultsView(
-                    vm = vm, state = s, aiOn = aiOn,
+                    vm = vm, state = s, aiOn = aiOn, siteOn = siteOn, siteStatus = siteStatus,
                     onPreview = { preview = it },
                     onDone = onBack
                 )
             }
         } else {
             DocsTab(
-                vm = vm, docs = docs, aiOn = aiOn,
+                vm = vm, docs = docs, aiOn = aiOn, siteOn = siteOn, siteStatus = siteStatus,
                 onPickTree = { try { treeLauncher.launch(null) } catch (_: Exception) { toast.show("Nu pot deschide selectorul de foldere.") } }
             )
         }
@@ -217,6 +245,7 @@ fun CleanupScreen(onBack: () -> Unit) {
     // Sheet: previzualizare (apăsare lungă pe o poză)
     preview?.let { item ->
         val ai = (state as? CleanupUiState.Results)?.ai?.suggestions?.get("m:${item.id}")
+        val siteHint = (state as? CleanupUiState.Results)?.site?.get(item.uri.toString())
         ModalBottomSheet(
             onDismissRequest = { preview = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -247,6 +276,10 @@ fun CleanupScreen(onBack: () -> Unit) {
                             style = BodySmall.copy(color = TextSecondary)
                         )
                     }
+                }
+                if (siteHint != null) {
+                    Spacer(Modifier.height(8.dp))
+                    SiteHintLine(siteHint)
                 }
                 Spacer(Modifier.height(16.dp))
                 Row {
@@ -293,9 +326,96 @@ private fun ScopeChip(text: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
+// ─────────────────────────── Site: linia de stare, comutatorul, atingerea cerută ───────────────────────────
+
+/** Linia de stare a lucrării curente de pe site (doar când comutatorul e pornit sau lucrarea încă trăiește). */
+@Composable
+private fun SiteStatusLine(status: OrganizerStatus?, onCancel: (() -> Unit)? = null) {
+    if (status == null) return
+    val active = status.state !in setOf("cancelled", "complete", "needs_review")
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "SITE · ${if (status.origin == "site") "DIN LAPTOP · " else ""}${status.label.uppercase()}",
+                style = monoLabel(9, 0.12f).copy(color = if (active) Accent2 else TextDim), maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            if (status.message.isNotBlank()) {
+                Text(status.message, style = BodyTiny.copy(color = TextDim), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (active && onCancel != null) {
+            Spacer(Modifier.width(8.dp))
+            MonoButton("oprește", onClick = onCancel)
+        }
+    }
+}
+
+/** Rândul cu comutatorul „Și pe site (copii 24 h)" — implicit oprit, cu o propoziție onestă despre ce pleacă. */
+@Composable
+private fun SiteSwitchRow(siteOn: Boolean, onSiteOn: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text("Și pe site (copii 24 h)", style = BodyStrong.copy(fontSize = 13.sp))
+            Text(
+                "Pozele și documentele analizate urcă în contul tău online pentru 24 h — le vezi și organizezi și din laptop.",
+                style = BodyTiny.copy(color = TextDim)
+            )
+        }
+        ForjaSwitch(siteOn, onSiteOn)
+    }
+}
+
+/** Mutări aprobate din laptop care așteaptă acordul Android — o atingere, apoi FORJA le face. */
+@Composable
+private fun PendingTouchCard(items: List<OrgItem>, busy: Boolean, onAllow: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        ForjaCard(Modifier.fillMaxWidth(), stroke = Accent2.copy(alpha = 0.5f)) {
+            Text("Organizarea din laptop așteaptă o atingere", style = BodyStrong.copy(fontSize = 15.sp))
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "${items.size} ${if (items.size == 1) "poză aprobată" else "poze aprobate"} din panoul online. Android cere acordul tău o singură dată; apoi le mutăm și site-ul primește confirmarea.",
+                style = BodySmall.copy(color = TextSecondary)
+            )
+            val names = items.take(3).joinToString(" · ") { it.name }
+            if (names.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(names, style = BodyTiny.copy(color = TextDim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.height(12.dp))
+            PrimaryButton("Permite mutarea", onClick = onAllow, modifier = Modifier.fillMaxWidth(), small = true, enabled = !busy)
+        }
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+/** Ce știe site-ul despre un element: copie, propunere (etichetată „Site”), stare. */
+@Composable
+private fun SiteHintLine(h: SiteHint) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SourceBadge("Site", Accent2)
+        Spacer(Modifier.width(8.dp))
+        val a = h.analysis
+        Text(
+            when {
+                a != null && a.destination.isNotBlank() -> "mută în ${a.destination}" + (if (a.reason.isNotBlank()) " — ${a.reason}" else "") + (if (a.confidence.isNotBlank()) " (${a.confidence})" else "")
+                h.state == "moved" -> "mutată · confirmată pe site"
+                h.state == "needs_permission" -> "așteaptă atingerea ta"
+                h.error.isNotBlank() -> h.error
+                h.uploaded -> "copie pe site 24 h · fără propunere încă"
+                else -> "în inventarul de pe site"
+            },
+            style = BodySmall.copy(color = TextSecondary), maxLines = 3, overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
 @Composable
 private fun ScopeChooser(
     state: CleanupUiState.Choose,
+    siteOn: Boolean,
+    siteStatus: OrganizerStatus?,
+    onSiteOn: (Boolean) -> Unit,
+    onCancelSite: () -> Unit,
     onScope: (CleanupScope) -> Unit,
     onPickAlbum: () -> Unit,
     onReset: () -> Unit,
@@ -342,6 +462,12 @@ private fun ScopeChooser(
                     Text("Doar duplicate și fișiere mari — nu le analizăm cadru cu cadru.", style = BodyTiny.copy(color = TextDim))
                 }
                 ForjaSwitch(scope.includeVideos) { onScope(scope.copy(includeVideos = it)) }
+            }
+            Spacer(Modifier.height(10.dp))
+            SiteSwitchRow(siteOn, onSiteOn)
+            if (siteOn || siteStatus != null) {
+                Spacer(Modifier.height(8.dp))
+                SiteStatusLine(siteStatus, onCancel = onCancelSite)
             }
             val resume = state.resume
             if (resume != null && resume.processed > 0) {
@@ -437,6 +563,8 @@ private fun ResultsView(
     vm: CleanupViewModel,
     state: CleanupUiState.Results,
     aiOn: Boolean,
+    siteOn: Boolean,
+    siteStatus: OrganizerStatus?,
     onPreview: (MediaItem) -> Unit,
     onDone: () -> Unit
 ) {
@@ -445,6 +573,7 @@ private fun ResultsView(
     val flaggedBytes = flagged.sumOf { it.sizeBytes }
     val selectedItems = flagged.filter { it.id in state.selected }
     val selectedBytes = selectedItems.sumOf { it.sizeBytes }
+    val nameOf: (String) -> String = { uri -> report.scanned.firstOrNull { it.uri.toString() == uri }?.name ?: "poză" }
 
     Column(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -457,6 +586,10 @@ private fun ResultsView(
                         (if (report.warnings.isNotEmpty()) " · ${report.warnings.size} necitite" else ""),
                     style = BodyTiny.copy(color = TextSecondary)
                 )
+                if (state.jobId != null && siteStatus != null && siteStatus.jobId == state.jobId) {
+                    Spacer(Modifier.height(6.dp))
+                    SiteStatusLine(siteStatus, onCancel = { vm.cancelSiteJob() })
+                }
                 Spacer(Modifier.height(10.dp))
             }
             if (report.isEmpty) {
@@ -486,14 +619,18 @@ private fun ResultsView(
                 }
                 categorySection(vm, state, cat, items, tiles, onPreview)
             }
-            if (vm.aiAvailable) {
+            if (vm.aiAvailable || (siteOn && state.jobId != null)) {
                 item(key = "ai") {
                     AiPanelCard(
-                        ai = state.ai, aiOn = aiOn,
+                        ai = state.ai, aiOn = aiOn, aiAvailable = vm.aiAvailable,
                         subject = "miniaturi ≤ 512 px",
                         onToggle = { vm.setAiOn(it) },
                         onRequest = { vm.requestAi() },
-                        onApplyFolder = { vm.applyAiFolder(it) }
+                        onApplyFolder = { vm.applyAiFolder(it) },
+                        siteOn = siteOn, siteJob = state.jobId != null, siteMode = siteStatus?.takeIf { it.jobId == state.jobId }?.mode,
+                        siteRoot = OrganizerJobs.PHOTO_DESTINATION, site = state.site, siteLoading = state.siteLoading, nameOf = nameOf,
+                        onSiteRequest = { vm.requestSiteAi() },
+                        onApplySiteFolder = { vm.applySiteFolder(it) }
                     )
                     Spacer(Modifier.height(12.dp))
                 }
@@ -569,6 +706,7 @@ private fun LazyListScope.categorySection(
                 MediaTile(
                     item = t.item, selected = t.item.id in state.selected, reason = t.reason, keeper = t.keeper,
                     badge = state.ai.suggestions["m:${t.item.id}"],
+                    siteBadge = state.site[t.item.uri.toString()]?.let { it.analysis != null || it.state == "moved" } == true,
                     onToggle = { vm.toggleSelect(t.item.id) },
                     onLong = { onPreview(t.item) },
                     modifier = Modifier.weight(1f)
@@ -590,7 +728,8 @@ private fun MediaTile(
     badge: OrganizeSuggestion?,
     onToggle: () -> Unit,
     onLong: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    siteBadge: Boolean = false
 ) {
     Box(
         modifier
@@ -623,6 +762,12 @@ private fun MediaTile(
         if (badge != null) {
             Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { SuggestionDot(badge) }
         }
+        if (siteBadge) {
+            Box(
+                Modifier.align(Alignment.BottomStart).padding(start = if (badge != null) 28.dp else 6.dp, bottom = 6.dp)
+                    .clip(ChipShape).background(Color(0xCC0A0A0B)).padding(horizontal = 4.dp, vertical = 1.dp)
+            ) { Text("SITE", style = monoLabel(6, 0.10f).copy(color = Accent2)) }
+        }
         Box(
             Modifier.align(Alignment.BottomEnd).padding(6.dp).size(22.dp).clip(CircleShape)
                 .background(if (selected) Error else Color(0x99000000))
@@ -646,14 +791,28 @@ private fun SuggestionDot(s: OrganizeSuggestion) {
 
 // ─────────────────────────── Panoul AI (poze și documente) ───────────────────────────
 
+/**
+ * Panoul AI: sugestiile FORJA AI (/v1/organize, miniaturi/fragmente) și, când „Și pe site” e pornit,
+ * analiza contului online pe copiile din 24 h. Sursa e etichetată de fiecare dată: „FORJA AI” vs „Site”.
+ */
 @Composable
 private fun AiPanelCard(
     ai: AiPanel,
     aiOn: Boolean,
+    aiAvailable: Boolean,
     subject: String,
     onToggle: (Boolean) -> Unit,
     onRequest: () -> Unit,
-    onApplyFolder: (String) -> Unit
+    onApplyFolder: (String) -> Unit,
+    siteOn: Boolean = false,
+    siteJob: Boolean = false,
+    siteMode: String? = null,
+    siteRoot: String = "",
+    site: Map<String, SiteHint> = emptyMap(),
+    siteLoading: Boolean = false,
+    nameOf: (String) -> String = { it },
+    onSiteRequest: () -> Unit = {},
+    onApplySiteFolder: (String) -> Unit = {}
 ) {
     ForjaCard(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -664,10 +823,63 @@ private fun AiPanelCard(
                     style = BodyTiny.copy(color = TextSecondary)
                 )
             }
-            ForjaSwitch(aiOn, onToggle)
+            if (aiAvailable) ForjaSwitch(aiOn, onToggle)
         }
-        if (aiOn) {
+        if (siteOn && siteJob) {
             Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SourceBadge("Site", Accent2)
+                Spacer(Modifier.width(8.dp))
+                val uploaded = site.values.count { it.uploaded }
+                val analyzed = site.values.count { it.analysis != null }
+                Text(
+                    "$uploaded ${if (uploaded == 1) "copie" else "copii"} pe site · $analyzed ${if (analyzed == 1) "analizată" else "analizate"}",
+                    style = BodyTiny.copy(color = TextSecondary), modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            if (siteMode == "online") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SecondaryButton(
+                        if (siteLoading) "site-ul analizează…" else "Cere analiza site-ului (≤ 5)",
+                        onClick = { if (!siteLoading) onSiteRequest() }, modifier = Modifier.weight(1f)
+                    )
+                    if (siteLoading) {
+                        Spacer(Modifier.width(12.dp))
+                        CircularProgressIndicator(color = Accent2, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    }
+                }
+            } else {
+                Text(
+                    "Analiza de conținut pe site cere „Sugestii AI” pornit înainte de scanare. Copiile și verdictele telefonului sunt deja acolo.",
+                    style = BodyTiny.copy(color = TextDim)
+                )
+            }
+            val siteFolders = siteFolders(site, siteRoot)
+            if (siteFolders.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                siteFolders.entries.sortedByDescending { it.value.size }.take(6).forEach { (folder, list) ->
+                    PrimaryButton(
+                        "Site: mută ${list.size} în $folder", onClick = { onApplySiteFolder(folder) },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp), small = true
+                    )
+                }
+                site.entries.filter { it.value.analysis != null }.take(6).forEach { (uri, h) ->
+                    val a = h.analysis!!
+                    Text(
+                        "${nameOf(uri)} → ${a.destination}" + (if (a.reason.isNotBlank()) " — ${a.reason}" else ""),
+                        style = BodyTiny.copy(color = TextDim), maxLines = 2, overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+        if (aiOn && aiAvailable) {
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SourceBadge("FORJA AI")
+                Spacer(Modifier.width(8.dp))
+            }
+            Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SecondaryButton(
                     if (ai.loading) "se gândește…" else if (ai.requested) "Cere din nou" else "Cere sugestii pentru selecție",
@@ -719,6 +931,8 @@ private fun DocsTab(
     vm: CleanupViewModel,
     docs: DocsUiState,
     aiOn: Boolean,
+    siteOn: Boolean,
+    siteStatus: OrganizerStatus?,
     onPickTree: () -> Unit
 ) {
     val tree = docs.tree
@@ -749,6 +963,10 @@ private fun DocsTab(
             Text("alt folder", style = BodySmall.copy(color = Accent2), modifier = Modifier.pressable(onPickTree))
         }
         Spacer(Modifier.height(8.dp))
+        if (docs.jobId != null && siteStatus != null && siteStatus.jobId == docs.jobId) {
+            Box(Modifier.padding(horizontal = 20.dp)) { SiteStatusLine(siteStatus, onCancel = { vm.cancelSiteJob() }) }
+            Spacer(Modifier.height(8.dp))
+        }
         if (docs.loading) {
             Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(color = Accent2, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -775,14 +993,19 @@ private fun DocsTab(
                 docSection(vm, docs, "Mari", "Mari", report.large, report.large.map { DocRowModel(it, "mare", false) })
                 docSection(vm, docs, "Vechi", "Vechi", report.old, report.old.map { DocRowModel(it, "vechi (>3 luni)", false) })
                 docSection(vm, docs, "Suspecte", "Duplicate", report.suspects.map { it.first }, report.suspects.map { DocRowModel(it.first, it.second, false) })
-                if (vm.aiAvailable) {
+                if (vm.aiAvailable || (siteOn && docs.jobId != null)) {
                     item(key = "ai") {
                         AiPanelCard(
-                            ai = docs.ai, aiOn = aiOn,
+                            ai = docs.ai, aiOn = aiOn, aiAvailable = vm.aiAvailable,
                             subject = "numele fișierelor și fragmente scurte din cele text",
                             onToggle = { vm.setAiOn(it) },
                             onRequest = { vm.requestDocsAi() },
-                            onApplyFolder = { vm.applyDocsAiFolder(it) }
+                            onApplyFolder = { vm.applyDocsAiFolder(it) },
+                            siteOn = siteOn, siteJob = docs.jobId != null, siteMode = siteStatus?.takeIf { it.jobId == docs.jobId }?.mode,
+                            siteRoot = OrganizerJobs.DOC_DESTINATION, site = docs.site, siteLoading = docs.siteLoading,
+                            nameOf = { uri -> report.items.firstOrNull { it.key == uri }?.name ?: "fișier" },
+                            onSiteRequest = { vm.requestDocsSiteAi() },
+                            onApplySiteFolder = { vm.applyDocsSiteFolder(it) }
                         )
                         Spacer(Modifier.height(12.dp))
                     }
@@ -837,6 +1060,7 @@ private fun LazyListScope.docSection(
         DocRow(
             item = r.item, selected = r.item.key in docs.selected, reason = r.reason, keeper = r.keeper,
             badge = docs.ai.suggestions[vm.docAiId(r.item)],
+            siteHint = docs.site[r.item.key]?.takeIf { it.analysis != null || it.state == "moved" || it.state == "needs_review" },
             onToggle = { vm.toggleDoc(r.item.key) }
         )
     }
@@ -844,7 +1068,10 @@ private fun LazyListScope.docSection(
 }
 
 @Composable
-private fun DocRow(item: DocItem, selected: Boolean, reason: String?, keeper: Boolean, badge: OrganizeSuggestion?, onToggle: () -> Unit) {
+private fun DocRow(
+    item: DocItem, selected: Boolean, reason: String?, keeper: Boolean, badge: OrganizeSuggestion?,
+    onToggle: () -> Unit, siteHint: SiteHint? = null
+) {
     ForjaCard(
         Modifier.fillMaxWidth().padding(bottom = 8.dp).pressable(onToggle),
         fill = if (selected) Color(0x14FF4D3A) else Surface1,
@@ -875,6 +1102,10 @@ private fun DocRow(item: DocItem, selected: Boolean, reason: String?, keeper: Bo
                             style = BodyTiny.copy(color = TextSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis
                         )
                     }
+                }
+                if (siteHint != null) {
+                    Spacer(Modifier.height(4.dp))
+                    SiteHintLine(siteHint)
                 }
             }
             Spacer(Modifier.width(10.dp))

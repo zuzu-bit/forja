@@ -287,18 +287,28 @@ class DocumentOrganizer(private val context: Context, private val prefs: Prefs) 
 
     // ─────────────────────────── Mutare ───────────────────────────
 
-    private fun ensureFolder(tree: Uri, category: String): DocumentFile? {
-        val root = DocumentFile.fromTreeUri(context, tree) ?: return null
-        var dir = root.findFile(ROOT_FOLDER)?.takeIf { it.isDirectory } ?: root.createDirectory(ROOT_FOLDER) ?: return null
-        for (seg in sanitizeFolder(category).split('/').filter { it.isNotBlank() }) {
+    private fun ensureFolder(tree: Uri, category: String): DocumentFile? = ensureFolderPath(tree, "$ROOT_FOLDER/${sanitizeFolder(category)}")
+
+    /** Creează (dacă lipsește) o cale de dosare relativă la rădăcina aleasă, ex. „FORJA/Facturi"; ≤ 8 segmente curățate. */
+    private fun ensureFolderPath(tree: Uri, path: String): DocumentFile? {
+        val bad = Regex("[\\\\:*?\"<>|\\p{Cntrl}]")
+        val segments = path.replace('\\', '/').split('/').map { it.replace(bad, "").trim().trim('.') }
+            .filter { it.isNotBlank() && it != ".." }.take(8)
+        if (segments.isEmpty()) return null
+        var dir = DocumentFile.fromTreeUri(context, tree) ?: return null
+        for (seg in segments) {
             dir = dir.findFile(seg)?.takeIf { it.isDirectory } ?: dir.createDirectory(seg) ?: return null
         }
         return dir
     }
 
     /** Mută un fișier sub „Organizate/<categorie>/": întâi moveDocument, apoi copiere verificată + ștergere. */
-    suspend fun move(tree: Uri, item: DocItem, category: String): MoveOutcome = withContext(Dispatchers.IO) {
-        val target = ensureFolder(tree, category) ?: return@withContext MoveOutcome.Failed("Nu pot crea dosarul „$ROOT_FOLDER/$category”.")
+    suspend fun move(tree: Uri, item: DocItem, category: String): MoveOutcome =
+        moveToPath(tree, item, "$ROOT_FOLDER/${sanitizeFolder(category)}")
+
+    /** Mutare într-un dosar relativ la rădăcină (ex. „FORJA/Facturi") — destinații alese din panoul online. */
+    suspend fun moveToPath(tree: Uri, item: DocItem, path: String): MoveOutcome = withContext(Dispatchers.IO) {
+        val target = ensureFolderPath(tree, path) ?: return@withContext MoveOutcome.Failed("Nu pot crea dosarul „$path”.")
         val targetUri = target.uri
         if (targetUri == item.parentUri) return@withContext MoveOutcome.Failed("Fișierul e deja acolo.")
         val finalName = if (target.findFile(item.name) != null) collisionName(item.name) else item.name

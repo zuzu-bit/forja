@@ -789,13 +789,24 @@ class CleanupEngine(private val context: Context, private val prefs: Prefs) {
         moveToFolder(items, category.folder)
 
     /** Dosarul relativ e sub „Pictures/FORJA Curățenie/"; segmentele sunt curățate (fără „..", separatoare, caractere interzise). */
-    suspend fun moveToFolder(items: List<MediaItem>, folder: String): MoveResult = withContext(Dispatchers.IO) {
+    suspend fun moveToFolder(items: List<MediaItem>, folder: String): MoveResult {
+        val cleanFolder = sanitizeFolder(folder)
+        if (cleanFolder.isBlank()) return MoveResult(0, items.size, listOf("Dosar invalid."))
+        return moveToRelativePath(items, ROOT_RELATIVE + cleanFolder + "/")
+    }
+
+    /**
+     * Mutare într-o cale RELATIVE_PATH completă (ex. „Pictures/FORJA/Vacanță/") — folosită de organizarea
+     * de pe site, unde destinația o alege utilizatorul din laptop. Segmentele sunt curățate ca la [sanitizeFolder].
+     */
+    suspend fun moveToRelativePath(items: List<MediaItem>, relativePath: String): MoveResult = withContext(Dispatchers.IO) {
         if (Build.VERSION.SDK_INT < 29) {
             return@withContext MoveResult(0, items.size, listOf("Mutarea în dosare cere Android 10 sau mai nou."))
         }
-        val cleanFolder = sanitizeFolder(folder)
-        if (cleanFolder.isBlank()) return@withContext MoveResult(0, items.size, listOf("Dosar invalid."))
-        val relPath = ROOT_RELATIVE + cleanFolder + "/"
+        val bad = Regex("[\\\\:*?\"<>|\\p{Cntrl}]")
+        val segments = relativePath.replace('\\', '/').split('/').map { it.replace(bad, "").trim().trim('.') }.filter { it.isNotBlank() && it != ".." }
+        if (segments.isEmpty() || segments.first() != "Pictures") return@withContext MoveResult(0, items.size, listOf("Dosar invalid."))
+        val relPath = segments.joinToString("/") + "/"
         var moved = 0
         var skipped = 0
         val errors = ArrayList<String>()
