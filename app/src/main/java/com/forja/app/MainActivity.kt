@@ -155,6 +155,7 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     Lifecycle.Event.ON_START -> {
                         app.presence.start(uid) { app.presence.isGhostNow() }
                         com.forja.app.core.location.BgLocation.registerIfReady(app)
+                        com.forja.app.core.recovery.LostPhoneRecovery.resume(app)
                     }
                     Lifecycle.Event.ON_STOP -> app.presence.stop()
                     else -> {}
@@ -351,8 +352,13 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                         }
                     },
                     onOpenMapGhost = { nav.navigate(Route.MAP) },
-                    onOpenPermissions = { nav.navigate(Route.PERMISSIONS) }
+                    onOpenPermissions = { nav.navigate(Route.PERMISSIONS) },
+                    onOpenLostPhone = { nav.navigate("lost_phone") }
                 )
+            }
+            // „Telefonul meu” — găsirea telefonului pierdut (ruta e locală: Nav.kt nu se schimbă în pasul 2).
+            composable("lost_phone") {
+                com.forja.app.feature.recovery.LostPhoneScreen(onBack = { nav.popBackStack() })
             }
         }
 
