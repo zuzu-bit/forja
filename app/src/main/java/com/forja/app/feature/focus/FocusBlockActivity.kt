@@ -68,7 +68,7 @@ class FocusBlockActivity : ComponentActivity() {
                         )
                         Spacer(Modifier.height(10.dp))
                         Text(
-                            "Consemnul e al tău, paznicul doar îl ține. Timpul se întoarce la tine.",
+                            "Tu ai dat consemnul, paznicul doar îl ține. Timpul se întoarce la tine.",
                             style = Body.copy(fontSize = 15.sp),
                             textAlign = TextAlign.Center
                         )

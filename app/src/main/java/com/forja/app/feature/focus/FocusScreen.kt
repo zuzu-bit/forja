@@ -174,7 +174,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             ModuleHeader(
                 stamp = "POST DE PAZĂ",
                 title = "Focus",
-                order = "Timpul tău, apărat. Paznicul ține postul, tu ții rândul.",
+                order = "Timpul tău, apărat. Paznicul e la post, tu ții frontul.",
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(24.dp))
@@ -241,7 +241,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                                         scope.launch {
                                             app.prefs.setDetoxUntil(System.currentTimeMillis() + min * 60_000L)
                                             FocusMonitorService.start(context)
-                                            toast.show("Detox pornit. Paznicul e în post. Ne vedem peste ${Fmt.durationHm(min)}.")
+                                            toast.show("Detox pornit. Schimbul a început. Ne vedem peste ${Fmt.durationHm(min)}.")
                                         }
                                     }
                                 },
@@ -330,7 +330,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             if (!hasUsage) {
                 PrimaryButton("Permite accesul", onClick = { permOpen = true }, modifier = Modifier.fillMaxWidth())
             } else if (!hasOverlay) {
-                PrimaryButton("Permite ecranul de blocare", onClick = { overlayOpen = true }, modifier = Modifier.fillMaxWidth())
+                PrimaryButton("Permite blocarea", onClick = { overlayOpen = true }, modifier = Modifier.fillMaxWidth())
             } else if (!focusActive) {
                 PrimaryButton(
                     "Pornește Focus",
@@ -571,10 +571,10 @@ private fun DetoxAddictionSection() {
     var mascotLine by remember { mutableStateOf<String?>(null) }
     val guardianLines = listOf(
         "Sunt aici cu tine. Respiră — momentul trece.",
-        "Ți-ai scris de ce vrei asta. Recitește-o acum, cu mine.",
+        "Ți-ai scris de ce vrei asta. Recitește scrisoarea acum, cu mine.",
         "Ești mai puternic decât impulsul de acum.",
         "Un pas mic acum, mândrie mare mâine.",
-        "Nu ești singur în asta. Eu țin postul, tu ții de tine."
+        "Nu ești singur în asta. Eu stau de pază, tu ții de tine."
     )
     val mascotUrl = remember { com.forja.app.core.media.Media.mediaUrl("paznic.jpg") }
 
@@ -661,13 +661,13 @@ private fun DetoxAddictionSection() {
             }
 
             SecondaryButton(
-                if (letter.isBlank()) "Scrie scrisoarea către tine" else "Scrisoarea e scrisă · schimb-o",
+                if (letter.isBlank()) "Scrie scrisoarea" else "Schimbă scrisoarea",
                 onClick = { letterOpen = true },
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
             SecondaryButton(
-                if (words.isBlank()) "Alege cuvintele de blocat" else "Cuvinte alese · schimbă-le",
+                if (words.isBlank()) "Alege cuvintele" else "Schimbă cuvintele",
                 onClick = { wordsOpen = true },
                 modifier = Modifier.fillMaxWidth()
             )
@@ -677,7 +677,7 @@ private fun DetoxAddictionSection() {
                 onClick = {
                     scope.launch {
                         app.prefs.setDetoxOn(true)
-                        toast.show("Detox pornit. Scrie-ți scrisoarea și alege cuvintele, mai jos.")
+                        toast.show("Detox pornit. Mai jos: scrie-ți scrisoarea și alege cuvintele.")
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -1103,7 +1103,7 @@ private fun GuardWizardSheet(
                     Text("Pornește paznicul", style = TitleModule.copy(fontSize = 20.sp))
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "Revii în Accesibilitate și pornește „FORJA · Detox de adicție”. Acum comutatorul merge. Paznicul intră în post și te oprește la tentația aleasă de tine.",
+                        "Revino în Accesibilitate și pornește „FORJA · Detox de adicție”. Acum comutatorul merge. Paznicul intră în post și te oprește la tentația aleasă de tine.",
                         style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
                     )
                     Spacer(Modifier.height(16.dp))
@@ -1187,7 +1187,7 @@ private fun AppPickerSheet(onClose: () -> Unit, onPick: (pkg: String, label: Str
                 .padding(bottom = 28.dp)
                 .fillMaxHeight(0.85f)
         ) {
-            Text("Ce aplicație consemnezi?", style = TitleModule.copy(fontSize = 20.sp))
+            Text("Ce aplicație oprești?", style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(12.dp))
             SectionLabel("Consemnată până la ora")
             Spacer(Modifier.height(8.dp))
