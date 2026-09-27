@@ -62,8 +62,9 @@ fun ActivitiesScreen(onOpenDetail: (Long) -> Unit, onBack: () -> Unit) {
         ) {
             Column {
                 ModuleHeader(stamp = "JURNAL DE MARȘ", title = "Activitățile tale")
+                val weekN = activities.count { it.startAt >= Fmt.startOfWeekMillis() }
                 Text(
-                    "SĂPTĂMÂNA ASTA · ${Fmt.km(weekM)} KM · ${activities.count { it.startAt >= Fmt.startOfWeekMillis() }} TURE",
+                    "SĂPTĂMÂNA ASTA · ${Fmt.km(weekM)} KM · $weekN ${if (weekN == 1) "TURĂ" else "TURE"}",
                     style = monoLabel(9, 0.12f).copy(color = Accent2)
                 )
             }

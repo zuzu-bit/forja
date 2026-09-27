@@ -71,7 +71,7 @@ fun ActivityDetailScreen(activityId: Long, onBack: () -> Unit) {
         }
 
         if (a == null) {
-            Text("Se încarcă traseul.", style = Body, modifier = Modifier.padding(20.dp))
+            Text("Se încarcă…", style = Body, modifier = Modifier.padding(20.dp))
             return@Column
         }
 

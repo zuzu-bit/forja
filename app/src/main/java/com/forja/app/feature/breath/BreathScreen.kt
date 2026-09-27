@@ -88,7 +88,7 @@ fun BreathScreen() {
             contentAlignment = Alignment.Center
         ) {
             Text(
-                if (running) phases[phase].first else "Repaus",
+                if (running) phases[phase].first else "Gata",
                 style = TitleModule.copy(fontSize = 30.sp),
                 textAlign = TextAlign.Center
             )

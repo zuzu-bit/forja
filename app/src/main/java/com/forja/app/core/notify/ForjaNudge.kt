@@ -33,10 +33,10 @@ object ForjaNudge {
     private val MESSAGES = listOf(
         "Cinci minute de repaus. Deschide FORJA și respiră rar.",
         "O tură scurtă ajunge. Corpul ține minte fiecare pas.",
-        "Notează masa de azi. Rația sinceră începe în farfurie.",
+        "Notează masa de azi. Sinceritatea începe în farfurie.",
         "Somnul bun începe de cu seară. Pregătește stingerea în FORJA.",
         "Scuza de azi e mai mică decât tine. Un pas, acum.",
-        "Camarazii tăi se mișcă. Vezi unde sunt și ține rândul.",
+        "Camarazii tăi se mișcă. Vezi unde sunt și ține pasul.",
         "O apă, o respirație, un gând limpede. Le ai pe toate în FORJA.",
         "Progresul e suma zilelor mici. Azi e una dintre ele.",
         "Mândria de diseară se clădește din alegerea de acum.",

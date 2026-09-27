@@ -203,7 +203,7 @@ class GoTrackService : Service() {
         return NotificationCompat.Builder(this, "go")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle(label)
-            .setContentText("Traseul se înregistrează. Atinge pentru consolă, oprești din hartă.")
+            .setContentText("Traseul se înregistrează. Atinge pentru consolă. Oprești din hartă.")
             .setOngoing(true)
             .setContentIntent(pi)
             .build()
