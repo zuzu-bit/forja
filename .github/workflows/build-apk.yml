@@ -35,6 +35,9 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
@@ -113,9 +116,15 @@ jobs:
             report_problem "$(printf 'whoami:\n%s\n\ndeploy:\n%s' "$(echo "$WHO" | tail -c 2000)" "$(echo "$OUT" | tail -c 8000)")"
             exit 0
           fi
-          if [ -n "$GEMINI_API_KEY" ]; then
-            printf '%s' "$GEMINI_API_KEY" | npx wrangler@3 secret put GEMINI_API_KEY >/dev/null 2>&1 || true
-          fi
+          # Cheile AI (server/AI.md): fiecare ajunge secret pe worker DOAR dacă există în GitHub → Settings → Secrets.
+          AI_KEYS=""
+          for K in GEMINI_API_KEY GROQ_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY; do
+            if [ -n "${!K}" ]; then
+              printf '%s' "${!K}" | npx wrangler@3 secret put "$K" >/dev/null 2>&1 || true
+              AI_KEYS="$AI_KEYS ${K%_API_KEY}"
+            fi
+          done
+          echo "Chei AI puse pe worker:${AI_KEYS:- niciuna (doar Workers AI)}"
           # Cheia de administrare: doar CI poate cere serverului să genereze media.
           printf '%s' "$ACC" | npx wrangler@3 secret put ADMIN_KEY >/dev/null 2>&1 || true
           sleep 8
@@ -186,12 +195,16 @@ jobs:
           echo "Server publicat la: $URL"
           echo "## Serverul central FORJA" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: $URL" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$GEMINI_API_KEY" ]; then
-            echo "- Analiza meselor: Gemini (cheia companiei)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$AI_KEYS" ]; then
+            echo "- Furnizori AI (mese, curățenie, somn):$AI_KEYS → apoi Workers AI" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "- Analiza meselor: banca de modele open-source Cloudflare (fără chei)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Furnizori AI: NICIO cheie — doar modelele Cloudflare (mai slabe). Vezi server/AI.md: cheile Gemini și Groq sunt gratuite." >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "- Sunete somn: Whisper (fără chei)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "- Somn: Gemini ascultă clipurile și chunk-urile integral (cronologie cu dovezi)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Somn: doar Whisper (transcriere) — fără cheia Gemini sforăitul din chunk-uri nu se detectează" >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
   build:
