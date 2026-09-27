@@ -11,6 +11,10 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -63,7 +67,7 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:launchMode="singleInstance"
-            android:taskAffinity="com.forja.app.focusblock"
+            android:taskAffinity="${applicationId}.focusblock"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.Forja" />
 
@@ -107,7 +111,7 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:launchMode="singleInstance"
-            android:taskAffinity="com.forja.app.detoxblock"
+            android:taskAffinity="${applicationId}.detoxblock"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.Forja" />
 

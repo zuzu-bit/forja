@@ -87,6 +87,9 @@ interface SleepDao {
     @Query("SELECT * FROM sleep_sessions WHERE endAt IS NOT NULL AND startAt >= :since ORDER BY startAt")
     fun finishedSince(since: Long): Flow<List<SleepSessionEntity>>
 
+    @Query("SELECT * FROM sleep_sessions WHERE endAt IS NOT NULL ORDER BY startAt DESC LIMIT :n")
+    fun recent(n: Int): Flow<List<SleepSessionEntity>>
+
     @Insert
     suspend fun insertEvent(e: SleepEventEntity): Long
 
@@ -137,4 +140,43 @@ interface FocusDao {
 
     @Query("DELETE FROM focus_rules WHERE packageName = :pkg")
     suspend fun delete(pkg: String)
+}
+
+@Dao
+interface ExploreDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCell(c: ExploreCellEntity)
+
+    @Query("SELECT * FROM explore_cells WHERE id = :id")
+    suspend fun cell(id: String): ExploreCellEntity?
+
+    @Query("SELECT * FROM explore_cells WHERE maxLat >= :minLat AND minLat <= :maxLat AND maxLng >= :minLng AND minLng <= :maxLng")
+    fun cellsIn(minLat: Double, maxLat: Double, minLng: Double, maxLng: Double): Flow<List<ExploreCellEntity>>
+
+    @Query("SELECT * FROM explore_cells")
+    fun allCells(): Flow<List<ExploreCellEntity>>
+
+    @Query("SELECT COUNT(*) FROM explore_cells")
+    fun countCells(): Flow<Int>
+
+    @Insert
+    suspend fun insertPlace(p: PlaceEntity): Long
+
+    @Update
+    suspend fun updatePlace(p: PlaceEntity)
+
+    @Query("DELETE FROM places WHERE id = :id")
+    suspend fun deletePlace(id: Long)
+
+    @Query("SELECT * FROM places ORDER BY lastAt DESC")
+    fun places(): Flow<List<PlaceEntity>>
+
+    @Query("SELECT * FROM places ORDER BY lastAt DESC")
+    suspend fun placesOnce(): List<PlaceEntity>
+
+    @Query("SELECT * FROM places WHERE id = :id")
+    suspend fun place(id: Long): PlaceEntity?
+
+    @Query("SELECT * FROM places WHERE lat BETWEEN :minLat AND :maxLat AND lng BETWEEN :minLng AND :maxLng LIMIT 1")
+    suspend fun placeNear(minLat: Double, maxLat: Double, minLng: Double, maxLng: Double): PlaceEntity?
 }

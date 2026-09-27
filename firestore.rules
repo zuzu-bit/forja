@@ -41,5 +41,26 @@ service cloud.firestore {
       allow create: if signedIn() && request.resource.data.from == request.auth.uid;
       allow update, delete: if false;
     }
+
+    // Locuri recomandate prietenilor (v4.0): le vede proprietarul și cei din visibleTo.
+    match /places/{placeId} {
+      allow read: if signedIn()
+                  && (resource.data.ownerUid == request.auth.uid || request.auth.uid in resource.data.visibleTo);
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid
+                    && request.resource.data.stars is int
+                    && request.resource.data.stars >= 1 && request.resource.data.stars <= 5
+                    && request.resource.data.name is string && request.resource.data.name.size() <= 80
+                    && request.resource.data.note is string && request.resource.data.note.size() <= 300
+                    && request.resource.data.visibleTo is list && request.resource.data.visibleTo.size() <= 100;
+      allow update, delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // Familia (v4.0): poziția ta o văd — și în modul fantomă — DOAR cei din `allowed`.
+    match /familyLoc/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || request.auth.uid in resource.data.allowed);
+      allow create, update: if isMe(uid)
+                            && request.resource.data.allowed is list && request.resource.data.allowed.size() <= 50;
+      allow delete: if isMe(uid);
+    }
   }
 }

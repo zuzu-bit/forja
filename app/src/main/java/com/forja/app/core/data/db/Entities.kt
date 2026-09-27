@@ -121,3 +121,35 @@ data class FocusRuleEntity(
     val untilMinute: Int,
     val enabled: Boolean = true
 )
+
+// ── Explorare (v4.0): zonele deblocate la plimbare și locurile unde ai STAT ──
+
+/** O celulă de ~150 m (grilă Web-Mercator) prin care ai trecut. id = "x_y". */
+@Entity(tableName = "explore_cells")
+data class ExploreCellEntity(
+    @PrimaryKey val id: String,
+    val minLat: Double,
+    val minLng: Double,
+    val maxLat: Double,
+    val maxLng: Double,
+    val firstAt: Long,
+    val lastAt: Long,
+    val visits: Int = 1
+)
+
+/** Un loc = ai stat ≥ prag (implicit 5 h). Nume, stele, notă; recomandat prietenilor → places/{remoteId}. */
+@Entity(tableName = "places")
+data class PlaceEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val lat: Double,
+    val lng: Double,
+    val firstAt: Long,
+    val lastAt: Long,
+    val stayMs: Long,
+    val name: String = "",
+    val stars: Int = 0,
+    val note: String = "",
+    val recommended: Boolean = false,
+    val remoteId: String? = null,
+    val cellId: String = ""
+)

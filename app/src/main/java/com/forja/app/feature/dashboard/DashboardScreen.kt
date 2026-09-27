@@ -70,6 +70,10 @@ fun DashboardScreen(
     val mealsToday by app.db.mealDao().mealsForDay(Fmt.epochDay()).collectAsState(initial = emptyList())
     val workoutsWeek by app.db.workoutDao().sessionCountSince(Fmt.startOfWeekMillis()).collectAsState(initial = 0)
     val forest by app.prefs.focusForest.collectAsState(initial = Triple(0, 0, 0))
+    val cellCount by app.db.exploreDao().countCells().collectAsState(initial = 0)
+    val placesList by app.db.exploreDao().places().collectAsState(initial = emptyList())
+    val placeCount = placesList.size
+    val cleanupCursor by app.prefs.cleanupCursor.collectAsState(initial = "")
 
     var name by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { name = app.prefs.cachedName.first().ifBlank { "Sportiv" } }
@@ -109,6 +113,23 @@ fun DashboardScreen(
             "timpul tău, apărat",
             "https://t3.ftcdn.net/jpg/10/16/02/48/500_F_1016024842_sVPfKb4a4gZkZ7XjEjnGtdkeYz1eF2Gz.jpg",
             Route.FOCUS
+        ),
+        // v4.0 — Explorarea: zonele deblocate la plimbare și locurile unde ai stat.
+        ModuleCard(
+            "Explorare",
+            if (cellCount > 0) "$cellCount zone deblocate · $placeCount ${if (placeCount == 1) "loc" else "locuri"}"
+            else "ieși la o plimbare — deblochezi zone",
+            com.forja.app.core.media.Media.mediaUrl("354016637.jpg")
+                ?: "https://t4.ftcdn.net/jpg/04/30/39/81/500_F_430398119_8X2LMR6p3pWYrpsvH3DYgYUz32PfnxXl.jpg",
+            Route.MAP
+        ),
+        // v4.0 — Curățenia: galerie și documente, cu reluare de unde ai rămas.
+        ModuleCard(
+            "Curățenie",
+            if (cleanupCursor.isNotBlank()) "continuă de unde ai rămas" else "ce curățăm azi?",
+            com.forja.app.core.media.Media.mediaUrl("snd_noise.jpg")
+                ?: "https://t3.ftcdn.net/jpg/05/62/79/66/500_F_562796663_NJKtdLr9EatSHwup53J47QNnYOCr0ZZ8.jpg",
+            Route.CLEANUP
         )
     )
 

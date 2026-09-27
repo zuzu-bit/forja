@@ -144,11 +144,48 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermis
         SectionLabel("Setări")
         Spacer(Modifier.height(10.dp))
 
+        // v4.0 — panoul online (site-ul FORJA), cu același cont.
         SettingRow(
-            "Permisiuni & pornire",
-            "Toate într-un singur loc — activează ce ai nevoie, ca aplicația să nu te mai întrebe prin ecrane.",
+            "Panoul meu online",
+            "Site-ul FORJA: harta cu zonele și locurile tale, organizarea din laptop, rapoartele — cu același cont.",
+            onClick = {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse(com.forja.app.BuildConfig.INSIGHTS_URL.trimEnd('/') + "/insights")
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) { toast.show("Nu am găsit un browser. Deschide manual: ${com.forja.app.BuildConfig.INSIGHTS_URL}") }
+            }
+        ) { Text("deschide ↗", style = BodySmall.copy(color = Accent2)) }
+
+        SettingRow(
+            "Echipare",
+            "Notificări, locație, microfon, poze, baterie — cinci bife, o singură dată.",
             onClick = onOpenPermissions
         ) { Text("deschide →", style = BodySmall.copy(color = Accent2)) }
+
+        // v4.0 — Explorarea: zone deblocate + locuri unde ai stat; pragul se alege din hartă.
+        val exploreOn by app.prefs.exploreOn.collectAsState(initial = true)
+        val placeThreshold by app.prefs.placeThresholdMin.collectAsState(initial = 300)
+        val familyUids by app.prefs.familyUids.collectAsState(initial = emptySet())
+        SettingRow(
+            "Explorare",
+            buildString {
+                append("Zonele prin care treci se deblochează pe hartă; un loc = ai stat ≥ ")
+                append(if (placeThreshold >= 60) "${placeThreshold / 60} h" else "$placeThreshold min")
+                append(". Totul rămâne în contul tău.")
+                if (familyUids.isNotEmpty()) append(" Familia (${familyUids.size}) te vede și în fantomă.")
+            },
+        ) {
+            ForjaSwitch(exploreOn) { v ->
+                scope.launch {
+                    app.prefs.setExploreOn(v)
+                    toast.show(if (v) "Explorarea e pornită. Fiecare plimbare deblochează zone." else "Explorarea e oprită. Zonele deja deblocate rămân.")
+                }
+            }
+        }
 
         SettingRow(
             "Notificări",
@@ -232,8 +269,10 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermis
 
         SettingRow(
             "Date & confidențialitate",
-            "Jurnalele (mese, somn, activități) se sincronizează în contul tău FORJA. Pozele și clipurile audio NU se stochează — se analizează și dispar. Locația: doar prietenii, doar când nu ești fantomă.",
-            onClick = { toast.show("Pozele și sunetele nu se stochează nicăieri — se analizează și dispar.") }
+            "Jurnalele (mese, somn, activități), zonele explorate și locurile tale se sincronizează în contul tău FORJA. " +
+                "Pozele meselor și clipurile audio se analizează și dispar; înregistrarea nopții se păstrează 24 h. " +
+                "Locația: prietenii doar când nu ești fantomă — familia mereu. Sugestiile AI la curățenie sunt opt-in.",
+            onClick = { toast.show("Nimic nu pleacă de pe telefon fără o bifă pusă de tine.") }
         ) { }
 
         Spacer(Modifier.height(18.dp))

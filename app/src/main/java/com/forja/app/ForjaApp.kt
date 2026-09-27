@@ -38,6 +38,8 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
     lateinit var foodApi: OpenFoodFacts
     lateinit var geminiFood: GeminiFood
     lateinit var forjaApi: ForjaApi
+    /** Explorarea (v4.0): zonele deblocate + locurile unde ai stat; primește fixuri din toate sursele. */
+    lateinit var explore: com.forja.app.core.explore.ExploreTracker
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
@@ -55,12 +57,13 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         foodApi = OpenFoodFacts()
         geminiFood = GeminiFood()
         forjaApi = ForjaApi()
+        explore = com.forja.app.core.explore.ExploreTracker(this)
 
         // Locația în fundal (dacă utilizatorul a activat-o și permisiunea există).
         com.forja.app.core.location.BgLocation.registerIfReady(this)
 
-        // osmdroid: user agent + cache intern (fără permisiuni de stocare).
-        Configuration.getInstance().userAgentValue = packageName
+        // osmdroid: user agent identificabil (cerut de politica OSM) + cache intern (fără permisiuni de stocare).
+        Configuration.getInstance().userAgentValue = "FORJA/${BuildConfig.VERSION_NAME} ($packageName)"
         Configuration.getInstance().osmdroidBasePath = getDir("osmdroid", MODE_PRIVATE)
         Configuration.getInstance().osmdroidTileCache = getDir("osmdroid_tiles", MODE_PRIVATE)
 
@@ -96,6 +99,8 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         nm.createNotificationChannel(NotificationChannel("sleep", getString(R.string.notif_channel_sleep), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("focus", getString(R.string.notif_channel_focus), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("social", getString(R.string.notif_channel_social), NotificationManager.IMPORTANCE_DEFAULT))
+        nm.createNotificationChannel(NotificationChannel("explore", getString(R.string.notif_channel_explore), NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel("cleanup", getString(R.string.notif_channel_cleanup), NotificationManager.IMPORTANCE_LOW))
         // Alarma deșteaptă: IMPORTANCE_HIGH e obligatoriu ca full-screen intent-ul să pornească
         // AlarmActivity cu ecranul stins. Sunetul îl pune AlarmActivity, nu notificarea.
         nm.createNotificationChannel(

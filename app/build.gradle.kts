@@ -12,14 +12,18 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.forja.app"
+        // Același pachet ca aplicația de pe telefon (3.7-online.xx) → 4.0 se instalează PESTE ea.
+        applicationId = "com.forja.app.research"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
-        versionName = "3.7"
+        versionCode = 60
+        versionName = "4.0"
         vectorDrawables { useSupportLibrary = true }
-        // Serverul central FORJA — injectat de CI după deploy; gol = căile locale.
-        buildConfigField("String", "FORJA_API_URL", "\"${System.getenv("FORJA_API_URL") ?: ""}\"")
+        // Serverul central FORJA — injectat de CI după deploy; implicit = worker-ul deja publicat.
+        val apiUrl = System.getenv("FORJA_API_URL")?.takeIf { it.isNotBlank() } ?: "https://forja-api.forja-22e7ea2d.workers.dev"
+        buildConfigField("String", "FORJA_API_URL", "\"$apiUrl\"")
+        // Site-ul FORJA (panoul online) — worker-ul forja-insights.
+        buildConfigField("String", "INSIGHTS_URL", "\"https://forja-insights.forja-22e7ea2d.workers.dev\"")
     }
 
     signingConfigs {

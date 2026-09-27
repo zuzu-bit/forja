@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -43,10 +44,76 @@ class Prefs(private val context: Context) {
         val focusGrown = intPreferencesKey("focus_grown")
         val focusWithered = intPreferencesKey("focus_withered")
         val focusPartialSecs = intPreferencesKey("focus_partial_secs")
+        // v4.0 — start
+        val introSeenVersion = intPreferencesKey("intro_seen_version")
+        val gearSeenVersion = intPreferencesKey("gear_seen_version")
+        // v4.0 — explorare / hartă
+        val exploreOn = booleanPreferencesKey("explore_on")
+        val placeThresholdMin = intPreferencesKey("place_threshold_min")
+        val showExplore = booleanPreferencesKey("show_explore")
+        val map3d = booleanPreferencesKey("map_3d")
+        val familyUids = stringSetPreferencesKey("family_uids")
+        val exploreCandidate = stringPreferencesKey("explore_candidate")
+        // v4.0 — curățenie
+        val cleanupCursor = stringPreferencesKey("cleanup_cursor")
+        val cleanupLastScope = stringPreferencesKey("cleanup_last_scope")
+        val cleanupDocsTree = stringPreferencesKey("cleanup_docs_tree")
+        val cleanupAiOn = booleanPreferencesKey("cleanup_ai_on")
+        val cleanupDocsUndo = stringPreferencesKey("cleanup_docs_undo")
+    }
+
+    companion object {
+        /** Prezentarea de început: se arată o dată pentru fiecare versiune — și conturilor existente. */
+        const val INTRO_VERSION = 2
+        /** „Echipare” (permisiunile): la fel, o dată per versiune. */
+        const val GEAR_VERSION = 2
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }
-    suspend fun setOnboardingDone() = context.dataStore.edit { it[K.onboardingDone] = true }
+    /** Versiunea prezentării văzute (0 = niciodată). Compară cu [INTRO_VERSION]. */
+    val introSeenVersion: Flow<Int> = context.dataStore.data.map { it[K.introSeenVersion] ?: 0 }
+    /** Prezentarea a fost parcursă: bifează și versiunea curentă. */
+    suspend fun setIntroSeen() = context.dataStore.edit {
+        it[K.onboardingDone] = true
+        it[K.introSeenVersion] = INTRO_VERSION
+    }
+    suspend fun setOnboardingDone() = setIntroSeen()
+
+    val gearSeenVersion: Flow<Int> = context.dataStore.data.map { it[K.gearSeenVersion] ?: 0 }
+    suspend fun setGearSeen() = context.dataStore.edit { it[K.gearSeenVersion] = GEAR_VERSION }
+
+    // ── Explorare (hartă) ──
+    /** Urmărirea zonelor/locurilor — pornită implicit, se oprește din Profil. */
+    val exploreOn: Flow<Boolean> = context.dataStore.data.map { it[K.exploreOn] ?: true }
+    suspend fun setExploreOn(v: Boolean) = context.dataStore.edit { it[K.exploreOn] = v }
+    /** Un „loc” = ai STAT cel puțin atâtea minute (30 / 60 / 120 / 300). */
+    val placeThresholdMin: Flow<Int> = context.dataStore.data.map { it[K.placeThresholdMin] ?: 300 }
+    suspend fun setPlaceThresholdMin(v: Int) = context.dataStore.edit { it[K.placeThresholdMin] = v }
+    val showExplore: Flow<Boolean> = context.dataStore.data.map { it[K.showExplore] ?: true }
+    suspend fun setShowExplore(v: Boolean) = context.dataStore.edit { it[K.showExplore] = v }
+    val map3d: Flow<Boolean> = context.dataStore.data.map { it[K.map3d] ?: false }
+    suspend fun setMap3d(v: Boolean) = context.dataStore.edit { it[K.map3d] = v }
+    /** Oglinda locală a users/{me}.familyUids — prietenii care te văd și în fantomă. */
+    val familyUids: Flow<Set<String>> = context.dataStore.data.map { it[K.familyUids] ?: emptySet() }
+    suspend fun setFamilyUids(v: Set<String>) = context.dataStore.edit { it[K.familyUids] = v }
+    /** Candidatul de „ședere” curent (JSON, format intern ExploreTracker). */
+    val exploreCandidate: Flow<String> = context.dataStore.data.map { it[K.exploreCandidate] ?: "" }
+    suspend fun setExploreCandidate(v: String) = context.dataStore.edit { it[K.exploreCandidate] = v }
+
+    // ── Curățenie ──
+    /** Cursorul de reluare (JSON CleanupCursor) — OBLIGATORIU: continuăm de unde am rămas. */
+    val cleanupCursor: Flow<String> = context.dataStore.data.map { it[K.cleanupCursor] ?: "" }
+    suspend fun setCleanupCursor(v: String) = context.dataStore.edit { it[K.cleanupCursor] = v }
+    val cleanupLastScope: Flow<String> = context.dataStore.data.map { it[K.cleanupLastScope] ?: "" }
+    suspend fun setCleanupLastScope(v: String) = context.dataStore.edit { it[K.cleanupLastScope] = v }
+    /** Dosarul de documente ales (URI SAF persistat). */
+    val cleanupDocsTree: Flow<String> = context.dataStore.data.map { it[K.cleanupDocsTree] ?: "" }
+    suspend fun setCleanupDocsTree(v: String) = context.dataStore.edit { it[K.cleanupDocsTree] = v }
+    /** Sugestii AI (miniaturi ≤512px și fragmente de text către serverul FORJA) — strict opt-in. */
+    val cleanupAiOn: Flow<Boolean> = context.dataStore.data.map { it[K.cleanupAiOn] ?: false }
+    suspend fun setCleanupAiOn(v: Boolean) = context.dataStore.edit { it[K.cleanupAiOn] = v }
+    val cleanupDocsUndo: Flow<String> = context.dataStore.data.map { it[K.cleanupDocsUndo] ?: "" }
+    suspend fun setCleanupDocsUndo(v: String) = context.dataStore.edit { it[K.cleanupDocsUndo] = v }
 
     val kcalTarget: Flow<Int> = context.dataStore.data.map { it[K.kcalTarget] ?: 2250 }
     suspend fun setKcalTarget(v: Int) = context.dataStore.edit { it[K.kcalTarget] = v }
@@ -188,5 +255,7 @@ class Prefs(private val context: Context) {
     suspend fun resetFirstRun() = context.dataStore.edit {
         it.remove(K.onboardingDone)
         it.remove(K.permsIntroSeen)
+        it.remove(K.introSeenVersion)
+        it.remove(K.gearSeenVersion)
     }
 }

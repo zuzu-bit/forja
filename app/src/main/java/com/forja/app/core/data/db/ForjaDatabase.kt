@@ -12,9 +12,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ExerciseEntity::class, PlanEntity::class, PlanExerciseEntity::class,
         WorkoutSessionEntity::class, SetLogEntity::class,
         MealEntity::class, SleepSessionEntity::class, SleepEventEntity::class,
-        ActivityEntity::class, FocusRuleEntity::class
+        ActivityEntity::class, FocusRuleEntity::class,
+        ExploreCellEntity::class, PlaceEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class ForjaDatabase : RoomDatabase() {
@@ -23,6 +24,7 @@ abstract class ForjaDatabase : RoomDatabase() {
     abstract fun sleepDao(): SleepDao
     abstract fun activityDao(): ActivityDao
     abstract fun focusDao(): FocusDao
+    abstract fun exploreDao(): ExploreDao
 
     companion object {
         @Volatile private var instance: ForjaDatabase? = null
@@ -34,13 +36,30 @@ abstract class ForjaDatabase : RoomDatabase() {
             }
         }
 
+        // v6: explorarea — zonele deblocate și locurile unde ai stat.
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `explore_cells` (`id` TEXT NOT NULL, `minLat` REAL NOT NULL, `minLng` REAL NOT NULL, " +
+                        "`maxLat` REAL NOT NULL, `maxLng` REAL NOT NULL, `firstAt` INTEGER NOT NULL, `lastAt` INTEGER NOT NULL, " +
+                        "`visits` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `places` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `lat` REAL NOT NULL, " +
+                        "`lng` REAL NOT NULL, `firstAt` INTEGER NOT NULL, `lastAt` INTEGER NOT NULL, `stayMs` INTEGER NOT NULL, " +
+                        "`name` TEXT NOT NULL, `stars` INTEGER NOT NULL, `note` TEXT NOT NULL, `recommended` INTEGER NOT NULL, " +
+                        "`remoteId` TEXT, `cellId` TEXT NOT NULL)"
+                )
+            }
+        }
+
         fun get(context: Context): ForjaDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     ForjaDatabase::class.java,
                     "forja.db"
-                ).addMigrations(MIGRATION_4_5)
+                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6)
                     .fallbackToDestructiveMigration()
                     .build().also { instance = it }
             }
