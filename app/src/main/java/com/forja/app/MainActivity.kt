@@ -58,12 +58,22 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    /** Crește la fiecare intent nou (notificare atinsă cât activitatea trăiește) — MainNav recitește extra-urile. */
+    var intentTick by mutableIntStateOf(0)
+        private set
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             ForjaTheme { ForjaRoot() }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intentTick++
     }
 }
 
@@ -125,6 +135,19 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
     val navScope = rememberCoroutineScope()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
+
+    // Notificarea „Organizarea din laptop așteaptă o atingere” (WP9) deschide direct Curățenia:
+    // extra „forja_route” = "cleanup", consumat o singură dată, doar când utilizatorul e deja pe Azi.
+    val hostActivity = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
+    val intentTick = (hostActivity as? MainActivity)?.intentTick ?: 0
+    LaunchedEffect(intentTick) {
+        val wanted = hostActivity?.intent?.getStringExtra(com.forja.app.core.cleanup.OrganizerJobs.ROUTE_EXTRA) ?: return@LaunchedEffect
+        hostActivity.intent?.removeExtra(com.forja.app.core.cleanup.OrganizerJobs.ROUTE_EXTRA)
+        if (wanted != Route.CLEANUP || startRoute != Route.DASHBOARD) return@LaunchedEffect
+        var tries = 0
+        while (nav.currentBackStackEntry == null && tries++ < 40) kotlinx.coroutines.delay(50)
+        try { nav.navigate(Route.CLEANUP) { launchSingleTop = true } } catch (_: Exception) { }
+    }
 
     val tabFor: Map<String, ForjaTab> = mapOf(
         Route.DASHBOARD to ForjaTab.Azi,
