@@ -21,9 +21,12 @@ import java.io.File
  *
  * Formatul salvat e al aplicației (câmpurile de mai jos). Răspunsul serverului se citește tolerant
  * (`parseServer`): evenimentele pot veni sub `events`/`timeline`, timpii sub `at`/`start`/`from`/`t`
- * (ms de la începutul audio-ului), textul sub `transcript`/`text`, iar statisticile sub `stats` sau
- * direct în rădăcină. Dacă serverul nu a putut asculta (fără cheie Gemini), `status` = `clips_only`
- * și `reason` spune de ce — ecranul o repetă onest, nu pretinde mai mult.
+ * (ms de la începutul audio-ului), textul sub `transcript`/`text`, statisticile sub `stats` sau direct
+ * în rădăcină, acoperirea sub `coverage{analyzedMs, totalMs}` (forma serverului FORJA) sau în minute.
+ * `limitari` (ce n-a putut asculta serverul: fără Gemini → doar Whisper, fără sforăit; bucăți picate)
+ * ajung în [limits] și se arată ca atare. Dacă serverul nu a putut asculta deloc, `status` = `clips_only`
+ * și `reason` spune de ce — ecranul o repetă onest, nu pretinde mai mult. `stale` = serverul s-a oprit
+ * din lucru („processing” fără bătaie de inimă, `nextAction: repost`): clientul re-trimite POST-ul.
  */
 @Serializable
 data class SleepTimeline(
@@ -35,7 +38,11 @@ data class SleepTimeline(
     /** epoch ms al începutului audio (din manifest) — ora unui eveniment = startedAt + at */
     val startedAt: Long = 0L,
     val savedAt: Long = 0L,
-    val provider: String = ""
+    val provider: String = "",
+    /** Ce n-a putut face serverul, în cuvintele lui (`limitari`) — se arată, nu se ascunde. */
+    val limits: List<String> = emptyList(),
+    /** Doar la `processing`: rularea de pe server s-a oprit; trebuie re-trimis `POST /v1/sleep-analyze`. */
+    val stale: Boolean = false
 ) {
     /** Un eveniment auzit pe server. `at`/`end` în ms de la începutul audio-ului. */
     @Serializable
@@ -64,6 +71,12 @@ data class SleepTimeline(
     )
 
     val listened: Boolean get() = status == "done"
+
+    /** Serverul a spus că sforăitul nu s-a putut detecta (doar transcriere Whisper) — nu scriem „fără sforăit”. */
+    val snoreUndetectable: Boolean get() = limits.any { it.contains("sforăit", ignoreCase = true) }
+
+    /** Cronologie parțială: are evenimente sau acoperire, chiar dacă analiza nu s-a încheiat. */
+    val partial: Boolean get() = events.isNotEmpty() || stats.coverageMin > 0
 
     /** Până la 6 fraze exacte, pentru rezumatul de dimineață. */
     fun quotes(limit: Int = 6): List<String> =
@@ -150,7 +163,11 @@ data class SleepTimeline(
             val root = try { json.parseToJsonElement(text).jsonObject } catch (_: Exception) { return null }
             val rawStatus = root.str("status", "state")?.lowercase()
             val reason = root.str("motiv", "reason", "error", "message") ?: ""
-            val provider = root.str("provider", "model") ?: ""
+            val provider = root.str("provider", "model")
+                ?: root.arr("sources")?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }?.joinToString(", ")?.takeIf { it.isNotBlank() }
+                ?: ""
+            val limits = root.arr("limitari", "limits")?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { s -> s.isNotBlank() } } ?: emptyList()
+            val stale = (root["stale"] as? JsonPrimitive)?.booleanOrNull == true || root.str("nextAction") == "repost"
 
             val events = ArrayList<Event>()
             fun addEvents(list: JsonArray, baseMs: Long, chunkIdx: Int) {
@@ -187,12 +204,17 @@ data class SleepTimeline(
                 ?: (st.num("snoreSec", "snore_sec")?.let { (it / 60).toInt() })
                 ?: events.filter { it.type == "snore" }.sumOf { it.durMs }.let { (it / 60_000L).toInt() }
             val snoreEpisodes = st.longOf("snoreEpisodes", "snore_episodes", "episoade")?.toInt() ?: events.count { it.type == "snore" }
-            val talkCount = st.longOf("talkCount", "talk_count", "phrases", "fraze")?.toInt() ?: events.count { it.type == "talk" }
-            val coughCount = st.longOf("coughCount", "cough_count")?.toInt() ?: events.count { it.type == "cough" }
-            val coverageMin = st.longOf("coverageMin", "coverage_min", "listenedMin", "analyzedMin", "ascultatMin")?.toInt()
-                ?: st.obj("coverage", "acoperire")?.longOf("min", "listened", "analyzed")?.toInt() ?: 0
-            val totalMin = st.longOf("totalMin", "total_min", "sentMin", "trimisMin")?.toInt()
-                ?: st.obj("coverage", "acoperire")?.longOf("total", "of", "din")?.toInt() ?: 0
+            val talkCount = st.longOf("talkCount", "talk_count", "talkEvents", "fraze")?.toInt() ?: events.count { it.type == "talk" }
+            val coughCount = st.longOf("coughCount", "cough_count", "coughs")?.toInt() ?: events.count { it.type == "cough" }
+            // Acoperirea: serverul FORJA o dă în rădăcină, în ms (`coverage{analyzedMs, totalMs}`); alte forme, în minute.
+            val cov = root.obj("coverage", "acoperire") ?: st.obj("coverage", "acoperire")
+            fun minutesOf(ms: Long): Int = ((ms + 30_000L) / 60_000L).toInt()
+            val coverageMin = cov?.longOf("analyzedMs", "listenedMs")?.let { minutesOf(it) }
+                ?: st.longOf("coverageMin", "coverage_min", "listenedMin", "analyzedMin", "ascultatMin")?.toInt()
+                ?: cov?.longOf("min", "listened", "analyzed")?.toInt() ?: 0
+            val totalMin = cov?.longOf("totalMs")?.let { minutesOf(it) }
+                ?: st.longOf("totalMin", "total_min", "sentMin", "trimisMin")?.toInt()
+                ?: cov?.longOf("total", "of", "din")?.toInt() ?: 0
 
             val status = when {
                 rawStatus == "processing" || rawStatus == "pending" || rawStatus == "queued" -> "processing"
@@ -212,7 +234,9 @@ data class SleepTimeline(
                 events = events,
                 stats = Stats(snoreMin, snoreEpisodes, talkCount, coughCount, coverageMin, totalMin),
                 startedAt = startedAt,
-                provider = provider
+                provider = provider,
+                limits = limits,
+                stale = stale
             )
         }
     }

@@ -27,9 +27,11 @@ import java.util.concurrent.TimeUnit
  *
  *  · `PUT  /v1/sleep-chunk?session=s<id>&index=<i>&from=<ms>&dur=<ms>`  corp audio/mp4 ≤ 25 MB
  *  · `GET  /v1/sleep-chunk?session=s<id>&index=<i>`                       redare (cu Range)
- *  · `POST /v1/sleep-analyze {session, chunks:[{index,from,dur}]}`        → cronologie | {status:"processing"} | {status:"clips_only", motiv}
- *  · `GET  /v1/sleep-analysis?session=s<id>`                              → JSON-ul salvat (sau processing)
- *  · `POST /v1/sleep-summary {…cifre, timeline:{stats, quotes}}`          → {summary}
+ *  · `POST /v1/sleep-analyze {session, chunks:[{index,from,dur}], sessionMs?}` → cronologie | {status:"processing"} | {status:"clips_only", motiv}
+ *    (un POST duce la capăt ~1–2 bucăți și continuă doar cu cele rămase; se re-trimite când GET spune `stale`)
+ *  · `GET  /v1/sleep-analysis?session=s<id>`                              → JSON-ul salvat; `processing` + `stale: true, nextAction: "repost"`
+ *                                                                           când rularea s-a oprit — clientul re-trimite POST-ul
+ *  · `POST /v1/sleep-summary {…cifre, tzOffsetMin, timeline:{coverage, stats}}` → {summary} (forma citită de server: `timelineDigest`)
  */
 class SleepApi(private val api: ForjaApi) {
     private val client = OkHttpClient.Builder()
@@ -81,8 +83,16 @@ class SleepApi(private val api: ForjaApi) {
                 }
             }
         } catch (e: Exception) {
-            Upload.Retry(e.javaClass.simpleName)
+            Upload.Retry(networkReason(e))
         }
+    }
+
+    /** Motivul unei erori de rețea, în cuvinte scurte (fără nume de clase Java în ecran). */
+    private fun networkReason(e: Exception): String = when (e) {
+        is java.net.UnknownHostException -> "fără rețea"
+        is java.net.SocketTimeoutException -> "serverul n-a răspuns la timp"
+        is java.io.InterruptedIOException -> "serverul n-a răspuns la timp"
+        else -> "eroare de rețea"
     }
 
     /** URL-ul de redare al unei bucăți (cere antetul Authorization). */
@@ -90,10 +100,11 @@ class SleepApi(private val api: ForjaApi) {
         "$base/v1/sleep-chunk?session=${serverSession(sessionId)}&index=$index"
 
     /**
-     * Cere analiza întregii nopți. Întoarce cronologia normalizată (status done / processing / clips_only /
-     * failed) sau null dacă serverul n-a putut fi întrebat (rețea, fără cont).
+     * Cere analiza întregii nopți (sau continuarea ei: serverul reia doar bucățile neanalizate). Întoarce
+     * cronologia normalizată (status done / processing / clips_only / failed) sau null dacă serverul n-a
+     * putut fi întrebat (rețea, fără cont). `sessionMs` = durata sesiunii, ca „din 7 h 50” să fie toată noaptea.
      */
-    suspend fun analyze(sessionId: Long, chunks: List<AacRecorder.Chunk>, startedAt: Long): SleepTimeline? = withContext(Dispatchers.IO) {
+    suspend fun analyze(sessionId: Long, chunks: List<AacRecorder.Chunk>, startedAt: Long, sessionMs: Long? = null): SleepTimeline? = withContext(Dispatchers.IO) {
         val auth = api.authHeader() ?: return@withContext null
         val body = buildJsonObject {
             put("session", serverSession(sessionId))
@@ -102,6 +113,7 @@ class SleepApi(private val api: ForjaApi) {
                     add(buildJsonObject { put("index", c.index); put("from", c.from); put("dur", c.dur) })
                 }
             }
+            if (sessionMs != null && sessionMs > 0L) put("sessionMs", sessionMs)
         }.toString()
         try {
             val req = Request.Builder()
@@ -116,7 +128,10 @@ class SleepApi(private val api: ForjaApi) {
         } catch (_: Exception) { null }
     }
 
-    /** Sondaj: JSON-ul salvat pe server pentru sesiune. null = nu s-a putut întreba. */
+    /**
+     * Sondaj: JSON-ul salvat pe server pentru sesiune. null = nu s-a putut întreba. 404 (nimic salvat, deși am
+     * cerut analiza) se întoarce ca `processing` + `stale`, ca apelantul să re-trimită POST-ul.
+     */
     suspend fun analysis(sessionId: Long, startedAt: Long, chunks: List<AacRecorder.Chunk>): SleepTimeline? = withContext(Dispatchers.IO) {
         val auth = api.authHeader() ?: return@withContext null
         try {
@@ -127,7 +142,7 @@ class SleepApi(private val api: ForjaApi) {
                 .build()
             client.newCall(req).execute().use { resp ->
                 val text = resp.body?.string() ?: ""
-                if (resp.code == 404) return@withContext SleepTimeline("processing", startedAt = startedAt)
+                if (resp.code == 404) return@withContext SleepTimeline("processing", startedAt = startedAt, stale = true)
                 parseAnalysis(resp.code, text, startedAt, chunks)
             }
         } catch (_: Exception) { null }
@@ -136,8 +151,12 @@ class SleepApi(private val api: ForjaApi) {
     private fun parseAnalysis(code: Int, text: String, startedAt: Long, chunks: List<AacRecorder.Chunk>): SleepTimeline? {
         val chunkFrom = chunks.associate { it.index to it.from }
         val parsed = SleepTimeline.parseServer(text, startedAt, chunkFrom)
-        if (code == 202) return (parsed ?: SleepTimeline("processing", startedAt = startedAt)).let {
-            if (it.status == "done" && it.events.isEmpty() && it.stats.coverageMin == 0) it.copy(status = "processing") else it
+        // 202 = încă lucrează: o poză de progres (evenimente, acoperire) NU e cronologia finală, oricum ar arăta;
+        // doar un eșec explicit (clips_only / failed) e definitiv.
+        if (code == 202) return when {
+            parsed != null && parsed.status in setOf("clips_only", "failed") -> parsed
+            parsed != null -> parsed.copy(status = "processing")
+            else -> SleepTimeline("processing", startedAt = startedAt)
         }
         if (code in 200..299) return parsed ?: SleepTimeline("failed", "răspuns de neînțeles", startedAt = startedAt)
         if (code in 500..599 || code == 429 || code == 408) return null   // reîncercăm
@@ -146,7 +165,10 @@ class SleepApi(private val api: ForjaApi) {
     }
 
     /**
-     * Rezumatul de dimineață cu cronologia: cifrele nopții + statistici + până la 6 citate EXACTE.
+     * Rezumatul de dimineață cu cronologia: cifrele nopții + statistici + până la 6 citate EXACTE, în forma
+     * pe care o citește serverul (`timelineDigest`: `coverage{analyzedMs,totalMs}`, `stats{snoreMinutes,
+     * snoreEpisodes, longestSnore{from,to}, talkEvents, coughs, phrases[{at,text}]}`, `tzOffsetMin`); timpii
+     * sunt epoch ms (începutul audio + momentul relativ), ca orele din rezumat să fie ale telefonului.
      * Serverul răspunde `{summary}`; null dacă nu a putut.
      */
     suspend fun summaryWithTimeline(
@@ -154,29 +176,33 @@ class SleepApi(private val api: ForjaApi) {
         snoreEvents: Int, talkEvents: Int, timeline: SleepTimeline
     ): String? = withContext(Dispatchers.IO) {
         val auth = api.authHeader() ?: return@withContext null
+        val base = timeline.startedAt
+        val longestSnore = timeline.events.filter { it.type == "snore" }.maxByOrNull { it.durMs }
+        val phrases = timeline.events.filter { it.type == "talk" && it.transcript.isNotBlank() }.take(6)
         val body = buildJsonObject {
             put("minutes", minutes); put("score", score)
             put("deepMin", deepMin); put("remMin", remMin)
             put("movements", movements); put("snoreEvents", snoreEvents); put("talkEvents", talkEvents)
+            put("tzOffsetMin", java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000)
             putJsonObject("timeline") {
                 put("status", timeline.status)
-                putJsonObject("stats") {
-                    put("snoreMin", timeline.stats.snoreMin)
-                    put("snoreEpisodes", timeline.stats.snoreEpisodes)
-                    put("talkCount", timeline.stats.talkCount)
-                    put("coughCount", timeline.stats.coughCount)
-                    put("coverageMin", timeline.stats.coverageMin)
-                    put("totalMin", timeline.stats.totalMin)
+                putJsonObject("coverage") {
+                    put("analyzedMs", timeline.stats.coverageMin * 60_000L)
+                    put("totalMs", timeline.stats.totalMin * 60_000L)
                 }
-                putJsonArray("quotes") { timeline.quotes(6).forEach { add(it) } }
-                putJsonArray("events") {
-                    timeline.events.take(40).forEach { e ->
-                        add(buildJsonObject {
-                            put("at", e.at); put("end", e.end); put("type", e.type)
-                            put("intensity", e.intensity); put("transcript", e.transcript); put("confidence", e.confidence)
-                        })
+                putJsonObject("stats") {
+                    put("snoreMinutes", timeline.stats.snoreMin)
+                    put("snoreEpisodes", timeline.stats.snoreEpisodes)
+                    put("talkEvents", timeline.stats.talkCount)
+                    put("coughs", timeline.stats.coughCount)
+                    if (longestSnore != null && longestSnore.durMs > 0L) {
+                        putJsonObject("longestSnore") { put("from", base + longestSnore.at); put("to", base + longestSnore.end) }
+                    }
+                    putJsonArray("phrases") {
+                        phrases.forEach { e -> add(buildJsonObject { put("at", base + e.at); put("text", e.transcript) }) }
                     }
                 }
+                if (timeline.limits.isNotEmpty()) putJsonArray("limitari") { timeline.limits.forEach { add(it) } }
             }
         }.toString()
         try {

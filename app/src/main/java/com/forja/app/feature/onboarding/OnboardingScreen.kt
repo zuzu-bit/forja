@@ -66,7 +66,7 @@ internal object IntroCopy {
             nr = "ORDIN DE ZI NR. 3",
             kicker = "STINGEREA · SOMN",
             title = "Te odihnești ca un soldat.",
-            order = "Somnul se măsoară discret, pe telefon. Dimineața primești raportul și te trezești în fereastra potrivită, nu în mijlocul unui vis.",
+            order = "Somnul se măsoară discret: mișcarea pe telefon, sunetul ascultat de model pe server. Dimineața primești raportul și te trezești în fereastra potrivită.",
             quote = "„Odihna nu e slăbiciune. E muniția de mâine.”",
             quoteBy = "— regula nr. 3",
             video = "https://v.ftcdn.net/05/12/88/79/700_F_512887976_190EN7woFkvAws5F4qzRxGMIOuIjvyPY_ST.mp4",

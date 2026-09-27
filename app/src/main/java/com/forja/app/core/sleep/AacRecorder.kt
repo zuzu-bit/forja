@@ -8,17 +8,28 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.nio.ByteBuffer
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * PCM → AAC (.m4a) în timp real, în BUCĂȚI de ~30 min: `sleep_full/<sesiune>/chunk_<i>.m4a`.
  *
  * Fiecare bucată are propriul encoder + muxer. Rotația se face exact la granița de mostre
  * (`chunkSamples`): blocul de PCM care trece peste graniță se împarte — prima parte închide bucata
- * veche, restul deschide bucata nouă. Nicio mostră nu se pierde între bucăți; singura aproximare e
- * cea inerentă codecului AAC (~1024 mostre de „primire” la începutul fiecărui fișier, ≈ 30 ms).
+ * veche, restul deschide bucata nouă. `from`/`dur` se calculează din mostrele primite, nu din ceas.
  *
- * Manifestul `chunks.json` se rescrie după fiecare rotație și la STOP, ca urcarea (WorkManager, alt
- * ciclu de viață) să știe ce există chiar dacă procesul moare între timp.
+ * Cât costă rotația pe firul audio: doar deschiderea encoderului nou (zeci de ms). Închiderea bucății
+ * vechi (golirea encoderului, indexul MP4 — până la câteva secunde pentru 30 min) se face pe un fir
+ * separat, în ordine. Tamponul AudioRecord de 2 s ([SleepTrackService]) acoperă pauza, deci în condiții
+ * normale nu se pierd mostre; rămâne aproximarea codecului AAC (~1024 mostre de „primire” la începutul
+ * fiecărui fișier, ≈ 30 ms). Dacă sistemul ar bloca totuși firul audio mai mult de 2 s, blocul pierdut
+ * ar decala timpii următori — nu pretindem mai mult decât atât.
+ *
+ * Manifestul `chunks.json` se rescrie după fiecare bucată închisă și la STOP, ca urcarea (WorkManager,
+ * alt ciclu de viață) să știe ce există chiar dacă procesul moare între timp.
+ *
+ * Fire: [feed] vine de pe firul audio, [stop] de pe alt fir (serviciul, la STOP) — se exclud reciproc;
+ * lista de bucăți și manifestul se scriu doar de pe firul de închidere, în ordinea bucăților.
  */
 class AacRecorder(
     private val sampleRate: Int,
@@ -42,10 +53,14 @@ class AacRecorder(
 
     private val chunkSamples: Long = chunkMs * sampleRate / 1000L
     private var totalSamples = 0L
+    /** Bucățile închise — atinse DOAR de pe firul [closer] (o singură coadă, în ordine). */
     private val chunks = ArrayList<Chunk>()
     private var segment: Segment? = null
     private val startedAt = System.currentTimeMillis()
+    /** Un singur fir pentru închiderea bucăților și scrierea manifestului. */
+    private val closer = Executors.newSingleThreadExecutor { r -> Thread(r, "forja-aac-close").apply { isDaemon = true } }
 
+    @Volatile
     var failed = false
         private set
 
@@ -55,7 +70,8 @@ class AacRecorder(
         writeManifest(closed = false)
     }
 
-    /** Trimite un bloc de PCM (short-uri mono). Sigur la apeluri repetate de pe firul audio. */
+    /** Trimite un bloc de PCM (short-uri mono), de pe firul audio. Se exclude reciproc cu [stop]. */
+    @Synchronized
     fun feed(samples: ShortArray, count: Int) {
         if (failed || count <= 0) return
         try {
@@ -77,26 +93,37 @@ class AacRecorder(
         }
     }
 
-    /** Închide bucata curentă (EOS + muxer) și deschide următoarea. */
+    /**
+     * Rotația: bucata nouă se deschide imediat (aici, pe firul audio — un encoder nou), iar cea veche
+     * se închide pe [closer] (EOS, golire, index MP4) și abia apoi intră în manifest.
+     */
     private fun rotate() {
-        val seg = segment ?: return
-        seg.close()
-        chunks += seg.toChunk()
-        segment = Segment(seg.index + 1, totalSamples)
-        writeManifest(closed = false)
-    }
-
-    /** STOP: închide ultima bucată și marchează manifestul ca încheiat. */
-    fun stop() {
-        val seg = segment
-        segment = null
-        if (seg != null) {
-            try { seg.close() } catch (_: Exception) { }
-            if (seg.samples > 0) chunks += seg.toChunk() else seg.file.delete()
+        val old = segment ?: return
+        segment = Segment(old.index + 1, totalSamples)
+        closer.execute {
+            old.close()
+            chunks += old.toChunk()
+            writeManifest(closed = false)
         }
-        writeManifest(closed = true)
     }
 
+    /**
+     * STOP: închide ultima bucată, așteaptă închiderile în curs și scrie manifestul final (`closed`).
+     * Durează până la câteva secunde — de apelat de pe un fir de fundal, nu de pe cel principal.
+     */
+    fun stop() {
+        val seg = synchronized(this) { val s = segment; segment = null; s }   // de aici, feed() nu mai scrie nimic
+        if (seg != null) try { seg.close() } catch (_: Exception) { }
+        try {
+            closer.submit {
+                if (seg != null) { if (seg.samples > 0) chunks += seg.toChunk() else seg.file.delete() }
+                writeManifest(closed = true)
+            }.get(15, TimeUnit.SECONDS)
+        } catch (_: Exception) { }
+        closer.shutdown()
+    }
+
+    /** Doar de pe firul [closer] (sau din constructor, înainte de orice bucată). */
     private fun writeManifest(closed: Boolean) {
         try {
             val m = Manifest(sessionId, startedAt, sampleRate, chunks.toList(), closed)

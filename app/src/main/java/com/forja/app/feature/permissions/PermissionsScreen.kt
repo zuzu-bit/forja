@@ -53,7 +53,7 @@ import com.forja.app.core.media.Media
 private enum class Gear(val title: String, val sub: String, val icon: ImageVector) {
     Notifications("Notificări", "raportul de dimineață, alarma, prietenii", Icons.Outlined.Notifications),
     Location("Locație (precisă + în fundal)", "harta, alergarea, prietenii te văd", Icons.Outlined.MyLocation),
-    Microphone("Microfon", "somnul măsurat local — sforăit, vorbit", Icons.Outlined.Mic),
+    Microphone("Microfon", "sforăit, vorbit; noaptea urcă dimineața pe server, pe Wi-Fi", Icons.Outlined.Mic),
     Photos("Poze & galerie", "curățenia galeriei, analiza meselor", Icons.Outlined.PhotoLibrary),
     Battery("Baterie & alarmă pe ecran", "FORJA rămâne trează noaptea și te trezește", Icons.Outlined.BatteryChargingFull)
 }

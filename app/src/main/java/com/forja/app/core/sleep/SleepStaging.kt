@@ -16,8 +16,9 @@ import kotlinx.serialization.json.Json
  *  5. profund = ≥ 20 min consecutive fără nicio mișcare relevantă, la > 30 min după adormire,
  *     plafonat pe ciclu (45 min în ciclurile 1–3, 15 min după)
  *  6. REM ≈ ultimele 10/15/20/25 min ale fiecărui ciclu de ~90 min (crește spre dimineață), doar
- *     în minutele fără „treaz”; micro-mișcările și evenimentele de respirație neregulată din
- *     cronologie (dacă există) confirmă, nu inventează
+ *     în minutele fără „treaz”; micro-mișcările spre finalul ciclului confirmă (scot „profund” de
+ *     acolo), nu inventează. Cronologia serverului (vorbit/sforăit/tuse) NU intră în stadii: serverul
+ *     nu detectează respirația, așa că nu pretindem o rafinare care nu există
  *  7. trezirile = șiruri de ≥ 2 min „treaz” după adormire (fără trezirea finală)
  *  8. scor 0–100 explicat, linie cu linie („−8: 3 treziri”)
  * Etichetele rămân ESTIMATE. Nu e măsurătoare clinică și textele nu o promit.
@@ -101,11 +102,8 @@ object SleepStaging {
     /** Lungimea ferestrei REM la finalul ciclului `cycleNo` (0-based): 10, 15, 20, 25, 25… */
     fun remWindowMin(cycleNo: Int): Int = minOf(10 + 5 * cycleNo, 25)
 
-    /**
-     * Stadializarea completă. `breathIrregularMinutes`: minute (față de start) cu respirație neregulată
-     * din cronologia serverului — opțional; întăresc REM în fereastra ciclică, nu îl creează în afara ei.
-     */
-    fun stage(epochs: List<Epoch>, breathIrregularMinutes: Set<Int> = emptySet()): Result {
+    /** Stadializarea completă, doar din epocile de mișcare (pașii din antet). */
+    fun stage(epochs: List<Epoch>): Result {
         val n = epochs.size
         if (n == 0) return Result("", 0, 0, 0, 0, 0, 0, 0, listOf(ScoreLine(0, "fără date")))
         val d = weightedActivity(epochs)
@@ -147,7 +145,7 @@ object SleepStaging {
             val cycle = (k - onset) / CYCLE_MIN
             val win = remWindowMin(cycle)
             val inWindow = pos >= CYCLE_MIN - win
-            val hint = epochs[k].micro > 0 || breathIrregularMinutes.contains(k)
+            val hint = epochs[k].micro > 0
             if (stages[k] == "awake") continue
             if (inWindow) stages[k] = "rem"
             else if (hint && stages[k] == "deep" && pos >= CYCLE_MIN - win - 5) stages[k] = "light" // micro-mișcări spre finalul ciclului: nu e profund

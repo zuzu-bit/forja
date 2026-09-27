@@ -41,8 +41,10 @@ Ce se întâmplă cu o noapte, pas cu pas (totul e estimare, nu diagnostic — �
 1. **Înregistrare în bucăți** (`core/sleep/AacRecorder.kt`): AAC-LC 48 kbps mono, fișiere de ~30 min în
    `filesDir/sleep_full/<sesiune>/chunk_<i>.m4a`, cu manifestul `chunks.json`
    (`{session, startedAt, sampleRate, chunks:[{index, file, from, dur}], closed}`; `from`/`dur` în ms față de începutul
-   audio-ului). Rotația se face la granița de mostre, fără pierderi între bucăți. Sesiunile vechi cu un singur
-   `sleep_full/<id>.m4a` se tratează ca bucata 0 și rămân redabile.
+   audio-ului). Rotația se face la granița de mostre: bucata nouă se deschide pe firul audio (zeci de ms), cea veche
+   se închide pe un fir separat, iar tamponul de captură de 2 s acoperă pauza — în condiții normale nu se pierd mostre
+   (timpii vin din mostre, nu din ceas). Sesiunile vechi cu un singur `sleep_full/<id>.m4a` se tratează ca bucata 0 și
+   rămân redabile (fără cronologie).
 2. **Stadii din mișcare** (`core/sleep/SleepStaging.kt`, funcții pure): epoci de 1 min din mișcările accelerometrului
    (+ micro-mișcări), scor ponderat ±2 min (stil Cole-Kripke), prag treaz/somn, latența de adormire (10 min liniștite),
    „profund” = ≥ 20 min fără mișcare la > 30 min după adormire (plafonat pe ciclu), REM ≈ finalul ciclurilor de ~90 min,
@@ -50,16 +52,23 @@ Ce se întâmplă cu o noapte, pas cu pas (totul e estimare, nu diagnostic — �
    hipnograma și scorul din baza Room vin de aici; `measurement` rămâne `estimated`.
 3. **Urcare automată** (`core/sleep/SleepUpload.kt`, WorkManager): la „M-am trezit”, pe Wi-Fi (sau „și pe date mobile”,
    din ecranul de somn) și cu bateria ≥ 15 %: `PUT /v1/sleep-chunk?session=s<id>&index&from&dur` pentru fiecare bucată,
-   apoi `POST /v1/sleep-analyze`, apoi sondaj `GET /v1/sleep-analysis` la 20 s (cel mult 20 min, împărțite pe rulări).
-   Progresul e în `upload.json`; rezultatul normalizat în `timeline.json`
-   (`{status: done|processing|clips_only|failed|timeout, reason, events:[{at, end, type, intensity, transcript, confidence}],
-   stats:{snoreMin, snoreEpisodes, talkCount, coughCount, coverageMin, totalMin}, startedAt}`). La final: rezumatul de
-   dimineață refăcut cu cronologia (`POST /v1/sleep-summary` + `timeline`), Firestore (`snoreMin`, `talkCount`,
-   `coverageMin`) și notificarea „Raportul nopții e gata” pe canalul „sleep”. Clientul HTTP e `core/network/SleepApi.kt`.
+   apoi `POST /v1/sleep-analyze` (cu `sessionMs`), apoi sondaj `GET /v1/sleep-analysis` la 20 s. Un POST duce la capăt
+   ~1–2 bucăți pe server; când GET răspunde `processing` + `stale` (rularea s-a oprit), POST-ul se re-trimite cu aceeași
+   listă și serverul continuă doar cu bucățile rămase. Renunțăm după 20 min FĂRĂ progres (bugetul curge din nou la fiecare
+   bucată analizată), în rulări de cel mult 7 min, și păstrăm ce s-a ascultat (`status: timeout` cu evenimentele parțiale
+   și „analiza s-a oprit” în ecran; „Încearcă din nou” reia de unde a rămas). Progresul e în `upload.json`; rezultatul
+   normalizat în `timeline.json` (`{status: done|processing|clips_only|failed|timeout, reason, events:[{at, end, type,
+   intensity, transcript, confidence}], stats:{snoreMin, snoreEpisodes, talkCount, coughCount, coverageMin, totalMin},
+   limits:[…], startedAt}`; acoperirea se citește din `coverage{analyzedMs, totalMs}`, limitările din `limitari`). La final:
+   rezumatul de dimineață refăcut cu cronologia (`POST /v1/sleep-summary`, cu `coverage`, `stats` în forma serverului și
+   `tzOffsetMin`), Firestore (`snoreMin`, `talkCount`, `coverageMin`) și notificarea „Raportul nopții e gata” pe canalul
+   „sleep”. Clientul HTTP e `core/network/SleepApi.kt`.
 4. **Raportul** (`feature/sleep/SleepScreen.kt`): secțiunea „Noaptea, ascultată” — acoperirea onestă („Am ascultat 7 h 42 min
    din 7 h 50”), cronologia cu oră, tip, intensitate, transcriere EXACTĂ între ghilimele și încredere, „Ascultă” = 8 s din
-   bucata potrivită (offset − `from`), „Ascultă toată noaptea” + „SARI LA MOMENT” pe bucăți. Fără cheie Gemini pe server:
-   „Serverul nu a putut asculta noaptea (lipsește cheia Gemini). Ai doar clipurile prinse pe telefon.”
+   bucata potrivită (offset − `from`), „Ascultă toată noaptea” + „SARI LA MOMENT” pe bucăți. Limitările serverului se
+   afișează în cuvintele lui (fără Gemini → doar transcriere Whisper: „sforăit: nu s-a putut detecta”, nu „fără sforăit”).
+   Fără nicio cale de ascultare pe server: „Serverul nu a putut asculta noaptea (lipsește cheia Gemini). Ai doar clipurile
+   prinse pe telefon.”
 5. **Păstrare**: clipurile de 5 s rămân locale (7 zile) și se clasifică live ca înainte; bucățile stau pe telefon 24 h după
    urcare (3 zile dacă n-au urcat), pe server 7 zile; `timeline.json`/`staging.json` 30 de zile.
 
@@ -90,7 +99,8 @@ Notă despre release: pagina de release afișează starea acestor servicii la mo
 - **UI**: Jetpack Compose, design tokens exacți din handoff (culori, Archivo Expanded /
   Hanken Grotesk / JetBrains Mono ca fonturi variabile, cele 3 arcuri spring: snappy/natural/gentle).
 - **Local (pe telefon)**: Room — antrenamente, serii, mese, somn, activități, reguli Focus.
-  DataStore — preferințe. Mesele și somnul NU pleacă de pe telefon.
+  DataStore — preferințe. Mesele nu pleacă de pe telefon; din somn urcă doar înregistrarea nopții (pe server 7 zile,
+  pentru cronologie) și cifrele raportului.
 - **Cloud (între prieteni)**: Firebase Auth (email+parolă) + Firestore — profil, cod de
   invitație, prietenii (reciproc, prin cod), poziția live (doar când nu ești fantomă), energie (kudos).
 - **Hartă**: osmdroid + tiles CARTO dark cu tentă caldă (paleta din prototip), markeri cu

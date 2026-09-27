@@ -33,8 +33,10 @@ import java.util.concurrent.TimeUnit
 /**
  * Urcarea automată a nopții (WorkManager) — la sfârșitul sesiunii:
  *  1. fiecare bucată → `PUT /v1/sleep-chunk` (bucățile deja urcate se sar; progresul e în `upload.json`)
- *  2. `POST /v1/sleep-analyze`
- *  3. sondaj `GET /v1/sleep-analysis` la 20 s, cel mult 20 min în total (peste mai multe rulări, dacă e nevoie)
+ *  2. `POST /v1/sleep-analyze` — serverul duce la capăt ~1–2 bucăți per cerere și continuă doar cu cele rămase
+ *  3. sondaj `GET /v1/sleep-analysis` la 20 s; când serverul s-a oprit din lucru (`stale`), POST-ul se re-trimite
+ *     cu aceeași listă de bucăți; renunțăm după 20 min FĂRĂ progres pe server (bugetul curge din nou la fiecare
+ *     bucată nouă analizată), împărțite pe rulări de cel mult 7 min. La renunțare păstrăm ce s-a ascultat până atunci.
  *  4. `timeline.json` salvat + rezumatul de dimineață refăcut cu cronologia + Firestore + notificare
  *     „Raportul nopții e gata” pe canalul „sleep” existent.
  *
@@ -49,6 +51,7 @@ object SleepUpload {
     const val NOTIF_ID = 35
     const val PROGRESS_FILE = "upload.json"
     const val POLL_EVERY_MS = 20_000L
+    /** Cât așteptăm FĂRĂ progres pe server înainte să renunțăm (cu ce s-a ascultat până atunci). */
     const val POLL_TOTAL_MS = 20L * 60_000L
     /** Cât sondăm într-o singură rulare (WorkManager oprește lucrările lungi la ~10 min). */
     const val POLL_PER_RUN_MS = 7L * 60_000L
@@ -63,7 +66,10 @@ object SleepUpload {
         val rejected: List<Int> = emptyList(),
         val analyzeRequestedAt: Long = 0L,
         val pollStartedAt: Long = 0L,
+        /** Minute de sondaj fără progres pe server (se resetează când serverul mai termină o bucată). */
         val pollSpentMs: Long = 0L,
+        /** Cât a ascultat serverul până acum (minute), din ultimul răspuns — pentru progres și pentru ecran. */
+        val analyzedMin: Int = 0,
         val attempts: Int = 0,
         val done: Boolean = false,
         val lastError: String = "",
@@ -131,18 +137,27 @@ object SleepUpload {
             m == null -> "Nu există înregistrare pentru noaptea asta."
             p == null -> if (cellularAllowed(context)) "Urcarea pornește când ai net." else "Urcarea pornește pe Wi-Fi."
             p.done -> ""
-            p.attempts >= MAX_ATTEMPTS -> "Urcarea a renunțat după $MAX_ATTEMPTS încercări."
+            p.attempts >= MAX_ATTEMPTS -> "Urcarea a renunțat după $MAX_ATTEMPTS de încercări."
             p.uploaded.size + p.rejected.size < m.chunks.size ->
                 "Urcat ${p.uploaded.size} din ${m.chunks.size} bucăți" + (if (cellularAllowed(context)) "." else " (pe Wi-Fi).")
-            p.analyzeRequestedAt > 0L -> "Serverul ascultă noaptea. Poate dura până la 20 min."
+            p.analyzeRequestedAt > 0L && p.analyzedMin > 0 ->
+                "Serverul ascultă noaptea, bucată cu bucată: ${hm(p.analyzedMin)} din ${hm((m.chunks.sumOf { it.dur } / 60_000L).toInt())} până acum."
+            p.analyzeRequestedAt > 0L -> "Serverul ascultă noaptea, bucată cu bucată (câteva minute pe bucată)."
             else -> "Bucățile au urcat. Urmează analiza."
         }
     }
 
+    /**
+     * Procentul bateriei; când sistemul nu-l poate da (`Int.MIN_VALUE`, 0 = necunoscut) răspundem 100, ca să nu
+     * blocăm urcarea la nesfârșit cu „baterie sub 15 %” — constrângerea WorkManager acoperă oricum bateria slabă.
+     */
     fun batteryPercent(context: Context): Int = try {
         val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).coerceIn(0, 100)
+        val v = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        if (v == Int.MIN_VALUE || v <= 0) 100 else v.coerceIn(0, 100)
     } catch (_: Exception) { 100 }
+
+    fun hm(min: Int): String = if (min >= 60) "${min / 60} h ${"%02d".format(min % 60)} min" else "$min min"
 
     /** „Raportul nopții e gata” — canalul „sleep” existent; deschide aplicația. */
     fun notifyReady(context: Context, coverage: String) {
@@ -208,10 +223,11 @@ class SleepUploadWorker(
         // Bucățile sunt pe server 7 zile: înregistrarea rămâne ascultabilă și după ce dispare de pe telefon.
         try { extendRecordedUntil(app, sessionId) } catch (_: Exception) { }
 
-        // 2. analiza
+        // 2. analiza — „din 7 h 50” e toată noaptea, nu doar minutele înregistrate
+        val sessionMs = findSession(app, sessionId)?.let { s -> s.endAt?.let { it - s.startAt } }?.takeIf { it > 0L }
         var timeline: SleepTimeline? = null
         if (p.analyzeRequestedAt == 0L) {
-            timeline = api.analyze(sessionId, sent, manifest.startedAt) ?: run {
+            timeline = api.analyze(sessionId, sent, manifest.startedAt, sessionMs) ?: run {
                 SleepUpload.saveProgress(dir, p.copy(lastError = "analiza nu a putut fi cerută"))
                 return Result.retry()
             }
@@ -219,24 +235,43 @@ class SleepUploadWorker(
             SleepUpload.saveProgress(dir, p)
         }
 
-        // 3. sondaj — la 20 s, cel mult 20 min în total (împărțite pe rulări)
+        // 3. sondaj la 20 s. Serverul duce la capăt ~1–2 bucăți per POST; când GET spune `stale` (rularea s-a oprit),
+        //    re-trimitem POST-ul și el continuă doar cu bucățile rămase. Renunțăm după 20 min FĂRĂ progres — bugetul
+        //    curge din nou la fiecare bucată nouă analizată — și păstrăm ce s-a ascultat până atunci (parțial, onest).
         val runStart = System.currentTimeMillis()
+        var stallStart = runStart
+        var stallBase = p.pollSpentMs
+        var last: SleepTimeline? = timeline?.takeIf { it.partial }
         while (timeline == null || timeline.status == "processing") {
-            val spentTotal = p.pollSpentMs + (System.currentTimeMillis() - runStart)
-            if (spentTotal >= SleepUpload.POLL_TOTAL_MS) {
-                timeline = SleepTimeline("timeout", "serverul nu a terminat în 20 de minute", startedAt = manifest.startedAt)
+            val now = System.currentTimeMillis()
+            val stalled = stallBase + (now - stallStart)
+            if (stalled >= SleepUpload.POLL_TOTAL_MS) {
+                timeline = (last ?: SleepTimeline("timeout", startedAt = manifest.startedAt))
+                    .copy(status = "timeout", reason = "serverul nu a mai avansat în 20 de minute", stale = false)
                 break
             }
-            if (System.currentTimeMillis() - runStart >= SleepUpload.POLL_PER_RUN_MS) {
-                SleepUpload.saveProgress(dir, p.copy(pollSpentMs = spentTotal, lastError = ""))
+            if (now - runStart >= SleepUpload.POLL_PER_RUN_MS) {
+                SleepUpload.saveProgress(dir, p.copy(pollSpentMs = stalled, lastError = ""))
                 return Result.retry()
             }
             delay(SleepUpload.POLL_EVERY_MS)
-            timeline = api.analysis(sessionId, manifest.startedAt, sent) ?: continue
+            var t = api.analysis(sessionId, manifest.startedAt, sent) ?: continue
+            if (t.status == "processing" && t.stale) {
+                api.analyze(sessionId, sent, manifest.startedAt, sessionMs)?.let { t = it }
+            }
+            timeline = t
+            if (t.partial) last = t
+            if (t.stats.coverageMin > p.analyzedMin) {
+                // progres real pe server: bugetul de 20 min pornește din nou
+                p = p.copy(analyzedMin = t.stats.coverageMin, pollSpentMs = 0L)
+                SleepUpload.saveProgress(dir, p)
+                stallBase = 0L
+                stallStart = System.currentTimeMillis()
+            }
         }
 
         val t = timeline ?: SleepTimeline("failed", "fără răspuns", startedAt = manifest.startedAt)
-        finish(app, dir, sessionId, manifest, t, p.copy(pollSpentMs = p.pollSpentMs + (System.currentTimeMillis() - runStart)))
+        finish(app, dir, sessionId, manifest, t, p.copy(pollSpentMs = stallBase + (System.currentTimeMillis() - stallStart)))
         return Result.success()
     }
 
@@ -278,7 +313,7 @@ class SleepUploadWorker(
         } catch (_: Exception) { }
 
         val cov = if (t.stats.coverageMin > 0 && t.stats.totalMin > 0)
-            "Am ascultat ${hm(t.stats.coverageMin)} din ${hm(t.stats.totalMin)}."
+            "Am ascultat ${SleepUpload.hm(t.stats.coverageMin)} din ${SleepUpload.hm(t.stats.totalMin)}."
         else "Cronologia nopții te așteaptă în Somn."
         SleepUpload.notifyReady(applicationContext, cov)
     }
@@ -293,6 +328,4 @@ class SleepUploadWorker(
         val until = System.currentTimeMillis() + SleepUpload.SERVER_TTL_MS
         if (s.recordedUntil < until) app.db.sleepDao().update(s.copy(recordedUntil = until))
     }
-
-    private fun hm(min: Int): String = if (min >= 60) "${min / 60} h ${"%02d".format(min % 60)} min" else "$min min"
 }

@@ -73,8 +73,8 @@ class SleepTrackService : Service(), SensorEventListener {
     private val ring = ShortArray(sampleRate * ringSeconds)
     private var ringPos = 0
     private var totalWritten = 0L
-    private var fullRecorder: AacRecorder? = null
-    private var fullDir: File? = null
+    /** Înregistrarea completă (AAC pe bucăți); scrisă de pe firul sesiunii, citită de pe firul audio. */
+    @Volatile private var fullRecorder: AacRecorder? = null
     private var baseline = 250.0
     private var lastSnoreEventAt = 0L
     private var lastTalkEventAt = 0L
@@ -237,9 +237,7 @@ class SleepTrackService : Service(), SensorEventListener {
                     if (System.currentTimeMillis() - it.lastModified() > 7 * 24 * 3600_000L) it.delete()
                 }
                 if (micType) {
-                    val dir = AacRecorder.sessionDir(filesDir, sessionId)
-                    fullDir = dir
-                    fullRecorder = AacRecorder(sampleRate, dir, sessionId)
+                    fullRecorder = AacRecorder(sampleRate, AacRecorder.sessionDir(filesDir, sessionId), sessionId)
                 }
             } catch (_: Exception) { }
         }
@@ -276,7 +274,8 @@ class SleepTrackService : Service(), SensorEventListener {
                 f.listFiles()?.forEach { c ->
                     if (!c.name.endsWith(".m4a")) return@forEach
                     val idx = c.name.removePrefix("chunk_").removeSuffix(".m4a").toIntOrNull()
-                    val uploaded = progress != null && (progress.done || (idx != null && idx in progress.uploaded))
+                    // „urcat” = bucata e în lista celor ajunse pe server; `done` singur poate însemna și „am renunțat”.
+                    val uploaded = progress != null && idx != null && idx in progress.uploaded
                     val keepMs = if (uploaded) 24 * 3600_000L else 3L * 24 * 3600_000L
                     if (now - c.lastModified() > keepMs) c.delete()
                 }
@@ -294,7 +293,8 @@ class SleepTrackService : Service(), SensorEventListener {
         )
         if (minBuf <= 0) return
         try {
-            val bufBytes = maxOf(minBuf, sampleRate)
+            // Tampon de 2 s (16 bit mono): acoperă rotația bucăților AAC (encoder nou pe firul audio) fără să piardă mostre.
+            val bufBytes = maxOf(minBuf, sampleRate * 4)
             // VOICE_RECOGNITION: reglat pentru voce, curat, fără procesări agresive de apel.
             var rec: AudioRecord? = null
             for (src in intArrayOf(MediaRecorder.AudioSource.VOICE_RECOGNITION, MediaRecorder.AudioSource.MIC)) {
@@ -310,7 +310,7 @@ class SleepTrackService : Service(), SensorEventListener {
             audioJob = scope.launch {
                 val chunk = ShortArray(sampleRate / 10) // 100ms
                 while (isActive) {
-                    val n = recorder.read(chunk, 0, chunk.size)
+                    val n = try { recorder.read(chunk, 0, chunk.size) } catch (_: Exception) { -1 }
                     if (n <= 0) { delay(50); continue }
                     // scrie în ring
                     for (i in 0 until n) {
@@ -579,7 +579,7 @@ class SleepTrackService : Service(), SensorEventListener {
             audioRecord?.release()
         } catch (_: Exception) { }
         audioRecord = null
-        try { fullRecorder?.stop() } catch (_: Exception) { }
+        val recorder = fullRecorder
         fullRecorder = null
         val app = ForjaApp.from(this)
         app.presence.manualState = null
@@ -587,8 +587,10 @@ class SleepTrackService : Service(), SensorEventListener {
         val moves = movements
         val moveTimes = synchronized(movementTimes) { movementTimes.toList() }
         val micro = synchronized(microPerMinute) { HashMap(microPerMinute) }
-        val recDir = fullDir
         scope.launch {
+            // Ultima bucată se închide aici (EOS, indexul MP4 — până la câteva secunde), nu pe firul principal,
+            // și strict înainte de citirea manifestului de mai jos.
+            try { recorder?.stop() } catch (_: Exception) { }
             val dao = app.db.sleepDao()
             dao.activeSessionOnce()?.let { s ->
                 val end = System.currentTimeMillis()
@@ -600,7 +602,11 @@ class SleepTrackService : Service(), SensorEventListener {
                 val light = staging.lightMin
                 val rem = staging.remMin
                 val score = staging.score
-                try { recDir?.let { File(it, STAGING_FILE).writeText(SleepStaging.toJson(staging)) } } catch (_: Exception) { }
+                // Și fără microfon: dosarul sesiunii (fără chunks.json) ține doar staging.json, ca raportul să explice scorul.
+                try {
+                    val dir = AacRecorder.sessionDir(filesDir, s.id).apply { mkdirs() }
+                    File(dir, STAGING_FILE).writeText(SleepStaging.toJson(staging))
+                } catch (_: Exception) { }
 
                 // Înregistrarea completă: bucățile rămân local 24 h; urcarea pe server o face SleepUpload
                 // (Wi-Fi, baterie ≥ 15 %), care prelungește la 7 zile când bucățile au ajuns pe server.
@@ -609,12 +615,7 @@ class SleepTrackService : Service(), SensorEventListener {
                 val hasAudio = manifest != null && manifest.chunks.any { c ->
                     AacRecorder.chunkFile(filesDir, s.id, c).length() > 4000
                 }
-                if (hasAudio) {
-                    recordedUntil = end + 24 * 3600_000L
-                    if (app.forjaApi.available) {
-                        try { SleepUpload.schedule(this@SleepTrackService, s.id) } catch (_: Exception) { }
-                    }
-                }
+                if (hasAudio) recordedUntil = end + 24 * 3600_000L
 
                 val events = dao.eventsForSessionOnce(s.id)
                 val snoreCount = events.count { it.type == "snore" }
@@ -634,6 +635,11 @@ class SleepTrackService : Service(), SensorEventListener {
                     summary = summary, recordedUntil = recordedUntil
                 )
                 dao.update(updated)
+                // Urcarea pornește abia după ce rândul sesiunii e închis (endAt, recordedUntil): lucrarea o caută printre
+                // sesiunile încheiate și îi prelungește recordedUntil la 7 zile când bucățile ajung pe server.
+                if (hasAudio && app.forjaApi.available) {
+                    try { SleepUpload.schedule(this@SleepTrackService, s.id) } catch (_: Exception) { }
+                }
                 // Raportul urcă în baza companiei — cifrele + rezumatul, nu audio-ul brut.
                 // Minutele de sforăit/acoperirea se completează după analiza serverului (SleepUpload).
                 try {
@@ -700,7 +706,8 @@ class SleepTrackService : Service(), SensorEventListener {
             audioRecord?.stop()
             audioRecord?.release()
         } catch (_: Exception) { }
-        try { fullRecorder?.stop() } catch (_: Exception) { }
+        // Plasă de siguranță (finishSession n-a apucat): închiderea durează secunde — nu pe firul principal.
+        fullRecorder?.let { r -> fullRecorder = null; Thread({ try { r.stop() } catch (_: Exception) { } }, "forja-aac-stop").start() }
         scope.cancel()
         super.onDestroy()
     }
@@ -749,20 +756,30 @@ class SleepTrackService : Service(), SensorEventListener {
             }
         }
 
-        /** Închide sesiunea rămasă deschisă fără serviciu: scor 0, onest — noaptea s-a pierdut. */
+        /**
+         * Închide sesiunea rămasă deschisă fără serviciu: scor 0, onest — mișcarea s-a pierdut. Bucățile de audio
+         * deja închise (manifestul se scrie după fiecare) sunt bune: urcă și ele, ca la orice noapte.
+         */
         fun closeStaleSession(context: Context) {
             val app = ForjaApp.from(context)
             app.appScope.launch {
                 try {
                     val dao = app.db.sleepDao()
                     dao.activeSessionOnce()?.let { s ->
+                        val end = System.currentTimeMillis()
+                        val chunks = AacRecorder.manifestFor(context.filesDir, s.id, s.startAt)?.chunks?.filter { it.dur > 0L }.orEmpty()
                         dao.update(
                             s.copy(
-                                endAt = System.currentTimeMillis(),
+                                endAt = end,
                                 score = 0,
-                                summary = "Veghea s-a întrerupt peste noapte — telefonul a oprit FORJA. Scoate-o de la optimizarea bateriei."
+                                summary = "Veghea s-a întrerupt peste noapte — telefonul a oprit FORJA. Scoate-o de la optimizarea bateriei.",
+                                recordedUntil = if (chunks.isNotEmpty()) end + 24 * 3600_000L else s.recordedUntil
                             )
                         )
+                        // după ce rândul e închis (endAt) — lucrarea caută sesiunea printre cele încheiate
+                        if (chunks.isNotEmpty() && app.forjaApi.available) {
+                            try { SleepUpload.schedule(context, s.id) } catch (_: Exception) { }
+                        }
                     }
                 } catch (_: Exception) { }
                 try {
