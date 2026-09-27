@@ -59,7 +59,6 @@ fun DashboardScreen(
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
 
-    val evening = Fmt.isEvening()
     val weekDistance by app.db.activityDao().distanceSince(Fmt.startOfWeekMillis()).collectAsState(initial = 0.0)
     val yesterdayStart = Fmt.startOfDayMillis(1)
     val todayStart = Fmt.startOfDayMillis(0)
@@ -152,8 +151,9 @@ fun DashboardScreen(
             Column {
                 Text("${Fmt.greeting()}, ${name.split(' ').firstOrNull() ?: ""}".trim(), style = BodyStrong.copy(fontSize = 16.sp))
                 Spacer(Modifier.height(6.dp))
-                // Ștampila postului: raportul zilei sau al serii — fără animație, fila revine des în ecran.
-                StampLabel(if (evening) "RAPORT DE SEARĂ" else "RAPORT DE ZI", rotationDeg = -4f, appear = false)
+                // Ștampila postului — numele postului, nu ora; momentul zilei îl duce Tone.report în cardul de jos.
+                // Fără animație, fila revine des în ecran.
+                StampLabel("RAPORT DE ZI", rotationDeg = -4f, appear = false)
             }
             Box(Modifier.pressable(onOpenProfile)) {
                 Avatar(name = name, size = 40.dp, ring = true)
@@ -248,7 +248,7 @@ fun DashboardScreen(
                 Text("Încă niciun camarad.", style = BodyStrong)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Trimite codul tău din Profil unui prieten. Apăreți unul altuia pe hartă.",
+                    "Trimite-i unui prieten codul tău din Profil. Apăreți unul altuia pe hartă.",
                     style = BodySmall
                 )
             }

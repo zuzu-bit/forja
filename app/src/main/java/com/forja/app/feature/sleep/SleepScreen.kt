@@ -216,7 +216,7 @@ fun SleepScreen() {
                     when {
                         morning -> "RAPORT DE DIMINEAȚĂ"
                         eveningSleep -> "PREGĂTEȘTE-TE DE SOMN"
-                        else -> "SOMNUL TĂU"
+                        else -> "ÎNTRE DOUĂ NOPȚI"
                     },
                     style = monoLabel(9, 0.16f).copy(color = SleepRem)
                 )
