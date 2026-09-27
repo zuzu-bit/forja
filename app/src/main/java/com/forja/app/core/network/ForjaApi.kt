@@ -6,6 +6,7 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
@@ -172,4 +173,117 @@ class ForjaApi {
             }
         } catch (_: Exception) { null }
     }
+
+    // ═══════════════ Curățenie v2 — sugestii AI (/v1/organize) ═══════════════
+    // Pleacă DOAR ce a aprobat utilizatorul (cleanup_ai_on): miniaturi ≤ 512 px și fragmente de text ≤ 2000 caractere.
+
+    sealed class OrganizeResult {
+        data class Ok(val response: OrganizeResponse) : OrganizeResult()
+        data class Fail(val message: String) : OrganizeResult()
+    }
+
+    private val organizeJson = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
+
+    /** Trimite elementele în loturi de ≤ 24 (≤ 3 MB fiecare) și adună sugestiile. */
+    suspend fun organize(items: List<OrganizeItem>): OrganizeResult = withContext(Dispatchers.IO) {
+        if (items.isEmpty()) return@withContext OrganizeResult.Fail("Nimic de trimis.")
+        val token = idToken() ?: return@withContext OrganizeResult.Fail("Intră în cont ca să primești sugestii AI.")
+        val merged = ArrayList<OrganizeSuggestion>()
+        var summary = ""
+        var provider = ""
+        var partial = false
+        var failure: String? = null
+        for (batch in items.chunked(ORGANIZE_BATCH)) {
+            val body = encodeOrganizeBatch(batch)
+            try {
+                val req = Request.Builder()
+                    .url("$base/v1/organize")
+                    .header("Authorization", "Bearer $token")
+                    .post(body.toRequestBody("application/json".toMediaType()))
+                    .build()
+                longClient.newCall(req).execute().use { resp ->
+                    val text = resp.body?.string() ?: ""
+                    if (!resp.isSuccessful) {
+                        val msg = try {
+                            json.parseToJsonElement(text).jsonObject["error"]?.jsonPrimitive?.contentOrNull
+                        } catch (_: Exception) { null }
+                        failure = msg ?: "Serverul FORJA a răspuns cu ${resp.code}."
+                        partial = true
+                    } else {
+                        val r = organizeJson.decodeFromString(OrganizeResponse.serializer(), text)
+                        merged += r.items
+                        if (summary.isBlank() && r.summary.isNotBlank()) summary = r.summary
+                        if (provider.isBlank() && r.provider.isNotBlank()) provider = r.provider
+                        if (r.partial) partial = true
+                    }
+                }
+            } catch (e: Exception) {
+                failure = if (e is java.io.InterruptedIOException || e is java.net.SocketTimeoutException)
+                    "Sugestiile durează prea mult acum — serverul AI e aglomerat. Mai încearcă o dată."
+                else "Serverul FORJA nu răspunde. Verifică internetul."
+                partial = true
+            }
+        }
+        val fail = failure
+        if (merged.isEmpty() && fail != null) OrganizeResult.Fail(fail)
+        else OrganizeResult.Ok(OrganizeResponse(merged, summary, provider, partial))
+    }
+
+    /** Corpul unui lot; dacă depășește 3 MB, miniaturile cad de la coadă până încape. */
+    private fun encodeOrganizeBatch(batch: List<OrganizeItem>): String {
+        var items = batch
+        var body = organizeJson.encodeToString(OrganizeRequest.serializer(), OrganizeRequest(items))
+        var drop = items.size - 1
+        while (body.length > ORGANIZE_MAX_BODY && drop >= 0) {
+            if (items[drop].thumbnail != null) {
+                items = items.mapIndexed { i, it -> if (i == drop) it.copy(thumbnail = null) else it }
+                body = organizeJson.encodeToString(OrganizeRequest.serializer(), OrganizeRequest(items))
+            }
+            drop--
+        }
+        return body
+    }
+
+    companion object {
+        const val ORGANIZE_BATCH = 24
+        const val ORGANIZE_MAX_BODY = 3_000_000
+    }
 }
+
+// ─────────────────────────── DTO-uri /v1/organize ───────────────────────────
+
+@Serializable
+data class OrganizeItem(
+    val id: String,                 // "m:<mediaId>" sau "d:<sha256 al uri-ului documentului>"
+    val kind: String,               // "image" | "document"
+    val name: String,
+    val size: Long,
+    val mime: String,
+    val width: Int? = null,
+    val height: Int? = null,
+    val bucket: String? = null,     // album / folder relativ
+    val takenAt: Long? = null,
+    val thumbnail: String? = null,  // JPEG base64 ≤ 512 px, q≈70, ≤ 120 KB (doar poze, doar cu cleanup_ai_on)
+    val text: String? = null,       // documente: fragment ≤ 2000 caractere (doar text/*, json, csv, xml, html, md)
+    val localHints: List<String> = emptyList()   // ex. ["screenshot", "duplicate_of:m:123", "blurry:42"]
+)
+
+@Serializable
+data class OrganizeSuggestion(
+    val id: String,
+    val suggestion: String = "keep",   // "keep" | "delete" | "move"
+    val folder: String? = null,        // dosar relativ sub „Pictures/FORJA Curățenie/" sau „Organizate/"
+    val reason: String = "",
+    val confidence: String = "medie"   // "ridicată" | "medie" | "scăzută"
+)
+
+@Serializable
+data class OrganizeResponse(
+    val items: List<OrganizeSuggestion> = emptyList(),
+    val summary: String = "",
+    val provider: String = "",
+    val partial: Boolean = false
+)
+
+@Serializable
+data class OrganizeRequest(val items: List<OrganizeItem>, val locale: String = "ro")
