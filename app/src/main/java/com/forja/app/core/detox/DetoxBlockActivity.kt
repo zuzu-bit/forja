@@ -102,7 +102,7 @@ private fun DetoxBlockScreen(onDone: () -> Unit) {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "Nu tu ai greșit — doar un moment a bătut la ușă. Îl lași să treacă.",
+                "Nu ai greșit nimic. Un moment a bătut la ușă. Îl lași să treacă.",
                 style = Body.copy(fontSize = 15.sp),
                 textAlign = TextAlign.Center
             )
@@ -131,7 +131,7 @@ private fun DetoxBlockScreen(onDone: () -> Unit) {
             )
             Spacer(Modifier.height(10.dp))
             Text(
-                "Dacă e greu des, nu ești slab — vorbește cu cineva de încredere sau un specialist. Nu trebuie să duci asta singur.",
+                "Dacă e greu des, nu ești slab. Vorbește cu cineva de încredere sau cu un specialist. Nu trebuie să duci asta singur.",
                 style = BodyTiny.copy(color = TextDim),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 8.dp)
