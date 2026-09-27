@@ -1,170 +1,99 @@
 package com.forja.app.feature.cleanup
 
-import android.Manifest
-import android.content.Context
+import android.app.Activity
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
-import android.provider.MediaStore
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
-import androidx.documentfile.provider.DocumentFile
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.forja.app.core.cleanup.Category
+import com.forja.app.core.cleanup.CleanupEngine
+import com.forja.app.core.cleanup.CleanupScope
+import com.forja.app.core.cleanup.DocItem
+import com.forja.app.core.cleanup.DocumentOrganizer
+import com.forja.app.core.cleanup.MediaItem
+import com.forja.app.core.cleanup.ScanProgress
+import com.forja.app.core.cleanup.ScopeKind
+import com.forja.app.core.cleanup.fmtBytes
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
+import com.forja.app.core.network.OrganizeSuggestion
 import com.forja.app.core.util.Fmt
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
-data class PhotoItem(
-    val uri: Uri, val sizeBytes: Long, val dateAddedMs: Long,
-    val name: String, val bucket: String,
-    val suggested: Boolean, val reason: String
-)
+private val RO = Locale("ro")
+private val dateFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", RO)
+private fun fmtDate(ms: Long): String =
+    if (ms <= 0) "—" else dateFmt.format(Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()))
 
-data class DocItem(
-    val uri: Uri, val name: String, val sizeBytes: Long, val lastModified: Long,
-    val suggested: Boolean, val reason: String
-)
-
-private fun fmtSize(bytes: Long): String = when {
-    bytes >= 1_000_000 -> String.format("%.1f MB", bytes / 1_000_000.0).replace('.', ',')
-    bytes >= 1_000 -> "${bytes / 1000} KB"
-    else -> "$bytes B"
-}
-
-/** Curățenie de azi — detox digital: tu decizi, app-ul sugerează, nimic nu urcă nicăieri. */
+/**
+ * Curățenie de azi — detox digital, v2: alegi scopul, scanarea merge cu pauză și reluare,
+ * rezultatele vin grupate pe categorii, tu decizi ce pleacă. Nimic nu urcă nicăieri fără acordul tău.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CleanupScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    val app = remember { com.forja.app.ForjaApp.from(context) }
-    val scope = rememberCoroutineScope()
+    val activity = context as ComponentActivity
+    val vm: CleanupViewModel = viewModel(viewModelStoreOwner = activity)
     val toast = LocalToast.current
+    val state by vm.state.collectAsState()
+    val docs by vm.docs.collectAsState()
+    val aiOn by vm.aiOn.collectAsState()
+    var tab by rememberSaveable { mutableIntStateOf(0) }
 
-    var tab by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) { vm.events.collect { toast.show(it) } }
 
-    // ── Poze ──
-    fun photoPerm() = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
-    else Manifest.permission.READ_EXTERNAL_STORAGE
-    var hasPhotos by remember {
-        mutableStateOf(ContextCompat.checkSelfPermission(context, photoPerm()) == PackageManager.PERMISSION_GRANTED)
+    val intentLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
+        vm.onIntentResult(res.resultCode == Activity.RESULT_OK)
     }
-    var photos by remember { mutableStateOf<List<PhotoItem>>(emptyList()) }
-    var selectedPhotos by remember { mutableStateOf<Set<Uri>>(emptySet()) }
-    var loadingPhotos by remember { mutableStateOf(false) }
-
-    suspend fun loadPhotos() {
-        loadingPhotos = true
-        photos = queryRecentPhotos(context)
-        selectedPhotos = photos.filter { it.suggested }.map { it.uri }.toSet()
-        loadingPhotos = false
-    }
-
-    val photoPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        hasPhotos = ok
-        if (ok) scope.launch { loadPhotos() }
-    }
-    LaunchedEffect(hasPhotos) { if (hasPhotos && photos.isEmpty()) loadPhotos() }
-
-    val deleteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
-        if (res.resultCode == android.app.Activity.RESULT_OK) {
-            val freed = photos.filter { it.uri in selectedPhotos }.sumOf { it.sizeBytes }
-            photos = photos.filter { it.uri !in selectedPhotos }
-            selectedPhotos = emptySet()
-            toast.show("Curat! Ai eliberat ${fmtSize(freed)}. Telefon mai ușor.")
+    LaunchedEffect(Unit) {
+        vm.intentRequests.collect { sender ->
+            try { intentLauncher.launch(IntentSenderRequest.Builder(sender).build()) } catch (_: Exception) { vm.onIntentResult(false) }
         }
     }
-
-    fun deleteSelectedPhotos() {
-        val uris = photos.filter { it.uri in selectedPhotos }.map { it.uri }
-        if (uris.isEmpty()) return
-        if (Build.VERSION.SDK_INT >= 30) {
-            val pi = MediaStore.createDeleteRequest(context.contentResolver, uris)
-            deleteLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
-        } else {
-            scope.launch {
-                var freed = 0L
-                withContext(Dispatchers.IO) {
-                    uris.forEach { u ->
-                        try {
-                            freed += photos.first { it.uri == u }.sizeBytes
-                            context.contentResolver.delete(u, null, null)
-                        } catch (_: Exception) { }
-                    }
-                }
-                photos = photos.filter { it.uri !in selectedPhotos }
-                selectedPhotos = emptySet()
-                toast.show("Curat! Ai eliberat ${fmtSize(freed)}.")
-            }
-        }
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.onPermissionResult() }
+    val treeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) vm.onTreePicked(uri)
     }
 
-    // ── Documente ──
-    var docs by remember { mutableStateOf<List<DocItem>>(emptyList()) }
-    var selectedDocs by remember { mutableStateOf<Set<Uri>>(emptySet()) }
-    var docFolder by remember { mutableStateOf<String?>(null) }
-
-    val treeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
-        if (treeUri != null) {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-            } catch (_: Exception) { }
-            scope.launch {
-                val (name, list) = withContext(Dispatchers.IO) { queryDocs(context, treeUri) }
-                docFolder = name
-                docs = list
-                selectedDocs = list.filter { it.suggested }.map { it.uri }.toSet()
-            }
-        }
-    }
-
-    fun deleteSelectedDocs() {
-        val toDelete = docs.filter { it.uri in selectedDocs }
-        if (toDelete.isEmpty()) return
-        scope.launch {
-            var freed = 0L
-            withContext(Dispatchers.IO) {
-                toDelete.forEach { d ->
-                    try {
-                        val df = DocumentFile.fromSingleUri(context, d.uri)
-                        if (df != null && df.delete()) freed += d.sizeBytes
-                    } catch (_: Exception) { }
-                }
-            }
-            docs = docs.filter { it.uri !in selectedDocs }
-            selectedDocs = emptySet()
-            toast.show("Curat! Ai eliberat ${fmtSize(freed)}.")
-        }
-    }
+    var preview by remember { mutableStateOf<MediaItem?>(null) }
+    var albumSheet by remember { mutableStateOf(false) }
 
     Column(
         Modifier.fillMaxSize().topoBackground(decor = false).statusBarsPadding().navigationBarsPadding()
@@ -175,11 +104,7 @@ fun CleanupScreen(onBack: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                Text(
-                    "Curățenie de azi",
-                    style = TitleModule.copy(fontSize = 24.sp),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
+                Text("Curățenie de azi", style = TitleModule.copy(fontSize = 24.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     "TELEFON MAI UȘOR, MINTE MAI LIMPEDE",
                     style = monoLabel(9, 0.14f).copy(color = Accent2),
@@ -207,196 +132,758 @@ fun CleanupScreen(onBack: () -> Unit) {
         Spacer(Modifier.height(12.dp))
 
         if (tab == 0) {
-            // POZE
-            if (!hasPhotos) {
-                Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Ca să facem curat, FORJA are nevoie de acces la galerie.", style = Body, modifier = Modifier.padding(bottom = 12.dp))
-                    Text("Pozele nu pleacă nicăieri — le vezi doar tu, aici, ca să decizi.", style = BodyTiny.copy(color = TextDim), modifier = Modifier.padding(bottom = 12.dp))
-                    SecondaryButton("Dă accesul", onClick = { photoPermLauncher.launch(photoPerm()) })
-                }
-            } else {
-                val selCount = selectedPhotos.size
-                val selBytes = photos.filter { it.uri in selectedPhotos }.sumOf { it.sizeBytes }
-                Text(
-                    if (loadingPhotos) "se încarcă pozele…"
-                    else "${photos.size} poze recente · ${photos.count { it.suggested }} sugerate de aruncat (tu confirmi)",
-                    style = BodyTiny.copy(color = TextSecondary),
-                    modifier = Modifier.padding(horizontal = 20.dp)
-                )
-                Spacer(Modifier.height(10.dp))
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
-                    contentPadding = PaddingValues(bottom = 100.dp)
-                ) {
-                    items(photos, key = { it.uri }) { p ->
-                        val sel = p.uri in selectedPhotos
-                        Box(
-                            Modifier
-                                .padding(4.dp)
-                                .aspectRatio(1f)
-                                .clip(ThumbShape)
-                                .pressable({
-                                    selectedPhotos = if (sel) selectedPhotos - p.uri else selectedPhotos + p.uri
-                                })
-                        ) {
-                            AsyncImage(model = p.uri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                            if (p.suggested) {
-                                Box(
-                                    Modifier.align(Alignment.TopStart).padding(4.dp)
-                                        .clip(ChipShape).background(Color(0xCC0A0A0B)).padding(horizontal = 5.dp, vertical = 2.dp)
-                                ) { Text(p.reason, style = monoLabel(7, 0.06f).copy(color = Accent2)) }
-                            }
-                            Box(
-                                Modifier.align(Alignment.BottomEnd).padding(6.dp).size(22.dp).clip(CircleShape)
-                                    .background(if (sel) Error else Color(0x99000000))
-                                    .border(1.5.dp, Color.White, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) { if (sel) Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(14.dp)) }
-                            Text(fmtSize(p.sizeBytes), style = monoLabel(7, 0.02f).copy(color = Color.White),
-                                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
-                        }
-                    }
-                }
-                if (selCount > 0) {
-                    PrimaryButton(
-                        "Șterge $selCount ${if (selCount == 1) "poză" else "poze"} · ${fmtSize(selBytes)}",
-                        onClick = { deleteSelectedPhotos() },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 20.dp)
-                    )
-                }
-            }
-        } else {
-            // DOCUMENTE
-            Column(Modifier.fillMaxSize()) {
-                if (docFolder == null) {
-                    Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Alege un folder cu documente (ex: Download).", style = Body, modifier = Modifier.padding(bottom = 6.dp))
-                        Text("Android nu ne lasă la toate fișierele fără riscuri — deci alegi tu folderul. Nimic nu pleacă de pe telefon.", style = BodyTiny.copy(color = TextDim), modifier = Modifier.padding(bottom = 14.dp))
-                        SecondaryButton("Alege folderul", onClick = { treeLauncher.launch(null) })
-                    }
-                } else {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("📁 $docFolder · ${docs.size} fișiere", style = BodySmall.copy(color = TextSecondary))
-                        Text("alt folder", style = BodySmall.copy(color = Accent2), modifier = Modifier.pressable({ treeLauncher.launch(null) }))
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-                        docs.forEach { d ->
-                            val sel = d.uri in selectedDocs
-                            ForjaCard(
-                                Modifier.fillMaxWidth().padding(bottom = 8.dp)
-                                    .pressable({ selectedDocs = if (sel) selectedDocs - d.uri else selectedDocs + d.uri }),
-                                fill = if (sel) Color(0x14FF4D3A) else Surface1,
-                                stroke = if (sel) Color(0x66FF4D3A) else StrokeCard, padding = 12.dp
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(d.name, style = BodyStrong.copy(fontSize = 13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text(
-                                            "${fmtSize(d.sizeBytes)} · ${Fmt.freshness(d.lastModified)}" + (if (d.suggested) " · ${d.reason}" else ""),
-                                            style = BodyTiny.copy(color = if (d.suggested) Accent2 else TextDim)
-                                        )
-                                    }
-                                    Box(
-                                        Modifier.size(22.dp).clip(CircleShape)
-                                            .background(if (sel) Error else Surface2)
-                                            .border(1.dp, if (sel) Error else StrokeCardStrong, CircleShape),
-                                        contentAlignment = Alignment.Center
-                                    ) { if (sel) Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(14.dp)) }
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(90.dp))
-                    }
-                    val selCount = selectedDocs.size
-                    if (selCount > 0) {
-                        val selBytes = docs.filter { it.uri in selectedDocs }.sumOf { it.sizeBytes }
-                        PrimaryButton(
-                            "Șterge $selCount ${if (selCount == 1) "fișier" else "fișiere"} · ${fmtSize(selBytes)}",
-                            onClick = { deleteSelectedDocs() },
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 20.dp)
+            when (val s = state) {
+                is CleanupUiState.Choose -> {
+                    if (!s.hasPermission) {
+                        PermissionGate(onAsk = { permLauncher.launch(vm.photoPermissions()) })
+                    } else {
+                        ScopeChooser(
+                            state = s,
+                            onScope = { vm.setScope(it) },
+                            onPickAlbum = { albumSheet = true },
+                            onReset = { vm.resetProgress() },
+                            onStart = { vm.startScan() }
                         )
                     }
+                }
+                is CleanupUiState.Scanning -> ProgressCard(
+                    state = s,
+                    onPause = { vm.pause() },
+                    onResume = { vm.resumeScan() },
+                    onCancel = { vm.backToChoose() }
+                )
+                is CleanupUiState.Results -> ResultsView(
+                    vm = vm, state = s, aiOn = aiOn,
+                    onPreview = { preview = it },
+                    onDone = onBack
+                )
+            }
+        } else {
+            DocsTab(
+                vm = vm, docs = docs, aiOn = aiOn,
+                onPickTree = { try { treeLauncher.launch(null) } catch (_: Exception) { toast.show("Nu pot deschide selectorul de foldere.") } }
+            )
+        }
+    }
+
+    // Sheet: albumele galeriei
+    if (albumSheet) {
+        val s = state as? CleanupUiState.Choose
+        ModalBottomSheet(
+            onDismissRequest = { albumSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = Surface1, shape = SheetShape
+        ) {
+            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp).fillMaxHeight(0.85f)) {
+                Text("Un album", style = TitleModule.copy(fontSize = 20.sp))
+                Spacer(Modifier.height(4.dp))
+                Text("Alege albumul pe care îl curățăm azi.", style = BodySmall.copy(color = TextSecondary))
+                Spacer(Modifier.height(12.dp))
+                val albums = s?.albums ?: emptyList()
+                if (s != null && !s.albumsLoaded) {
+                    Text("citesc albumele…", style = monoLabel(10, 0.12f).copy(color = TextDim))
+                } else if (albums.isEmpty()) {
+                    Text("Galeria nu are albume încă.", style = Body)
+                }
+                LazyColumn(Modifier.weight(1f)) {
+                    items(albums, key = { it.bucketId }) { a ->
+                        val selected = s?.scope?.kind == ScopeKind.ALBUM && s.scope.bucketId == a.bucketId
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(CardShape)
+                                .background(if (selected) TabPillActive else Color.Transparent)
+                                .pressable({
+                                    if (s != null) vm.setScope(s.scope.copy(kind = ScopeKind.ALBUM, bucketId = a.bucketId, bucketName = a.name))
+                                    albumSheet = false
+                                })
+                                .padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(Modifier.size(44.dp).clip(ThumbShape).background(Surface2)) {
+                                if (a.coverUri != null) AsyncImage(model = a.coverUri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(a.name, style = BodyStrong.copy(fontSize = 14.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${a.count} ${if (a.count == 1) "element" else "elemente"} · ${fmtBytes(a.bytes)}", style = BodyTiny.copy(color = TextDim))
+                            }
+                            if (selected) Icon(Icons.Filled.Check, null, tint = Accent2, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Sheet: previzualizare (apăsare lungă pe o poză)
+    preview?.let { item ->
+        val ai = (state as? CleanupUiState.Results)?.ai?.suggestions?.get("m:${item.id}")
+        ModalBottomSheet(
+            onDismissRequest = { preview = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = Surface1, shape = SheetShape
+        ) {
+            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+                AsyncImage(
+                    model = item.uri, contentDescription = null, contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp).clip(CardShape).background(Surface2)
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(item.name, style = BodyStrong, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(4.dp))
+                val where = item.relativePath.ifBlank { item.bucketName }.trimEnd('/')
+                val dims = if (item.width > 0 && item.height > 0) " · ${item.width}×${item.height}" else ""
+                Text("${where.ifBlank { "galerie" }} · ${fmtBytes(item.sizeBytes)}$dims", style = BodySmall.copy(color = TextSecondary))
+                Text(fmtDate(item.bestTimeMs), style = BodyTiny.copy(color = TextDim))
+                if (ai != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SuggestionDot(ai)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            buildString {
+                                append(when (ai.suggestion) { "delete" -> "AI: de aruncat"; "move" -> "AI: mută în ${ai.folder ?: "dosar"}"; else -> "AI: păstrează" })
+                                if (ai.reason.isNotBlank()) append(" — ${ai.reason}")
+                            },
+                            style = BodySmall.copy(color = TextSecondary)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Row {
+                    SecondaryButton("Deschide în Galerie", onClick = {
+                        try {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW).setDataAndType(item.uri, item.mime.ifBlank { "image/*" })
+                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            )
+                        } catch (_: Exception) { toast.show("Nicio aplicație nu poate deschide poza.") }
+                    }, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(10.dp))
+                    SecondaryButton("Șterge", onClick = { preview = null; vm.deleteItems(listOf(item)) }, modifier = Modifier.weight(1f), textColor = Error)
                 }
             }
         }
     }
 }
 
-private suspend fun queryRecentPhotos(context: Context): List<PhotoItem> = withContext(Dispatchers.IO) {
-    val out = ArrayList<PhotoItem>()
-    val proj = arrayOf(
-        MediaStore.Images.Media._ID, MediaStore.Images.Media.SIZE,
-        MediaStore.Images.Media.DATE_ADDED, MediaStore.Images.Media.DISPLAY_NAME,
-        MediaStore.Images.Media.BUCKET_DISPLAY_NAME
-    )
-    try {
-        context.contentResolver.query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, proj, null, null,
-            "${MediaStore.Images.Media.DATE_ADDED} DESC"
-        )?.use { c ->
-            val idC = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            val szC = c.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
-            val dtC = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
-            val nmC = c.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-            val bkC = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
-            val sizeCount = HashMap<Long, Int>()
-            val raw = ArrayList<Array<Any?>>()
-            while (c.moveToNext() && raw.size < 300) {
-                val id = c.getLong(idC); val sz = c.getLong(szC); val dt = c.getLong(dtC) * 1000L
-                val nm = c.getString(nmC) ?: ""; val bk = c.getString(bkC) ?: ""
-                sizeCount[sz] = (sizeCount[sz] ?: 0) + 1
-                raw.add(arrayOf(id, sz, dt, nm, bk))
-            }
-            val now = System.currentTimeMillis()
-            raw.forEach { r ->
-                val id = r[0] as Long; val sz = r[1] as Long; val dt = r[2] as Long
-                val nm = r[3] as String; val bk = r[4] as String
-                val isShot = bk.lowercase().contains("screenshot") || nm.lowercase().startsWith("screenshot")
-                val isTiny = sz in 1..80_000
-                val isDup = (sizeCount[sz] ?: 0) > 1 && sz > 0
-                val reason = when {
-                    isShot -> "screenshot"
-                    isDup -> "posibil duplicat"
-                    isTiny -> "mic/meme"
-                    else -> ""
-                }
-                out.add(
-                    PhotoItem(
-                        uri = Uri.withAppendedPath(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id.toString()),
-                        sizeBytes = sz, dateAddedMs = dt, name = nm, bucket = bk,
-                        suggested = reason.isNotEmpty(), reason = reason
-                    )
-                )
-            }
-        }
-    } catch (_: Exception) { }
-    out
+// ─────────────────────────── Poze: permisiune, scop, progres ───────────────────────────
+
+@Composable
+private fun PermissionGate(onAsk: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Ca să facem curat, FORJA are nevoie de acces la galerie.", style = Body, modifier = Modifier.padding(bottom = 12.dp), textAlign = TextAlign.Center)
+        Text(
+            "Pozele nu pleacă nicăieri — le vezi doar tu, aici, ca să decizi. Pe Android 14 poți alege și doar câteva poze.",
+            style = BodyTiny.copy(color = TextDim), modifier = Modifier.padding(bottom = 12.dp), textAlign = TextAlign.Center
+        )
+        SecondaryButton("Dă accesul", onClick = onAsk)
+    }
 }
 
-private fun queryDocs(context: Context, treeUri: Uri): Pair<String, List<DocItem>> {
-    val tree = DocumentFile.fromTreeUri(context, treeUri) ?: return "?" to emptyList()
-    val folderName = tree.name ?: "Folder"
-    val files = tree.listFiles().filter { it.isFile }
-    val now = System.currentTimeMillis()
-    val nameCount = HashMap<String, Int>()
-    files.forEach { f -> val n = (f.name ?: "").substringBeforeLast('.'); nameCount[n] = (nameCount[n] ?: 0) + 1 }
-    val list = files.map { f ->
-        val name = f.name ?: "fișier"
-        val size = f.length()
-        val mod = f.lastModified()
-        val baseName = name.substringBeforeLast('.')
-        val old = mod > 0 && now - mod > 90L * 86_400_000L
-        val big = size > 20_000_000
-        val dup = name.contains("(1)") || name.contains(" copy") || (nameCount[baseName] ?: 0) > 1
-        val reason = when {
-            dup -> "posibil duplicat"; big -> "mare"; old -> "vechi (>3 luni)"; else -> ""
+@Composable
+private fun ScopeChip(text: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.clip(ChipShape)
+            .background(if (selected) TabPillActive else Surface2)
+            .border(1.dp, if (selected) Accent2.copy(alpha = 0.5f) else StrokeCard, ChipShape)
+            .pressable(onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+    ) {
+        Text(text, style = BodyStrong.copy(fontSize = 12.sp, color = if (selected) Accent2 else TextSecondary))
+    }
+}
+
+@Composable
+private fun ScopeChooser(
+    state: CleanupUiState.Choose,
+    onScope: (CleanupScope) -> Unit,
+    onPickAlbum: () -> Unit,
+    onReset: () -> Unit,
+    onStart: () -> Unit
+) {
+    val scope = state.scope
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        ForjaCard(Modifier.fillMaxWidth()) {
+            Text("Ce curățăm azi?", style = TitleModule.copy(fontSize = 20.sp))
+            Spacer(Modifier.height(4.dp))
+            Text("Alegi tu cât. Scanarea merge local, cu pauză și reluare.", style = BodySmall.copy(color = TextSecondary))
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ScopeChip("Toată galeria", scope.kind == ScopeKind.WHOLE_GALLERY) { onScope(scope.copy(kind = ScopeKind.WHOLE_GALLERY)) }
+                ScopeChip("Un album", scope.kind == ScopeKind.ALBUM) {
+                    if (scope.kind != ScopeKind.ALBUM || scope.bucketId == null) onPickAlbum()
+                    else onScope(scope.copy(kind = ScopeKind.ALBUM))
+                }
+                ScopeChip("Următoarele", scope.kind == ScopeKind.NEXT_BATCH) { onScope(scope.copy(kind = ScopeKind.NEXT_BATCH)) }
+            }
+            if (scope.kind == ScopeKind.NEXT_BATCH) {
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(50, 100, 300).forEach { n ->
+                        ScopeChip("$n", scope.batchSize == n) { onScope(scope.copy(batchSize = n)) }
+                    }
+                }
+            }
+            if (scope.kind == ScopeKind.ALBUM) {
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (scope.bucketName.isNullOrBlank()) "Niciun album ales încă." else "Album: ${scope.bucketName}",
+                        style = BodySmall.copy(color = TextSecondary), modifier = Modifier.weight(1f),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                    Text("alege", style = BodySmall.copy(color = Accent2), modifier = Modifier.pressable(onPickAlbum))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Include videoclipurile", style = BodyStrong.copy(fontSize = 13.sp))
+                    Text("Doar duplicate și fișiere mari — nu le analizăm cadru cu cadru.", style = BodyTiny.copy(color = TextDim))
+                }
+                ForjaSwitch(scope.includeVideos) { onScope(scope.copy(includeVideos = it)) }
+            }
+            val resume = state.resume
+            if (resume != null && resume.processed > 0) {
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Ai rămas la ${resume.processed} ${if (scope.includeVideos) "elemente" else "poze"} · Continuă",
+                        style = BodySmall.copy(color = Accent2), modifier = Modifier.weight(1f)
+                    )
+                    MonoButton("de la început", onClick = onReset)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            val canStart = scope.kind != ScopeKind.ALBUM || scope.bucketId != null
+            PrimaryButton(
+                if (resume != null && resume.processed > 0) "Continuă curățenia" else "Începe curățenia",
+                onClick = onStart, modifier = Modifier.fillMaxWidth(), enabled = canStart
+            )
         }
-        DocItem(f.uri, name, size, mod, reason.isNotEmpty(), reason)
-    }.sortedByDescending { it.sizeBytes }
-    return folderName to list
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "„Ordinea din jur începe cu ordinea dinăuntru.”",
+            style = BodyTiny.copy(color = TextDim), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun ProgressCard(
+    state: CleanupUiState.Scanning,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val p = state.progress
+    val (done, total, label, thumb) = when (p) {
+        null -> Quad(0, 0, "pornesc…", null)
+        is ScanProgress.Inventory -> Quad(0, 0, "inventariez · ${p.count}", null)
+        is ScanProgress.Hashing -> Quad(p.done, p.total, "caut duplicate · ${p.done}/${p.total}", p.currentUri)
+        is ScanProgress.Visual -> Quad(p.done, p.total, "verific claritatea · ${p.done}/${p.total}", p.currentUri)
+        is ScanProgress.Done -> Quad(1, 1, "gata", null)
+    }
+    val fraction = if (total > 0) done.toFloat() / total else 0f
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        ForjaCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(state.scope.title.uppercase(), style = monoLabel(9, 0.14f).copy(color = TextDim))
+                Spacer(Modifier.height(12.dp))
+                ProgressRing(progress = fraction, ringSize = 120.dp, animated = false) {
+                    if (total > 0) Text("${(fraction * 100).toInt()}%", style = heroNumeral(28))
+                    else Text(if (p is ScanProgress.Inventory) "${p.count}" else "…", style = heroNumeral(28))
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(if (state.paused) "pauză · progresul e salvat" else label, style = monoLabel(10, 0.12f).copy(color = if (state.paused) TextDim else Accent2))
+                if (thumb != null && !state.paused) {
+                    Spacer(Modifier.height(12.dp))
+                    AsyncImage(
+                        model = thumb, contentDescription = null, contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(72.dp).clip(ThumbShape).background(Surface2)
+                    )
+                }
+                val resume = state.resume
+                if (state.paused && resume != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("Ai verificat ${resume.processed} până acum. Poți închide aplicația liniștit.", style = BodyTiny.copy(color = TextDim), textAlign = TextAlign.Center)
+                }
+                Spacer(Modifier.height(16.dp))
+                Row {
+                    if (state.paused) PrimaryButton("Continuă", onClick = onResume, modifier = Modifier.weight(1f), small = true)
+                    else SecondaryButton("Pauză", onClick = onPause, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(10.dp))
+                    SecondaryButton("Renunță", onClick = onCancel, modifier = Modifier.weight(1f), textColor = TextSecondary)
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "Totul se calculează pe telefon: nicio poză nu pleacă în timpul scanării.",
+            style = BodyTiny.copy(color = TextDim), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center
+        )
+    }
+}
+
+private data class Quad(val done: Int, val total: Int, val label: String, val thumb: android.net.Uri?)
+
+// ─────────────────────────── Poze: rezultate ───────────────────────────
+
+/** Un tile din grilă: fie o poză de aruncat, fie „păstratul" unui grup. */
+private data class Tile(val item: MediaItem, val reason: String?, val keeper: Boolean)
+
+@Composable
+private fun ResultsView(
+    vm: CleanupViewModel,
+    state: CleanupUiState.Results,
+    aiOn: Boolean,
+    onPreview: (MediaItem) -> Unit,
+    onDone: () -> Unit
+) {
+    val report = state.report
+    val flagged = report.flaggedItems
+    val flaggedBytes = flagged.sumOf { it.sizeBytes }
+    val selectedItems = flagged.filter { it.id in state.selected }
+    val selectedBytes = selectedItems.sumOf { it.sizeBytes }
+
+    Column(Modifier.fillMaxSize()) {
+        LazyColumn(
+            Modifier.weight(1f),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 16.dp)
+        ) {
+            item(key = "summary") {
+                Text(
+                    "${report.scanned.size} verificate · ${flagged.size} de aruncat · ${fmtBytes(flaggedBytes)}" +
+                        (if (report.warnings.isNotEmpty()) " · ${report.warnings.size} necitite" else ""),
+                    style = BodyTiny.copy(color = TextSecondary)
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+            if (report.isEmpty) {
+                item(key = "empty") {
+                    ForjaCard(Modifier.fillMaxWidth()) {
+                        Text("Nimic de aruncat aici. Telefon curat.", style = BodyStrong.copy(fontSize = 15.sp))
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            if (report.hasMore) "Mai sunt poze de verificat — mergem mai departe când vrei."
+                            else "Ai trecut prin tot ce era de trecut. Ține-o așa.",
+                            style = BodySmall.copy(color = TextSecondary)
+                        )
+                    }
+                    Spacer(Modifier.height(14.dp))
+                }
+            }
+            for (cat in Category.values()) {
+                val items = vm.categoryItems(report, cat)
+                if (items.isEmpty()) continue
+                val tiles: List<Tile> = when (cat) {
+                    Category.DUPLICATE -> report.duplicates.flatMap { g -> listOf(Tile(g.keeper, null, true)) + g.copies.map { Tile(it, "duplicat identic", false) } }
+                    Category.SIMILAR -> report.similar.flatMap { g -> listOf(Tile(g.keeper, null, true)) + g.others.map { Tile(it, "aproape identică", false) } }
+                    Category.SCREENSHOT -> items.map { Tile(it, "captură", false) }
+                    Category.BLURRY -> report.blurry.map { Tile(it.item, "neclară · ${it.score.toInt()}×", false) }
+                    Category.TINY -> items.map { Tile(it, if (it.sizeBytes in 1..CleanupEngine.TINY_BYTES) "mică" else "rezoluție mică", false) }
+                    Category.LARGE -> items.map { Tile(it, fmtBytes(it.sizeBytes), false) }
+                }
+                categorySection(vm, state, cat, items, tiles, onPreview)
+            }
+            if (vm.aiAvailable) {
+                item(key = "ai") {
+                    AiPanelCard(
+                        ai = state.ai, aiOn = aiOn,
+                        subject = "miniaturi ≤ 512 px",
+                        onToggle = { vm.setAiOn(it) },
+                        onRequest = { vm.requestAi() },
+                        onApplyFolder = { vm.applyAiFolder(it) }
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
+            }
+            if (report.warnings.isNotEmpty()) {
+                item(key = "warnings") {
+                    Text("Necitite: ${report.warnings.take(3).joinToString(" · ")}", style = BodyTiny.copy(color = TextDim))
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+        }
+
+        // Footer lipit: acțiuni globale
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 16.dp)) {
+            if (state.busy) {
+                Text("lucrez…", style = monoLabel(10, 0.12f).copy(color = Accent2), modifier = Modifier.padding(bottom = 8.dp))
+            }
+            if (selectedItems.isNotEmpty()) {
+                PrimaryButton(
+                    "Șterge ${selectedItems.size} ${if (selectedItems.size == 1) "poză" else "poze"} · ${fmtBytes(selectedBytes)}",
+                    onClick = { vm.deleteSelected() }, modifier = Modifier.fillMaxWidth(), enabled = !state.busy
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            if (report.hasMore) {
+                PrimaryButton(
+                    "Următoarele ${state.scope.batchSize}", onClick = { vm.nextBatch() },
+                    modifier = Modifier.fillMaxWidth(), small = true, enabled = !state.busy
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            Row {
+                MonoButton("Gata pe azi", onClick = onDone, modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                MonoButton("Alt scop", onClick = { vm.backToChoose() }, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+private fun LazyListScope.categorySection(
+    vm: CleanupViewModel,
+    state: CleanupUiState.Results,
+    cat: Category,
+    items: List<MediaItem>,
+    tiles: List<Tile>,
+    onPreview: (MediaItem) -> Unit
+) {
+    val ids = items.map { it.id }
+    val bytes = items.sumOf { it.sizeBytes }
+    val allSelected = ids.all { it in state.selected }
+    val targets = items.filter { it.id in state.selected }.ifEmpty { items }
+    val targetBytes = targets.sumOf { it.sizeBytes }
+    item(key = "h-${cat.name}") {
+        SectionLabel("${cat.label} · ${items.size} · ${fmtBytes(bytes)}", color = Accent2)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SecondaryButton(if (allSelected) "Deselectează" else "Selectează tot", onClick = { vm.selectAll(ids, !allSelected) }, padV = 8.dp)
+            if (vm.engine.canMove) SecondaryButton("Mută în dosar", onClick = { vm.moveCategory(cat) }, padV = 8.dp)
+            SecondaryButton("Șterge ${targets.size} · ${fmtBytes(targetBytes)}", onClick = { vm.deleteCategory(cat) }, padV = 8.dp, textColor = Error)
+        }
+        if (cat == Category.DUPLICATE || cat == Category.SIMILAR) {
+            Spacer(Modifier.height(4.dp))
+            Text("Primul din fiecare grup e păstrat; copiile sunt bifate.", style = BodyTiny.copy(color = TextDim))
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+    val rows = tiles.chunked(3)
+    items(rows.size, key = { i -> "r-${cat.name}-${rows[i].first().item.id}" }) { i ->
+        val row = rows[i]
+        Row(Modifier.fillMaxWidth()) {
+            row.forEach { t ->
+                MediaTile(
+                    item = t.item, selected = t.item.id in state.selected, reason = t.reason, keeper = t.keeper,
+                    badge = state.ai.suggestions["m:${t.item.id}"],
+                    onToggle = { vm.toggleSelect(t.item.id) },
+                    onLong = { onPreview(t.item) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+        }
+    }
+    item(key = "sp-${cat.name}") { Spacer(Modifier.height(14.dp)) }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MediaTile(
+    item: MediaItem,
+    selected: Boolean,
+    reason: String?,
+    keeper: Boolean,
+    badge: OrganizeSuggestion?,
+    onToggle: () -> Unit,
+    onLong: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier
+            .padding(3.dp)
+            .aspectRatio(1f)
+            .clip(ThumbShape)
+            .background(Surface2)
+            .then(if (keeper) Modifier.border(1.5.dp, Positive.copy(alpha = 0.8f), ThumbShape) else Modifier)
+            .combinedClickable(onClick = onToggle, onLongClick = onLong)
+    ) {
+        AsyncImage(model = item.uri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        if (keeper) {
+            Box(
+                Modifier.align(Alignment.TopStart).padding(4.dp)
+                    .clip(ChipShape).background(Color(0xCC0A0A0B)).padding(horizontal = 5.dp, vertical = 2.dp)
+            ) { Text("păstrat", style = monoLabel(7, 0.06f).copy(color = Positive)) }
+        } else if (reason != null) {
+            Box(
+                Modifier.align(Alignment.TopStart).padding(4.dp)
+                    .clip(ChipShape).background(Color(0xCC0A0A0B)).padding(horizontal = 5.dp, vertical = 2.dp)
+            ) { Text(reason, style = monoLabel(7, 0.06f).copy(color = Accent2), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        }
+        Text(
+            fmtBytes(item.sizeBytes), style = monoLabel(7, 0.02f).copy(color = Color.White),
+            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
+        )
+        if (item.isVideo) {
+            Text("VIDEO", style = monoLabel(7, 0.10f).copy(color = Color.White), modifier = Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 26.dp))
+        }
+        if (badge != null) {
+            Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { SuggestionDot(badge) }
+        }
+        Box(
+            Modifier.align(Alignment.BottomEnd).padding(6.dp).size(22.dp).clip(CircleShape)
+                .background(if (selected) Error else Color(0x99000000))
+                .border(1.5.dp, Color.White, CircleShape),
+            contentAlignment = Alignment.Center
+        ) { if (selected) Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(14.dp)) }
+    }
+}
+
+/** Punctul sugestiei AI: verde = păstrează, roșu = de aruncat, verde-oliv cu dosar = mută. */
+@Composable
+private fun SuggestionDot(s: OrganizeSuggestion) {
+    when (s.suggestion) {
+        "move" -> Box(
+            Modifier.size(18.dp).clip(CircleShape).background(Color(0xCC0A0A0B)), contentAlignment = Alignment.Center
+        ) { Icon(Icons.Outlined.FolderOpen, null, tint = Accent2, modifier = Modifier.size(12.dp)) }
+        "delete" -> Box(Modifier.size(10.dp).clip(CircleShape).background(Error).border(1.dp, Color(0x99000000), CircleShape))
+        else -> Box(Modifier.size(10.dp).clip(CircleShape).background(Positive).border(1.dp, Color(0x99000000), CircleShape))
+    }
+}
+
+// ─────────────────────────── Panoul AI (poze și documente) ───────────────────────────
+
+@Composable
+private fun AiPanelCard(
+    ai: AiPanel,
+    aiOn: Boolean,
+    subject: String,
+    onToggle: (Boolean) -> Unit,
+    onRequest: () -> Unit,
+    onApplyFolder: (String) -> Unit
+) {
+    ForjaCard(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                Text("Sugestii AI", style = BodyStrong.copy(fontSize = 15.sp))
+                Text(
+                    "Trimite doar $subject, nimic altceva. AI-ul propune, tu decizi — nimic nu se șterge singur.",
+                    style = BodyTiny.copy(color = TextSecondary)
+                )
+            }
+            ForjaSwitch(aiOn, onToggle)
+        }
+        if (aiOn) {
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SecondaryButton(
+                    if (ai.loading) "se gândește…" else if (ai.requested) "Cere din nou" else "Cere sugestii pentru selecție",
+                    onClick = { if (!ai.loading) onRequest() }, modifier = Modifier.weight(1f)
+                )
+                if (ai.loading) {
+                    Spacer(Modifier.width(12.dp))
+                    CircularProgressIndicator(color = Accent2, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                }
+            }
+            if (ai.requested) {
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(Positive)); Text("păstrează", style = BodyTiny.copy(color = TextDim))
+                    Spacer(Modifier.width(6.dp))
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(Error)); Text("de aruncat (doar bifat)", style = BodyTiny.copy(color = TextDim))
+                    Spacer(Modifier.width(6.dp))
+                    Icon(Icons.Outlined.FolderOpen, null, tint = Accent2, modifier = Modifier.size(12.dp)); Text("mută", style = BodyTiny.copy(color = TextDim))
+                }
+                val folders = ai.moveFolders
+                if (folders.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    folders.entries.sortedByDescending { it.value.size }.forEach { (folder, list) ->
+                        PrimaryButton(
+                            "Mută ${list.size} în $folder", onClick = { onApplyFolder(folder) },
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp), small = true
+                        )
+                    }
+                }
+                if (ai.summary.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(ai.summary, style = BodySmall.copy(color = TextSecondary))
+                }
+                if (ai.provider.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(ai.provider.uppercase(), style = monoLabel(8, 0.12f).copy(color = TextDim2))
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────── Documente ───────────────────────────
+
+private data class DocRowModel(val item: DocItem, val reason: String?, val keeper: Boolean)
+
+@Composable
+private fun DocsTab(
+    vm: CleanupViewModel,
+    docs: DocsUiState,
+    aiOn: Boolean,
+    onPickTree: () -> Unit
+) {
+    val tree = docs.tree
+    if (tree == null) {
+        Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Alege un folder cu documente (ex: Download).", style = Body, modifier = Modifier.padding(bottom = 6.dp), textAlign = TextAlign.Center)
+            Text(
+                "Android nu ne lasă la toate fișierele fără riscuri — deci alegi tu folderul. Îl ținem minte. Nimic nu pleacă de pe telefon.",
+                style = BodyTiny.copy(color = TextDim), modifier = Modifier.padding(bottom = 14.dp), textAlign = TextAlign.Center
+            )
+            SecondaryButton("Alege folderul", onClick = onPickTree)
+        }
+        return
+    }
+    val report = docs.report
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "📁 ${docs.treeName} · ${report?.items?.size ?: 0} fișiere",
+                style = BodySmall.copy(color = TextSecondary), modifier = Modifier.weight(1f),
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            Text("rescanează", style = BodySmall.copy(color = TextDim), modifier = Modifier.pressable({ vm.rescanDocs() }))
+            Spacer(Modifier.width(12.dp))
+            Text("alt folder", style = BodySmall.copy(color = Accent2), modifier = Modifier.pressable(onPickTree))
+        }
+        Spacer(Modifier.height(8.dp))
+        if (docs.loading) {
+            Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(color = Accent2, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text("citesc folderul…", style = monoLabel(10, 0.12f).copy(color = Accent2))
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        val selectedDocs = report?.items?.filter { it.key in docs.selected } ?: emptyList()
+        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 16.dp)) {
+            if (report != null) {
+                if (report.isEmpty && !docs.loading) {
+                    item(key = "empty") {
+                        ForjaCard(Modifier.fillMaxWidth()) {
+                            Text("Nimic de aruncat aici. Folder curat.", style = BodyStrong.copy(fontSize = 15.sp))
+                            Spacer(Modifier.height(4.dp))
+                            Text("Poți totuși cere sugestii AI de organizare pentru tot folderul.", style = BodySmall.copy(color = TextSecondary))
+                        }
+                        Spacer(Modifier.height(14.dp))
+                    }
+                }
+                val dupRows = report.duplicates.flatMap { g -> listOf(DocRowModel(g.keeper, null, true)) + g.copies.map { DocRowModel(it, "duplicat identic", false) } }
+                docSection(vm, docs, "Duplicate", "Duplicate", report.duplicates.flatMap { it.copies }, dupRows)
+                docSection(vm, docs, "Mari", "Mari", report.large, report.large.map { DocRowModel(it, "mare", false) })
+                docSection(vm, docs, "Vechi", "Vechi", report.old, report.old.map { DocRowModel(it, "vechi (>3 luni)", false) })
+                docSection(vm, docs, "Suspecte", "Duplicate", report.suspects.map { it.first }, report.suspects.map { DocRowModel(it.first, it.second, false) })
+                if (vm.aiAvailable) {
+                    item(key = "ai") {
+                        AiPanelCard(
+                            ai = docs.ai, aiOn = aiOn,
+                            subject = "numele fișierelor și fragmente scurte din cele text",
+                            onToggle = { vm.setAiOn(it) },
+                            onRequest = { vm.requestDocsAi() },
+                            onApplyFolder = { vm.applyDocsAiFolder(it) }
+                        )
+                        Spacer(Modifier.height(12.dp))
+                    }
+                }
+                if (report.warnings.isNotEmpty()) {
+                    item(key = "warnings") {
+                        Text(report.warnings.take(2).joinToString(" · "), style = BodyTiny.copy(color = TextDim))
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+        }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 16.dp)) {
+            if (docs.busy) Text("lucrez…", style = monoLabel(10, 0.12f).copy(color = Accent2), modifier = Modifier.padding(bottom = 8.dp))
+            if (selectedDocs.isNotEmpty()) {
+                PrimaryButton(
+                    "Șterge ${selectedDocs.size} ${if (selectedDocs.size == 1) "fișier" else "fișiere"} · ${fmtBytes(selectedDocs.sumOf { it.sizeBytes })}",
+                    onClick = { vm.deleteDocs(selectedDocs) }, modifier = Modifier.fillMaxWidth(), enabled = !docs.busy
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            if (docs.undoCount > 0) {
+                SecondaryButton("Anulează ultima mutare", onClick = { vm.undoLastDocMove() }, modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+private fun LazyListScope.docSection(
+    vm: CleanupViewModel,
+    docs: DocsUiState,
+    title: String,
+    category: String,
+    items: List<DocItem>,
+    rows: List<DocRowModel>
+) {
+    if (items.isEmpty()) return
+    val keys = items.map { it.key }
+    val allSelected = keys.all { it in docs.selected }
+    val targets = items.filter { it.key in docs.selected }.ifEmpty { items }
+    item(key = "h-$title") {
+        SectionLabel("$title · ${items.size} · ${fmtBytes(items.sumOf { it.sizeBytes })}", color = Accent2)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SecondaryButton(if (allSelected) "Deselectează" else "Selectează tot", onClick = { vm.selectDocs(keys, !allSelected) }, padV = 8.dp)
+            SecondaryButton("Mută în ${DocumentOrganizer.ROOT_FOLDER}/$category", onClick = { vm.moveDocs(vm.docTargets(items), category) }, padV = 8.dp)
+            SecondaryButton("Șterge ${targets.size}", onClick = { vm.deleteDocs(vm.docTargets(items)) }, padV = 8.dp, textColor = Error)
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+    items(rows, key = { "d-$title-${it.item.key}" }) { r ->
+        DocRow(
+            item = r.item, selected = r.item.key in docs.selected, reason = r.reason, keeper = r.keeper,
+            badge = docs.ai.suggestions[vm.docAiId(r.item)],
+            onToggle = { vm.toggleDoc(r.item.key) }
+        )
+    }
+    item(key = "sp-$title") { Spacer(Modifier.height(10.dp)) }
+}
+
+@Composable
+private fun DocRow(item: DocItem, selected: Boolean, reason: String?, keeper: Boolean, badge: OrganizeSuggestion?, onToggle: () -> Unit) {
+    ForjaCard(
+        Modifier.fillMaxWidth().padding(bottom = 8.dp).pressable(onToggle),
+        fill = if (selected) Color(0x14FF4D3A) else Surface1,
+        stroke = if (selected) Color(0x66FF4D3A) else if (keeper) Positive.copy(alpha = 0.45f) else StrokeCard,
+        padding = 12.dp
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(item.name, style = BodyStrong.copy(fontSize = 13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val folder = item.path.substringBeforeLast('/', "")
+                Text(
+                    buildString {
+                        append(fmtBytes(item.sizeBytes)); append(" · "); append(Fmt.freshness(item.lastModified))
+                        if (folder.isNotBlank()) { append(" · "); append(folder) }
+                        if (keeper) append(" · păstrat") else if (reason != null) { append(" · "); append(reason) }
+                    },
+                    style = BodyTiny.copy(color = if (keeper) Positive else if (reason != null) Accent2 else TextDim),
+                    maxLines = 2, overflow = TextOverflow.Ellipsis
+                )
+                if (badge != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SuggestionDot(badge)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            when (badge.suggestion) { "delete" -> "AI: de aruncat"; "move" -> "AI: mută în ${badge.folder ?: "dosar"}"; else -> "AI: păstrează" } +
+                                (if (badge.reason.isNotBlank()) " — ${badge.reason}" else ""),
+                            style = BodyTiny.copy(color = TextSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Box(
+                Modifier.size(22.dp).clip(CircleShape)
+                    .background(if (selected) Error else Surface2)
+                    .border(1.dp, if (selected) Error else StrokeCardStrong, CircleShape),
+                contentAlignment = Alignment.Center
+            ) { if (selected) Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(14.dp)) }
+        }
+    }
 }
