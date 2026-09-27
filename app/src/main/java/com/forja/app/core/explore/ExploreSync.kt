@@ -73,6 +73,8 @@ object ExploreSync {
     private const val GRID_M = 150
     private const val CELLS_PER_PAGE = 400
     private const val PLACES_PER_PAGE = 100
+    /** Serverul primește ≤ 64 KiB pe cerere; paginăm și după octeți, nu doar după număr. */
+    private const val PAGE_BYTES = 56_000
     private const val PERIOD_MIN = 30L
     private const val FRIENDS_TIMEOUT_MS = 10_000L
 
@@ -164,11 +166,11 @@ object ExploreSync {
 
         var serverAt = 0L
         try {
-            for (page in cells.chunked(CELLS_PER_PAGE)) {
-                serverAt = post(device, page.map { cellJson(it) }, emptyList())
+            for (page in pages(cells.map { cellJson(it) }, CELLS_PER_PAGE)) {
+                serverAt = post(device, page, emptyList())
             }
             val entries = places.flatMap { placeEntries(it, family, friends) }
-            for (page in entries.chunked(PLACES_PER_PAGE)) {
+            for (page in pages(entries, PLACES_PER_PAGE)) {
                 serverAt = post(device, emptyList(), page)
             }
         } catch (e: InsightsFailure) {
@@ -188,7 +190,7 @@ object ExploreSync {
         if (!app.prefs.exploreSyncSite.first() || app.auth.currentUid == null) return Outcome.SKIPPED
         return try {
             val device = InsightsApi.deviceId(app.prefs)()
-            post(device, emptyList(), ids.map { tombstoneJson(it, at) })
+            for (page in pages(ids.map { tombstoneJson(it, at) }, PLACES_PER_PAGE)) post(device, emptyList(), page)
             Outcome.DONE
         } catch (e: InsightsFailure) {
             classify(e)
@@ -240,6 +242,33 @@ object ExploreSync {
             ?.map { it.uid }?.toSet() ?: emptySet()
     } catch (_: Exception) { emptySet() }
 
+    /** Pagini de cel mult [maxCount] intrări și ~[PAGE_BYTES] octeți (o intrare mare merge singură). */
+    private fun pages(items: List<JsonObject>, maxCount: Int): List<List<JsonObject>> {
+        val out = ArrayList<List<JsonObject>>()
+        var page = ArrayList<JsonObject>()
+        var bytes = 0
+        for (item in items) {
+            val size = item.toString().toByteArray(Charsets.UTF_8).size + 1
+            if (page.isNotEmpty() && (page.size >= maxCount || bytes + size > PAGE_BYTES)) {
+                out.add(page); page = ArrayList(); bytes = 0
+            }
+            page.add(item); bytes += size
+        }
+        if (page.isNotEmpty()) out.add(page)
+        return out
+    }
+
+    /** Coordonate la 6 zecimale (~11 cm): destul pentru hartă, de trei ori mai puțini octeți. */
+    private fun coord(v: Double): Double = Math.round(v * 1_000_000.0) / 1_000_000.0
+
+    /** Text pe o singură linie, fără caractere de control (serverul le respinge). */
+    private fun line(v: String, max: Int): String =
+        v.replace(Regex("[\\u0000-\\u001F\\u007F]"), " ").trim().take(max)
+
+    /** Nota poate avea rânduri noi; restul caracterelor de control pleacă. */
+    private fun note(v: String, max: Int): String =
+        v.replace("\r\n", "\n").replace(Regex("[\\u0000-\\u0008\\u000B-\\u001F\\u007F]"), " ").trim().take(max)
+
     /** Un POST explore/sync; întoarce `server_at`. */
     private suspend fun post(device: String, cells: List<JsonObject>, places: List<JsonObject>): Long {
         val body = buildJsonObject {
@@ -255,10 +284,10 @@ object ExploreSync {
 
     private fun cellJson(c: ExploreCellEntity): JsonObject = buildJsonObject {
         put("id", c.id)
-        put("min_lat", c.minLat)
-        put("min_lng", c.minLng)
-        put("max_lat", c.maxLat)
-        put("max_lng", c.maxLng)
+        put("min_lat", coord(c.minLat))
+        put("min_lng", coord(c.minLng))
+        put("max_lat", coord(maxOf(c.maxLat, c.minLat + 0.000001)))
+        put("max_lng", coord(maxOf(c.maxLng, c.minLng + 0.000001)))
         put("first_at", c.firstAt)
         put("last_at", maxOf(c.lastAt, c.firstAt))
         put("visits", c.visits.coerceAtLeast(1))
@@ -275,14 +304,14 @@ object ExploreSync {
         if (p.recommended) visible.addAll(friends)
         val place = buildJsonObject {
             put("id", id)
-            put("lat", p.lat)
-            put("lng", p.lng)
+            put("lat", coord(p.lat))
+            put("lng", coord(p.lng))
             put("first_at", p.firstAt)
             put("last_at", maxOf(p.lastAt, p.firstAt))
             put("stay_ms", p.stayMs.coerceAtLeast(0L))
-            put("name", p.name.take(80))
+            put("name", line(p.name, 80))
             put("stars", p.stars.coerceIn(0, 5))
-            put("note", p.note.take(300))
+            put("note", note(p.note, 300))
             put("recommended", p.recommended)
             putJsonArray("visible_to") { visible.take(100).forEach { add(it) } }
             put("updated_at", p.updatedAt.coerceAtLeast(0L))

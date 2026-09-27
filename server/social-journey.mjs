@@ -32,7 +32,7 @@ const MAX_AT=253402300799999, cellId=/^-?\d{1,9}_-?\d{1,9}$/, placeId=/^[A-Za-z0
 const eprefix=(id,kind)=>'explore:'+id+':'+kind+':';
 const emeta=id=>'explore-meta:'+id;
 const int=(v,a,b,msg='Valoare invalidă.')=>{if(!Number.isSafeInteger(v)||v<a||v>b)bad(msg);return v;};
-const label=(v,n)=>{if(v===undefined||v===null)return '';if(typeof v!=='string'||v.length>n||/[\x00-\x1f\x7f]/.test(v))bad('Text invalid.');return v.trim();};
+const label=(v,n,multi=false)=>{if(v===undefined||v===null)return '';if(typeof v!=='string'||v.length>n||(multi?/[\x00-\x08\x0b-\x1f\x7f]/:/[\x00-\x1f\x7f]/).test(v))bad('Text invalid.');return v.trim();};
 const live=v=>!!v&&v.deleted!==true;
 function cellFeature(c){return feature({type:'Polygon',coordinates:[[[c.min_lng,c.min_lat],[c.max_lng,c.min_lat],[c.max_lng,c.max_lat],[c.min_lng,c.max_lat],[c.min_lng,c.min_lat]]]},{id:c.id,first_at:c.first_at,last_at:c.last_at,visits:c.visits,kind:'explored'});}
 function publicPlace(v){return {id:v.id,lat:v.lat,lon:v.lng,lng:v.lng,name:v.name,stars:v.stars,note:v.note,recommended:v.recommended,stay_ms:v.stay_ms,first_at:v.first_at,last_at:v.last_at,updated_at:v.updated_at};}
@@ -57,7 +57,7 @@ function validPlace(v,p){
  if(v.visible_to!==undefined&&(!Array.isArray(v.visible_to)||v.visible_to.length>100||v.visible_to.some(x=>typeof x!=='string'||!uid.test(x))))bad('Loc invalid.');
  // Only accepted, unblocked friends may see a place; anyone else is dropped silently (same rule as places.visibleTo).
  const visible_to=[...new Set(v.visible_to||[])].filter(x=>x!==p.id&&p.friends.includes(x)&&!p.blocked.includes(x));
- return {id:v.id,lat:v.lat,lng:v.lng,first_at,last_at,stay_ms,name:label(v.name,80),stars,note:label(v.note,300),recommended:v.recommended===true,visible_to,updated_at:v.updated_at};
+ return {id:v.id,lat:v.lat,lng:v.lng,first_at,last_at,stay_ms,name:label(v.name,80),stars,note:label(v.note,300,true),recommended:v.recommended===true,visible_to,updated_at:v.updated_at};
 }
 async function wipeExplore(s,id){for(const kind of ['cell','place']){let rows;do{rows=await s.list({prefix:eprefix(id,kind),limit:500});for(const key of rows.keys())await s.delete(key);}while(rows.size===500);}await s.delete(emeta(id));}
 async function handleExplore(req,graph,p,path,method,url,now){
@@ -94,7 +94,7 @@ async function handleExplore(req,graph,p,path,method,url,now){
  if(match&&method==='PATCH'){
   const key=eprefix(p.id,'place')+match[1],place=await s.get(key);if(!live(place))bad('Loc indisponibil.',404);
   const v=await read(req,['name','stars','note'],[]);if(!Object.keys(v).length)bad('Alege un nume, stele sau o notă.');
-  if(v.name!==undefined)place.name=label(v.name,80);if(v.note!==undefined)place.note=label(v.note,300);if(v.stars!==undefined)place.stars=int(v.stars,0,5,'Stele invalide.');
+  if(v.name!==undefined)place.name=label(v.name,80);if(v.note!==undefined)place.note=label(v.note,300,true);if(v.stars!==undefined)place.stars=int(v.stars,0,5,'Stele invalide.');
   // Strictly newer than any phone edit already received, so the phone's last-writer-wins pull applies it.
   place.updated_at=Math.max(now,(place.updated_at||0)+1);
   const meta=await s.get(emeta(p.id))||{cells:0,places:1,revision:0,grid_m:150};meta.updated_at=now;

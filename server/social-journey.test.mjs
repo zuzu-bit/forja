@@ -60,12 +60,16 @@ test('explore sync validates bounds, sizes, ids and text and rejects oversized b
  assert.equal((await sync(f,'alice',{places:[place('p1',{stars:6})]})).status,400);
  assert.equal((await sync(f,'alice',{places:[place('p1',{name:'x'.repeat(81)})]})).status,400);
  assert.equal((await sync(f,'alice',{places:[place('p1',{note:'bad\x00'})]})).status,400);
+ assert.equal((await sync(f,'alice',{places:[place('p1',{name:'două\nrânduri'})]})).status,400,'names stay on one line');
+ assert.equal((await sync(f,'alice',{places:[place('p1',{note:'rând 1\nrând 2'})]})).status,200,'a note may span lines');
+ assert.equal((await f.call('alice','explore/places/p1','PATCH',{note:'de pe\nlaptop'})).status,200);
  assert.equal((await sync(f,'alice',{places:[place('bad id')]})).status,400);
  assert.equal((await sync(f,'alice',{grid_m:50})).status,400);
  assert.equal((await sync(f,'alice',{device:'phone'})).status,400);
  assert.equal((await f.call('alice','explore/sync','POST',{device,extra:1})).status,400);
  assert.equal((await f.call('alice','explore/state?cursor=zzz')).status,400);
  assert.equal((await f.call('alice','explore/state')).cells.features.length,0,'nothing invalid was stored');
+ assert.equal((await f.call('alice','explore/state')).places[0].note,'de pe\nlaptop');
 });
 test('explore cells page 200 at a time by cursor and places arrive on every page',async()=>{
  const f=fixture();

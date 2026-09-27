@@ -1070,6 +1070,8 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                 scope.launch {
                     app.prefs.setExploreSyncSite(on)
                     if (on) {
+                        // Retrimitem tot: site-ul trebuie să arate exact ce are telefonul (chiar dacă a fost șters de acolo).
+                        app.prefs.setExploreSyncedAt(0L)
                         ExploreSync.schedule(context)
                         ExploreSync.kick(context)
                         toast.show("Explorarea merge și pe site. Intră în panoul online cu același cont.")

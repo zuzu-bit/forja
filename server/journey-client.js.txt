@@ -26,7 +26,7 @@ function openJourney(){journeyModeButton();journeyUI.vector?.resize();refreshJou
 function exploreMerge(old,page){if(!old)return page;return {...page,cells:{type:'FeatureCollection',features:[...(old.cells?.features||[]),...(page.cells?.features||[])]},places:page.places?.length?page.places:old.places||[]};}
 async function refreshExplore(current,target,generation){
  let result=null,cursor=null;
- for(let n=0;n<25;n++){const query=new URLSearchParams();if(target)query.set('owner',target);if(cursor)query.set('cursor',cursor);const page=await socialCall('explore/state'+(query.size?'?'+query:''));if(auth!==current||target!==journeyUI.owner||generation!==journeyUI.generation)return null;result=exploreMerge(result,page);cursor=page.next_cursor;if(!cursor)break;}
+ for(let n=0;n<25;n++){const query=new URLSearchParams();if(target)query.set('owner',target);if(cursor)query.set('cursor',cursor);const qs=query.toString(),page=await socialCall('explore/state'+(qs?'?'+qs:''));if(auth!==current||target!==journeyUI.owner||generation!==journeyUI.generation)return null;result=exploreMerge(result,page);cursor=page.next_cursor;if(!cursor)break;}
  return result;
 }
 function exploreMeta(v){return ('★'.repeat(v.stars||0)||'fără stele')+(v.stay_ms?' · '+(v.stay_ms/3600000).toFixed(1)+' h stat':'')+(v.recommended?' · recomandat prietenilor':'');}
@@ -61,9 +61,10 @@ function renderJourney(){
  for(const v of d.visits){const row=el('article',undefined,'social-card');row.append(el('strong',v.name||'Loc vizitat'),el('p',(v.observed_ms/3600000).toFixed(1)+' h confirmate'+(v.rating?' · '+v.rating+'/5 ★':''),'social-meta'),button('Vezi locul',()=>{socialShowMap(v);journeyVisit(v);},'social-primary'));list.append(row);}
  const mine=$('journey-places');
  if(mine){mine.replaceChildren();const explore=journeyUI.explore,rows=explore?.places||[];mine.append(el('h3',owned?'Locurile mele':'Locuri din aplicație'));
-  if(!explore)mine.append(el('p',owned?'Pornește „Și pe site” din harta aplicației FORJA: zonele și locurile tale apar aici, cu același cont.':'Nimic trimis din aplicație.','social-meta'));
+  const never=!explore||(owned&&!explore.updated_at&&!explore.cells.features.length&&!rows.length);
+  if(never)mine.append(el('p',owned?'Pornește „Și pe site” din harta aplicației FORJA: zonele și locurile tale apar aici, cu același cont.':'Nimic trimis din aplicație.','social-meta'));
   else mine.append(el('p',`${explore.cells.features.length} zone de ${explore.grid_m} m din aplicație · ${rows.length} locuri`,'social-meta'));
-  if(explore&&!rows.length)mine.append(el('p',owned?'Locurile apar după ce stai undeva destul. Dă-le nume și stele din telefon sau de aici.':'Nu ți-a recomandat încă un loc.','social-meta'));
+  if(!never&&!rows.length)mine.append(el('p',owned?'Locurile apar după ce stai undeva destul. Dă-le nume și stele din telefon sau de aici.':'Nu ți-a recomandat încă un loc.','social-meta'));
   for(const v of rows){const row=el('article',undefined,'social-card');row.append(el('strong',v.name||'Loc fără nume'),el('p',exploreMeta(v),'social-meta'));if(v.note)row.append(el('p',v.note,'social-status'));row.append(button(owned?'Vezi și editează':'Vezi locul',()=>{socialShowMap(v);explorePlace(v);},'social-primary'));mine.append(row);}
  }
  renderJourneyMap();
