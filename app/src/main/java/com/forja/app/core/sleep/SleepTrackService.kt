@@ -529,12 +529,16 @@ class SleepTrackService : Service(), SensorEventListener {
         if (!notificationsOn || !fullScreenOk) AlarmRinger.start(this)
         scope.launch {
             delay(4_000)
-            if (alarmFired && !AlarmActivity.visible) AlarmRinger.start(this@SleepTrackService)
+            // Doar cât veghea e vie și alarma încă e „în așteptare”: după „M-am trezit” nu mai sunăm.
+            if (running && alarmFired && !AlarmActivity.visible) AlarmRinger.start(this@SleepTrackService)
         }
     }
 
     private fun finishSession() {
         running = false
+        finishing = true
+        alarmFired = false
+        snoozeUntil = 0L
         AlarmRinger.stop()
         cancelAlarmNotification()
         alarmJob?.cancel()
@@ -610,6 +614,7 @@ class SleepTrackService : Service(), SensorEventListener {
             }
             try { ServiceCompat.stopForeground(this@SleepTrackService, ServiceCompat.STOP_FOREGROUND_REMOVE) } catch (_: Exception) { }
             promoted = false
+            finishing = false
             stopSelf()
         }
     }
@@ -690,6 +695,7 @@ class SleepTrackService : Service(), SensorEventListener {
 
     override fun onDestroy() {
         running = false
+        finishing = false
         try { wakeLock?.release() } catch (_: Exception) { }
         sensorManager?.unregisterListener(this)
         audioJob?.cancel()
@@ -714,6 +720,10 @@ class SleepTrackService : Service(), SensorEventListener {
         var running: Boolean = false
             private set
 
+        /** true cât raportul nopții se scrie după STOP — al doilea „M-am trezit” nu mai închide sesiunea peste el. */
+        @Volatile
+        private var finishing: Boolean = false
+
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, SleepTrackService::class.java))
         }
@@ -727,7 +737,7 @@ class SleepTrackService : Service(), SensorEventListener {
         private fun send(context: Context, action: String) {
             val i = Intent(context, SleepTrackService::class.java).setAction(action)
             if (!running) {
-                if (action == ACTION_STOP) closeStaleSession(context)
+                if (action == ACTION_STOP && !finishing) closeStaleSession(context)
                 AlarmRinger.stop()
                 try { NotificationManagerCompat.from(context).cancel(ALARM_NOTIF_ID) } catch (_: Exception) { }
                 return

@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -58,6 +59,8 @@ class AlarmActivity : ComponentActivity() {
 
         setContent {
             ForjaTheme {
+                // Sună până spui tu: „înapoi” nu închide alarma pe tăcute.
+                BackHandler { }
                 Box(
                     Modifier
                         .fillMaxSize()
