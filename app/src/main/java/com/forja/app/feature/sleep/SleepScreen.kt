@@ -208,12 +208,15 @@ fun SleepScreen() {
                     .statusBarsPadding()
                     .padding(20.dp)
             ) {
+                // Ștampila postului, deasupra numelui filei — în culoarea nopții, ca să rămână în paleta somnului.
+                StampLabel("STINGEREA", color = SleepTextDim, rotationDeg = -4f)
+                Spacer(Modifier.height(6.dp))
                 Text("Somn", style = TitleModule)
                 Text(
                     when {
                         morning -> "RAPORT DE DIMINEAȚĂ"
                         eveningSleep -> "PREGĂTEȘTE-TE DE SOMN"
-                        else -> "SOMNUL TĂU"
+                        else -> "ÎNTRE DOUĂ NOPȚI"
                     },
                     style = monoLabel(9, 0.16f).copy(color = SleepRem)
                 )
@@ -262,7 +265,7 @@ fun SleepScreen() {
                             "${Fmt.clock(s.startAt)} → ${Fmt.clock(s.endAt ?: s.startAt)}",
                             style = monoLabel(9, 0.10f).copy(color = SleepTextDim)
                         )
-                    } ?: Text("Prima noapte cu FORJA\nte așteaptă.", style = Body.copy(color = SleepTextDim))
+                    } ?: Text("Prima noapte, diseară.\nRaportul, mâine.", style = Body.copy(color = SleepTextDim))
                 }
             }
         }
