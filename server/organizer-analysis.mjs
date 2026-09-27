@@ -164,10 +164,15 @@ export function organizerModelInput(model,messages,sources) {
     response_format:{type:'json_schema',json_schema:{name:'organizer_proposal',strict:true,schema}}};
   if(model===ORGANIZER_MODELS.scout)return {messages,guided_json:schema,max_tokens:2000,temperature:0.1};
   if(model===ORGANIZER_MODELS.gemini) {
-    // Relaxed schema (single-value enum instead of const, one evidence item over all ids, no additionalProperties); validateOrganizerProposal() stays the hard gate.
+    // Relaxed schema (one evidence item over all ids, one deletion_review object instead of two constant-pinned branches, no const/oneOf/additionalProperties);
+    // Gemini's enum accepts only strings, so booleans stay plain typed fields. validateOrganizerProposal() stays the hard gate.
     const ids=sources.map(s=>s.id);
     const relaxed={...schema,properties:{...schema.properties,evidence:{type:'array',minItems:1,maxItems:6,items:{type:'object',required:['source_id','quote','observation'],properties:{
-      source_id:{type:'string',enum:ids},quote:{type:'string',maxLength:240},observation:{type:'string',maxLength:400}}}}}};
+      source_id:{type:'string',enum:ids},quote:{type:'string',maxLength:240},observation:{type:'string',maxLength:400}}}},
+      deletion_review:{type:'object',required:['suggested','basis','reason','evidence_ids'],properties:{
+        suggested:{type:'boolean',description:'Implicit false; true numai pentru conținut foarte redus.'},basis:{type:'string',enum:['none','low_information']},
+        reason:{type:'string',maxLength:300,description:'Șirul gol când suggested este false.'},
+        evidence_ids:{type:'array',maxItems:6,items:{type:'string',enum:['e1','e2','e3','e4','e5','e6']}}}}}};
     const system=messages.filter(m=>m.role==='system').map(m=>String(m.content)).join('\n');
     const parts=messages.filter(m=>m.role!=='system').flatMap(m=>geminiParts(m.content));
     return {system,parts,schema:geminiSchema(relaxed)};

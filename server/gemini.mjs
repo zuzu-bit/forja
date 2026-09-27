@@ -2,27 +2,48 @@
 export const GEMINI_MODEL = 'gemini-2.5-flash';
 export const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent';
 const TIMEOUT_MS = 45000;
-// The Gemini responseSchema accepts only this OpenAPI subset: const, oneOf and additionalProperties are rejected.
+// The Gemini responseSchema accepts only this OpenAPI subset: const, oneOf and additionalProperties are rejected,
+// `enum` is a list of STRINGS (a boolean or number inside it is an HTTP 400) and `format` allows only a few named values.
 const SCHEMA_KEYS = new Set(['type','format','description','nullable','enum','items','properties','required','minItems','maxItems','minLength','maxLength','minimum','maximum','pattern','anyOf']);
+const FORMATS = new Set(['enum','date-time','float','double','int32','int64']);
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
+const typeOf = value => typeof value === 'boolean' ? 'boolean' : typeof value === 'number' ? (Number.isInteger(value) ? 'integer' : 'number') : 'string';
+const fixed = value => 'Valoare fixă: ' + JSON.stringify(value) + '.';
 
 export function geminiAvailable(env) { return typeof env?.GEMINI_API_KEY === 'string' && env.GEMINI_API_KEY.length > 0; }
 
-/** Derives a relaxed schema Gemini accepts: const → single-value enum, oneOf → anyOf, additionalProperties dropped, unknown keywords dropped. */
+/**
+ * Derives a relaxed schema Gemini accepts: const → single-value string enum (non-string or empty constants become a typed field
+ * with the value in `description`), oneOf → anyOf, `type` arrays → type + nullable, additionalProperties/unknown keywords/unsupported formats dropped.
+ * Callers keep their own validators as the hard gate.
+ */
 export function geminiSchema(schema) {
   if (Array.isArray(schema)) return schema.map(geminiSchema);
   if (!object(schema)) return schema;
   const out = {};
   for (const [key, value] of Object.entries(schema)) {
-    if (key === 'const') { out.enum = [value]; continue; }
+    if (key === 'const') {
+      if (typeof value === 'string' && value.length) out.enum = [value];
+      else { out.type = out.type ?? typeOf(value); out.description = [schema.description, fixed(value)].filter(Boolean).join(' '); }
+      continue;
+    }
+    if (key === 'description' && out.description) continue;
     if (key === 'oneOf') { out.anyOf = value.map(geminiSchema); continue; }
     if (!SCHEMA_KEYS.has(key)) continue;
+    if (key === 'type' && Array.isArray(value)) { const kinds = value.filter(t => t !== 'null'); if (kinds.length) out.type = kinds[0]; if (value.includes('null')) out.nullable = true; continue; }
+    if (key === 'format') { if (FORMATS.has(value)) out.format = value; continue; }
+    if (key === 'enum') {
+      if (Array.isArray(value) && value.length && value.every(v => typeof v === 'string' && v.length)) out.enum = value;
+      else if (Array.isArray(value) && value.length) out.description = [schema.description, 'Valori permise: ' + value.map(v => JSON.stringify(v)).join(', ') + '.'].filter(Boolean).join(' ');
+      continue;
+    }
     if (key === 'properties') { out.properties = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, geminiSchema(sub)])); continue; }
     if (key === 'items' || key === 'anyOf') { out[key] = geminiSchema(value); continue; }
     out[key] = value;
   }
-  // Boolean or enum-typed constants keep their declared type; Gemini needs `type` on every node.
-  if (out.enum && !out.type) out.type = typeof out.enum[0] === 'boolean' ? 'boolean' : typeof out.enum[0] === 'number' ? 'number' : 'string';
+  // Gemini needs `type` on every node; an enum without a declared type is a string enum.
+  if (out.enum && !out.type) out.type = 'string';
+  if (Array.isArray(schema.enum) && schema.enum.length && !out.enum && !out.type) out.type = typeOf(schema.enum[0]);
   return out;
 }
 
@@ -54,7 +75,9 @@ export function inlineData(bytes, mimeType) {
 export async function geminiGenerate(env, input, fetcher = fetch) {
   if (!geminiAvailable(env)) throw new Error('gemini_key_missing');
   if (!object(input) || !Array.isArray(input.parts) || !input.parts.length) throw new Error('gemini_input_invalid');
-  const generationConfig = { temperature: Number.isFinite(input.temperature) ? input.temperature : 0.1, maxOutputTokens: Number.isSafeInteger(input.maxTokens) && input.maxTokens > 0 ? input.maxTokens : 2000 };
+  const generationConfig = { temperature: Number.isFinite(input.temperature) ? input.temperature : 0.1, maxOutputTokens: Number.isSafeInteger(input.maxTokens) && input.maxTokens > 0 ? input.maxTokens : 2000,
+    // Gemini 2.5 Flash thinks by default and the thinking tokens count against maxOutputTokens; short budgets (250–500) would come back empty.
+    thinkingConfig: { thinkingBudget: 0 } };
   if (input.schema) { generationConfig.responseMimeType = 'application/json'; generationConfig.responseSchema = geminiSchema(input.schema); }
   const body = { ...(input.system ? { system_instruction: { parts: [{ text: String(input.system) }] } } : {}), contents: [{ role: 'user', parts: input.parts }], generationConfig };
   const response = await fetcher(GEMINI_ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS) });

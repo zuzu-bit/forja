@@ -393,7 +393,7 @@ test('runText prefers Gemini with the system rule, user text and a relaxed JSON 
   assert.equal(requests[0].url,GEMINI_ENDPOINT);assert.equal(requests[0].init.headers['x-goog-api-key'],'secret');
   const body=JSON.parse(requests[0].init.body);
   assert.deepEqual(body.system_instruction,{parts:[{text:'Regula.'}]});assert.deepEqual(body.contents,[{role:'user',parts:[{text:'{"brief":"x"}'}]}]);
-  assert.deepEqual(body.generationConfig,{temperature:0.3,maxOutputTokens:500,responseMimeType:'application/json',responseSchema:{type:'object',required:['title','body'],properties:{title:{type:'string',maxLength:100},body:{type:'string',maxLength:500}}}});
+  assert.deepEqual(body.generationConfig,{temperature:0.3,maxOutputTokens:500,thinkingConfig:{thinkingBudget:0},responseMimeType:'application/json',responseSchema:{type:'object',required:['title','body'],properties:{title:{type:'string',maxLength:100},body:{type:'string',maxLength:500}}}});
 });
 test('runText falls back to Workers AI Llama on any Gemini error and uses it directly without a key',async(t)=>{
   const runs=[];const env={GEMINI_API_KEY:'k',AI:{run:async(model,input)=>{runs.push({model,input});return {response:'{"ok":1}'};}}};

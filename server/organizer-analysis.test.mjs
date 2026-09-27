@@ -151,7 +151,12 @@ test('Gemini receives the system rule, the evidence context, the real image byte
   assert.equal(body.generationConfig.responseMimeType,'application/json');assert.equal(body.generationConfig.temperature,0.1);assert.equal(body.generationConfig.maxOutputTokens,2000);
   const schema=body.generationConfig.responseSchema;
   assert.equal(hasKeyword(schema,['const','oneOf','additionalProperties']),false);
-  assert.deepEqual(schema.properties.evidence.items.properties.source_id.enum,['image']);assert.deepEqual(schema.properties.deletion_review.anyOf[0].properties.suggested,{enum:[false],type:'boolean'});
+  assert.deepEqual(schema.properties.evidence.items.properties.source_id.enum,['image']);
+  // Gemini's enum holds strings only: booleans and empty strings never appear inside an enum, and deletion_review is a single object.
+  assert.equal(schema.properties.deletion_review.anyOf,undefined);assert.equal(schema.properties.deletion_review.properties.suggested.type,'boolean');assert.equal(schema.properties.deletion_review.properties.suggested.enum,undefined);
+  assert.deepEqual(schema.properties.deletion_review.properties.basis.enum,['none','low_information']);
+  assert.equal(JSON.stringify(schema).includes('"enum":[false]')||JSON.stringify(schema).includes('"enum":[""]')||JSON.stringify(schema).includes('"enum":[true]'),false);
+  assert.deepEqual(body.generationConfig.thinkingConfig,{thinkingBudget:0});
   assert.equal(result.model,ORGANIZER_MODELS.gemini);assert.equal(result.vision_model,null);assert.equal(result.status,'complete');assert.equal(result.destination,'Documente/Facturi');
   assert.equal(result.evidence[0].representation,'original');assert.equal(result.applied,false);
 });
@@ -182,7 +187,9 @@ test('a grant change during the Gemini call discards the result before any fallb
 test('geminiGenerate never runs without a key and converts every schema keyword Gemini rejects',async()=>{
   await assert.rejects(()=>geminiGenerate({},{system:'s',parts:[{text:'t'}]}),/gemini_key_missing/);
   const relaxed=geminiSchema({type:'object',additionalProperties:false,required:['a'],properties:{a:{type:'string',const:'x'},b:{oneOf:[{type:'string',minLength:2,maxLength:5},{type:'string',const:''}]},c:{type:'boolean',const:true},d:{type:'array',minItems:0,maxItems:2,items:{type:'string',enum:['e1']}}}});
-  assert.deepEqual(relaxed,{type:'object',required:['a'],properties:{a:{type:'string',enum:['x']},b:{anyOf:[{type:'string',minLength:2,maxLength:5},{type:'string',enum:['']}]},c:{type:'boolean',enum:[true]},d:{type:'array',minItems:0,maxItems:2,items:{type:'string',enum:['e1']}}}});
+  assert.deepEqual(relaxed,{type:'object',required:['a'],properties:{a:{type:'string',enum:['x']},b:{anyOf:[{type:'string',minLength:2,maxLength:5},{type:'string',description:'Valoare fixă: "".'}]},c:{type:'boolean',description:'Valoare fixă: true.'},d:{type:'array',minItems:0,maxItems:2,items:{type:'string',enum:['e1']}}}});
+  assert.deepEqual(geminiSchema({type:['string','null'],format:'uri',description:'d'}),{type:'string',nullable:true,description:'d'});
+  assert.deepEqual(geminiSchema({type:'integer',enum:[1,2],format:'int32'}),{type:'integer',format:'int32',description:'Valori permise: 1, 2.'});
   const text=source(),input=organizerModelInput(ORGANIZER_MODELS.gemini,[{role:'system',content:'S'},{role:'user',content:'context'}],[{id:'text',kind:'text',text:'abc'}]);
   assert.deepEqual(input.parts,[{text:'context'}]);assert.equal(input.system,'S');assert.deepEqual(input.schema.properties.evidence.items.properties.source_id.enum,['text']);
   assert.equal(hasKeyword(input.schema,['const','oneOf','additionalProperties']),false);
