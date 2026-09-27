@@ -1,0 +1,29 @@
+name: Evaluate organizer models with synthetic files
+on:
+  push:
+    branches: ['ux/organizer-model-eval-v26']
+    paths: ['server/organizer-analysis.mjs', 'server/organizer-model-eval.mjs', 'server/fixtures/organizer/**', '.github/workflows/organizer-model-eval.yml']
+permissions:
+  contents: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Evaluate at most twelve calls using synthetic files
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ORGANIZER_EVAL_OUTPUT: organizer-model-evaluation.json
+        run: node server/organizer-model-eval.mjs
+      - name: Keep model evaluation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Organizer-Model-Evaluation
+          path: organizer-model-evaluation.json
+          if-no-files-found: error
