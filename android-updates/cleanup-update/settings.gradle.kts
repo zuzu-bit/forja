@@ -13,3 +13,9 @@ dependencyResolutionManagement {
 }
 rootProject.name = "forja-cleanup-update"
 include(":feature")
+
+// Separate rendering probe; never part of the delivered feature/APK.
+if (providers.gradleProperty("forjaQaProbe").isPresent) {
+    include(":qaProbe")
+    project(":qaProbe").projectDir = file("../repair-update/qa")
+}

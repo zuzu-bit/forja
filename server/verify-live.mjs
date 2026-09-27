@@ -12,7 +12,7 @@ async function health() {
   if (!r.ok) throw Error('Site indisponibil: HTTP ' + r.status);
   const h = await r.json();
   if (h.service !== 'forja-insights' || !Number.isInteger(h.version)) throw Error('Adresa nu răspunde ca site FORJA.');
-  if (h.version > 14) throw Error('Site-ul este mai nou decât acest pachet. Publicarea a fost oprită.');
+  if (h.version > 15) throw Error('Site-ul este mai nou decât acest pachet. Publicarea a fost oprită.');
   return h;
 }
 if (process.argv.includes('--before')) {
@@ -26,7 +26,7 @@ if (process.argv.includes('--before')) {
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
       const h = await health();
-      if (h.version !== 14 || h.organizer_jobs!==4 || flags.some(k => h[k] !== 1)) throw Error('Versiunea sau funcțiile online nu corespund actualizării.');
+      if (h.version !== 15 || h.organizer_jobs!==4 || flags.some(k => h[k] !== 1)) throw Error('Versiunea sau funcțiile online nu corespund actualizării.');
       const page = await get('/');
       const client = await get('/insights/app.js');
       if (!page.ok || !client.ok || sha(await page.text()) !== sha(html) || sha(await client.text()) !== sha(js)) throw Error('Pagina sau interfața online diferă de fișierele verificate.');

@@ -19,8 +19,8 @@ function execute(kind,args){
 async function readHealth(){const response=await fetch(site+'/health',{cache:'no-store',signal:AbortSignal.timeout(20000)});if(!response.ok)throw Error('Site-ul nu raspunde: HTTP '+response.status);return response.json();}
 export async function publish({exec=execute,health=readHealth,log=console.log,delay=ms=>new Promise(r=>setTimeout(r,ms))}={}){
  let before;try{before=await health();}catch{log('Nu pot verifica acum versiunea online. Voi verifica si dupa publicare.');}
- if(before?.service==='forja-insights'&&before.files_sync===1&&before.cleanup_schedule===1&&before.version===14&&before.organizer_jobs===4&&before.journey===1&&before.map3d===1&&before.content_ai===1&&before.sleep_audio===1&&before.visual_ui===1&&before.background_audio===1&&before.organizer===1&&before.social===1&&before.partners===1&&before.contacts===1&&before.lost_phone===1&&before.organizer_modes===1){log('GATA! Site-ul are deja aceasta versiune. Foloseste APK-ul v26 pentru organizare, explorare si sincronizare.');return 'already-current';}
- if(before?.version>14)throw Error('Site-ul are o versiune mai noua. Nu public acest pachet peste ea.');
+ if(before?.service==='forja-insights'&&before.files_sync===1&&before.cleanup_schedule===1&&before.version===15&&before.organizer_jobs===4&&before.journey===1&&before.map3d===1&&before.content_ai===1&&before.sleep_audio===1&&before.visual_ui===1&&before.background_audio===1&&before.organizer===1&&before.social===1&&before.partners===1&&before.contacts===1&&before.lost_phone===1&&before.organizer_modes===1){log('GATA! Site-ul are deja aceasta versiune. Foloseste APK-ul v27 pentru organizare, explorare si sincronizare.');return 'already-current';}
+ if(before?.version>15)throw Error('Site-ul are o versiune mai noua. Nu public acest pachet peste ea.');
  log('\n1/5 Pregatesc dependentele si verific actualizarea.');
  await exec('npm',['ci','--no-audit','--no-fund']);await exec('npm',['test']);
  await exec('wrangler',['deploy','--dry-run','--config',config]);
@@ -32,7 +32,7 @@ export async function publish({exec=execute,health=readHealth,log=console.log,de
  await exec('wrangler',['deploy','--config',config,'--experimental-provision=false']);
  log('\n5/5 Verific daca actualizarea raspunde pe adresa site-ului.');
  for(let i=0;i<6;i++){
-  try{const result=await health();if(result.service==='forja-insights'&&result.version===14&&result.organizer_jobs===4&&result.journey===1&&result.map3d===1&&result.content_ai===1&&result.sleep_audio===1&&result.visual_ui===1&&result.organizer===1&&result.social===1&&result.partners===1&&result.contacts===1&&result.lost_phone===1&&result.organizer_modes===1&&result.background_audio===1&&result.files_sync===1&&result.cleanup_schedule===1){log('\nGATA! Site-ul FORJA a fost actualizat. Instaleaza APK-ul v26 si intra cu acelasi cont FORJA.');return 'published';}}catch{}
+  try{const result=await health();if(result.service==='forja-insights'&&result.version===15&&result.organizer_jobs===4&&result.journey===1&&result.map3d===1&&result.content_ai===1&&result.sleep_audio===1&&result.visual_ui===1&&result.organizer===1&&result.social===1&&result.partners===1&&result.contacts===1&&result.lost_phone===1&&result.organizer_modes===1&&result.background_audio===1&&result.files_sync===1&&result.cleanup_schedule===1){log('\nGATA! Site-ul FORJA a fost actualizat. Instaleaza APK-ul v27 si intra cu acelasi cont FORJA.');return 'published';}}catch{}
   if(i<5)await delay(2000);
  }
  throw Error('Cloudflare a terminat publicarea, dar nu pot confirma functia la adresa FORJA. Nu republica automat; verifica mesajele din fereastra.');
@@ -47,7 +47,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
  try{
   validatePackage();
   if(process.argv.includes('--check-only'))console.log('Pachetul si destinatia FORJA sunt valide. Nu am publicat nimic.');
-  else{console.log('FORJA v26 - Organizare continua, explorare si sincronizare\nDestinatie: '+site+'\nAcest program publica actualizarea in contul tau, dupa conectarea in browser.');await publish();
+  else{console.log('FORJA v27 - Organizare continua, explorare si sincronizare\nDestinatie: '+site+'\nAcest program publica actualizarea in contul tau, dupa conectarea in browser.');await publish();
    if(process.platform==='win32')spawn('rundll32.exe',['url.dll,FileProtocolHandler',site],{stdio:'ignore',detached:true}).on('error',()=>console.log('Deschide manual '+site)).unref();
   }
  }catch(error){console.error('\nOPRIT: '+error.message+'\nTrimite o captura a mesajului de eroare, fara parole sau coduri de acces.');process.exitCode=1;}

@@ -65,7 +65,7 @@ private fun icon(c:Context,name:String,own:Boolean):BitmapDrawable {
 @Composable fun SocialMapScreen(onBack:()->Unit={}) {
  val c=LocalContext.current;val scope=rememberCoroutineScope();var owner by remember{mutableStateOf(FileSync.owner())};var clock by remember{mutableLongStateOf(System.currentTimeMillis())}
  var journalPages by remember(owner){mutableIntStateOf(1)};val journalLock=remember(owner){kotlinx.coroutines.sync.Mutex()};var journal by remember(owner){mutableStateOf<JSONObject?>(null)};var journalOwner by remember(owner){mutableStateOf<String?>(null)};var selectedVisit by remember(owner){mutableStateOf<JSONObject?>(null)}
- var vectorReady by remember{mutableStateOf(false)};var vectorError by remember{mutableStateOf(false)};var threeD by remember{mutableStateOf(false)};var vectorCenter by remember{mutableStateOf<GeoPoint?>(null)}
+ var vectorReady by remember(owner){mutableStateOf(false)};var vectorError by remember(owner){mutableStateOf(false)};var threeD by remember(owner){mutableStateOf(false)};var vectorLoading by remember(owner){mutableStateOf(false)};var vectorCenter by remember(owner){mutableStateOf<GeoPoint?>(null)}
  var data by remember(owner){mutableStateOf<JSONObject?>(null)};var error by remember(owner){mutableStateOf("")};var busy by remember{mutableStateOf(false)}
  var pane by remember{mutableStateOf("friends")};var sheet by remember{mutableStateOf<String?>(null)};var pickingPlace by remember{mutableStateOf<String?>(null)};var selectedPoint by remember{mutableStateOf<GeoPoint?>(null)};var activity by remember{mutableStateOf("walk")};var minutes by remember{mutableIntStateOf(60)};var consent by remember{mutableStateOf(false)}
  var friend by remember(owner){mutableStateOf<JSONObject?>(null)};var chat by remember{mutableStateOf<List<JSONObject>>(emptyList())};var message by remember{mutableStateOf("")}
@@ -75,8 +75,10 @@ private fun icon(c:Context,name:String,own:Boolean):BitmapDrawable {
  val status by SocialApi.status.collectAsState()
  val map=remember(c){Configuration.getInstance().userAgentValue="FORJA/3.7-online.23 (${c.packageName})";MapView(c).apply{setTileSource(TileSourceFactory.MAPNIK);setMultiTouchControls(true);zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER);minZoomLevel=3.0;maxZoomLevel=19.0;controller.setZoom(7.0);controller.setCenter(GeoPoint(45.8,24.9))}}
  val vector=remember(c,owner){JourneyMapView(c){event->when(event.optString("type")){
-  "ready"->{vectorReady=true;vectorError=false}
-  "error"->{vectorReady=false;vectorError=true;threeD=false;note="Harta 2D este disponibilă; 3D necesită conexiune și WebGL."}
+  "loading"->{vectorReady=false;vectorError=false;threeD=false;vectorLoading=false}
+  "ready"->{vectorReady=true;vectorError=false;threeD=false;vectorLoading=false}
+  "mode"->{threeD=event.optString("mode")=="3d";vectorLoading=event.optBoolean("loading")}
+  "error"->{if(!event.optBoolean("recoverable")){vectorReady=false;vectorError=true};threeD=false;vectorLoading=false;note=event.optString("message","Harta 2D rămâne disponibilă.")}
   "move"->{val p=event.optJSONObject("point");if(p!=null&&p.optDouble("lat").isFinite()&&p.optDouble("lon").isFinite())vectorCenter=GeoPoint(p.optDouble("lat"),p.optDouble("lon"))}
   "pick"->{val p=event.optJSONObject("item");if(p!=null)when(p.optString("kind")){"person"->{friend=data?.rows("friends")?.find{it.optString("id")==p.optString("id")};if(friend!=null)sheet="friend"};"visit"->{selectedVisit=journal?.rows("visits")?.find{it.optString("id")==p.optString("id")};if(selectedVisit!=null)sheet=if(journalOwner==null)"visit"else"shared-visit"};"place"->{selectedPoint=GeoPoint(p.optDouble("lat"),p.optDouble("lon"));sheet="places"}}}
  }}}
@@ -154,7 +156,7 @@ private fun icon(c:Context,name:String,own:Boolean):BitmapDrawable {
        MapGlyph("menu",green);Text("Hartă",fontWeight=FontWeight.SemiBold,fontSize=14.sp)
       }
      }
-     if(vectorReady)OutlinedButton(onClick={threeD=!threeD;vector.mode(threeD)},modifier=Modifier.heightIn(min=48.dp)){Text(if(threeD)"3D"else"2D")}
+     if(vectorReady)OutlinedButton(enabled=!vectorLoading,onClick={vector.mode(!threeD)},modifier=Modifier.heightIn(min=48.dp)){Text(if(vectorLoading)"…"else if(threeD)"2D"else"3D")}
      if(session==null&&data?.optJSONObject("me")?.optJSONObject("visibility")?.rows("grants").isNullOrEmpty())Button(enabled=owner!=null&&!busy,onClick={consent=false;val v=me?.optJSONObject("visibility");openSheet(if(v?.optBoolean("configured")==true&&v.rows("grants").none{it.optBoolean("current")})"visibility"else"share")},modifier=Modifier.heightIn(min=48.dp),contentPadding=PaddingValues(horizontal=18.dp,vertical=10.dp)){
       MapGlyph("share",dark);Spacer(Modifier.width(8.dp));Text("Partajează",fontSize=14.sp)
      }else Surface(onClick={SocialRecovery.stop(c);action{SocialApi.call(c,"session",method="DELETE")}},shape=CircleShape,color=dark,shadowElevation=3.dp){

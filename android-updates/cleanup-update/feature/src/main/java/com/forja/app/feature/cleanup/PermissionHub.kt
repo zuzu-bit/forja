@@ -100,7 +100,6 @@ fun PermissionHub(activity: Activity) {
     var settingsNeeded by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var chosenTree by rememberSaveable { mutableStateOf<String?>(null) }
-    var result by remember { mutableStateOf<SyncSetup.Result?>(null) }
     var resultOwner by rememberSaveable { mutableStateOf<String?>(null) }
     var locationExcluded by rememberSaveable { mutableStateOf(false) }
     var usageExcluded by rememberSaveable { mutableStateOf(false) }
@@ -129,9 +128,8 @@ fun PermissionHub(activity: Activity) {
             val next = it.currentUser?.uid
             if (next != signedIn || next != stagedOwner) {
                 controller.restoreCurrentAccount()
-                result = null; resultOwner = null; chosenTree = null
+                resultOwner = null; chosenTree = null
                 locationExcluded = false; usageExcluded = false; backgroundExcluded = false
-                if (page == 4) page = 3
                 signedIn = next
                 stagedOwner = next
             }
@@ -140,20 +138,8 @@ fun PermissionHub(activity: Activity) {
         owner.lifecycle.addObserver(observer); auth.addAuthStateListener(listener)
         onDispose { owner.lifecycle.removeObserver(observer); auth.removeAuthStateListener(listener) }
     }
-    LaunchedEffect(signedIn, page) {
-        if (page == 4 && (signedIn == null || signedIn != resultOwner)) {
-            controller.restoreCurrentAccount()
-            result = null; resultOwner = null; chosenTree = null
-            feedback = "Verifică noul cont înainte de activare."
-            page = 3
-        }
-    }
-    LaunchedEffect(page, signedIn) {
-        if (page == 4 && signedIn != null) while (true) {
-            kotlinx.coroutines.delay(1500)
-            refresh++
-        }
-    }
+    // Old saved activity state may still point at the removed confirmation page.
+    LaunchedEffect(page) { if (page !in 0..3) page = 3 }
     fun has(permission: String) = activity.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
     fun open(intent: Intent) { runCatching { activity.startActivity(intent) }.onFailure { feedback = "Nu am putut deschide această opțiune." } }
     fun appSettings() = open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}")))
@@ -168,7 +154,7 @@ fun PermissionHub(activity: Activity) {
         if (save) {
             if (resultOwner != FirebaseAuth.getInstance().currentUser?.uid) {
                 controller.restoreCurrentAccount()
-                result = null; resultOwner = null; chosenTree = null; page = 3
+                resultOwner = null; chosenTree = null; page = 3
                 feedback = "Contul s-a schimbat. Verifică noul cont înainte de activare."
                 return
             }
@@ -184,7 +170,6 @@ fun PermissionHub(activity: Activity) {
     val photosPartial = remember(refresh) { Build.VERSION.SDK_INT >= 34 && has(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) }
     val usageOn = remember(refresh) { ResearchPermissionAccess.usage(activity) }
     val backgroundOn = remember(refresh) { locationOn && (Build.VERSION.SDK_INT < 29 || has(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) }
-    val currentStatus = remember(refresh, signedIn) { SyncSetup.status(activity) }
     fun activate() {
         if (busy) return
         val owner = signedIn
@@ -194,20 +179,24 @@ fun PermissionHub(activity: Activity) {
             controller.back()
             return
         }
-        busy = true; feedback = ""; result = null
+        busy = true; feedback = ""
         scope.launch {
             try {
                 val outcome = SyncSetup.activate(activity, chosenTree?.let(Uri::parse))
                 if (outcome.accountChanged || FirebaseAuth.getInstance().currentUser?.uid != owner) {
                     feedback = "Contul s-a schimbat. Verifică noul cont înainte de activare."
                     page = 3
+                } else if (outcome.scopes.any { it.state == SyncSetup.State.ERROR }) {
+                    feedback = "O parte din sincronizare nu s-a activat. Încearcă din nou."
+                    refresh++
                 } else {
                     // Permissions are inputs to this explicit sync action, never an implicit grant.
                     if (notificationOn && locationOn && !locationExcluded) controller.toggle("location", true)
                     if (notificationOn && usageOn && !usageExcluded) controller.toggle("app_usage", true)
                     if (!backgroundExcluded && notificationOn && ((locationOn && !locationExcluded) || (usageOn && !usageExcluded))) controller.background(true)
-                    result = outcome; resultOwner = owner; page = 4; refresh++
-                    markIntroduced()
+                    resultOwner = owner
+                    // Finish the same confirmed action directly; no extra success screen.
+                    leave(true)
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
               catch (_: Exception) { feedback = "Conectarea nu s-a încheiat. Poți reîncerca." }
@@ -216,7 +205,7 @@ fun PermissionHub(activity: Activity) {
     }
     fun previous() {
         if (busy) return
-        when (page) { 0 -> leave(false); 4 -> page = 3; else -> page-- }
+        when (page) { 0 -> leave(false); else -> page = (page - 1).coerceIn(0, 3) }
     }
     BackHandler { previous() }
     MaterialTheme(colorScheme = darkColorScheme(primary = HubMint, onPrimary = HubInk, background = HubInk,
@@ -235,13 +224,12 @@ fun PermissionHub(activity: Activity) {
                     if (feedback.isNotBlank()) Text(feedback, color = HubMint, fontSize = 12.sp,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                     Button(onClick = {
-                        when (page) { 0 -> page = 1; 1 -> page = 2; 2 -> { feedback = ""; page = 3 }; 3 -> activate(); else -> leave(true) }
+                        when (page) { 0 -> page = 1; 1 -> page = 2; 2 -> { feedback = ""; page = 3 }; else -> activate() }
                     }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(19.dp)) {
                         if (busy) CircularProgressIndicator(Modifier.size(20.dp).padding(end = 6.dp), strokeWidth = 2.dp, color = HubInk)
                         Text(when (page) {
                             0 -> "Descoperă FORJA"; 1 -> "Pregătește FORJA"; 2 -> "Continuă"
-                            3 -> if (busy) "Se conectează…" else if (signedIn == null) "Intră în cont" else "Activează sincronizarea"
-                            else -> "Intră în FORJA"
+                            else -> if (busy) "Se conectează…" else if (signedIn == null) "Intră în cont" else "Activează sincronizarea"
                         }, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
@@ -312,33 +300,7 @@ fun PermissionHub(activity: Activity) {
                             if (signedIn == null) Text("Continuăm după conectarea în contul FORJA.", color = HubMint, fontSize = 13.sp)
                             TextButton(onClick = { open(Intent(Intent.ACTION_VIEW, Uri.parse(HubSite))) }, contentPadding = PaddingValues(0.dp)) { Text("Deschide site-ul FORJA ↗") }
                         }
-                        else -> {
-                            HubArtwork(activity, "sync", "FORJA pe telefon și laptop", compact = true)
-                            val rows = currentStatus.map { fresh ->
-                                result?.scopes?.firstOrNull { it.key == fresh.key && it.state == SyncSetup.State.ERROR } ?: fresh
-                            }
-                            val failed = result?.accountChanged == true || rows.any { it.state == SyncSetup.State.ERROR }
-                            HubHeading(if (failed) "Mai avem un pas." else "Contul tău este conectat.",
-                                if (failed) "Ce a reușit rămâne activ. Restul se poate relua."
-                                else "Transferurile continuă când telefonul are conexiune și acces.")
-                            Surface(shape = RoundedCornerShape(22.dp)) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                    rows.filter { it.key in setOf("journals", "gallery", "folder", "sleep") }.forEach { item ->
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(if (item.state == SyncSetup.State.ACTIVE) "✓" else if (item.state == SyncSetup.State.QUEUED) "◷" else "○", color = HubMint, fontSize = 20.sp, modifier = Modifier.padding(end = 13.dp))
-                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                Text(item.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                                Text(item.detail, color = HubMuted, fontSize = 12.sp, lineHeight = 17.sp)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if (rows.any { it.key == "folder" && it.state == SyncSetup.State.NEEDS_SETUP }) TextButton(onClick = {
-                                page = 3; folder.launch(null)
-                            }, contentPadding = PaddingValues(0.dp)) { Text("Adaugă și un dosar") }
-                            if (failed) TextButton(onClick = { page = 3 }, contentPadding = PaddingValues(0.dp)) { Text("Revizuiește conectarea") }
-                        }
+
                     }
                 }
             }

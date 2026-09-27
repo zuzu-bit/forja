@@ -7,7 +7,7 @@ const script = value => '<script>' + value.replace(/<\/script/gi, '<\\/script') 
 function buildPreview({fixture = createFixture(), defaultPage = 'overview'} = {}) {
 let html = fs.readFileSync(path.join(server, 'insights.html'), 'utf8')
   .replace(/<script\b[^>]*src=["'][^"']+["'][^>]*><\/script>/g, '')
-  .replace(/<link\b[^>]*href=["']\/insights\/(?:leaflet|maplibre).css["'][^>]*>/g, '')
+  .replace(/<link\b[^>]*href=["']\/insights\/(?:leaflet|maplibre)\.css(?:\?[^"']*)?["'][^>]*>/g, '')
   .replace('<title>', '<title>DEMO local · ');
 const leafletCSS = fs.readFileSync(path.join(server, 'vendor/leaflet-1.9.4.css.txt'), 'utf8');
 const leafletJS = fs.readFileSync(path.join(server, 'vendor/leaflet-1.9.4.js.txt'), 'utf8');
