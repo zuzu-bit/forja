@@ -71,7 +71,7 @@ fun ActivityDetailScreen(activityId: Long, onBack: () -> Unit) {
         }
 
         if (a == null) {
-            Text("Se încarcă…", style = Body, modifier = Modifier.padding(20.dp))
+            Text("Se încarcă traseul.", style = Body, modifier = Modifier.padding(20.dp))
             return@Column
         }
 
@@ -186,7 +186,7 @@ fun ActivityDetailScreen(activityId: Long, onBack: () -> Unit) {
                 )
             }
             Column {
-                SectionLabel("Calorii")
+                SectionLabel("Calorii · estimat")
                 Text("${a.kcal}", style = heroNumeral(30))
             }
             Column {

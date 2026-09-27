@@ -66,9 +66,13 @@ fun FriendsSheet(
                 .fillMaxHeight(0.85f)
                 .verticalScroll(rememberScrollState())
         ) {
-            Text("Prietenii tăi", style = TitleModule.copy(fontSize = 20.sp))
+            ModuleHeader(
+                stamp = "CAMARAZI",
+                title = "Prietenii tăi",
+                titleStyle = TitleModule.copy(fontSize = 20.sp)
+            )
             Text(
-                if (friends.isEmpty()) "încă niciunul — schimbați codurile și apăreți pe hartă"
+                if (friends.isEmpty()) "Încă niciunul. Schimbați codurile și apăreți pe hartă."
                 else "${friends.size} · $activeCount activi acum",
                 style = BodySmall.copy(color = TextSecondary)
             )
@@ -151,7 +155,7 @@ fun FriendsSheet(
 
             if (friends.isEmpty()) {
                 Text(
-                    "Harta prinde viață când primul prieten acceptă. Fără conturi false, fără roboți — doar oamenii tăi.",
+                    "Harta se umple când primul prieten acceptă. Fără conturi false, fără roboți. Doar oamenii tăi.",
                     style = BodySmall.copy(color = TextDim)
                 )
             }

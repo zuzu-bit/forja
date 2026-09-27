@@ -61,21 +61,28 @@ fun ActivitiesScreen(onOpenDetail: (Long) -> Unit, onBack: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text("Activitățile tale", style = TitleModule)
+                ModuleHeader(stamp = "JURNAL DE MARȘ", title = "Activitățile tale")
                 Text(
-                    "SĂPTĂMÂNA ASTA: ${Fmt.km(weekM)} KM · ${activities.count { it.startAt >= Fmt.startOfWeekMillis() }} IEȘIRI",
+                    "SĂPTĂMÂNA ASTA · ${Fmt.km(weekM)} KM · ${activities.count { it.startAt >= Fmt.startOfWeekMillis() }} TURE",
                     style = monoLabel(9, 0.12f).copy(color = Accent2)
                 )
             }
             SecondaryButton("Înapoi", onClick = onBack, padV = 8.dp)
         }
 
+        WarmQuote(
+            Tone.ofDay(Tone.activities),
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 14.dp),
+            color = TextSecondary,
+            fontSize = 15
+        )
+
         if (activities.isEmpty()) {
             ForjaCard(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                 Text("Încă nicio tură.", style = BodyStrong)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Apasă GO pe hartă, alege sportul și pornește. Fiecare metru rămâne aici.",
+                    "Apasă GO pe hartă, alege sportul și pornește. Fiecare metru se trece în jurnal.",
                     style = BodySmall
                 )
             }
