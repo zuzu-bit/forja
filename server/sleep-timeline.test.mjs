@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mergeTimeline, timelineStats, coverage, normalizeChunk, formatClock, formatDuration, eventsFromSegments, SNORE_MERGE_GAP_MS } from './sleep-timeline.mjs';
 import { classifyClip, parseWav, envelopePeriodicity } from './sleep-clip.mjs';
+import { validate, SLEEP_EVENTS_SCHEMA } from './ai-schemas.mjs';
 
 const T0 = Date.UTC(2026, 8, 27, 23, 0, 0); // 23:00 UTC
 const MIN = 60_000;
@@ -133,4 +134,36 @@ test('classifyClip: liniște / sforăit periodic (0,5–2 Hz) / zgomot fără ri
   assert.equal(bad.type, 'noise');
   assert.equal(bad.decoded, false);
   assert.deepEqual(envelopePeriodicity([1, 2, 3]), { peak: 0, periodMs: 0 });
+});
+
+/** WAV cu un chunk JUNK de 4020 octeți și un antet `fmt ` trunchiat la coadă: 4048 octeți (trece de pragul de 4000 al rutei). */
+function truncatedFmtWav() {
+  const buf = new ArrayBuffer(4048);
+  const dv = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); dv.setUint32(4, 4040, true); str(8, 'WAVE'); str(12, 'JUNK'); dv.setUint32(16, 4020, true); str(4040, 'fmt '); dv.setUint32(4044, 16, true);
+  return new Uint8Array(buf);
+}
+
+test('parseWav: antet fmt trunchiat sau prea scurt → null și verdict „zgomot slab”, nu RangeError', () => {
+  const bytes = truncatedFmtWav();
+  assert.equal(parseWav(bytes), null);
+  const v = classifyClip(bytes);
+  assert.deepEqual([v.type, v.decoded, v.confidence], ['noise', false, 0.2]);
+  const short = new Uint8Array(silence);
+  new DataView(short.buffer).setUint32(16, 8, true); // fmt declarat pe 8 octeți
+  assert.equal(parseWav(short), null);
+  assert.equal(parseWav(silence).bits, 16, 'WAV-ul întreg se citește în continuare');
+});
+
+test('450 de „respirații” de sforăit într-un chunk trec de schemă și se unesc într-un singur episod întreg', () => {
+  const events = Array.from({ length: 450 }, (_, i) => ({ type: 'snore', startMs: i * 4000, endMs: i * 4000 + 3000, intensity: 0.5 }));
+  assert.equal(validate(SLEEP_EVENTS_SCHEMA, { events }).ok, true);
+  const t = mergeTimeline(chunks, { 0: events });
+  assert.equal(t.events.length, 1);
+  assert.equal(t.events[0].parts, 450);
+  assert.equal(t.events[0].from, T0);
+  assert.equal(t.events[0].to, T0 + 449 * 4000 + 3000, 'episodul ține până la ultima respirație, nu doar până la a 400-a');
+  assert.equal(t.stats.snoreEpisodes, 1);
+  assert.equal(t.stats.snoreMinutes, 30);
 });

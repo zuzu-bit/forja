@@ -137,22 +137,123 @@ test('transcribe: groq whisper cu segmente (verbose_json), apoi workers whisper 
   await assert.rejects(() => transcribe({ GROQ_API_KEY: 'q' }, { bytes: new Uint8Array(10) }), /Transcrierea/);
 });
 
-test('bugetul zilnic: la limită furnizorul e sărit; consumul se vede în diag, cheile nu', async () => {
+test('bugetul zilnic: la Gemini cota e per model (Flash epuizat → Flash-Lite), furnizorul e sărit doar cu toate modelele la limită; consumul se vede în diag, cheile nu', async () => {
   const kv = new Map();
   const env = { GEMINI_API_KEY: 'g-secret', GROQ_API_KEY: 'q-secret', AI_BUDGET: { get: async (k) => kv.get(k) ?? null, put: async (k, v) => kv.set(k, v) } };
   const day = new Date().toISOString().slice(0, 10);
-  kv.set(`ai-budget:gemini:${day}`, '250');
-  const calls = mockFetch(() => ok(openaiReply('{"summary":"ok"}')));
-  const r = await textJson(env, { task: 'sum', prompt: 'p JSON', schema: SUMMARY_SCHEMA });
-  assert.equal(r.provider, 'groq');
+  kv.set(`ai-budget:gemini/gemini-2.5-flash:${day}`, '250');
+  let calls = mockFetch((url) => url.includes('googleapis') ? ok(geminiReply('{"summary":"ok"}')) : ok(openaiReply('{"summary":"ok"}')));
+  let r = await textJson(env, { task: 'sum', prompt: 'p JSON', schema: SUMMARY_SCHEMA });
+  assert.equal(r.provider, 'gemini');
+  assert.equal(r.model, 'gemini-2.5-flash-lite', 'Flash la limită → Flash-Lite (cota lui), nu alt furnizor');
+  assert.equal(calls.length, 1);
+  assert.equal(kv.get(`ai-budget:gemini/gemini-2.5-flash-lite:${day}`), '1');
+  assert.equal(kv.get(`ai-budget:gemini:${day}`), '1', 'contorul furnizorului numără toate apelurile lui');
+  kv.set(`ai-budget:gemini/gemini-2.5-flash-lite:${day}`, '1000');
+  kv.set(`ai-budget:gemini/gemini-2.5-pro:${day}`, '50');
+  resetBudgetCache();
+  calls = mockFetch(() => ok(openaiReply('{"summary":"ok"}')));
+  r = await textJson(env, { task: 'sum', prompt: 'p JSON', schema: SUMMARY_SCHEMA });
+  assert.equal(r.provider, 'groq', 'toate modelele Gemini la limită → furnizorul următor');
   assert.ok(calls.every((c) => c.url.includes('groq')));
   assert.equal(kv.get(`ai-budget:groq:${day}`), '1');
   const diag = await diagProviders(env);
   assert.deepEqual(diag.providers, { gemini: 'configured', groq: 'configured', anthropic: 'absent', openai: 'absent', workers: 'absent' });
-  assert.equal(diag.budget.gemini.azi, 250);
+  assert.equal(diag.budget.gemini.azi, 1);
+  assert.deepEqual(diag.budget.gemini.modele['gemini-2.5-flash'], { azi: 250, limita: 250 });
+  assert.deepEqual(diag.budget.gemini.modele['gemini-2.5-flash-lite'], { azi: 1000, limita: 1000 });
+  assert.equal(diag.budget.gemini.modele['gemini-2.5-pro'].limita, 50);
   assert.equal(diag.budget.groq.azi, 1);
   assert.equal(diag.lastUsed.sum.provider, 'groq');
   assert.ok(!JSON.stringify(diag).includes('secret'));
   const none = await diagProviders({});
   assert.match(none.mode, /fără chei/);
+});
+
+test('gemini: 429 e per model — Flash la 429 → Flash-Lite răspunde, fără să sară tot furnizorul', async () => {
+  const calls = mockFetch((url) => url.includes('gemini-2.5-flash:') ? ok({ error: 'rate' }, 429) : ok(geminiReply(JSON.stringify(MEAL))));
+  const r = await visionJson({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q' }, { task: 'meal', prompt: 'x JSON', images: [{ b64: 'AAAA', mime: 'image/jpeg' }], schema: MEAL_SCHEMA });
+  assert.equal(r.provider, 'gemini');
+  assert.equal(r.model, 'gemini-2.5-flash-lite');
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((c) => c.url.includes('googleapis')));
+});
+
+test('timeoutMs de la apelant = buget pe TOT furnizorul: modelele rămase nu mai pornesc după ce s-a epuizat; fără el, bugetul e per model', async () => {
+  const realNow = Date.now;
+  let clock = realNow();
+  Date.now = () => clock;
+  try {
+    const slow = (url) => { if (url.includes('googleapis')) { clock += 30_000; return ok({}, 500); } return ok(openaiReply(JSON.stringify(MEAL))); };
+    let calls = mockFetch(slow);
+    const r = await visionJson({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q' }, { task: 'meal', prompt: 'x JSON', images: [{ b64: 'AAAA', mime: 'image/jpeg' }], schema: MEAL_SCHEMA, timeoutMs: 45_000 });
+    assert.equal(r.provider, 'groq');
+    assert.equal(calls.filter((c) => c.url.includes('googleapis')).length, 2, '30 s + 30 s > 45 s: al treilea model Gemini nu mai pornește');
+    resetBudgetCache();
+    calls = mockFetch(slow);
+    await visionJson({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q' }, { task: 'meal', prompt: 'x JSON', images: [{ b64: 'AAAA', mime: 'image/jpeg' }], schema: MEAL_SCHEMA });
+    assert.equal(calls.filter((c) => c.url.includes('googleapis')).length, 3, 'fără timeoutMs fiecare model are bugetul lui');
+  } finally { Date.now = realNow; }
+});
+
+test('transcribe cu skipAudioProviders: Gemini deja încercat de apelant → direct la Groq Whisper, fără alt apel Gemini', async () => {
+  const calls = mockFetch((url) => url.includes('googleapis') ? ok(geminiReply('{"transcript":"x"}')) : ok({ text: 'Bună.', language: 'ro', segments: [] }));
+  const r = await transcribe({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q' }, { bytes: new Uint8Array(4000), mime: 'audio/wav', skipAudioProviders: true });
+  assert.equal(r.provider, 'groq');
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].url.includes('groq'));
+  const r2 = await transcribe({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q' }, { bytes: new Uint8Array(4000), mime: 'audio/wav' });
+  assert.equal(r2.provider, 'gemini', 'fără opțiune, Gemini rămâne primul');
+});
+
+test('contorul zilnic: incrementarea citește valoarea stocată (mai multe izolate), cache-ul expiră după 60 s', async () => {
+  const kv = new Map();
+  const env = { GROQ_API_KEY: 'q', AI_BUDGET: { get: async (k) => kv.get(k) ?? null, put: async (k, v) => kv.set(k, v) } };
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `ai-budget:groq:${day}`;
+  mockFetch(() => ok(openaiReply('{"summary":"ok"}')));
+  await textJson(env, { task: 'sum', prompt: 'p JSON', schema: SUMMARY_SCHEMA });
+  assert.equal(kv.get(key), '1');
+  kv.set(key, '10'); // alt izolat a numărat între timp
+  await textJson(env, { task: 'sum', prompt: 'p JSON', schema: SUMMARY_SCHEMA });
+  assert.equal(kv.get(key), '11', 'citire-modificare-scriere, nu cache + 1');
+  const realNow = Date.now;
+  let clock = realNow();
+  Date.now = () => clock;
+  try {
+    kv.set(key, '14400'); // limita atinsă de alte izolate; cache-ul local încă spune 11
+    const calls = mockFetch(() => ok(openaiReply('{"summary":"ok"}')));
+    await textJson(env, { task: 'sum', prompt: 'p JSON', schema: SUMMARY_SCHEMA });
+    assert.equal(calls.length, 1, 'sub 60 s poarta se uită în cache');
+    clock += 61_000;
+    await assert.rejects(() => textJson(env, { task: 'sum', prompt: 'p JSON', schema: SUMMARY_SCHEMA }), /limita zilnică/);
+  } finally { Date.now = realNow; }
+});
+
+test('workers: contorul numără apelurile env.AI.run (vedere + text), limita e null și unitatea e spusă în diag', async () => {
+  const env = { AI: aiMock() };
+  const r = await visionJson(env, { task: 'meal', prompt: 'p JSON', images: [{ b64: 'AAAA', mime: 'image/jpeg' }], schema: MEAL_SCHEMA });
+  assert.equal(r.provider, 'workers');
+  const diag = await diagProviders(env);
+  assert.equal(diag.budget.workers.azi, 2, 'un apel de vedere + un apel de text');
+  assert.equal(diag.budget.workers.limita, null);
+  assert.match(diag.budget.workers.unitate, /apeluri/);
+  assert.match(diag.budget.workers.cunoscut, /neuroni/);
+});
+
+test('twoPass fără poză la verificare: workers primește descrierea modelului de vedere, groq verifică doar coerența cifrelor', async () => {
+  const prompts = [];
+  const env = { AI: { run: async (model, input) => { if (input.image) return { description: 'chicken - 150 g, rice - 100 g' }; prompts.push(input.messages.at(-1).content); return { response: JSON.stringify(MEAL) }; } } };
+  const r = await visionJson(env, { task: 'meal', prompt: 'p JSON', images: [{ b64: 'AAAA', mime: 'image/jpeg' }], schema: MEAL_SCHEMA, twoPass: true });
+  assert.equal(r.verified, true);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /Nu vezi imaginea/);
+  assert.match(prompts[1], /chicken - 150 g/);
+  assert.ok(!prompts[1].includes('față de imagine'));
+  const calls = mockFetch(() => ok(openaiReply(JSON.stringify(MEAL))));
+  await visionJson({ GROQ_API_KEY: 'q' }, { task: 'meal', prompt: 'p JSON', images: [{ b64: 'AAAA', mime: 'image/jpeg' }], schema: MEAL_SCHEMA, twoPass: true });
+  const second = calls[1].body.messages.at(-1).content;
+  assert.equal(typeof second, 'string', 'fără imagine la verificare');
+  assert.match(second, /coerența cifrelor/);
+  assert.match(second, /4×proteine/);
 });

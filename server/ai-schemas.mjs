@@ -150,12 +150,14 @@ export const SLEEP_AUDIO_SCHEMA = {
 };
 
 // ── Somn: evenimentele unui chunk de până la 35 min ──
+// maxItems larg: un model care raportează sforăitul pe fiecare respirație (≈ 450 în 30 min) nu trebuie să pice validarea;
+// promptul cere episoade, iar mergeTimeline unește oricum pauzele sub 20 s.
 export const SLEEP_EVENTS_SCHEMA = {
   type: "object",
   required: ["events"],
   properties: {
     events: {
-      type: "array", maxItems: 400,
+      type: "array", maxItems: 2000,
       items: {
         type: "object",
         required: ["type", "startMs", "endMs"],
@@ -187,6 +189,10 @@ export const TRANSCRIPT_SCHEMA = {
 
 const round = (v, digits = 0) => { const n = Number(v); if (!Number.isFinite(n) || n < 0) return 0; const f = 10 ** digits; return Math.round(n * f) / f; };
 const label = (v, fallback = "medie") => (INCREDERE.includes(v) ? v : fallback);
+const RANK = { "ridicată": 2, medie: 1, "scăzută": 0 };
+/** Cea mai mică dintre două etichete de încredere (ridicată > medie > scăzută). */
+const lowerLabel = (a, b) => (RANK[a] <= RANK[b] ? a : b);
+export const MEAL_KCAL_TOLERANCE = 0.15;
 
 /** Totalul din componente (kcal, P, C, G, fibre), rotunjit. */
 export function mealTotals(componente) {
@@ -197,7 +203,7 @@ export function mealTotals(componente) {
 }
 
 /** kcal ≈ 4P + 4C + 9G (±15 %): spune dacă cifrele se contrazic. */
-export function mealTotalsConsistent(total, tolerance = 0.15) {
+export function mealTotalsConsistent(total, tolerance = MEAL_KCAL_TOLERANCE) {
   const expected = 4 * total.proteine + 4 * total.carbo + 9 * total.grasimi;
   if (expected <= 0 && total.kcal <= 0) return true;
   if (expected <= 0) return false;
@@ -205,18 +211,41 @@ export function mealTotalsConsistent(total, tolerance = 0.15) {
 }
 
 /**
- * Normalizează răspunsul unui model la contractul v2: numere rotunjite, etichete valide, totaluri recalculate,
- * versiune 2. Câmpurile vechi (fel, incredere, componente[nume, grame, kcal, proteine, carbo, grasimi]) rămân identice.
+ * Regula 4P+4C+9G ±15 % aplicată determinist pe o componentă (nu lăsată doar modelului): kcal care contrazice macronutrienții
+ * devine 4P+4C+9G și încrederea coboară la cel mult „medie”; macronutrienți toți 0 cu kcal > 0 = nu se poate verifica → „scăzută”.
+ * Întoarce {componenta, corectat}.
+ */
+export function enforceComponentKcal(c, tolerance = MEAL_KCAL_TOLERANCE) {
+  const expected = 4 * c.proteine + 4 * c.carbo + 9 * c.grasimi;
+  if (expected > 0) {
+    if (Math.abs(c.kcal - expected) / expected > tolerance) return { componenta: { ...c, kcal: round(expected), incredere: lowerLabel(c.incredere, "medie") }, corectat: true };
+    return { componenta: c, corectat: false };
+  }
+  if (c.kcal > 0) return { componenta: { ...c, incredere: "scăzută" }, corectat: false };
+  return { componenta: c, corectat: false };
+}
+
+/**
+ * Normalizează răspunsul unui model la contractul v2: numere rotunjite, etichete valide, kcal per componentă verificate față de
+ * macronutrienți (4P+4C+9G ±15 %, corectate dacă se contrazic), totaluri recalculate, versiune 2.
+ * Câmpurile vechi (fel, incredere, componente[nume, grame, kcal, proteine, carbo, grasimi]) rămân identice.
  */
 export function normalizeMeal(parsed, model = "") {
+  const corectate = [];
   const componente = (Array.isArray(parsed?.componente) ? parsed.componente : []).slice(0, 30).map((c) => ({
     nume: String(c?.nume ?? "").slice(0, 80).trim() || "component",
     grame: round(c?.grame), kcal: round(c?.kcal), proteine: round(c?.proteine), carbo: round(c?.carbo), grasimi: round(c?.grasimi),
     fibre: round(c?.fibre), incredere: label(c?.incredere, label(parsed?.incredere)),
-  }));
+  })).map((c) => {
+    const { componenta, corectat } = enforceComponentKcal(c);
+    if (corectat) corectate.push(componenta.nume);
+    return componenta;
+  });
   const total = mealTotals(componente);
   const observatii = (Array.isArray(parsed?.observatii) ? parsed.observatii : []).filter((o) => typeof o === "string" && o.trim()).slice(0, 8).map((o) => o.trim().slice(0, 160));
+  if (corectate.length && observatii.length < 8) observatii.push(`Calorii recalculate din macronutrienți (4P+4C+9G) la: ${corectate.slice(0, 4).join(", ")}.`.slice(0, 160));
   let incredere = label(parsed?.incredere, "scăzută");
+  if (corectate.length) incredere = lowerLabel(incredere, "medie"); // cifrele modelului s-au contrazis între ele
   if (componente.length && !mealTotalsConsistent(total) && incredere === "ridicată") incredere = "medie";
   const scorValoare = Math.min(10, Math.max(1, round(parsed?.scor?.valoare) || (componente.length ? 5 : 1)));
   return {

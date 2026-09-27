@@ -1,7 +1,8 @@
 // Unelte comune adaptoarelor AI: erori tipizate (fără chei în mesaj), fetch cu timeout, base64 pe Workers.
 
 export class AiError extends Error {
-  /** kind: network | http | json | empty | unsupported | blocked | budget; fatal = sari peste restul modelelor furnizorului (429, 401, 403). */
+  /** kind: network | http | json | empty | unsupported | blocked | budget; fatal = 429/401/403: routerul sare restul modelelor furnizorului
+   *  (excepție: 429 la un furnizor cu `perModelQuota`, ca Gemini, unde fiecare model are cota lui → doar următorul model). */
   constructor(message, { provider = "", model = "", status = 0, kind = "http", fatal = false } = {}) {
     super(message);
     this.name = "AiError";

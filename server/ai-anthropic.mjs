@@ -3,6 +3,8 @@ import { AiError, postJson, labelText } from "./ai-common.mjs";
 
 export const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+// Modelele care acceptă `output_config.effort` (Fable/Mythos, Opus 4.5+, Sonnet 4.6+); Haiku 4.5 și Sonnet 4.5 îl resping cu 400.
+const EFFORT_MODELS = /^claude-(fable|mythos|opus-(4-[5-8]|5)|sonnet-(4-6|5))/;
 
 export const anthropic = {
   name: "anthropic",
@@ -12,7 +14,11 @@ export const anthropic = {
   models: (env) => [...new Set([env?.ANTHROPIC_MODEL || "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5"])],
   dailyLimit: null,
 
-  /** Un apel: întoarce textul modelului. Fără temperature/thinking explicit (Fable 5.1 le respinge); JSON-ul e cerut prin prompt și validat de router. */
+  /**
+   * Un apel: întoarce textul modelului. Fără temperature/thinking explicit (Fable 5.1 le respinge; gândirea e mereu pornită acolo).
+   * `output_config.effort: "low"` ține un apel de masă/curățenie/rezumat în bugetele de 45–60 s ale rutelor și costul jos;
+   * JSON-ul e cerut prin prompt și validat de router.
+   */
   async generate(env, { model, system, prompt, images = [], documents = [], maxTokens, timeoutMs }) {
     const content = [];
     for (const doc of documents) {
@@ -28,6 +34,7 @@ export const anthropic = {
       model,
       max_tokens: Math.min(16000, Math.max(256, maxTokens || 4000)),
       ...(system ? { system } : {}),
+      ...(EFFORT_MODELS.test(model) ? { output_config: { effort: "low" } } : {}),
       messages: [{ role: "user", content }],
     };
     const data = await postJson(ANTHROPIC_URL, { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, body, timeoutMs || this.timeoutMs, "anthropic", model);

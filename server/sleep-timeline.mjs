@@ -2,6 +2,9 @@
 // cu sforăitul unit în episoade, statistici oneste și acoperirea „N min din M analizate”. Funcții pure, fără I/O.
 
 export const SNORE_MERGE_GAP_MS = 20_000;
+// Cât acceptăm de la un chunk înainte de unire (cât și schema SLEEP_EVENTS_SCHEMA) și cât păstrăm după unire, în total.
+export const MAX_EVENTS_PER_CHUNK = 2000;
+export const MAX_EVENTS_TOTAL = 2000;
 const TYPES = new Set(["talk", "snore", "cough", "noise"]);
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 const finite = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
@@ -31,7 +34,7 @@ export function mergeTimeline(chunks, events, options = {}) {
   for (const chunk of valid) {
     const list = byIndex.get(chunk.index);
     if (!Array.isArray(list)) continue;
-    for (const ev of list.slice(0, 400)) {
+    for (const ev of list.slice(0, MAX_EVENTS_PER_CHUNK)) {
       if (!ev || !TYPES.has(ev.type)) continue;
       const start = clamp(finite(ev.startMs), 0, chunk.dur), end = clamp(finite(ev.endMs, start), 0, chunk.dur);
       if (end <= start && ev.type !== "talk") continue;
@@ -60,7 +63,8 @@ export function mergeTimeline(chunks, events, options = {}) {
     merged.push({ ...ev });
   }
   const analyzed = valid.filter((c) => byIndex.has(c.index));
-  return { events: merged, stats: timelineStats(merged, options), coverage: coverage(valid, analyzed.map((c) => c.index), options.sessionMs) };
+  const capped = merged.slice(0, MAX_EVENTS_TOTAL);
+  return { events: capped, stats: timelineStats(capped, options), coverage: coverage(valid, analyzed.map((c) => c.index), options.sessionMs) };
 }
 
 /** Minute de sforăit, episoade, cel mai lung episod, fraze auzite (până la `maxPhrases`, implicit 6), tuse, zgomote. */

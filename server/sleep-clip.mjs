@@ -14,7 +14,11 @@ export function parseWav(bytes) {
   let pos = 12, fmt = null, data = null;
   while (pos + 8 <= u8.length) {
     const id = tag(pos), size = dv.getUint32(pos + 4, true);
-    if (id === "fmt ") fmt = { format: dv.getUint16(pos + 8, true), channels: dv.getUint16(pos + 10, true), sampleRate: dv.getUint32(pos + 12, true), bits: dv.getUint16(pos + 22, true) };
+    if (id === "fmt ") {
+      // Câmpurile fmt (format, canale, rată, biți) ocupă 16 octeți după antet: un fmt trunchiat sau prea scurt e WAV nevalid, nu o excepție.
+      if (size < 16 || pos + 24 > u8.length) return null;
+      fmt = { format: dv.getUint16(pos + 8, true), channels: dv.getUint16(pos + 10, true), sampleRate: dv.getUint32(pos + 12, true), bits: dv.getUint16(pos + 22, true) };
+    }
     if (id === "data") { data = { offset: pos + 8, length: Math.min(size, u8.length - pos - 8) }; break; }
     pos += 8 + size + (size % 2);
   }

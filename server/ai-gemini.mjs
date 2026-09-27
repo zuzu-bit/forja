@@ -14,7 +14,10 @@ export const gemini = {
   supports: { images: true, documents: true, audio: true, verifyWithImages: true },
   available: (env) => typeof env?.GEMINI_API_KEY === "string" && env.GEMINI_API_KEY.length > 0,
   models: (env) => [...new Set([env?.GEMINI_MODEL || GEMINI_MODELS[0], ...GEMINI_MODELS])],
-  dailyLimit: 250, // cereri/zi la Flash pe nivelul gratuit (orientativ)
+  // Cotele gratuite sunt PER MODEL (găleți separate): un 429 la Flash nu înseamnă că Flash-Lite e epuizat. Routerul numără și sare per model.
+  dailyLimit: null,
+  perModelQuota: true,
+  modelLimits: { "gemini-2.5-flash": 250, "gemini-2.5-flash-lite": 1000, "gemini-2.5-pro": 50 }, // cereri/zi, orientativ
 
   async generate(env, { model, system, prompt, images = [], documents = [], audio = null, schema, maxTokens, timeoutMs, temperature }) {
     const parts = [];
