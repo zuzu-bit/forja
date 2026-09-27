@@ -35,9 +35,18 @@ export async function evaluateOrganizerModels(run,{models=Object.values(ORGANIZE
 }
 
 if(process.argv[1]&&new URL('file://'+process.argv[1]).href===import.meta.url) {
-  const account=process.env.CLOUDFLARE_ACCOUNT_ID||process.env.CF_ACCOUNT_ID;
+  let account=process.env.CLOUDFLARE_ACCOUNT_ID||process.env.CF_ACCOUNT_ID;
   const token=process.env.CLOUDFLARE_API_TOKEN||process.env.CF_API_TOKEN;
-  if(!account||!token)throw new Error('Cloudflare evaluation credentials unavailable');
+  if(!token)throw new Error('Cloudflare evaluation credentials unavailable');
+  if(!account){
+    const response=await fetch('https://api.cloudflare.com/client/v4/accounts?per_page=50',{headers:{authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
+    const data=await response.json();if(!response.ok||!data.success||!Array.isArray(data.result))throw new Error('Cloudflare account lookup unavailable');
+    const matches=[];for(const candidate of data.result){
+      const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${candidate.id}/workers/subdomain`,{headers:{authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
+      if(r.ok&&(await r.json()).result?.subdomain==='forja-22e7ea2d')matches.push(candidate.id);
+    }
+    if(matches.length!==1)throw new Error('Existing FORJA account could not be resolved unambiguously');account=matches[0];
+  }
   const selected=process.env.ORGANIZER_EVAL_MODELS?.split(',').map(s=>s.trim()).filter(Boolean);
   const report=await evaluateOrganizerModels(async(model,input)=>{
     const response=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/ai/run/${model}`,{
@@ -50,3 +59,4 @@ if(process.argv[1]&&new URL('file://'+process.argv[1]).href===import.meta.url) {
   console.log(JSON.stringify({synthetic:true,calls:report.calls,summary:report.summary}));
   if(report.summary.every(r=>r.passed<r.total))process.exitCode=1;
 }
+
