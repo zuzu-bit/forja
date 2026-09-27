@@ -22,7 +22,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ORGANIZER_EVAL_OUTPUT: organizer-model-evaluation.json
           ORGANIZER_EVAL_MODELS: '@cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/meta/llama-4-scout-17b-16e-instruct'
-          ORGANIZER_EVAL_CASES: 'photographed_invoice,mixed_untrusted'
           ORGANIZER_EVAL_BINDING_URL: http://127.0.0.1:8789/infer
           WRANGLER_SEND_METRICS: 'false'
         run: |
