@@ -2,6 +2,11 @@ name: Build FORJA APK
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publică APK-ul la Releases (apk-latest). false = doar build de verificare (artifact)."
+        type: boolean
+        default: true
   push:
     branches: [ main ]
     paths:
@@ -253,7 +258,7 @@ jobs:
           echo "- Baza de date Firestore: $FS_STATUS" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publică APK-ul la Releases
-        if: success()
+        if: success() && (github.event_name != 'workflow_dispatch' || inputs.publish)
         env:
           GH_TOKEN: ${{ github.token }}
           AUTH_STATUS: ${{ steps.fbcheck.outputs.AUTH_STATUS }}
