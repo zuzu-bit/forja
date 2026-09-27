@@ -8,3 +8,8 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+
+.kotlin/
+node_modules/
+.wrangler/
+server/deployment-verification.json

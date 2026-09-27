@@ -1,0 +1,207 @@
+const organizerUI={owner:null,devices:[],dirty:false,run:null,items:[],cursor:null,serial:0,edits:new Map()};
+function clearOrganizer(){organizerUI.serial++;Object.assign(organizerUI,{owner:null,devices:[],dirty:false,run:null,items:[],cursor:null,edits:new Map()});clearOrganizerV4();for(const id of ['organizer-requests','organizer-review','organizer-plans'])$(id).replaceChildren();}
+function refreshOrganizer(data){
+ if(organizerUI.owner!==auth){clearOrganizer();organizerUI.owner=auth;}
+ organizerUI.devices=data.devices;
+ refreshOrganizerV4(data.devices.filter(d=>d.protocol>=4));
+ if(!organizerUI.dirty){$('organizer-requests').replaceChildren();for(const d of data.devices.filter(d=>d.protocol<4))$('organizer-requests').append(organizerForm(d));if(!data.devices.length)empty($('organizer-requests'),'Conectează telefonul','Alege Galeria sau un dosar din aplicație.');}
+ if(organizerUI.run)refreshOrganizerPlans(organizerUI.run.device);
+}
+function organizerForm(d){
+ const form=el('form',undefined,'cleanup-device');form.append(el('h3',d.label||'Telefon'));
+ if(![2,3].includes(d.protocol)||!d.grant.enabled){form.append(el('p','Actualizează aplicația și activează „Organizare din laptop” pe telefon.'));return form;}
+ form.addEventListener('input',()=>organizerUI.dirty=true);
+ const phrase=el('input');phrase.placeholder='Ex.: ultimele 50 de poze';phrase.maxLength=100;
+ const photos=cleanupCheck('Galerie',d.grant.photos,!d.grant.photos),files=cleanupCheck('Dosarul ales',false,!d.grant.files);
+ function counter(label){const wrap=el('div'),select=el('select'),custom=el('input');select.setAttribute('aria-label',label);custom.setAttribute('aria-label',label+' · număr ales');for(const[value,text]of [['50','Ultimele 50'],['100','Ultimele 100'],['custom','Număr ales'],['0','Toate cele accesibile']]){const o=el('option',text);o.value=value;select.append(o);}custom.type='number';custom.min=1;custom.max=15000;custom.value=50;custom.hidden=true;select.onchange=()=>custom.hidden=select.value!=='custom';wrap.append(select,custom);return {wrap,value:()=>select.value==='custom'?Number(custom.value):Number(select.value),set(n){select.value=['50','100','0'].includes(String(n))?String(n):'custom';custom.value=n;custom.hidden=select.value!=='custom';}};}
+ const pc=counter('Număr de fotografii'),fc=counter('Număr de fișiere'),pf=el('input'),ff=el('input'),from=el('input'),to=el('input');pf.placeholder='Toată galeria sau DCIM/Camera';ff.placeholder='Tot dosarul sau Educație/Fișe';pf.maxLength=ff.maxLength=200;from.type=to.type='date';
+ const recursive=cleanupCheck('Include subdosarele',true),wifi=cleanupCheck('Transfer doar prin Wi-Fi',true);
+ const use=button('Folosește selecția',()=>{const q=phrase.value.toLocaleLowerCase('ro-RO');const n=/\btoate\b/.test(q)?0:Number(q.match(/\b(\d{1,5})\b/)?.[1]);if(!Number.isInteger(n)||n<0||n>15000){notice('Scrie, de exemplu, „ultimele 100 de poze”.');return;}if(/poz|foto/.test(q)&&d.grant.photos){photos.input.checked=true;files.input.checked=false;pc.set(n);}else if(/document|fi[sș]ier/.test(q)&&d.grant.files){photos.input.checked=false;files.input.checked=true;fc.set(n);}else{notice('Alege o sursă activată: poze sau fișiere.');return;}organizerUI.dirty=true;});use.type='button';
+ const grid=el('div',undefined,'cleanup-grid');grid.append(photos.label,cleanupField('Fotografii',pc.wrap),files.label,cleanupField('Fișiere',fc.wrap));form.append(grid);
+ const mode=el('select');mode.setAttribute('aria-label','Mod de organizare');for(const [v,t]of [['manual','Manual · aleg destinațiile'],['local','Sugestii locale · pe telefon']]){const o=el('option',t);o.value=v;mode.append(o);}mode.value='local';form.append(cleanupField('Organizare',mode));
+ const filters=el('div',undefined,'cleanup-grid');filters.append(cleanupField('Album sau cale în Galerie',pf),cleanupField('Subdosar',ff),cleanupField('De la',from),cleanupField('Până la',to),recursive.label,wifi.label);
+ form.append(cleanupDetails('Personalizează selecția',cleanupField('Selecție rapidă',phrase),use,filters,el('p','Perioada și dosarul se aplică înainte de alegerea celor mai recente. Fotografiile folosesc data fotografierii, apoi data modificării; fișierele folosesc data modificării. Datele includ zilele alese, în fusul orar al laptopului.','muted small'),el('p','„Toate”: până la 15.000 de elemente pe sursă. Transfer: maximum 500 de copii / 512 MB, până la 25 MB per fișier.','muted small')));
+ const submit=el('button','Pregătește selecția','primary');submit.type='submit';form.append(el('p','Primești copii. Originalele rămân pe telefon.','muted small'),submit);let id=null;
+ form.onsubmit=async e=>{e.preventDefault();const current=auth;submit.disabled=true;
+  try{const end=to.value?new Date(to.value+'T00:00:00'):null;if(end)end.setDate(end.getDate()+1);const selection={mode:mode.value,photos:photos.input.checked,files:files.input.checked,photo_count:pc.value(),file_count:fc.value(),photo_folder:pf.value.trim(),file_folder:ff.value.trim(),from:from.value?new Date(from.value+'T00:00:00').getTime():null,to:end?.getTime()??null,recursive:recursive.input.checked,wifi_only:wifi.input.checked};
+   const payload=JSON.stringify(selection);if(!id||id.payload!==payload)id={value:crypto.randomUUID(),payload};await api(`/v2/organizer/devices/${d.id}/request`,{method:'POST',body:JSON.stringify({id:id.value,revision:d.revision,selection})});if(auth!==current)return;organizerUI.dirty=false;notice('Cerere trimisă. Așteaptă conectarea telefonului; în fundal poate dura mai mult.',true);await refreshCleanup(true);
+  }catch(error){if(auth===current&&error.name!=='AbortError')notice(error.message);}finally{if(auth===current)submit.disabled=false;}};
+ return form;
+}
+async function openOrganizer(run,after=null){
+ const current=auth,serial=++organizerUI.serial;organizerUI.run=run;organizerUI.edits.clear();$('organizer-review').replaceChildren(el('p','Încarc rezultatele…'));
+ try{const data=await api(`/v2/organizer/devices/${run.device}/runs/${run.id}/items`+(after?'?after='+encodeURIComponent(after):''));if(auth!==current||serial!==organizerUI.serial)return;organizerUI.items=data.items;organizerUI.cursor=data.next_cursor;renderOrganizer(data.total);refreshOrganizerPlans(run.device);}catch(e){if(auth===current&&serial===organizerUI.serial){$('organizer-review').replaceChildren(el('p',e.message));}}
+}
+function renderOrganizer(total){
+ const box=$('organizer-review'),r=organizerUI.run;box.replaceChildren();box.append(el('h3','Alege destinațiile'),el('p',total+' rezultate · '+dt(r.at),'muted small'));
+ if(!total){box.append(el('p','Așteptăm rezultatele de pe telefon.'));box.append(button('Actualizează',()=>openOrganizer(r)));return;}
+ const table=el('table'),head=el('tr');for(const s of ['Alege','Fișier / conținut','Dosar destinație'])head.append(el('th',s));table.append(head);
+ for(const item of organizerUI.items){const row=el('tr'),check=el('input');check.type='checkbox';check.disabled=!item.received;check.setAttribute('aria-label','Selectează '+item.name);const cell=el('td');cell.append(check);row.append(cell);const details=el('td');details.append(el('strong',item.name),el('p',(item.source==='photos'?'Galerie':'Dosar')+' · '+item.folder,'muted small'));if(item.partial)details.append(el('p','Analiză parțială · de verificat','muted small'));if(item.reason||item.excerpt){const d=cleanupDetails('Detalii');if(item.reason)d.append(el('p',item.reason,'muted small'));if(item.excerpt)d.append(el('pre',item.excerpt));details.append(d);}if(item.received)details.append(button('Vezi copia',()=>previewFile(item)));else details.append(el('p','Copia este în așteptare.','muted small'));row.append(details);
+  const destination=el('input');destination.value=item.destination;destination.maxLength=200;destination.setAttribute('aria-label','Dosar pentru '+item.name);const reason=el('p',r.selection?.mode==='manual'?'Alegi tu':'Sugestie locală','muted small'),target=el('td');target.append(destination,reason);row.append(target);table.append(row);organizerUI.edits.set(item.id,{item,check,destination,reason});
+ }
+ const wrap=el('div',undefined,'organizer-table');wrap.append(table);box.append(wrap);
+ const selectionRow=el('div',undefined,'row');for(const[source,label]of [['photos','Selectează Galeria'],['files','Selectează dosarul']])selectionRow.append(button(label,()=>{for(const e of organizerUI.edits.values())e.check.checked=e.item.source===source&&!e.check.disabled;}));box.append(selectionRow);
+ const online=cleanupCheck('Permit analiza online a selecției',false);
+ const ai=button('Analizează cu AI',async()=>{
+  const selected=[...organizerUI.edits].filter(([,e])=>e.check.checked),current=auth,serial=organizerUI.serial;if(!online.input.checked||!selected.length||selected.length>5){notice('Selectează 1–5 fișiere și permite analiza online.');return;}ai.disabled=true;
+  try{const result=await api('/insights/api/organize',{method:'POST',body:JSON.stringify({device:r.device,run:r.id,ids:selected.map(([id])=>id),consent:true})});if(auth!==current||serial!==organizerUI.serial)return;for(const v of result.items){const e=organizerUI.edits.get(v.id);e.destination.value=v.destination;e.reason.textContent='AI online · '+({low:'de verificat',medium:'încredere medie',high:'încredere ridicată'}[v.confidence])+': '+v.reason;}notice('Propuneri actualizate. Verifică-le înainte de a aproba mutarea.',true);}catch(e){if(auth===current)notice(e.message);}finally{if(auth===current)ai.disabled=false;}
+ });box.append(cleanupDetails('Sugestii AI online · opțional',el('p','Cloudflare procesează textul extras și miniaturile celor 1–5 fișiere selectate.','muted small'),online.label,ai,el('p','Llama 70B și analiză vizuală · maximum 30 de inferențe pe zi. Fiecare miniatură folosește o inferență vizuală, plus una pentru grupare.','muted small')));
+ const confirm=cleanupCheck('Am verificat destinațiile și aprob mutarea fișierelor originale pe telefon.',false);box.append(confirm.label);let planRequest=null;
+ const apply=button('Mută originalele pe telefon',async()=>{
+  const entries=[...organizerUI.edits.values()].filter(e=>e.check.checked),current=auth;if(!confirm.input.checked||!entries.length){notice('Selectează fișiere și confirmă mutarea originalelor.');return;}if(new Set(entries.map(e=>e.item.source)).size!==1){notice('Aplică separat fotografiile din Galerie și fișierele din dosar.');return;}
+  const d=organizerUI.devices.find(d=>d.id===r.device);if(!d?.grant.organize){notice('Activează „Aplică mutările aprobate din laptop” în configurarea telefonului. Apoi cere o analiză nouă.');return;}apply.disabled=true;
+  try{const items=entries.map(e=>({id:e.item.id,destination:e.destination.value.trim()})),fingerprint=JSON.stringify(items);if(!planRequest||planRequest.fingerprint!==fingerprint)planRequest={id:crypto.randomUUID(),fingerprint};const p=await api(`/v2/organizer/devices/${r.device}/runs/${r.id}/plan`,{method:'POST',body:JSON.stringify({id:planRequest.id,grant_id:d.grant.id,items,confirm:true})});if(auth!==current)return;notice(p.message,true);await refreshOrganizerPlans(r.device);}catch(e){if(auth===current)notice(e.message);}finally{if(auth===current)apply.disabled=false;}
+ });apply.classList.add('primary');box.append(apply,el('p','Galeria și dosarul se mută separat. Fotografiile cer și confirmarea Android pe telefon.','muted small'),cleanupDetails('Despre mutare',el('p','Documentele rămân în dosarul autorizat. Pentru Galerie, deschide Curățenie pe telefon și confirmă planul. Rezultatul apare după răspunsul telefonului. Nu se șterg automat fișiere; jurnalul de anulare păstrează ultima operație.','muted small')));
+ if(organizerUI.cursor)box.append(button('Pagina următoare (lasă editările nesalvate)',()=>openOrganizer(r,organizerUI.cursor)));box.append(button('Reîncarcă prima pagină',()=>openOrganizer(r)));
+ box.scrollIntoView({behavior:'smooth',block:'start'});
+}
+async function refreshOrganizerPlans(device){
+ const current=auth;try{const data=await api(`/v2/organizer/devices/${device}/plans`);if(auth!==current||organizerUI.run?.device!==device)return;const box=$('organizer-plans');box.replaceChildren();for(const p of data.plans){const row=el('article',undefined,'cleanup-result');row.append(el('h3',({approved:'În așteptarea telefonului',awaiting_phone:'Confirmă pe telefon',applying:'Se mută pe telefon',complete:'Rezultat primit',error:'Necesită atenție'}[p.state])||p.state),el('p',p.message),el('p',`${p.moved} mutate · ${p.copied} copiate · ${p.skipped} nemodificate`,'muted small'));if(['approved','awaiting_phone'].includes(p.state))row.append(button('Anulează planul',async()=>{try{await api(`/v2/organizer/devices/${device}/plans/${p.id}`,{method:'DELETE'});refreshOrganizerPlans(device);}catch(e){notice(e.message);}}));box.append(row);}}catch(e){if(auth===current&&e.name!=='AbortError')notice(e.message);}
+}
+
+// Protocol 4 keeps original-file progress independently of temporary cloud copies.
+const organizerV4={device:null,devices:[],jobs:new Map(),draft:null,draftKey:null,serial:0,itemsSerial:new Map(),busy:new Set(),requests:new Map(),edits:new Map(),lastDevices:'',batchCounts:new Map()};
+const organizerJobLabel={awaiting_phone:'Așteaptă telefonul',running:'Se organizează pe telefon',paused:'În pauză',partial:'Mai sunt elemente de verificat',complete:'Lot încheiat',cancelled:'Oprit',access_needed:'Necesită acces pe telefon'};
+const organizerItemLabel={pending:'În așteptare',analyzed:'Analizat',upload_pending:'Așteaptă transferul',uploaded:'Copie primită',ready:'Așteaptă mutarea',applying:'Se mută',moved:'Mutat pe telefon',copied_pending_removal:'Copiat · mutare neîncheiată',needs_review:'De verificat',failed_retryable:'Se poate reîncerca',skipped:'Nemodificat'};
+function clearOrganizerV4(){organizerV4.serial++;Object.assign(organizerV4,{device:null,devices:[],jobs:new Map(),draft:null,draftKey:null,itemsSerial:new Map(),busy:new Set(),requests:new Map(),edits:new Map(),lastDevices:'',batchCounts:new Map()});$('organizer-workspace').replaceChildren();$('organizer-workspace').hidden=true;$('organizer-jobs').replaceChildren();}
+function organizerDevice(){return organizerV4.devices.find(d=>d.id===organizerV4.device);}
+function organizerApi(device,job=''){return '/v2/organizer/devices/'+device+'/jobs'+(job?'/'+job:'');}
+function organizerGrantSignature(d){return JSON.stringify([d.id,d.grant,d.protocol]);}
+function refreshOrganizerV4(devices){
+ organizerV4.devices=devices;
+ if(!devices.some(d=>d.id===organizerV4.device)){organizerV4.device=devices[0]?.id||null;organizerV4.draft=null;organizerV4.lastDevices='';}
+ const root=$('organizer-workspace');root.hidden=!devices.length;if(!devices.length){organizerV4.serial++;$('organizer-jobs').replaceChildren();return;}
+ const signature=JSON.stringify(devices.map(organizerGrantSignature));
+ if(signature!==organizerV4.lastDevices){organizerV4.lastDevices=signature;renderOrganizerStart();}
+ refreshOrganizerJobs();
+}
+function organizerOption(select,value,label){const option=el('option',label);option.value=value;select.append(option);}
+function renderOrganizerStart(){
+ const root=$('organizer-workspace'),d=organizerDevice();root.replaceChildren();if(!d)return;
+ root.append(el('h2','Ce vrei să organizăm?'));
+ if(organizerV4.devices.length>1){const phone=el('select');phone.id='organizer-device';for(const row of organizerV4.devices)organizerOption(phone,row.id,row.label||'Telefon');phone.value=d.id;phone.onchange=()=>{organizerV4.device=phone.value;organizerV4.serial++;organizerV4.draft=null;organizerV4.jobs.clear();$('organizer-jobs').replaceChildren();renderOrganizerStart();refreshOrganizerJobs();};root.append(cleanupField('Telefon',phone));}
+ else root.append(el('p',d.label||'Telefonul tău','small muted'));
+ if(!d.grant?.enabled){root.append(el('p','Activează organizarea pe telefon.','organizer-job-empty'));return;}
+ let draft=organizerV4.draft;
+ if(!draft||draft.device!==d.id){draft={device:d.id,source:d.grant.photos?'photos':'files',folder:'',scope:'all',count:50,destination:'FORJA',mode:'local',auto_apply:d.grant.organize===true,ai_consent:false};organizerV4.draft=draft;}
+ if(!d.grant[draft.source])draft.source=d.grant.photos?'photos':'files';if(!d.grant.organize)draft.auto_apply=false;
+ const sources=el('div',undefined,'organizer-source-row');
+ for(const [key,title,subtitle]of [['photos','Galerie','Fotografiile autorizate'],['files','Documente','Dosarul permis pe telefon']]){const b=el('button',undefined,'organizer-source');b.type='button';b.dataset.organizerSource=key;b.disabled=!d.grant[key];b.setAttribute('aria-pressed',String(draft.source===key));b.append(el('strong',title),el('span',d.grant[key]?subtitle:'Permite accesul pe telefon'));b.onclick=()=>{draft.source=key;draft.folder='';draft.scope='all';renderOrganizerStart();};sources.append(b);}root.append(sources);
+ const selection=el('div',undefined,'organizer-source-picker'),available=(d.grant.sources||[]).filter(source=>source.source===draft.source);
+ if(available.length){if(!available.some(source=>source.id===draft.source_id))draft.source_id=draft.source==='files'?available[0].id:null;const source=el('select');source.id='organizer-source-id';if(draft.source==='photos')organizerOption(source,'','Toată galeria autorizată');for(const entry of available)organizerOption(source,entry.id,entry.label||entry.folder||'Dosar autorizat');source.value=draft.source_id||'';source.onchange=()=>{draft.source_id=source.value||null;draft.folder='';renderOrganizerStart();};selection.append(cleanupField('Dosar permis pe telefon',source));}else draft.source_id=null;
+ const scope=el('select');scope.id='organizer-scope';organizerOption(scope,'all',draft.source==='photos'?'Toată galeria autorizată':'Tot dosarul autorizat');organizerOption(scope,'folder',draft.source==='photos'?'Un album / dosar':'Un subdosar');scope.value=draft.scope;
+ const folder=el('input');folder.id='organizer-folder';folder.maxLength=200;folder.value=draft.folder;folder.placeholder=draft.source==='photos'?'DCIM/Camera':'Facturi';const folderField=cleanupField(draft.source==='photos'?'Album sau dosar':'Subdosar',folder);folderField.hidden=draft.scope!=='folder';folder.oninput=()=>draft.folder=folder.value;scope.onchange=()=>{draft.scope=scope.value;folderField.hidden=scope.value!=='folder';};selection.append(cleanupField('Sursă',scope),folderField);root.append(selection);
+ const batch=el('div',undefined,'organizer-batch-row'),custom=el('input');custom.id='organizer-count';custom.type='number';custom.min=1;custom.max=1000;custom.value=draft.count||50;custom.setAttribute('aria-label','Număr de elemente');custom.hidden=[0,50,100].includes(draft.count);
+ for(const [value,label]of [[0,'Toate cele rămase'],[50,'Următoarele 50'],[100,'Următoarele 100'],[-1,'Alt număr']]){const b=el('button',label);b.type='button';b.dataset.organizerCount=String(value);b.setAttribute('aria-pressed',String(value===draft.count||(value===-1&&![0,50,100].includes(draft.count))));b.onclick=()=>{draft.count=value===-1?Number(custom.value)||25:value;custom.hidden=value!==-1;for(const other of batch.children)other.setAttribute('aria-pressed',String(other===b));};batch.append(b);}custom.oninput=()=>draft.count=Number(custom.value);root.append(batch,custom);
+ const destination=el('input');destination.id='organizer-destination';destination.maxLength=200;destination.value=draft.destination;destination.oninput=()=>draft.destination=destination.value;
+ const mode=el('select');mode.id='organizer-mode';for(const [key,label]of [['local','Sugestii pe telefon'],['manual','Aleg eu dosarele'],['online','Sugestii AI online']])organizerOption(mode,key,label);mode.value=draft.mode;
+ const auto=cleanupCheck('Aplică automat mutările în dosarele sugerate',draft.auto_apply,!d.grant.organize),ai=cleanupCheck('Permit analiza online a conținutului selecției cu Cloudflare AI.',draft.ai_consent);
+ auto.input.id='organizer-auto';auto.input.onchange=()=>draft.auto_apply=auto.input.checked;ai.input.id='organizer-ai-consent';ai.input.onchange=()=>draft.ai_consent=ai.input.checked;ai.label.hidden=draft.mode!=='online';
+ mode.onchange=()=>{draft.mode=mode.value;ai.label.hidden=mode.value!=='online';if(mode.value==='manual'){draft.auto_apply=false;auto.input.checked=false;}auto.input.disabled=!d.grant.organize||mode.value==='manual';};auto.input.disabled=!d.grant.organize||draft.mode==='manual';
+ const options=cleanupDetails('Dosare și opțiuni',cleanupField('Dosarul destinație',destination),cleanupField('Cum alegem dosarele?',mode),auto.label,ai.label);root.append(options);
+ const summary=el('p',draft.auto_apply?'Telefonul mută originalele în dosarele sugerate. Nu se șterg fișiere.':'Primești propuneri. Aprobi mutarea originalelor separat.','small muted');auto.input.addEventListener('change',()=>summary.textContent=auto.input.checked?'Telefonul mută originalele în dosarele sugerate. Nu se șterg fișiere.':'Primești propuneri. Aprobi mutarea originalelor separat.');mode.addEventListener('change',()=>summary.textContent=draft.auto_apply?'Telefonul mută originalele în dosarele sugerate. Nu se șterg fișiere.':'Primești propuneri. Aprobi mutarea originalelor separat.');
+ const start=button('Organizează',()=>createOrganizerJob(draft),'primary');start.id='organizer-start';start.disabled=!d.grant[draft.source];const row=el('div',undefined,'organizer-start-row');row.append(start);root.append(summary,row);
+ const help=el('a','Acces, copii și originale','inline-help');help.href='#privacy-files';root.append(help);
+}
+async function createOrganizerJob(draft){
+ const current=auth,d=organizerDevice();if(!d||d.id!==draft.device||!d.grant?.enabled)throw Error('Configurarea telefonului s-a schimbat.');
+ if(!Number.isInteger(draft.count)||draft.count<0||draft.count>1000)throw Error('Alege 1–1.000 de elemente sau toate cele rămase.');
+ if(draft.scope==='folder'&&!draft.folder.trim())throw Error('Alege albumul sau subdosarul.');
+ if(!draft.destination.trim())throw Error('Alege un dosar destinație.');
+ if(draft.mode==='online'&&!draft.ai_consent)throw Error('Permite analiza online înainte de pornire.');
+ const source=(d.grant.sources||[]).find(row=>row.id===draft.source_id&&row.source===draft.source),relative=draft.scope==='folder'?draft.folder.trim():'';const folder=relative;
+ const values={grant_id:d.grant.id,revision:d.revision,source:draft.source,...(source?{source_id:source.id}:{}),scope:{folder,recursive:true},destination:draft.destination.trim(),mode:draft.mode,auto_apply:draft.auto_apply&&d.grant.organize===true,ai_consent:draft.mode==='online'&&draft.ai_consent};
+ const key=JSON.stringify(values);if(organizerV4.draftKey?.key!==key)organizerV4.draftKey={key,id:crypto.randomUUID()};
+ const job=await api(organizerApi(d.id),{method:'POST',body:JSON.stringify({id:organizerV4.draftKey.id,...values})});if(auth!==current||organizerV4.device!==d.id)return;
+ organizerV4.jobs.set(job.id,job);renderOrganizerJobs();
+ await sendOrganizerCommand(job,'continue',draft.count);if(auth!==current)return;organizerV4.draftKey=null;
+}
+async function refreshOrganizerJobs(){
+ const current=auth,device=organizerV4.device;if(!current||!device)return;const serial=++organizerV4.serial;
+ try{const data=await api(organizerApi(device));if(auth!==current||device!==organizerV4.device||serial!==organizerV4.serial)return;organizerV4.jobs=new Map(data.jobs.map(job=>[job.id,job]));renderOrganizerJobs();}
+ catch(e){if(auth===current&&device===organizerV4.device&&serial===organizerV4.serial&&e.name!=='AbortError')notice(e.message);}
+}
+function organizerCount(job,key){const value=job.counters?.[key];return Number.isSafeInteger(value)&&value>=0?value:null;}
+function organizerCommandPending(job){return job.command?.status==='pending'||!!job.command&&!job.command.status&&job.state==='awaiting_phone';}
+function renderOrganizerJobs(){
+ const box=$('organizer-jobs'),device=organizerV4.device;if(!device)return;
+ for(const card of box.querySelectorAll('[data-organizer-job]'))if(!organizerV4.jobs.has(card.dataset.organizerJob)){organizerV4.itemsSerial.set(card.dataset.organizerJob,(organizerV4.itemsSerial.get(card.dataset.organizerJob)||0)+1);card.remove();}
+ box.querySelectorAll(':scope>.organizer-job-empty').forEach(n=>n.remove());
+ if(!organizerV4.jobs.size){box.append(el('p','Lucrările tale apar aici după pornire.','organizer-job-empty'));return;}
+ for(const job of [...organizerV4.jobs.values()].sort((a,b)=>b.created_at-a.created_at)){
+  let card=[...box.querySelectorAll('[data-organizer-job]')].find(node=>node.dataset.organizerJob===job.id);
+  if(!card){card=el('article',undefined,'organizer-job');card.dataset.organizerJob=job.id;card.append(el('div',undefined,'organizer-job-summary'),el('div',undefined,'organizer-job-actions'));const detail=cleanupDetails('Vezi rezultatul'),body=el('div',undefined,'organizer-items');detail.classList.add('organizer-job-detail');detail.append(body);detail.addEventListener('toggle',()=>{if(detail.open&&!body.dataset.loaded)openOrganizerJobItems(job.id,body);});card.append(detail);box.append(card);}
+  const summary=card.querySelector('.organizer-job-summary');summary.replaceChildren();const head=el('div',undefined,'organizer-job-head');head.append(el('h3',job.source==='photos'?'Galerie':'Documente'),el('span',organizerJobLabel[job.state]||'Se verifică starea','pill'));summary.append(head,el('p',(job.scope?.folder||'Toată sursa autorizată')+' → '+job.destination,'small muted'));
+  const counts=el('div',undefined,'organizer-counts');for(const [key,label]of [['moved','mutate'],['uploaded','copii de organizat'],['needs_review','de verificat'],['failed_retryable','de reluat']]){const n=organizerCount(job,key);if(n!==null){const cell=el('div');cell.append(el('b',String(n)),el('span',label));counts.append(cell);}}summary.append(counts);
+  const total=organizerCount(job,'total'),moved=organizerCount(job,'moved');if(total>0&&moved!==null){const progress=el('progress',undefined,'organizer-progress');progress.max=total;progress.value=Math.min(total,moved);progress.setAttribute('aria-label','Fișiere mutate pe telefon');summary.append(progress,el('p',moved+' din '+total+' mutate','small muted'));}
+  if(Number.isSafeInteger(job.inventory_unavailable)&&job.inventory_unavailable>0)summary.append(el('p',job.inventory_unavailable+' inaccesibile pe telefon','small muted'));
+  if(job.message)summary.append(el('p',job.message,'small muted'));
+  if(organizerCount(job,'copied_pending_removal'))summary.append(el('p',job.counters.copied_pending_removal+' copii create · originalele încă așteaptă finalizarea mutării.','small muted'));
+  const actions=card.querySelector('.organizer-job-actions');actions.replaceChildren();const row=el('div',undefined,'row'),pending=organizerCommandPending(job),busy=organizerV4.busy.has(job.id),d=organizerDevice();
+  if(!['cancelled','access_needed'].includes(job.state)){
+   if(!pending&&(job.command?.status==='complete'||job.state==='paused'||!job.command||job.state==='complete')){let count=organizerV4.batchCounts.get(job.id)??job.command?.count??50;const choice=el('select');choice.setAttribute('aria-label','Mărimea următorului lot');for(const value of [...new Set([50,100,0,count])])organizerOption(choice,String(value),value?'Următoarele '+value:'Toate cele rămase');choice.value=String(count);choice.onchange=()=>{count=Number(choice.value);organizerV4.batchCounts.set(job.id,count);};if(job.command?.status==='complete'||job.state==='complete')row.append(choice);row.append(button(job.command?.status==='complete'||job.state==='complete'?'Organizează următorul lot':job.command?'Continuă':'Pornește',()=>sendOrganizerCommand(job,'continue',count),'primary'));}
+   if(['running','partial','awaiting_phone'].includes(job.state)&&job.command?.status!=='complete')row.append(button('Pauză',()=>sendOrganizerCommand(job,'pause',0)));
+   row.append(button('Oprește lucrarea',()=>{if(confirm('Oprești operațiile noi ale acestei lucrări? O mutare începută se verifică pe telefon.'))return sendOrganizerCommand(job,'cancel',0);},'small subtle'));
+  }
+  row.append(button('Actualizează',async()=>{await refreshOrganizerJobs();const detail=card.querySelector('.organizer-job-detail');if(detail.open)await openOrganizerJobItems(job.id,detail.querySelector('.organizer-items'));}));for(const b of row.querySelectorAll('button'))b.disabled=busy||!d?.grant?.enabled;actions.append(row);
+  if(pending)actions.append(el('p','Comanda așteaptă răspunsul telefonului.','organizer-form-status'));
+  const details=card.querySelector('.organizer-job-detail'),body=details.querySelector('.organizer-items'),signature=JSON.stringify([job.sync_revision,job.revision,job.updated_at,job.state,job.counters]);
+  if(details.open&&body.dataset.loaded&&(body.dataset.jobSignature!==signature||Number(body.dataset.expires)<=vaultNow())&&!body.contains(document.activeElement))openOrganizerJobItems(job.id,body);
+ }
+}
+async function sendOrganizerCommand(job,action,count){
+ const current=auth,device=organizerV4.device;if(!current||!device||organizerV4.busy.has(job.id))return;
+ const live=organizerV4.jobs.get(job.id);if(!live)throw Error('Lucrarea nu mai este disponibilă.');
+ const fingerprint=JSON.stringify([device,job.id,action,count]);let request=organizerV4.requests.get(job.id);if(request?.fingerprint!==fingerprint){request={fingerprint,request_id:crypto.randomUUID(),revision:live.revision};organizerV4.requests.set(job.id,request);}
+ organizerV4.busy.add(job.id);organizerV4.serial++;renderOrganizerJobs();
+ try{const next=await api(organizerApi(device,job.id)+'/command',{method:'POST',body:JSON.stringify({request_id:request.request_id,revision:request.revision,action,count})});if(auth!==current||device!==organizerV4.device)return;organizerV4.serial++;organizerV4.jobs.set(next.id,next);organizerV4.requests.delete(job.id);renderOrganizerJobs();}
+ catch(error){if(auth===current&&device===organizerV4.device&&error.status>=400&&error.status<500){organizerV4.requests.delete(job.id);await refreshOrganizerJobs();}throw error;}
+ finally{if(auth===current&&device===organizerV4.device){organizerV4.busy.delete(job.id);renderOrganizerJobs();}}
+}
+async function openOrganizerJobItems(jobId,body,after=null){
+ const current=auth,device=organizerV4.device,loadedJob=organizerV4.jobs.get(jobId),signature=JSON.stringify([loadedJob?.sync_revision,loadedJob?.revision,loadedJob?.updated_at,loadedJob?.state,loadedJob?.counters]),serial=(organizerV4.itemsSerial.get(jobId)||0)+1;organizerV4.itemsSerial.set(jobId,serial);
+ try{const data=await api(organizerApi(device,jobId)+'/items'+(after?'?after='+encodeURIComponent(after):''));if(auth!==current||device!==organizerV4.device||serial!==organizerV4.itemsSerial.get(jobId)||!body.isConnected)return;
+  if(!after){body.replaceChildren();body.dataset.expires=String(Infinity);for(const [key,edit]of organizerV4.edits)if(key.startsWith(jobId+':'))edit.visible=false;}body.dataset.loaded='yes';body.dataset.jobSignature=signature;body.querySelector('.organizer-more')?.remove();const job=organizerV4.jobs.get(jobId);
+  if(!data.items.length&&!after)body.append(el('p','Telefonul nu a trimis încă rezultate pentru această lucrare.','small muted'));
+  for(const item of data.items){const card=el('article',undefined,'organizer-item');card.dataset.organizerItem=item.id;const head=el('div',undefined,'organizer-item-head');head.append(el('strong',item.name),el('span',organizerItemLabel[item.state]||'Se verifică','pill'));card.append(head);if(item.destination)card.append(el('p','→ '+item.destination,'small muted'));if(item.reason)card.append(el('p',item.reason,'small muted'));if(item.partial||item.coverage?.partial)card.append(el('p','Analiză parțială · de verificat','small muted'));if(item.analysis)card.append(organizerEvidence(item.analysis));
+   const file=item.received===true?item.file:null;for(const expires of [file?.expires_at,item.duplicate?.expires_at])if(Number.isFinite(expires))body.dataset.expires=String(Math.min(Number(body.dataset.expires),expires));if(item.duplicate?.kind==='exact_bytes'&&item.duplicate.verified_received_bytes===true)card.append(el('p',item.duplicate.is_keeper?'Copii identice · păstrează acest original':'Duplicat exact · de verificat','small muted'));if(file&&file.expires_at>vaultNow())card.append(button('Vezi copia',()=>previewFile(file)));else if(item.file_id)card.append(el('p','Copia nu este disponibilă aici. Progresul originalului este păstrat.','small muted'));
+   if(['analyzed','uploaded','ready','needs_review'].includes(item.state)){const chosen=cleanupCheck('Selectează '+item.name,false,job.mode!=='local'&&(!file||file.expires_at<=vaultNow())),destination=el('input');destination.value=item.destination||job.destination;destination.maxLength=200;destination.setAttribute('aria-label','Dosar pentru '+item.name);const key=jobId+':'+item.id,previous=organizerV4.edits.get(key);if(previous&&previous.item.version===item.version&&previous.item.sha256===item.sha256){chosen.input.checked=previous.chosen&&!chosen.input.disabled;destination.value=previous.destination;}const edit={item,chosen:chosen.input.checked,destination:destination.value,visible:true};organizerV4.edits.set(key,edit);chosen.input.onchange=()=>edit.chosen=chosen.input.checked;destination.oninput=()=>edit.destination=destination.value;card.append(cleanupDetails('Destinație și verificare',chosen.label,destination));}
+   body.append(card);
+  }
+  if(data.next_cursor)body.append(button('Mai multe rezultate',()=>openOrganizerJobItems(jobId,body,data.next_cursor),'organizer-more'));
+  if(!after){const controls=cleanupDetails('Mutările selectate'),blocked=['paused','cancelled','access_needed'].includes(job.state),confirmMove=cleanupCheck('Aprob mutarea originalelor selectate pe telefon.',false,blocked),approve=button('Aprobă mutările',()=>approveOrganizerItems(jobId,body,confirmMove.input.checked));controls.classList.add('organizer-review-actions');approve.disabled=blocked;controls.append(confirmMove.label,approve);if(blocked)controls.append(el('p','Continuă lucrarea pentru a aproba mutările.','small muted'));const ai=cleanupCheck('Permit analiza online a conținutului selectat cu Cloudflare AI.',false);if(job.mode==='online'&&job.ai_consent)controls.append(ai.label,button('Propune dosare cu AI',()=>analyzeOrganizerItems(jobId,body,ai.input.checked)));body.append(controls);const manage=cleanupDetails('Opțiuni lucrare',button('Șterge progresul lucrării',()=>deleteOrganizerJob(jobId)));manage.classList.add('organizer-manage');body.append(manage);}else for(const controls of body.querySelectorAll(':scope>.organizer-review-actions,:scope>.organizer-manage'))body.append(controls);
+ }catch(e){if(auth===current&&device===organizerV4.device&&serial===organizerV4.itemsSerial.get(jobId)&&body.isConnected&&e.name!=='AbortError')body.append(el('p',e.message,'notice'));}
+}
+function selectedOrganizerItems(jobId){return [...organizerV4.edits].filter(([key,value])=>key.startsWith(jobId+':')&&value.chosen&&value.visible).map(([,value])=>value);}
+async function approveOrganizerItems(jobId,body,confirmed){
+ const current=auth,device=organizerV4.device,job=organizerV4.jobs.get(jobId),items=selectedOrganizerItems(jobId);if(['paused','cancelled','access_needed'].includes(job?.state))throw Error('Continuă lucrarea pentru a aproba mutările.');if(!confirmed||!items.length||items.length>100)throw Error('Selectează 1–100 de fișiere și confirmă mutarea.');if(!organizerDevice()?.grant.organize)throw Error('Permite mutările din aplicația telefonului.');
+ const approved=items.map(e=>({id:e.item.id,destination:e.destination.trim()}));if(approved.some(e=>!e.destination))throw Error('Alege destinația fiecărui fișier.');
+ const fingerprint=JSON.stringify([device,jobId,approved]),key='approve:'+jobId;let request=organizerV4.requests.get(key);if(request?.fingerprint!==fingerprint){request={fingerprint,request_id:crypto.randomUUID(),revision:job.revision};organizerV4.requests.set(key,request);}
+ if(organizerV4.busy.has(jobId))return;organizerV4.busy.add(jobId);organizerV4.serial++;
+ try{const next=await api(organizerApi(device,jobId)+'/approve',{method:'POST',body:JSON.stringify({request_id:request.request_id,revision:request.revision,items:approved,confirm:true})});if(auth!==current||device!==organizerV4.device)return;organizerV4.requests.delete(key);organizerV4.serial++;organizerV4.jobs.set(next.id,next);renderOrganizerJobs();if(body.isConnected)await openOrganizerJobItems(jobId,body);}
+ catch(error){if(auth===current&&device===organizerV4.device&&error.status>=400&&error.status<500){organizerV4.requests.delete(key);await refreshOrganizerJobs();}throw error;}
+ finally{if(auth===current&&device===organizerV4.device)organizerV4.busy.delete(jobId);}
+}
+
+async function analyzeOrganizerItems(jobId,body,consent){
+ const current=auth,device=organizerV4.device,items=selectedOrganizerItems(jobId);if(!consent||!items.length||items.length>5)throw Error('Selectează 1–5 fișiere și permite analiza online.');
+ if(organizerV4.busy.has(jobId))return;organizerV4.busy.add(jobId);try{await api('/insights/api/organizer-analysis',{method:'POST',body:JSON.stringify({device,job:jobId,ids:items.map(e=>e.item.id),consent:true})});if(auth!==current||device!==organizerV4.device||!body.isConnected)return;await openOrganizerJobItems(jobId,body);await refreshOrganizerJobs();}finally{if(auth===current&&device===organizerV4.device)organizerV4.busy.delete(jobId);}
+}
+
+async function deleteOrganizerJob(jobId){
+ if(!confirm('Ștergi progresul acestei lucrări? Originalele rămân pe telefon, iar copiile online expiră separat.'))return;
+ const current=auth,device=organizerV4.device;organizerV4.serial++;
+ await api(organizerApi(device,jobId),{method:'DELETE'});if(auth!==current||device!==organizerV4.device)return;
+ organizerV4.serial++;organizerV4.jobs.delete(jobId);renderOrganizerJobs();await refreshOrganizerJobs();
+}
+
+function organizerEvidence(analysis){
+ const detail=cleanupDetails('Detaliile analizei'),coverage=analysis.coverage||{};
+ if(Number.isSafeInteger(coverage.pages_processed)&&Number.isSafeInteger(coverage.pages_total))detail.append(el('p',coverage.pages_processed+' din '+coverage.pages_total+' pagini analizate','small muted'));
+ if(coverage.status==='partial')detail.append(el('p','Conținut citit parțial.','small muted'));if(coverage.status==='unavailable')detail.append(el('p','Conținutul nu a putut fi citit.','small muted'));
+ const evidence=Array.isArray(analysis.evidence)?analysis.evidence:[];
+ for(const proof of evidence.slice(0,6)){const text=proof.kind==='text'?proof.quote:proof.observation;if(!text)continue;const row=el('div',undefined,'organizer-evidence');row.append(el('p',proof.kind==='visual'?'Observație AI · de verificat':Number.isSafeInteger(proof.page)?'Pagina '+proof.page:'Fragment citit','small muted'),el('p',text,'small'));detail.append(row);}
+ const deletion=analysis.deletion;
+ if(deletion?.suggested===true&&deletion.review_only===true&&deletion.requires_confirmation===true){const refs=new Set(deletion.evidence_ids||[]),linked=evidence.filter(e=>refs.has(e.id));if(linked.length){detail.append(el('h3','De verificat pentru ștergere'),el('p',deletion.reason||'Propunere AI care necesită verificare.','small'),el('p','Propunere AI · nimic nu a fost șters.','small muted'));}}
+ return detail;
+}
