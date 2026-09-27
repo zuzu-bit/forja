@@ -289,7 +289,8 @@ fun PermissionsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                if (deniedForever) {
+                // Ecranul de setări rămâne la îndemână cât timp mai e ceva de bifat.
+                if (deniedForever && done < 5) {
                     Spacer(Modifier.height(12.dp))
                     Text(
                         "Android a închis dialogul pentru una dintre bife. O poți porni doar din setările aplicației.",

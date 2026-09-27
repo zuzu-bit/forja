@@ -64,7 +64,6 @@ import com.forja.app.core.designsystem.SwitchOff
 import com.forja.app.core.designsystem.monoLabel
 import kotlinx.coroutines.delay
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -246,12 +245,8 @@ fun TypewriterText(
         onDone?.invoke()
     }
 
-    val blink by rememberInfiniteTransition(label = "cursor").animateFloat(
-        initialValue = 1f, targetValue = 0f,
-        animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse),
-        label = "blink"
-    )
-    val cursorAlpha = if (reduced) 1f else blink
+    // Clipirea cursorului: sub „mișcare redusă” nu pornim nicio buclă.
+    val cursorAlpha = if (reduced || !cursorOn) 1f else blinkValue()
 
     // Textul complet, invizibil, ține locul: layout-ul nu sare cât se scrie.
     Box(modifier) {
@@ -282,12 +277,8 @@ fun PulseGlow(
     content: @Composable BoxScope.() -> Unit
 ) {
     val reduced = LocalReducedMotion.current
-    val pulse by rememberInfiniteTransition(label = "glow").animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(periodMs.coerceAtLeast(200), easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "pulse"
-    )
-    val t = if (reduced) 0.5f else pulse
+    // Sub „mișcare redusă”: o singură stare, la mijlocul respirației, fără buclă.
+    val t = if (reduced) 0.5f else pulseValue(periodMs)
     Box(
         modifier.drawBehind {
             val r = radius.toPx() * (0.85f + 0.3f * t)
@@ -391,6 +382,28 @@ fun StampLabel(
             style = monoLabel(fontSize, tracking).copy(color = color, fontWeight = FontWeight.Bold)
         )
     }
+}
+
+/** Valoarea clipirii cursorului (1 → 0 → 1, 500 ms). Compusă doar când clipirea e activă. */
+@Composable
+private fun blinkValue(): Float {
+    val blink by rememberInfiniteTransition(label = "cursor").animateFloat(
+        initialValue = 1f, targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse),
+        label = "blink"
+    )
+    return blink
+}
+
+/** Valoarea pulsului (0 → 1 → 0), ritm blând. Compusă doar când mișcarea nu e redusă. */
+@Composable
+private fun pulseValue(periodMs: Int): Float {
+    val pulse by rememberInfiniteTransition(label = "glow").animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(periodMs.coerceAtLeast(200), easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "pulse"
+    )
+    return pulse
 }
 
 // ───────────────────────────── Ajutoare mici ─────────────────────────────
