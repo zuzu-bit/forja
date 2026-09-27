@@ -179,4 +179,19 @@ interface ExploreDao {
 
     @Query("SELECT * FROM places WHERE lat BETWEEN :minLat AND :maxLat AND lng BETWEEN :minLng AND :maxLng LIMIT 1")
     suspend fun placeNear(minLat: Double, maxLat: Double, minLng: Double, maxLng: Double): PlaceEntity?
+
+    @Query("SELECT * FROM explore_cells WHERE lastAt > :since")
+    suspend fun cellsChangedSince(since: Long): List<ExploreCellEntity>
+
+    @Query("SELECT * FROM places WHERE updatedAt > :since OR lastAt > :since")
+    suspend fun placesChangedSince(since: Long): List<PlaceEntity>
+
+    @Query("SELECT * FROM places WHERE remoteId = :remoteId LIMIT 1")
+    suspend fun placeByRemoteId(remoteId: String): PlaceEntity?
+
+    @Query("DELETE FROM explore_cells")
+    suspend fun clearCells()
+
+    @Query("DELETE FROM places")
+    suspend fun clearPlaces()
 }

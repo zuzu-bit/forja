@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ActivityEntity::class, FocusRuleEntity::class,
         ExploreCellEntity::class, PlaceEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class ForjaDatabase : RoomDatabase() {
@@ -53,13 +53,20 @@ abstract class ForjaDatabase : RoomDatabase() {
             }
         }
 
+        // v7: locurile țin minte când au fost editate — reconciliere cu panoul online.
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE places ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun get(context: Context): ForjaDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     ForjaDatabase::class.java,
                     "forja.db"
-                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6)
+                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .fallbackToDestructiveMigration()
                     .build().also { instance = it }
             }

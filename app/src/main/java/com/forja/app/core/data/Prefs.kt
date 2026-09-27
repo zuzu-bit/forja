@@ -54,6 +54,11 @@ class Prefs(private val context: Context) {
         val map3d = booleanPreferencesKey("map_3d")
         val familyUids = stringSetPreferencesKey("family_uids")
         val exploreCandidate = stringPreferencesKey("explore_candidate")
+        val exploreSyncSite = booleanPreferencesKey("explore_sync_site")
+        val exploreSyncedAt = longPreferencesKey("explore_synced_at")
+        val exploreDeviceId = stringPreferencesKey("explore_device_id")
+        // v4.0 — sincronizarea în cont (site)
+        val syncStatus = stringPreferencesKey("sync_status")
         // v4.0 — curățenie
         val cleanupCursor = stringPreferencesKey("cleanup_cursor")
         val cleanupLastScope = stringPreferencesKey("cleanup_last_scope")
@@ -99,6 +104,18 @@ class Prefs(private val context: Context) {
     /** Candidatul de „ședere” curent (JSON, format intern ExploreTracker). */
     val exploreCandidate: Flow<String> = context.dataStore.data.map { it[K.exploreCandidate] ?: "" }
     suspend fun setExploreCandidate(v: String) = context.dataStore.edit { it[K.exploreCandidate] = v }
+    /** Trimite zonele și locurile în panoul online (site) — opt-in explicit. */
+    val exploreSyncSite: Flow<Boolean> = context.dataStore.data.map { it[K.exploreSyncSite] ?: false }
+    suspend fun setExploreSyncSite(v: Boolean) = context.dataStore.edit { it[K.exploreSyncSite] = v }
+    /** Marca serverului (server_at) până la care explorarea a fost trimisă. */
+    val exploreSyncedAt: Flow<Long> = context.dataStore.data.map { it[K.exploreSyncedAt] ?: 0L }
+    suspend fun setExploreSyncedAt(v: Long) = context.dataStore.edit { it[K.exploreSyncedAt] = v }
+    /** Identitatea acestui telefon față de site (UUID), generată o singură dată. */
+    val exploreDeviceId: Flow<String> = context.dataStore.data.map { it[K.exploreDeviceId] ?: "" }
+    suspend fun setExploreDeviceId(v: String) = context.dataStore.edit { it[K.exploreDeviceId] = v }
+    /** Starea sincronizării în cont, în cuvinte — afișată în Echipare și Profil. */
+    val syncStatus: Flow<String> = context.dataStore.data.map { it[K.syncStatus] ?: "" }
+    suspend fun setSyncStatus(v: String) = context.dataStore.edit { it[K.syncStatus] = v }
 
     // ── Curățenie ──
     /** Cursorul de reluare (JSON CleanupCursor) — OBLIGATORIU: continuăm de unde am rămas. */

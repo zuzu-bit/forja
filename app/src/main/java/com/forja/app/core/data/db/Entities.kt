@@ -151,5 +151,7 @@ data class PlaceEntity(
     val note: String = "",
     val recommended: Boolean = false,
     val remoteId: String? = null,
-    val cellId: String = ""
+    val cellId: String = "",
+    /** Ultima editare (nume/stele/notă) — câștigă cea mai nouă între telefon și site. */
+    val updatedAt: Long = 0L
 )
