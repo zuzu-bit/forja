@@ -38,10 +38,12 @@ export async function evaluateOrganizerModels(run,{models=Object.values(ORGANIZE
 }
 
 if(process.argv[1]&&new URL('file://'+process.argv[1]).href===import.meta.url) {
+  const localEndpoint=process.env.ORGANIZER_EVAL_BINDING_URL;
+  if(localEndpoint){const url=new URL(localEndpoint);if(url.protocol!=='http:'||!['localhost','127.0.0.1','[::1]'].includes(url.hostname)||url.username||url.password)throw new Error('Evaluation binding must use loopback HTTP');}
   let account=process.env.CLOUDFLARE_ACCOUNT_ID||process.env.CF_ACCOUNT_ID;
   const token=process.env.CLOUDFLARE_API_TOKEN||process.env.CF_API_TOKEN;
-  if(!token)throw new Error('Cloudflare evaluation credentials unavailable');
-  if(!account){
+  if(!localEndpoint&&!token)throw new Error('Cloudflare evaluation credentials unavailable');
+  if(!localEndpoint&&!account){
     const response=await fetch('https://api.cloudflare.com/client/v4/accounts?per_page=50',{headers:{authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
     const data=await response.json();if(!response.ok||!data.success||!Array.isArray(data.result))throw new Error('Cloudflare account lookup unavailable');
     const matches=[];for(const candidate of data.result){
@@ -52,11 +54,12 @@ if(process.argv[1]&&new URL('file://'+process.argv[1]).href===import.meta.url) {
   }
   const selected=process.env.ORGANIZER_EVAL_MODELS?.split(',').map(s=>s.trim()).filter(Boolean);
   const report=await evaluateOrganizerModels(async(model,input)=>{
-    const response=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/ai/run/${model}`,{
-      method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(input),signal:AbortSignal.timeout(40000)});
+    const response=await fetch(localEndpoint||`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/ai/run/${model}`,{
+      method:'POST',headers:{...(localEndpoint?{'x-organizer-eval':'synthetic-only-v1'}:{authorization:`Bearer ${token}`}), 'content-type':'application/json'},
+      body:JSON.stringify(localEndpoint?{model,input}:input),signal:AbortSignal.timeout(40000)});
     const body=await response.json().catch(()=>null);
     if(!response.ok||body?.success===false||!body?.result){
-      const error=new Error('provider_rejected');error.httpStatus=response.status;
+      const error=new Error('provider_rejected');error.httpStatus=Number.isInteger(body?.provider_http_status)?body.provider_http_status:response.status;
       error.codes=Array.isArray(body?.errors)?body.errors.map(e=>Number(e.code)).filter(n=>Number.isSafeInteger(n)):[];throw error;
     }
     return body.result;

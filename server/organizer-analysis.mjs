@@ -66,7 +66,11 @@ function extractionEvidence(extraction,file) {
   if(processed!==null && pages.size>processed)bad('Acoperire contradictorie.',422);
   const limitations=extraction.limitations??[];
   if(!Array.isArray(limitations)||limitations.length>10||limitations.some(s=>!clean(s,160)))bad('Limite de extracție invalide.',422);
-  return {text,total,processed,spans,partial:extraction.partial||total!==null&&processed!==total,
+  let cursor=0,unmapped=false;
+  for(const span of spans){if(text.slice(cursor,span.start).trim())unmapped=true;cursor=span.end;}
+  if(spans.length && text.slice(cursor).trim())unmapped=true;
+  return {text,total,processed,spans,partial:extraction.partial||total!==null&&processed!==total||unmapped,
+    unmapped,
     method:extraction.method,limitations};
 }
 
@@ -84,11 +88,15 @@ export async function prepareOrganizerEvidence(file,bytes,extraction) {
   } else {
     const extracted=extractionEvidence(extraction,file);
     if(extracted) {
+      const expected=type==='application/pdf'?['pdf_text','pdf_text_ocr']:type.startsWith('image/')?['image_ocr']:OFFICE_MIMES.has(type)||type==='application/zip'?['office_xml']:[];
+      expected.push('unsupported');
+      if(!expected.includes(extracted.method)||extracted.method==='unsupported'&&extracted.text.trim())bad('Metoda de extracție nu corespunde formatului.',422);
       text=extracted.text;pagesTotal=extracted.total;pagesProcessed=extracted.processed;
       partial=extracted.partial;limitations.push(...extracted.limitations);methods.push('phone_'+extracted.method);
       for(const span of extracted.spans)sources.push({id:'page-'+span.page,kind:'text',page:span.page,method:'phone_'+span.method,text:text.slice(span.start,span.end)});
       // A phone extraction is attributed to that processor, not independently authenticated OCR.
       limitations.push('phone_extraction_linked_by_source_hash');
+      if(extracted.unmapped)limitations.push('unmapped_text_not_analyzed');
       if(type==='application/pdf' && pagesTotal===null){partial=true;limitations.push('page_coverage_unknown');}
     }
     if(type.startsWith('image/')) {
