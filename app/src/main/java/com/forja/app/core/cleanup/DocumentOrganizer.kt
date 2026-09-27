@@ -277,6 +277,57 @@ class DocumentOrganizer(private val context: Context, private val prefs: Prefs) 
         } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
     }
 
+    /** PDF (după MIME sau extensie) — pleacă întreg la analiza pe server, dacă are ≤ maxBytes. */
+    fun isPdf(item: DocItem): Boolean =
+        item.mime.equals("application/pdf", ignoreCase = true) ||
+            (item.name.substringAfterLast('.', "").equals("pdf", ignoreCase = true) &&
+                (item.mime.isBlank() || item.mime == "application/octet-stream" || item.mime == "*/*"))
+
+    /** PDF care poate pleca întreg: ≤ maxBytes și cu antetul „%PDF" (citim doar primii octeți, nu tot fișierul). */
+    suspend fun pdfSendable(item: DocItem, maxBytes: Long): Boolean = withContext(Dispatchers.IO) {
+        if (!isPdf(item) || item.sizeBytes <= 0 || item.sizeBytes > maxBytes) return@withContext false
+        try {
+            cr.openInputStream(item.uri)?.use { s ->
+                val head = ByteArray(5)
+                var total = 0
+                while (total < head.size) {
+                    val n = s.read(head, total, head.size - total)
+                    if (n < 0) break
+                    total += n
+                }
+                total >= head.size && isPdfHeader(head)
+            } ?: false
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { false }
+    }
+
+    /**
+     * Octeții unui PDF ≤ maxBytes, verificați după antetul „%PDF"; null dacă e prea mare, nu e PDF sau nu se poate citi.
+     * Blocant (se apelează de pe firul care scrie cererea): un singur tampon, exact cât spune SAF, fără copie în plus.
+     */
+    fun readPdf(item: DocItem, maxBytes: Long): ByteArray? {
+        if (!isPdf(item) || item.sizeBytes <= 0 || item.sizeBytes > maxBytes) return null
+        return try {
+            cr.openInputStream(item.uri)?.use { s ->
+                val bytes = ByteArray(item.sizeBytes.toInt())
+                var total = 0
+                while (total < bytes.size) {
+                    val n = s.read(bytes, total, bytes.size - total)
+                    if (n < 0) break
+                    total += n
+                }
+                // Mai lung decât a spus SAF → nu ne încredem în mărime; mai scurt → doar cât s-a citit.
+                val out = if (s.read() != -1) null else if (total < bytes.size) bytes.copyOf(total) else bytes
+                out?.takeIf { isPdfHeader(it) }
+            }
+        } catch (_: Exception) { null }
+    }
+
+    /** Ca `readPdf`, din corutine. */
+    suspend fun pdfBytes(item: DocItem, maxBytes: Long): ByteArray? = withContext(Dispatchers.IO) { readPdf(item, maxBytes) }
+
+    private fun isPdfHeader(b: ByteArray): Boolean =
+        b.size >= 5 && b[0] == '%'.code.toByte() && b[1] == 'P'.code.toByte() && b[2] == 'D'.code.toByte() && b[3] == 'F'.code.toByte()
+
     fun isTextLike(item: DocItem): Boolean {
         val m = item.mime.lowercase()
         if (m.startsWith("text/")) return true

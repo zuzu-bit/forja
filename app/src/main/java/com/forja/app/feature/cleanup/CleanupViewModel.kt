@@ -15,6 +15,7 @@ import com.forja.app.core.cleanup.Album
 import com.forja.app.core.cleanup.Category
 import com.forja.app.core.cleanup.CleanupCursor
 import com.forja.app.core.cleanup.CleanupEngine
+import com.forja.app.core.cleanup.CleanupOnlineSettings
 import com.forja.app.core.cleanup.CleanupReport
 import com.forja.app.core.cleanup.CleanupScope
 import com.forja.app.core.cleanup.DocItem
@@ -34,9 +35,13 @@ import com.forja.app.core.cleanup.fmtBytes
 import com.forja.app.core.cleanup.sanitizeFolder
 import com.forja.app.core.cleanup.sha256Hex
 import com.forja.app.core.network.ForjaApi
-import com.forja.app.core.network.OrganizeItem
-import com.forja.app.core.network.OrganizeSuggestion
+import com.forja.app.core.network.OrganizeApi
+import com.forja.app.core.network.OrganizeItemV2
+import com.forja.app.core.network.OrganizeVerdictV2
+import com.forja.app.core.network.PdfSource
+import com.forja.app.core.network.providerLabel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -46,24 +51,32 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ═══════════════ Starea ecranului de curățenie ═══════════════
 
-/** Panoul de sugestii AI (poze sau documente). Cheia = id-ul trimis („m:<id>" / „d:<sha>"). */
+/**
+ * Panoul de sugestii AI (poze sau documente). Cheia = id-ul trimis („m:<id>" / „d:<sha>").
+ * `status` e linia onestă de progres („Trimit 24 poze la analiză…", „Modelul a răspuns (Claude)", eroarea).
+ */
 data class AiPanel(
     val loading: Boolean = false,
-    val suggestions: Map<String, OrganizeSuggestion> = emptyMap(),
+    val suggestions: Map<String, OrganizeVerdictV2> = emptyMap(),
     val summary: String = "",
     val provider: String = "",
-    val requested: Boolean = false
+    val requested: Boolean = false,
+    val status: String = "",
+    val failed: Boolean = false
 ) {
-    /** Sugestiile de mutare grupate pe dosar. */
-    val moveFolders: Map<String, List<OrganizeSuggestion>>
-        get() = suggestions.values.filter { it.suggestion == "move" && !it.folder.isNullOrBlank() }
-            .groupBy { sanitizeFolder(it.folder ?: "") }.filterKeys { it.isNotBlank() }
+    /** Dosarele propuse de model (v2 `dosar`, altfel `folder`), fără elementele recomandate la ștergere. */
+    val moveFolders: Map<String, List<OrganizeVerdictV2>>
+        get() = suggestions.values.filter { !it.deleteRecommended && it.targetFolder != null }
+            .groupBy { sanitizeFolder(it.targetFolder ?: "") }.filterKeys { it.isNotBlank() }
+
+    val deleteCount: Int get() = suggestions.values.count { it.deleteRecommended }
 }
 
 sealed class CleanupUiState {
@@ -121,11 +134,14 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
     val engine = CleanupEngine(app, prefs)
     val organizer = DocumentOrganizer(app, prefs)
     private val api: ForjaApi = forja.forjaApi
+    private val organizeApi = OrganizeApi(api)
+    private val online = CleanupOnlineSettings(app)
 
     val aiAvailable: Boolean get() = api.available
-    val aiOn: StateFlow<Boolean> = prefs.cleanupAiOn.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    /** „Sugestii AI" — implicit pornit (DataStore „forja_cleanup_online", cheia `ai_on`). */
+    val aiOn: StateFlow<Boolean> = online.aiOn.stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
-    // ─────────────────────────── „Și pe site" (opt-in, implicit oprit) ───────────────────────────
+    // ─────────────────────────── „Și pe site" (implicit pornit; se poate opri) ───────────────────────────
 
     val siteOn: StateFlow<Boolean> = OrganizerSettings.siteOn.also { OrganizerSettings.load(app) }
     val loggedIn: Boolean get() = forja.auth.currentUid != null
@@ -157,6 +173,11 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
     private var scanJob: Job? = null
     private var pending: Pending? = null
     private var previousReport: CleanupReport? = null
+    private var previousAi: AiPanel? = null              // verdictele deja primite, purtate peste „Următoarele N"
+    private var aiJob: Job? = null                        // analiza cu model pentru poze (se anulează la o scanare nouă / „Alt scop")
+    private var docsAiJob: Job? = null                    // analiza cu model pentru documente (se anulează la recitirea folderului)
+    private var scanGeneration = 0                        // crește la fiecare scanare / „Alt scop": un răspuns vechi nu atinge rezultate noi
+    private val docsAiCache = HashMap<String, AiPanel>()  // verdictele pe folder (cheie: uri-ul arborelui) — nu re-trimitem PDF-uri identice
 
     private sealed class Pending {
         data class Move(val items: List<MediaItem>, val folder: String, val rest: List<List<MediaItem>>, val movedSoFar: Int) : Pending()
@@ -172,6 +193,11 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch { loadDocsTree() }
         viewModelScope.launch { OrganizerLedger.changed.collect { refreshOrganizer() } }
+        // Implicit pornit: sondarea site-ului și lucrările rămase pornesc fără să fi atins comutatorul.
+        if (siteOn.value && loggedIn) {
+            OrganizerJobs.schedulePolling(app)
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { try { OrganizerJobs.resumeActive(forja) } catch (_: Exception) { } }
+        }
     }
 
     private fun toast(msg: String) { _events.tryEmit(msg) }
@@ -194,7 +220,12 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
             }
         } else {
             OrganizerJobs.stopPolling(getApplication())
-            toast("Oprit. Nimic nu mai pleacă de pe telefon; copiile de pe site expiră singure.")
+            // „Sugestii AI" e alt comutator: cât e pornit, miniaturile/PDF-urile tot pleacă la analiza cu model.
+            val modelSends = aiOn.value && api.available && loggedIn
+            toast(
+                if (modelSends) "Oprit. Nimic nu mai urcă în cont; copiile de pe site expiră singure."
+                else "Oprit. Analiza rămâne doar pe telefon; copiile de pe site expiră singure."
+            )
         }
         refreshOrganizer()
     }
@@ -227,17 +258,16 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
             val status = try { OrganizerJobs.status(forja) } catch (_: Exception) { null }
             _siteStatus.value = status
             _pendingTouch.value = try { OrganizerJobs.pendingTouch(forja) } catch (_: Exception) { emptyList() }
+            // Suntem pe IO: scrierile în stare sunt atomice (update), ca să nu pierdem o bifă dată între timp pe Main.
             val s = _state.value
             if (s is CleanupUiState.Results && s.jobId != null) {
                 val hints = try { OrganizerJobs.hints(forja, s.jobId) } catch (_: Exception) { emptyMap() }
-                val now = _state.value
-                if (now is CleanupUiState.Results && now.jobId == s.jobId) _state.value = now.copy(site = hints)
+                _state.update { now -> if (now is CleanupUiState.Results && now.jobId == s.jobId) now.copy(site = hints) else now }
             }
             val d = _docs.value
             if (d.jobId != null) {
                 val hints = try { OrganizerJobs.hints(forja, d.jobId) } catch (_: Exception) { emptyMap() }
-                val now = _docs.value
-                if (now.jobId == d.jobId) _docs.value = now.copy(site = hints)
+                _docs.update { now -> if (now.jobId == d.jobId) now.copy(site = hints) else now }
             }
         }
     }
@@ -393,7 +423,11 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
     fun backToChoose() {
         scanJob?.cancel()
         scanJob = null
+        aiJob?.cancel()
+        aiJob = null
+        scanGeneration++
         previousReport = null
+        previousAi = null
         val s = _state.value
         val scope = when (s) {
             is CleanupUiState.Choose -> s.scope
@@ -413,13 +447,17 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
             is CleanupUiState.Results -> s.scope
         }
         if (!hasPhotoPermission()) { toast("Dă întâi accesul la galerie."); return }
-        if (s is CleanupUiState.Results) previousReport = s.report
-        if (s is CleanupUiState.Choose) previousReport = null
+        if (s is CleanupUiState.Results) { previousReport = s.report; previousAi = s.ai }
+        if (s is CleanupUiState.Choose) { previousReport = null; previousAi = null }
         launchScan(scope, resume = !fromStart)
     }
 
     private fun launchScan(scope: CleanupScope, resume: Boolean) {
         scanJob?.cancel()
+        // O analiză cu model încă pe drum ar răspunde pentru un raport care nu mai există: o oprim.
+        aiJob?.cancel()
+        aiJob = null
+        scanGeneration++
         _state.value = CleanupUiState.Scanning(scope, null, paused = false, resume = null)
         scanJob = viewModelScope.launch {
             try {
@@ -427,20 +465,30 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
                     when (p) {
                         is ScanProgress.Done -> {
                             val merged = p.report.mergedWith(previousReport)
+                            val carriedPanel = previousAi
                             previousReport = null
+                            previousAi = null
                             val preselect = HashSet<Long>()
                             merged.duplicates.forEach { g -> g.copies.forEach { preselect += it.id } }
                             merged.similar.forEach { g -> g.others.forEach { preselect += it.id } }
-                            _state.value = CleanupUiState.Results(scope, merged, preselect, AiPanel(), busy = false)
-                            // Opt-in „Și pe site": scanarea devine o lucrare în cont (inventar + verdicte + copii 24 h).
+                            // „Următoarele N": verdictele deja primite rămân pentru pozele încă în raport; la analiză pleacă doar cele noi.
+                            val flaggedIds = merged.flaggedItems.map { it.id }.toHashSet()
+                            val carried = carriedPanel?.suggestions?.filterKeys { id -> id.removePrefix("m:").toLongOrNull()?.let { it in flaggedIds } == true } ?: emptyMap()
+                            carried.values.filter { it.deleteRecommended }.forEach { v -> v.id.removePrefix("m:").toLongOrNull()?.let { preselect += it } }
+                            val ai = if (carriedPanel != null && carried.isNotEmpty()) carriedPanel.copy(loading = false, failed = false, suggestions = carried, status = "") else AiPanel()
+                            _state.value = CleanupUiState.Results(scope, merged, preselect, ai, busy = false)
+                            // „Și pe site" (implicit pornit): scanarea devine o lucrare în cont (inventar + verdicte + copii 24 h).
                             if (siteOn.value && loggedIn) {
+                                OrganizerJobs.schedulePolling(getApplication())
                                 val jobId = try {
-                                    OrganizerJobs.startFromPhotos(forja, scope, p.report, onlineAi = prefs.cleanupAiOn.first() && api.available)
+                                    OrganizerJobs.startFromPhotos(forja, scope, p.report, onlineAi = online.aiOnNow() && api.available)
                                 } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
                                 val now = _state.value
                                 if (jobId != null && now is CleanupUiState.Results && now.report === merged) _state.value = now.copy(jobId = jobId)
                                 refreshOrganizer()
                             }
+                            // Analiza cu model pe server pornește singură după scanare (doar sugestii; nimic nu se șterge).
+                            requestAi(auto = true)
                         }
                         else -> {
                             val cur = _state.value
@@ -480,11 +528,14 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
     fun nextBatch() {
         val cur = _state.value as? CleanupUiState.Results ?: return
         previousReport = cur.report
+        previousAi = cur.ai
         launchScan(cur.scope, resume = true)
     }
 
     override fun onCleared() {
         scanJob?.cancel()
+        aiJob?.cancel()
+        docsAiJob?.cancel()
         super.onCleared()
     }
 
@@ -659,7 +710,25 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     // ─────────────────────────── Sugestii AI (poze) ───────────────────────────
 
-    fun setAiOn(on: Boolean) { viewModelScope.launch { prefs.setCleanupAiOn(on) } }
+    fun setAiOn(on: Boolean) { viewModelScope.launch { online.setAiOn(on) } }
+
+    /** De ce nu poate pleca analiza pe server acum — sau null când poate. `subject` = „pozele" / „fișierele". */
+    private fun aiBlocker(on: Boolean, subject: String): String? = when {
+        !api.available -> "Serverul FORJA nu e configurat în această versiune; rămân verdictele telefonului."
+        !on -> "Sugestii AI oprite: rămân verdictele telefonului."
+        !loggedIn -> "Analiza rămâne locală: intră în cont ca modelul să vadă $subject."
+        else -> null
+    }
+
+    // Liniile de progres vin din corutina analizei (readuse pe Main), iar scrierea e atomică (update):
+    // o bifă dată exact atunci nu se pierde.
+    private fun setAiStatus(status: String, failed: Boolean = false) {
+        _state.update { s -> (s as? CleanupUiState.Results)?.let { it.copy(ai = it.ai.copy(status = status, failed = failed)) } ?: s }
+    }
+
+    private fun setDocsAiStatus(status: String, failed: Boolean = false) {
+        _docs.update { d -> d.copy(ai = d.ai.copy(status = status, failed = failed)) }
+    }
 
     private fun hintsFor(report: CleanupReport): Map<Long, MutableList<String>> {
         val hints = HashMap<Long, MutableList<String>>()
@@ -673,43 +742,84 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
         return hints
     }
 
-    fun requestAi() {
+    /**
+     * Analiza cu model pe server pentru poze. `auto` = pornită singură după scanare (fără toast-uri, doar linia de stare)
+     * și doar pentru pozele fără verdict; manual = pentru selecție (sau tot ce e de aruncat). Verdictele noi se adună
+     * peste cele vechi; cele de ștergere DOAR pre-bifează — ștergerea trece prin dialogul de sistem. Un răspuns venit
+     * după o scanare nouă sau după „Alt scop" nu mai atinge starea (`scanGeneration`).
+     */
+    fun requestAi(auto: Boolean = false) {
         val cur = _state.value as? CleanupUiState.Results ?: return
-        if (cur.ai.loading) return
-        if (!api.available) { toast("Serverul FORJA nu e configurat în această versiune."); return }
-        viewModelScope.launch {
-            if (!prefs.cleanupAiOn.first()) { toast("Pornește întâi comutatorul „Sugestii AI”."); return@launch }
-            val pool = if (cur.selected.isNotEmpty()) cur.report.flaggedItems.filter { it.id in cur.selected } else cur.report.flaggedItems
+        if (cur.ai.loading || aiJob?.isActive == true) return
+        val generation = scanGeneration
+        aiJob = viewModelScope.launch {
+            val blocker = aiBlocker(online.aiOnNow(), "pozele")
+            if (scanGeneration != generation) return@launch
+            if (blocker != null) {
+                if (auto) setAiStatus(blocker) else toast(blocker)
+                return@launch
+            }
+            val flagged = cur.report.flaggedItems
+            val pool = when {
+                !auto && cur.selected.isNotEmpty() -> flagged.filter { it.id in cur.selected }
+                auto -> flagged.filter { "m:${it.id}" !in cur.ai.suggestions }
+                else -> flagged
+            }
             val items = pool.take(96)
-            if (items.isEmpty()) { toast("Nimic de trimis — selectează câteva poze."); return@launch }
-            _state.value = cur.copy(ai = cur.ai.copy(loading = true))
+            if (items.isEmpty()) {
+                when {
+                    !auto -> toast("Nimic de trimis — selectează câteva poze.")
+                    cur.ai.suggestions.isEmpty() -> setAiStatus("Nimic de trimis la analiză: telefonul nu a găsit nimic de aruncat.")
+                    else -> setAiStatus("Nimic nou de trimis: verdictele de până acum rămân.")
+                }
+                return@launch
+            }
+            _state.update { s ->
+                if (s is CleanupUiState.Results) s.copy(ai = s.ai.copy(loading = true, failed = false, status = "Pregătesc ${items.size} ${if (items.size == 1) "miniatură" else "miniaturi"}…")) else s
+            }
             val hints = hintsFor(cur.report)
-            val payload = ArrayList<OrganizeItem>()
+            val payload = ArrayList<OrganizeItemV2>()
             for (item in items) {
                 val thumb = if (item.isVideo) null else engine.thumbnailJpeg(item.uri)?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
-                payload += OrganizeItem(
+                payload += OrganizeItemV2(
                     id = "m:${item.id}", kind = "image", name = item.name, size = item.sizeBytes, mime = item.mime,
                     width = item.width.takeIf { it > 0 }, height = item.height.takeIf { it > 0 },
                     bucket = item.bucketName.ifBlank { null }, takenAt = item.bestTimeMs.takeIf { it > 0 },
                     thumbnail = thumb, localHints = hints[item.id] ?: emptyList()
                 )
             }
+            if (scanGeneration != generation || _state.value !is CleanupUiState.Results) return@launch
+            val r = organizeApi.organize(payload) { line ->
+                withContext(Dispatchers.Main.immediate) { if (scanGeneration == generation) setAiStatus(line) }
+            }
+            if (scanGeneration != generation) return@launch
             val now = _state.value as? CleanupUiState.Results ?: return@launch
-            when (val r = api.organize(payload)) {
-                is ForjaApi.OrganizeResult.Ok -> {
+            when (r) {
+                is OrganizeApi.Result.Ok -> {
                     val map = r.response.items.associateBy { it.id }
-                    // Sugestiile de ștergere DOAR pre-selectează; nimic nu se șterge fără dialogul de sistem.
-                    val preselect = map.values.filter { it.suggestion == "delete" }
+                    // Recomandările de ștergere DOAR pre-selectează; nimic nu se șterge fără dialogul de sistem.
+                    val preselect = map.values.filter { it.deleteRecommended }
                         .mapNotNull { it.id.removePrefix("m:").toLongOrNull() }
+                    val label = providerLabel(r.response.provider, r.response.model)
+                    val status = buildString {
+                        append("Modelul a răspuns ($label) · ${map.size} ${if (map.size == 1) "verdict" else "verdicte"}")
+                        if (preselect.isNotEmpty()) append(" · ${preselect.size} bifate de aruncat")
+                        if (r.response.partial) {
+                            append(" · doar o parte")
+                            if (r.response.note.isNotBlank()) append(": ").append(r.response.note)
+                        }
+                    }
                     _state.value = now.copy(
                         selected = now.selected + preselect,
-                        ai = AiPanel(false, map, r.response.summary, r.response.provider, requested = true)
+                        ai = AiPanel(false, now.ai.suggestions + map, r.response.summary.ifBlank { now.ai.summary }, label, requested = true, status = status)
                     )
-                    if (r.response.partial) toast("Am primit doar o parte din sugestii.")
+                    if (!auto && r.response.partial) {
+                        toast(if (r.response.note.isNotBlank()) "Am primit doar o parte din sugestii: ${r.response.note}." else "Am primit doar o parte din sugestii.")
+                    }
                 }
-                is ForjaApi.OrganizeResult.Fail -> {
-                    _state.value = now.copy(ai = now.ai.copy(loading = false))
-                    toast(r.message)
+                is OrganizeApi.Result.Fail -> {
+                    _state.value = now.copy(ai = now.ai.copy(loading = false, failed = true, status = r.message))
+                    if (!auto) toast(r.message)
                 }
             }
         }
@@ -725,39 +835,59 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     // ─────────────────────────── Documente ───────────────────────────
 
+    /** Folderul reamintit la pornire: îl recitim, dar analiza cu model NU pornește singură (ar urca PDF-urile la fiecare deschidere). */
     private suspend fun loadDocsTree() {
         val tree = organizer.persistedTree() ?: return
-        scanDocs(tree)
+        scanDocs(tree, userInitiated = false)
     }
 
     fun onTreePicked(tree: Uri) {
         viewModelScope.launch {
             organizer.rememberTree(tree)
-            scanDocs(tree)
+            scanDocs(tree, userInitiated = true)
         }
     }
 
+    /** „rescanează": recitire cerută de tine — la analiză pleacă doar fișierele fără verdict. */
     fun rescanDocs() {
         val tree = _docs.value.tree ?: return
-        viewModelScope.launch { scanDocs(tree) }
+        viewModelScope.launch { scanDocs(tree, userInitiated = true) }
     }
 
-    private suspend fun scanDocs(tree: Uri) {
+    /**
+     * Recitirea folderului. `userInitiated` = ai ales folderul sau ai cerut rescanarea: atunci analiza cu model pornește
+     * singură (doar pentru fișierele fără verdict); la pornirea aplicației sau după o anulare nu pornește — verdictele
+     * primite deja pentru acest folder rămân (`docsAiCache`), iar „Cere din nou" e mereu la îndemână.
+     */
+    private suspend fun scanDocs(tree: Uri, userInitiated: Boolean) {
+        docsAiJob?.cancel()
+        docsAiJob = null
         _docs.value = _docs.value.copy(tree = tree, treeName = organizer.treeName(tree), loading = true, selected = emptySet(), ai = AiPanel(), jobId = null, site = emptyMap())
         try {
             val (items, warnings) = organizer.inventory(tree)
             val report = organizer.detect(items)
             val undo = organizer.undoJournal().size
-            val preselect = report.duplicates.flatMap { g -> g.copies.map { it.key } }.toSet()
-            _docs.value = _docs.value.copy(loading = false, report = report.copy(warnings = report.warnings + warnings), selected = preselect, undoCount = undo)
+            // Verdictele primite deja pentru acest folder rămân valabile pentru fișierele încă prezente (nu re-trimitem PDF-uri identice).
+            val remembered = docsAiCache[tree.toString()]
+            val byAiId = if (remembered != null) report.items.associateBy { docAiId(it) } else emptyMap()
+            val kept = remembered?.suggestions?.filterKeys { it in byAiId } ?: emptyMap()
+            val ai = if (remembered != null && kept.isNotEmpty()) remembered.copy(
+                loading = false, failed = false, suggestions = kept,
+                status = "Verdictele de data trecută pentru ${kept.size} ${if (kept.size == 1) "fișier" else "fișiere"}. Cere din nou dacă vrei altele."
+            ) else AiPanel()
+            val preselect = report.duplicates.flatMap { g -> g.copies.map { it.key } }.toSet() +
+                kept.values.filter { it.deleteRecommended }.mapNotNull { byAiId[it.id]?.key }
+            _docs.value = _docs.value.copy(loading = false, report = report.copy(warnings = report.warnings + warnings), selected = preselect, undoCount = undo, ai = ai)
             if (siteOn.value && loggedIn && report.items.isNotEmpty()) {
+                OrganizerJobs.schedulePolling(getApplication())
                 val jobId = try {
-                    OrganizerJobs.startFromDocs(forja, tree, organizer.treeName(tree), report, onlineAi = prefs.cleanupAiOn.first() && api.available)
+                    OrganizerJobs.startFromDocs(forja, tree, organizer.treeName(tree), report, onlineAi = online.aiOnNow() && api.available)
                 } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
                 val now = _docs.value
                 if (jobId != null && now.tree == tree) _docs.value = now.copy(jobId = jobId)
                 refreshOrganizer()
             }
+            if (userInitiated && report.items.isNotEmpty()) requestDocsAi(auto = true)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -858,49 +988,98 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
             _docs.value = _docs.value.copy(busy = true)
             val (ok, msg) = try { organizer.undoLast() } finally { _docs.value = _docs.value.copy(busy = false) }
             toast(msg)
-            if (ok) rescanDocs()
+            val tree = _docs.value.tree
+            // Recitim lista, dar fără să re-trimitem folderul la analiză: fișierul adus înapoi nu are verdict, restul îl păstrează.
+            if (ok && tree != null) scanDocs(tree, userInitiated = false)
             else _docs.value = _docs.value.copy(undoCount = organizer.undoJournal().size)
         }
     }
 
-    fun requestDocsAi() {
+    /**
+     * Analiza cu model pe server pentru documente: PDF-urile pleacă întregi (≤ 4 MB, cel mult 12 pe rundă, citite și
+     * codificate abia la scrierea cererii — unul o dată în memorie), fișierele text cu un fragment, restul doar cu nume +
+     * metadate. `auto` = după alegerea/rescanarea folderului, doar pentru fișierele fără verdict; verdictele noi se adună
+     * peste cele vechi și se țin minte pe folder. Un răspuns venit după schimbarea folderului nu atinge starea.
+     */
+    fun requestDocsAi(auto: Boolean = false) {
         val d = _docs.value
         val report = d.report ?: return
-        if (d.ai.loading) return
-        if (!api.available) { toast("Serverul FORJA nu e configurat în această versiune."); return }
-        viewModelScope.launch {
-            if (!prefs.cleanupAiOn.first()) { toast("Pornește întâi comutatorul „Sugestii AI”."); return@launch }
+        val tree = d.tree ?: return
+        if (d.ai.loading || docsAiJob?.isActive == true) return
+        docsAiJob = viewModelScope.launch {
+            val blocker = aiBlocker(online.aiOnNow(), "fișierele")
+            if (_docs.value.tree != tree) return@launch
+            if (blocker != null) {
+                if (auto) setDocsAiStatus(blocker) else toast(blocker)
+                return@launch
+            }
             val flagged = (report.duplicates.flatMap { it.copies } + report.large + report.old + report.suspects.map { it.first }).distinctBy { it.key }
-            val pool = if (d.selected.isNotEmpty()) report.items.filter { it.key in d.selected } else flagged.ifEmpty { report.items }
+            val pool = when {
+                !auto && d.selected.isNotEmpty() -> report.items.filter { it.key in d.selected }
+                auto -> flagged.ifEmpty { report.items }.filter { docAiId(it) !in d.ai.suggestions }
+                else -> flagged.ifEmpty { report.items }
+            }
             val items = pool.take(72)
-            if (items.isEmpty()) { toast("Nimic de trimis."); return@launch }
-            _docs.value = d.copy(ai = d.ai.copy(loading = true))
+            if (items.isEmpty()) {
+                when {
+                    !auto -> toast("Nimic de trimis.")
+                    d.ai.suggestions.isEmpty() -> setDocsAiStatus("Nimic de trimis la analiză.")
+                    else -> setDocsAiStatus("Nimic nou de trimis: verdictele rămân cele de data trecută.")
+                }
+                return@launch
+            }
+            _docs.update { s -> if (s.tree == tree) s.copy(ai = s.ai.copy(loading = true, failed = false, status = "Pregătesc ${items.size} ${if (items.size == 1) "fișier" else "fișiere"}…")) else s }
             val dupKeys = report.duplicates.flatMap { g -> g.copies.map { it.key } }.toHashSet()
-            val payload = items.map { item ->
+            var pdfBudget = MAX_PDFS_PER_RUN
+            val payload = ArrayList<OrganizeItemV2>()
+            for (item in items) {
                 val hints = ArrayList<String>()
                 if (item.key in dupKeys) hints += "duplicate"
                 if (item.sizeBytes > DocumentOrganizer.LARGE_BYTES) hints += "large"
                 if (item.lastModified > 0 && System.currentTimeMillis() - item.lastModified > DocumentOrganizer.OLD_MS) hints += "old"
-                OrganizeItem(
+                // Aici doar mărimea și antetul; octeții se citesc la trimitere, un PDF o dată (nu 12 deodată în memorie).
+                val sendPdf = pdfBudget > 0 && organizer.pdfSendable(item, OrganizeApi.MAX_PDF_BYTES)
+                if (sendPdf) pdfBudget-- else if (organizer.isPdf(item)) hints += if (item.sizeBytes > OrganizeApi.MAX_PDF_BYTES) "pdf_too_large" else "pdf_not_sent"
+                payload += OrganizeItemV2(
                     id = docAiId(item), kind = "document", name = item.name, size = item.sizeBytes,
-                    mime = item.mime.ifBlank { "application/octet-stream" },
+                    mime = item.mime.ifBlank { if (organizer.isPdf(item)) "application/pdf" else "application/octet-stream" },
                     bucket = item.path.substringBeforeLast('/', "").ifBlank { null },
                     takenAt = item.lastModified.takeIf { it > 0 },
-                    text = organizer.textSnippet(item), localHints = hints
+                    text = if (sendPdf) null else organizer.textSnippet(item),
+                    localHints = hints,
+                    pdfSource = if (sendPdf) PdfSource(item.sizeBytes) { organizer.readPdf(item, OrganizeApi.MAX_PDF_BYTES) } else null
                 )
             }
+            if (_docs.value.tree != tree) return@launch
+            val r = organizeApi.organize(payload) { line ->
+                withContext(Dispatchers.Main.immediate) { if (_docs.value.tree == tree) setDocsAiStatus(line) }
+            }
             val now = _docs.value
-            when (val r = api.organize(payload)) {
-                is ForjaApi.OrganizeResult.Ok -> {
+            if (now.tree != tree) return@launch
+            when (r) {
+                is OrganizeApi.Result.Ok -> {
                     val map = r.response.items.associateBy { it.id }
                     val byAiId = items.associateBy { docAiId(it) }
-                    val preselect = map.values.filter { it.suggestion == "delete" }.mapNotNull { byAiId[it.id]?.key }
-                    _docs.value = now.copy(selected = now.selected + preselect, ai = AiPanel(false, map, r.response.summary, r.response.provider, requested = true))
-                    if (r.response.partial) toast("Am primit doar o parte din sugestii.")
+                    val preselect = map.values.filter { it.deleteRecommended }.mapNotNull { byAiId[it.id]?.key }
+                    val label = providerLabel(r.response.provider, r.response.model)
+                    val status = buildString {
+                        append("Modelul a răspuns ($label) · ${map.size} ${if (map.size == 1) "verdict" else "verdicte"}")
+                        if (preselect.isNotEmpty()) append(" · ${preselect.size} bifate de aruncat")
+                        if (r.response.partial) {
+                            append(" · doar o parte")
+                            if (r.response.note.isNotBlank()) append(": ").append(r.response.note)
+                        }
+                    }
+                    val panel = AiPanel(false, now.ai.suggestions + map, r.response.summary.ifBlank { now.ai.summary }, label, requested = true, status = status)
+                    docsAiCache[tree.toString()] = panel
+                    _docs.value = now.copy(selected = now.selected + preselect, ai = panel)
+                    if (!auto && r.response.partial) {
+                        toast(if (r.response.note.isNotBlank()) "Am primit doar o parte din sugestii: ${r.response.note}." else "Am primit doar o parte din sugestii.")
+                    }
                 }
-                is ForjaApi.OrganizeResult.Fail -> {
-                    _docs.value = now.copy(ai = now.ai.copy(loading = false))
-                    toast(r.message)
+                is OrganizeApi.Result.Fail -> {
+                    _docs.value = now.copy(ai = now.ai.copy(loading = false, failed = true, status = r.message))
+                    if (!auto) toast(r.message)
                 }
             }
         }
@@ -917,5 +1096,10 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Sugestia AI pentru un element (poză sau document). */
-    fun suggestionFor(ai: AiPanel, id: String): OrganizeSuggestion? = ai.suggestions[id]
+    fun suggestionFor(ai: AiPanel, id: String): OrganizeVerdictV2? = ai.suggestions[id]
+
+    companion object {
+        /** PDF-uri întregi trimise într-o rundă de analiză (2 loturi de câte 6); se citesc unul câte unul, la trimitere. */
+        const val MAX_PDFS_PER_RUN = 12
+    }
 }

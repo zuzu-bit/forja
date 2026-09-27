@@ -53,15 +53,17 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 // ═══════════════ Organizarea pe telefon ȘI pe site — clientul protocolului 4 ═══════════════
-// Totul e opt-in: fără comutatorul „Și pe site (copii 24 h)" nimic nu pleacă de pe telefon.
-// Cu el pornit: fiecare scanare devine o lucrare în contul online (inventar + verdictele motorului),
+// Comutatorul „Și pe site (copii 24 h)" e implicit PORNIT și se poate opri oricând; oprit, nimic nu pleacă de pe telefon.
+// Cu el pornit (și contul conectat): fiecare scanare devine o lucrare în contul online (inventar + verdictele motorului),
 // copiile analizate urcă pentru 24 h, iar mutările aprobate din laptop se execută aici, cu același
 // acord Android ca orice mutare locală.
 
 /** Comutatoarele și identitatea acestui telefon față de site (SharedPreferences „organizer_v4"). */
 object OrganizerSettings {
     private const val FILE = "organizer_v4"
-    private val _siteOn = MutableStateFlow(false)
+    /** „Și pe site" e implicit pornit (cheia `site_on` rămâne; lipsa ei înseamnă pornit). */
+    const val SITE_ON_DEFAULT = true
+    private val _siteOn = MutableStateFlow(SITE_ON_DEFAULT)
     val siteOn: StateFlow<Boolean> get() = _siteOn
     @Volatile private var loaded = false
 
@@ -69,7 +71,7 @@ object OrganizerSettings {
 
     fun load(ctx: Context) {
         if (loaded) return
-        _siteOn.value = prefs(ctx).getBoolean("site_on", false)
+        _siteOn.value = prefs(ctx).getBoolean("site_on", SITE_ON_DEFAULT)
         loaded = true
     }
 
