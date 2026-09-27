@@ -90,8 +90,10 @@ class MapController(context: Context, private val staticMode: Boolean = false) {
             .compassEnabled(false).logoEnabled(false)
             .attributionEnabled(true)
             .attributionGravity(Gravity.BOTTOM or Gravity.START)
-            .attributionMargins(intArrayOf(dp(10), 0, 0, dp(bottomInsetDp)))
-            .attributionTintColor(0xFFA7A9AE.toInt())
+            // Butonul „i” (21 dp): la 16 dp de stânga, aliniat cu coloana Compose, cu `bottomInsetDp` de jos — MapScreen
+            // desenează creditul în același rând de 21 dp, la 6 dp după el, cu aceeași nuanță.
+            .attributionMargins(intArrayOf(dp(16), 0, 0, dp(bottomInsetDp)))
+            .attributionTintColor(attributionTint())
             .tiltGesturesEnabled(false)
             .rotateGesturesEnabled(!staticMode)
             .scrollGesturesEnabled(!staticMode)
@@ -110,15 +112,19 @@ class MapController(context: Context, private val staticMode: Boolean = false) {
 
     private fun dp(v: Int): Int = (v * density + 0.5f).toInt()
 
+    /** Nuanța butonului „i”: aceeași cu a creditului Compose de lângă el (zi #6B675F, noapte TextDim #7A7D83). */
+    private fun attributionTint(): Int = if (night) 0xFF7A7D83.toInt() else 0xFF6B675F.toInt()
+
     fun onLifecycle(event: Lifecycle.Event) {
         val v = view ?: return
         if (destroyed) return
         try {
             when (event) {
                 Lifecycle.Event.ON_START -> { if (!started) { v.onStart(); started = true } }
-                Lifecycle.Event.ON_RESUME -> { if (!resumed) { v.onResume(); resumed = true } }
-                Lifecycle.Event.ON_PAUSE -> { if (resumed) { v.onPause(); resumed = false } }
-                Lifecycle.Event.ON_STOP -> { if (started) { v.onStop(); started = false } }
+                // Pulsul „Tu” se oprește odată cu harta (ecran stins, aplicație în fundal) și își reia ciclul la revenire.
+                Lifecycle.Event.ON_RESUME -> { if (!resumed) { v.onResume(); resumed = true }; resumePulse() }
+                Lifecycle.Event.ON_PAUSE -> { if (resumed) { v.onPause(); resumed = false }; pulseAnim?.pause() }
+                Lifecycle.Event.ON_STOP -> { if (started) { v.onStop(); started = false }; pulseAnim?.pause() }
                 Lifecycle.Event.ON_DESTROY -> destroy()
                 else -> Unit
             }
@@ -157,6 +163,7 @@ class MapController(context: Context, private val staticMode: Boolean = false) {
             isDoubleTapGesturesEnabled = !staticMode
             isQuickZoomGesturesEnabled = !staticMode
             isZoomGesturesEnabled = true
+            setAttributionTintColor(attributionTint())
         }
         m.addOnMapClickListener { ll ->
             if (destroyed) return@addOnMapClickListener false
@@ -186,7 +193,7 @@ class MapController(context: Context, private val staticMode: Boolean = false) {
             MapLayerStack.install(s, night, density)
             icons.attach(s)
             MapLayerStack.visibility(s, layers)
-            ForjaStyle.setBuildings(s, threeD && layers.buildings3d, threeD)
+            applyBuildings()
             for ((src, fc) in data) s.getSourceAs<GeoJsonSource>(src)?.setGeoJson(fc)
             if (pulseOn) startPulse()
         } catch (_: Exception) { }
@@ -202,15 +209,17 @@ class MapController(context: Context, private val staticMode: Boolean = false) {
 
     // ── Aspect ──
 
+    /** Zi/noapte. Se poate apela înainte de createView: culoarea de încărcare și nuanța butonului „i” pleacă din `night`. */
     fun setNight(on: Boolean) {
         if (night == on) return
         night = on
+        try { map?.uiSettings?.setAttributionTintColor(attributionTint()) } catch (_: Exception) { }
         val s = style ?: return
         if (!s.isFullyLoaded) return
         try {
             ForjaStyle.apply(s, on, layers.labelsRo)
             MapLayerStack.theme(s, on)
-            ForjaStyle.setBuildings(s, threeD && layers.buildings3d, threeD)
+            applyBuildings()
         } catch (_: Exception) { }
     }
 
@@ -221,43 +230,77 @@ class MapController(context: Context, private val staticMode: Boolean = false) {
         if (!s.isFullyLoaded) return
         try {
             MapLayerStack.visibility(s, l)
-            ForjaStyle.setBuildings(s, threeD && l.buildings3d, threeD)
+            applyBuildings()
             if (labelsChanged) ForjaStyle.applyLabels(s, l.labelsRo)
         } catch (_: Exception) { }
     }
 
-    /** 2D ↔ 3D: pitch 0 ↔ 55 (easeCamera 600 ms), extrudările apar/dispar, clădirile plate se estompează în 3D. */
+    /** Clădirile după starea curentă (2D/3D, stratul „Clădiri 3D”, zi/noapte). */
+    private fun applyBuildings() {
+        val s = style ?: return
+        if (!s.isFullyLoaded) return
+        try { ForjaStyle.setBuildings(s, threeD && layers.buildings3d, threeD, night) } catch (_: Exception) { }
+    }
+
+    private fun fadeOutExtrusions() {
+        val s = style ?: return
+        if (!s.isFullyLoaded) return
+        try { ForjaStyle.fadeOutExtrusions(s) } catch (_: Exception) { }
+    }
+
+    /**
+     * 2D ↔ 3D: pitch 0 ↔ 55 (easeCamera 600 ms). La intrare extrudările apar imediat (la pitch 0 sunt plate și cresc cu
+     * înclinarea); la ieșire se estompează și rămân până se termină aplatizarea — `visibility` nu are tranziție, iar ascunse
+     * pe loc ar dispărea brusc cu camera încă înclinată. Mișcare redusă: salt, fără estompare.
+     */
     fun set3d(on: Boolean, animate: Boolean = true) {
         val changed = threeD != on
         threeD = on
-        style?.let { s -> if (s.isFullyLoaded) try { ForjaStyle.setBuildings(s, on && layers.buildings3d, on) } catch (_: Exception) { } }
-        val m = map ?: return
-        if (!changed && m.cameraPosition.tilt == (if (on) 55.0 else 0.0)) return
-        val cp = CameraPosition.Builder(m.cameraPosition).tilt(if (on) 55.0 else 0.0).build()
-        val update = CameraUpdateFactory.newCameraPosition(cp)
-        if (reducedMotion || !animate) m.moveCamera(update) else m.easeCamera(update, 600)
+        val m = map
+        if (m == null) { applyBuildings(); return }
+        val target = if (on) 55.0 else 0.0
+        if (!changed && m.cameraPosition.tilt == target) { applyBuildings(); return }
+        if (on) applyBuildings()
+        val update = CameraUpdateFactory.newCameraPosition(CameraPosition.Builder(m.cameraPosition).tilt(target).build())
+        when {
+            reducedMotion || !animate -> { m.moveCamera(update); applyBuildings() }
+            on -> m.easeCamera(update, 600)
+            else -> {
+                fadeOutExtrusions()
+                // La final (sau dacă un gest / o altă comandă întrerupe alunecarea) se aplică starea CURENTĂ — dacă între timp
+                // omul a reintrat în 3D, extrudările rămân.
+                m.easeCamera(update, 600, object : MapLibreMap.CancelableCallback {
+                    override fun onFinish() { applyBuildings() }
+                    override fun onCancel() { applyBuildings() }
+                })
+            }
+        }
     }
 
     // ── Date ──
 
     private var lastCellsAt = 0L
     private var pendingCells: FeatureCollection? = null
+    private var pendingEdges: FeatureCollection? = null
     private val flushCells = Runnable {
         val fc = pendingCells ?: return@Runnable
-        pendingCells = null
+        val ef = pendingEdges ?: MapGeo.empty()
+        pendingCells = null; pendingEdges = null
         lastCellsAt = SystemClock.uptimeMillis()
         push(MapIds.SRC_CELLS, fc)
+        push(MapIds.SRC_CELLS_EDGE, ef)
     }
 
-    /** Celulele: cel mult o actualizare pe secundă (ultima câștigă). */
-    fun setCells(fc: FeatureCollection) {
+    /** Celulele + conturul lor (MapGeo.cells / MapGeo.cellEdges): cel mult o actualizare pe secundă (ultima câștigă). */
+    fun setCells(fc: FeatureCollection, edges: FeatureCollection) {
         val now = SystemClock.uptimeMillis()
         val wait = 1000 - (now - lastCellsAt)
         if (wait <= 0 && pendingCells == null) {
             lastCellsAt = now
             push(MapIds.SRC_CELLS, fc)
+            push(MapIds.SRC_CELLS_EDGE, edges)
         } else {
-            pendingCells = fc
+            pendingCells = fc; pendingEdges = edges
             handler.removeCallbacks(flushCells)
             handler.postDelayed(flushCells, wait.coerceAtLeast(1))
         }
@@ -269,7 +312,19 @@ class MapController(context: Context, private val staticMode: Boolean = false) {
     fun setStreets(fc: FeatureCollection) = push(MapIds.SRC_STREETS, fc)
     fun setLiveRoute(fc: FeatureCollection) = push(MapIds.SRC_ROUTE, fc)
 
-    fun setLink(from: LatLng?, to: LatLng?) {
+    // ── Linia eu → prietenul selectat: capătul urmărește poziția GLISATĂ a prietenului, cadru cu cadru ──
+
+    private var linkUid: String? = null
+
+    /** Prietenul spre care se trage linia punctată (null = fără linie). Se reactualizează la fiecare cadru al glisării și la fiecare fix al meu. */
+    fun setLinkTo(uid: String?) {
+        linkUid = uid
+        pushLink()
+    }
+
+    private fun pushLink() {
+        val from = meLatLng()
+        val to = linkUid?.let { friendLatLng(it) }
         push(MapIds.SRC_LINK, if (from == null || to == null) MapGeo.empty() else MapGeo.link(from, to))
     }
 
@@ -280,11 +335,12 @@ class MapController(context: Context, private val staticMode: Boolean = false) {
     private var meLng = 0.0
     private var hasMe = false
 
-    /** Poziția mea; conul de direcție apare doar peste 1 m/s. */
-    fun setMe(lat: Double, lng: Double, bearing: Float, speedMps: Float, icon: String) {
+    /** Poziția mea; conul de direcție apare doar peste 1 m/s; în fantomă avatarul „Tu” stă la 0,55. */
+    fun setMe(lat: Double, lng: Double, bearing: Float, speedMps: Float, icon: String, ghost: Boolean) {
         meIcon = icon; meLat = lat; meLng = lng; hasMe = true
         icons.cone()
-        push(MapIds.SRC_ME, MapGeo.me(lat, lng, icon, bearing, speedMps > 1f))
+        push(MapIds.SRC_ME, MapGeo.me(lat, lng, icon, bearing, speedMps > 1f, ghost))
+        if (linkUid != null) pushLink()
     }
 
     fun meLatLng(): LatLng? = if (hasMe) LatLng(meLat, meLng) else null
@@ -292,7 +348,7 @@ class MapController(context: Context, private val staticMode: Boolean = false) {
     private var pulseOn = false
     private var pulseAnim: ValueAnimator? = null
 
-    /** Pulsul „Tu”: raza 8→22 dp, opacitate 0,35→0, 1800 ms, la nesfârșit. Oprit la mișcare redusă. */
+    /** Pulsul „Tu”: raza 8→22 dp, opacitate 0,35→0, 1800 ms, la nesfârșit cât harta e vizibilă. Oprit la mișcare redusă. */
     fun setPulse(on: Boolean) {
         val want = on && !reducedMotion
         if (pulseOn == want) return
@@ -320,7 +376,15 @@ class MapController(context: Context, private val staticMode: Boolean = false) {
                 } catch (_: Exception) { }
             }
             start()
+            // Harta în pauză (ecran stins, altă activitate deasupra) nu are nevoie de 60 de mutații de stil pe secundă.
+            if (!resumed) pause()
         }
+    }
+
+    /** ON_RESUME: pulsul pus pe pauză își reia ciclul; dacă între timp n-a existat (stil nou), pornește dacă e cerut. */
+    private fun resumePulse() {
+        val a = pulseAnim
+        if (a != null) { if (a.isPaused) a.resume() } else if (pulseOn) startPulse()
     }
 
     private fun stopPulse() {
@@ -379,7 +443,10 @@ class MapController(context: Context, private val staticMode: Boolean = false) {
         }
     }
 
-    private fun pushFriends() = push(MapIds.SRC_FRIENDS, MapGeo.friends(friendPins, positions))
+    private fun pushFriends() {
+        push(MapIds.SRC_FRIENDS, MapGeo.friends(friendPins, positions))
+        if (linkUid != null) pushLink()
+    }
 
     /** Poziția desenată ACUM a unui prieten (pentru linia eu → prieten). */
     fun friendLatLng(uid: String): LatLng? = positions[uid]?.let { LatLng(it[0], it[1]) }

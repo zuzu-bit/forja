@@ -101,33 +101,58 @@ object ForjaStyle {
         style.paint("landcover_wood", PropertyFactory.fillColor(l.wood))
         style.paint("landcover_grass", PropertyFactory.fillColor(l.grass))
         style.paint("landuse_residential", PropertyFactory.fillColor(l.residential))
-        for (id in listOf("landuse_pitch", "landuse_track", "landuse_cemetery", "landuse_hospital", "landuse_school", "aeroway_fill")) {
+        for (id in listOf(
+            "landuse_pitch", "landuse_track", "landuse_cemetery", "landuse_hospital", "landuse_school", "aeroway_fill",
+            "landcover_sand", "landcover_ice"
+        )) {
             style.paint(id, PropertyFactory.fillColor(l.landuse))
         }
         style.paint("water", PropertyFactory.fillColor(l.water))
         for (id in listOf("waterway_river", "waterway_other", "waterway_tunnel")) style.paint(id, PropertyFactory.lineColor(l.waterLine))
 
-        for (id in listOf("road_motorway", "bridge_motorway")) style.paint(id, PropertyFactory.lineColor(l.motorway))
-        for (id in listOf("road_trunk_primary", "bridge_trunk_primary", "road_link", "bridge_link", "road_motorway_link", "bridge_motorway_link")) {
+        // Drumuri, poduri ȘI tuneluri (Pasajul Unirii, Victoriei, Lujerului…), plus pistele aeroportului: liberty le lasă
+        // crem/alb, iar pe harta de noapte ar străluci — aceleași jetoane de culoare pentru toate variantele.
+        for (id in listOf("road_motorway", "bridge_motorway", "tunnel_motorway")) style.paint(id, PropertyFactory.lineColor(l.motorway))
+        for (id in listOf(
+            "road_trunk_primary", "bridge_trunk_primary", "tunnel_trunk_primary", "road_link", "bridge_link", "tunnel_link",
+            "road_motorway_link", "bridge_motorway_link", "tunnel_motorway_link"
+        )) {
             style.paint(id, PropertyFactory.lineColor(l.primary))
         }
-        for (id in listOf("road_secondary_tertiary", "bridge_secondary_tertiary")) style.paint(id, PropertyFactory.lineColor(l.secondary))
-        for (id in listOf("road_minor", "bridge_street", "road_service_track", "bridge_service_track", "road_path_pedestrian", "bridge_path_pedestrian")) {
+        for (id in listOf("road_secondary_tertiary", "bridge_secondary_tertiary", "tunnel_secondary_tertiary")) {
+            style.paint(id, PropertyFactory.lineColor(l.secondary))
+        }
+        for (id in listOf(
+            "road_minor", "bridge_street", "tunnel_minor", "road_service_track", "bridge_service_track", "tunnel_service_track",
+            "road_path_pedestrian", "bridge_path_pedestrian", "tunnel_path_pedestrian", "aeroway_runway", "aeroway_taxiway"
+        )) {
             style.paint(id, PropertyFactory.lineColor(l.minor))
         }
         for (id in listOf(
             "road_motorway_casing", "road_trunk_primary_casing", "road_secondary_tertiary_casing", "road_link_casing",
             "road_motorway_link_casing", "bridge_motorway_casing", "bridge_trunk_primary_casing",
-            "bridge_secondary_tertiary_casing", "bridge_link_casing", "bridge_motorway_link_casing"
+            "bridge_secondary_tertiary_casing", "bridge_link_casing", "bridge_motorway_link_casing",
+            "tunnel_motorway_casing", "tunnel_trunk_primary_casing", "tunnel_secondary_tertiary_casing", "tunnel_link_casing",
+            "tunnel_motorway_link_casing"
         )) style.paint(id, PropertyFactory.lineColor(l.casingMajor))
-        for (id in listOf("road_minor_casing", "road_service_track_casing", "bridge_street_casing", "bridge_service_track_casing", "bridge_path_pedestrian_casing")) {
+        for (id in listOf(
+            "road_minor_casing", "road_service_track_casing", "bridge_street_casing", "bridge_service_track_casing",
+            "bridge_path_pedestrian_casing", "tunnel_street_casing", "tunnel_service_track_casing"
+        )) {
             style.paint(id, PropertyFactory.lineColor(l.casingMinor))
         }
-        for (id in listOf("road_major_rail", "road_transit_rail", "bridge_major_rail", "bridge_transit_rail", "road_major_rail_hatching", "road_transit_rail_hatching")) {
+        for (id in listOf(
+            "road_major_rail", "road_transit_rail", "bridge_major_rail", "bridge_transit_rail", "tunnel_major_rail", "tunnel_transit_rail",
+            "road_major_rail_hatching", "road_transit_rail_hatching", "bridge_major_rail_hatching", "bridge_transit_rail_hatching",
+            "tunnel_major_rail_hatching", "tunnel_transit_rail_hatching"
+        )) {
             style.paint(id, PropertyFactory.lineColor(l.rail))
         }
 
         style.paint("building", PropertyFactory.fillColor(l.building), PropertyFactory.fillOutlineColor(l.buildingEdge))
+        // Liberty oprește clădirile plate la zoom 14 (de acolo preia `building-3d`); în 2D le vrem la orice zoom —
+        // altfel, de la 14 în sus, orașul e doar străzi pe hârtie. Cu extrudările pornite stau estompate sub ele.
+        try { style.getLayer("building")?.setMaxZoom(24f) } catch (e: Exception) { Log.w(TAG, "liberty: building maxzoom — ${e.message}") }
         style.paint(
             "building-3d",
             PropertyFactory.fillExtrusionColor(l.building3d),
@@ -169,10 +194,22 @@ object ForjaStyle {
 
     /**
      * Clădirile: în 3D arătăm extrudările (dacă stratul e pornit) și estompăm clădirile plate;
-     * în 2D extrudările sunt ascunse și clădirile plate revin la opacitate întreagă.
+     * în 2D (sau în 3D cu „Clădiri 3D” oprit) extrudările sunt ascunse și clădirile plate revin la opacitate întreagă,
+     * la orice zoom. Opacitatea extrudărilor revine la valoarea paletei — după [fadeOutExtrusions] reapar cu o estompare de 300 ms.
      */
-    fun setBuildings(style: Style, extrusions: Boolean, threeD: Boolean) {
-        style.paint("building-3d", PropertyFactory.visibility(if (extrusions) Property.VISIBLE else Property.NONE))
+    fun setBuildings(style: Style, extrusions: Boolean, threeD: Boolean, night: Boolean) {
+        val l = if (night) Night else Day
+        style.paint(
+            "building-3d",
+            PropertyFactory.visibility(if (extrusions) Property.VISIBLE else Property.NONE),
+            PropertyFactory.fillExtrusionOpacity(if (extrusions) l.building3dOpacity else 0f)
+        )
         style.paint("building", PropertyFactory.fillOpacity(if (threeD && extrusions) 0.35f else 1f))
+        try { style.getLayer("building")?.setMaxZoom(24f) } catch (_: Exception) { }
+    }
+
+    /** La ieșirea din 3D: extrudările se estompează (tranziția de vopsea, 300 ms) cât camera se aplatizează; le ascunde [setBuildings] la final. */
+    fun fadeOutExtrusions(style: Style) {
+        style.paint("building-3d", PropertyFactory.fillExtrusionOpacity(0f))
     }
 }

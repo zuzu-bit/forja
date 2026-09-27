@@ -70,7 +70,9 @@ class MapIcons(private val context: Context) {
 
     fun friend(uid: String, name: String, state: String, ghost: Boolean, family: Boolean, selected: Boolean): String {
         val photo = photos[uid]
-        val key = "f|$uid|$state|$ghost|$family|$selected|${photo?.second ?: 0}"
+        // Fără poză desenăm inițialele, deci numele intră în cheie — altfel o redenumire ar păstra vechile inițiale până la recreare.
+        val nameKey = if (photo == null) name.hashCode() else 0
+        val key = "f|$uid|$nameKey|$state|$ghost|$family|$selected|${photo?.second ?: 0}"
         return register(key) { MapMarkers.friendBitmap(context, name, photo?.first, ghost, false, state, family, selected) }
     }
 

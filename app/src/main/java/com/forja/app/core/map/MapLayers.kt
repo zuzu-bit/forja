@@ -18,6 +18,7 @@ import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
+import org.maplibre.geojson.MultiLineString
 import org.maplibre.geojson.Point
 import org.maplibre.geojson.Polygon
 import kotlin.math.cos
@@ -26,6 +27,8 @@ import kotlin.math.pow
 /** Id-urile surselor și straturilor FORJA de pe hartă. Create O SINGURĂ DATĂ per stil, apoi doar `setGeoJson`. */
 object MapIds {
     const val SRC_CELLS = "forja-cells"
+    /** Conturul teritoriului: doar laturile exterioare ale celulelor (MapGeo.cellEdges), nu conturul fiecărei celule. */
+    const val SRC_CELLS_EDGE = "forja-cells-edge"
     const val SRC_HEAT = "forja-heat"
     const val SRC_PLACES = "forja-places"
     const val SRC_REC = "forja-rec-places"
@@ -85,8 +88,11 @@ object MapLayerStack {
     private const val TEAL = "#4FA3A0"
     private const val FONT_BOLD = "Noto Sans Bold"
 
-    /** 100 m în pixeli la zoom 13, latitudinea României (≈ 45°): 100 / (156543,03 · cos 45° / 2^13). Crește ×2 per nivel. */
-    private val haloPxAtZ13: Float = (100.0 / (156543.03 * cos(Math.toRadians(45.0)) / 2.0.pow(13.0))).toFloat()
+    /**
+     * 100 m în pixeli logici la zoom 13, latitudinea României (≈ 45°). MapLibre numără zoomul pe dale de 512 px:
+     * m/px = 2π·6378137 / (512 · 2^z) · cos φ = 78271,517 · cos φ / 2^z → 100 m ≈ 14,8 px la z13. Crește ×2 per nivel.
+     */
+    private val haloPxAtZ13: Float = (100.0 / (78271.517 * cos(Math.toRadians(45.0)) / 2.0.pow(13.0))).toFloat()
 
     private fun groundAnchor(style: Style): String? {
         if (style.getLayer("building") != null) return "building"
@@ -107,15 +113,21 @@ object MapLayerStack {
                 org.maplibre.android.style.sources.GeoJsonOptions().withBuffer(8).withTolerance(0.4f)
             )
         )
+        style.addSource(org.maplibre.android.style.sources.GeoJsonSource(MapIds.SRC_CELLS_EDGE, empty))
         style.addSource(org.maplibre.android.style.sources.GeoJsonSource(MapIds.SRC_STREETS, empty))
         style.addSource(org.maplibre.android.style.sources.GeoJsonSource(MapIds.SRC_ROUTE, empty))
-        style.addSource(org.maplibre.android.style.sources.GeoJsonSource(MapIds.SRC_PLACES, empty))
+        // Locurile: fără tampon de dală. Cercurile (halourile) nu se decupează la marginea dalei, deci un loc aflat în tamponul
+        // implicit (25 %) s-ar desena și în dala vecină — halou de două ori mai opac. Pinurile sunt simboluri, n-au nevoie de tampon.
+        val noBuffer = org.maplibre.android.style.sources.GeoJsonOptions().withBuffer(0)
+        style.addSource(org.maplibre.android.style.sources.GeoJsonSource(MapIds.SRC_PLACES, empty, noBuffer))
         style.addSource(org.maplibre.android.style.sources.GeoJsonSource(MapIds.SRC_REC, empty))
-        style.addSource(org.maplibre.android.style.sources.GeoJsonSource(MapIds.SRC_LINK, empty))
-        // Prietenii și eu: actualizări sincrone — poziția glisată nu rămâne un cadru în urmă.
+        // Prietenii, linia eu → prieten și eu: actualizări sincrone — poziția glisată nu rămâne un cadru în urmă.
         val sync = org.maplibre.android.style.sources.GeoJsonOptions().withSynchronousUpdate(true)
+        style.addSource(org.maplibre.android.style.sources.GeoJsonSource(MapIds.SRC_LINK, empty, sync))
         style.addSource(org.maplibre.android.style.sources.GeoJsonSource(MapIds.SRC_FRIENDS, empty, sync))
-        style.addSource(org.maplibre.android.style.sources.GeoJsonSource(MapIds.SRC_ME, empty, sync))
+        // Eu: un singur punct, fără tampon — inelul pulsului se desenează o singură dată.
+        val syncNoBuffer = org.maplibre.android.style.sources.GeoJsonOptions().withSynchronousUpdate(true).withBuffer(0)
+        style.addSource(org.maplibre.android.style.sources.GeoJsonSource(MapIds.SRC_ME, empty, syncNoBuffer))
 
         val anchor = groundAnchor(style)
 
@@ -167,13 +179,15 @@ object MapLayerStack {
         )
         cells.minZoom = 11.5f
         addGround(style, cells, anchor)
-        val cellsLine = LineLayer(MapIds.L_CELLS_LINE, MapIds.SRC_CELLS).withProperties(
+        // Conturul: doar marginea reală a teritoriului (laturile fără vecin, din sursa „edge”). Conturul fiecărei celule ar desena
+        // laturile interioare de două ori (0,55 + 0,55 ≈ 0,80) — o tablă de șah, nu o formă cu contur.
+        val cellsLine = LineLayer(MapIds.L_CELLS_LINE, MapIds.SRC_CELLS_EDGE).withProperties(
             PropertyFactory.lineColor(OLIVE2),
             PropertyFactory.lineWidth(1f),
             PropertyFactory.lineOpacity(
                 Expression.interpolate(
                     Expression.linear(), Expression.zoom(),
-                    Expression.stop(12, 0f), Expression.stop(14, 0.55f)
+                    Expression.stop(12, 0f), Expression.stop(13.5, 0.55f)
                 )
             )
         )
@@ -249,8 +263,8 @@ object MapLayerStack {
         // Linia punctată eu → prietenul selectat.
         style.addLayer(
             LineLayer(MapIds.L_LINK, MapIds.SRC_LINK).withProperties(
-                PropertyFactory.lineColor(BLUE),
-                PropertyFactory.lineWidth(2f),
+                PropertyFactory.lineColor(linkColor(night)),
+                PropertyFactory.lineWidth(linkWidth(night)),
                 PropertyFactory.lineDasharray(arrayOf(1.5f, 2f)),
                 PropertyFactory.lineCap(Property.LINE_CAP_ROUND)
             )
@@ -273,6 +287,9 @@ object MapLayerStack {
                 PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
                 PropertyFactory.textOffset(arrayOf(0f, 0.55f)),
                 PropertyFactory.textOptional(true),
+                // Și eticheta poate să se suprapună: cu suprapunerea interzisă, cheia MICĂ are prioritate la plasare și tocmai
+                // pastila selectatului („Ana · 1,2 km”, cheia 2) ar fi cea aruncată când doi prieteni stau unul peste altul.
+                PropertyFactory.textAllowOverlap(true),
                 PropertyFactory.textOpacity(Expression.toNumber(Expression.get("alpha"))),
                 PropertyFactory.textColor(if (night) "#F4F2EE" else "#1A1A1E"),
                 PropertyFactory.textHaloColor(if (night) "rgba(10,10,11,0.85)" else "#F4F2EE"),
@@ -307,6 +324,8 @@ object MapLayerStack {
                 PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
                 PropertyFactory.iconAllowOverlap(true),
                 PropertyFactory.iconIgnorePlacement(true),
+                // Fantomă: „Tu” la 0,55, ca prietenii-fantomă — bitmapul rămâne întreg, transparența o dă stratul.
+                PropertyFactory.iconOpacity(Expression.toNumber(Expression.get("alpha"))),
                 PropertyFactory.symbolSortKey(3f),
                 PropertyFactory.textField("Tu"),
                 PropertyFactory.textFont(arrayOf(FONT_BOLD)),
@@ -314,6 +333,8 @@ object MapLayerStack {
                 PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
                 PropertyFactory.textOffset(arrayOf(0f, 0.55f)),
                 PropertyFactory.textOptional(true),
+                PropertyFactory.textAllowOverlap(true),
+                PropertyFactory.textOpacity(Expression.toNumber(Expression.get("alpha"))),
                 PropertyFactory.textColor(if (night) "#F4F2EE" else "#1A1A1E"),
                 PropertyFactory.textHaloColor(if (night) "rgba(10,10,11,0.85)" else "#F4F2EE"),
                 PropertyFactory.textHaloWidth(2f)
@@ -340,11 +361,16 @@ object MapLayerStack {
             PropertyFactory.textHaloWidth(1.6f)
         )
 
+    /** Teritoriile ajung la opacitatea întreagă la 13,5 — exact unde se stinge strălucirea; altfel harta pălea între 12,5 și 14. */
     private fun cellsOpacity(night: Boolean): Expression =
         Expression.interpolate(
             Expression.linear(), Expression.zoom(),
-            Expression.stop(12, 0f), Expression.stop(14, if (night) 0.38f else 0.28f)
+            Expression.stop(12, 0f), Expression.stop(13.5, if (night) 0.38f else 0.28f)
         )
+
+    /** Linia eu → prieten: albastrul pal e de noapte; pe hârtia de zi (#f3efe6) ar avea contrast 1,9:1 — ziua e mai închisă și puțin mai lată. */
+    private fun linkColor(night: Boolean): String = if (night) BLUE else "#5F7FAE"
+    private fun linkWidth(night: Boolean): Float = if (night) 2f else 2.5f
 
     private fun streetWidth(base: Float): Expression =
         Expression.interpolate(
@@ -359,6 +385,7 @@ object MapLayerStack {
         style.getLayer(MapIds.L_CELLS)?.setProperties(PropertyFactory.fillOpacity(cellsOpacity(night)))
         style.getLayer(MapIds.L_STREETS_CASING)?.setProperties(PropertyFactory.lineOpacity(if (night) 0.5f else 0.35f))
         style.getLayer(MapIds.L_ROUTE_GLOW)?.setProperties(PropertyFactory.lineOpacity(if (night) 0.3f else 0.16f))
+        style.getLayer(MapIds.L_LINK)?.setProperties(PropertyFactory.lineColor(linkColor(night)), PropertyFactory.lineWidth(linkWidth(night)))
         for (id in listOf(MapIds.L_FRIENDS, MapIds.L_ME)) {
             style.getLayer(id)?.setProperties(PropertyFactory.textColor(text), PropertyFactory.textHaloColor(halo))
         }
@@ -410,6 +437,42 @@ object MapGeo {
         }
         return FeatureCollection.fromFeatures(out)
     }
+
+    /**
+     * Conturul teritoriului: laturile celulelor care nu au vecin cucerit (grila de 150 m, id „x_y” din ExploreGrid),
+     * într-o singură MultiLineString. Laturile interioare nu apar deloc — teritoriul citește ca o formă, nu ca o grilă.
+     */
+    fun cellEdges(cells: List<ExploreCellEntity>): FeatureCollection {
+        if (cells.isEmpty()) return empty
+        val n = cells.size
+        val xs = LongArray(n)
+        val ys = LongArray(n)
+        val keys = HashSet<Long>(n * 2)
+        for (i in 0 until n) {
+            val id = cells[i].id
+            val sep = id.indexOf('_')
+            val x = if (sep > 0) id.substring(0, sep).toLongOrNull() ?: Long.MIN_VALUE else Long.MIN_VALUE
+            val y = if (sep > 0) id.substring(sep + 1).toLongOrNull() ?: Long.MIN_VALUE else Long.MIN_VALUE
+            xs[i] = x; ys[i] = y
+            if (x != Long.MIN_VALUE && y != Long.MIN_VALUE) keys.add(cellKey(x, y))
+        }
+        val lines = ArrayList<List<Point>>()
+        for (i in 0 until n) {
+            val c = cells[i]
+            val x = xs[i]
+            val y = ys[i]
+            val known = x != Long.MIN_VALUE && y != Long.MIN_VALUE   // id necunoscut → toate cele patru laturi
+            if (!known || cellKey(x, y + 1) !in keys) lines.add(listOf(Point.fromLngLat(c.minLng, c.maxLat), Point.fromLngLat(c.maxLng, c.maxLat)))
+            if (!known || cellKey(x, y - 1) !in keys) lines.add(listOf(Point.fromLngLat(c.minLng, c.minLat), Point.fromLngLat(c.maxLng, c.minLat)))
+            if (!known || cellKey(x + 1, y) !in keys) lines.add(listOf(Point.fromLngLat(c.maxLng, c.minLat), Point.fromLngLat(c.maxLng, c.maxLat)))
+            if (!known || cellKey(x - 1, y) !in keys) lines.add(listOf(Point.fromLngLat(c.minLng, c.minLat), Point.fromLngLat(c.minLng, c.maxLat)))
+        }
+        if (lines.isEmpty()) return empty
+        return FeatureCollection.fromFeature(Feature.fromGeometry(MultiLineString.fromLngLats(lines)))
+    }
+
+    /** (x, y) ale grilei într-un singur Long (ambele încap în 32 de biți: |x|, |y| < 140 000). */
+    private fun cellKey(x: Long, y: Long): Long = (x shl 32) xor (y and 0xFFFFFFFFL)
 
     fun heat(cells: List<ExploreCellEntity>): FeatureCollection {
         if (cells.isEmpty()) return empty
@@ -472,13 +535,15 @@ object MapGeo {
         return FeatureCollection.fromFeatures(out)
     }
 
-    fun me(lat: Double, lng: Double, icon: String, bearing: Float, cone: Boolean): FeatureCollection {
+    /** Eu: `alpha` 0,55 în fantomă (stratul o aplică pe icon și pe „Tu”), 1 altfel. */
+    fun me(lat: Double, lng: Double, icon: String, bearing: Float, cone: Boolean, ghost: Boolean): FeatureCollection {
         val f = Feature.fromGeometry(Point.fromLngLat(lng, lat))
         f.addStringProperty("kind", "me")
         f.addStringProperty("id", "me")
         f.addStringProperty("icon", icon)
         f.addNumberProperty("bearing", bearing)
         f.addBooleanProperty("cone", cone)
+        f.addNumberProperty("alpha", if (ghost) 0.55f else 1f)
         return FeatureCollection.fromFeature(f)
     }
 

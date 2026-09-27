@@ -71,10 +71,10 @@ fun LayersSheet(layers: MapLayers, onChange: (MapLayers) -> Unit, onClose: () ->
                 LayerRow("Teritorii", "Celulele cucerite, colorate după cum le-ai luat.", layers.territories) {
                     onChange(layers.copy(territories = it))
                 }
-                LayerRow("Strălucire", "Zonele tale se aprind când te depărtezi.", layers.heat) {
+                LayerRow("Strălucire", "Teritoriile tale se aprind când te depărtezi.", layers.heat) {
                     onChange(layers.copy(heat = it))
                 }
-                LayerRow("Străzile tale", "Toate turele salvate, cu amber.", layers.streets) {
+                LayerRow("Străzile tale", "Toate turele tale, în amber.", layers.streets) {
                     onChange(layers.copy(streets = it))
                 }
                 LayerRow("Locuri", "Locurile tale și recomandările prietenilor.", layers.places) {

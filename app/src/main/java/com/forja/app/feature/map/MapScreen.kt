@@ -67,7 +67,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import org.maplibre.android.geometry.LatLng
 import java.util.Locale
 
 /** Înălțimea barei de jos: butoanele hărții stau deasupra ei. */
@@ -168,7 +167,11 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
 
     // Cifrele teritoriului
     val percentLabel = remember(cells) { ExploreStats.percentLabel(cells) }
-    val rank = remember(cells.size, friends) { if (friends.isEmpty()) null else ExploreStats.rankAmongFriends(cells.size, friends) }
+    // Locul între prieteni doar când există ce compara: am teritorii și cel puțin un prieten a publicat un număr — altfel ar ieși
+    // „Loc #1” pentru oricine are un prieten, iar tonul nu promite mai mult decât face aplicația.
+    val rank = remember(cells.size, friends) {
+        if (cells.isEmpty() || friends.none { it.exploreCells > 0 }) null else ExploreStats.rankAmongFriends(cells.size, friends)
+    }
     val modeCounts = remember(cells) { ExploreStats.modeCounts(cells) }
 
     var placesOpen by remember { mutableStateOf(false) }
@@ -204,6 +207,9 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
     val controller = remember {
         MapController(context).also {
             it.reducedMotion = reducedMotion
+            // Noaptea se știe înainte de a crea MapView-ul (culoarea de încărcare, nuanța butonului „i”): implicit după ceas
+            // (Auto), corectată de preferințe imediat ce sosesc — fără fulger de hârtie crem la 23:00.
+            it.setNight(MapLayers().isNight())
             // Legate la creare, nu într-un SideEffect: un stil servit din cache poate fi gata înainte de prima recompoziție.
             it.onStyleReady = { styleReady = true; mapFailed = false }
             it.onLoadFailed = { mapFailed = true }
@@ -259,7 +265,8 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
     LaunchedEffect(night) { controller.setNight(night) }
     LaunchedEffect(layers) { controller.setLayers(layers) }
     LaunchedEffect(map3d, styleReady) { controller.set3d(map3d, animate = styleReady) }
-    LaunchedEffect(hasLocation, ghostActive, styleReady) { controller.setPulse(hasLocation && !ghostActive) }
+    // Pulsul pornește abia când există un fix (nu doar permisiunea) — altfel ar anima un strat gol.
+    LaunchedEffect(myFix != null, ghostActive, styleReady) { controller.setPulse(myFix != null && !ghostActive) }
 
     // Fotografiile prietenilor (Coil → bitmap rotund); când apare una nouă, avatarele se redesenează.
     LaunchedEffect(friends) {
@@ -270,8 +277,8 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
 
     // Teritorii + strălucire: geometria se construiește în fundal, setGeoJson pe firul principal (≤ 1/s).
     LaunchedEffect(cells, styleReady) {
-        val (cf, hf) = withContext(Dispatchers.Default) { MapGeo.cells(cells) to MapGeo.heat(cells) }
-        controller.setCells(cf)
+        val (cf, ef, hf) = withContext(Dispatchers.Default) { Triple(MapGeo.cells(cells), MapGeo.cellEdges(cells), MapGeo.heat(cells)) }
+        controller.setCells(cf, ef)
         controller.setHeat(hf)
     }
     // Străzile tale: toate turele salvate.
@@ -308,14 +315,8 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
             }
         controller.setFriends(pins)
     }
-    // Linia punctată eu → prietenul selectat.
-    LaunchedEffect(selectedLive, myFix, styleReady) {
-        val f = selectedLive
-        val me = myFix
-        if (f != null && me != null && f.lat != null && f.lng != null) {
-            controller.setLink(LatLng(me.lat, me.lng), LatLng(f.lat, f.lng))
-        } else controller.setLink(null, null)
-    }
+    // Linia punctată eu → prietenul selectat: controllerul o trage spre poziția GLISATĂ a prietenului, cadru cu cadru.
+    LaunchedEffect(selectedLive?.uid, styleReady) { controller.setLinkTo(selectedLive?.uid) }
 
     // Poziția mea LIVE cât timp harta e deschisă: update la 3 s, hrănește Explorarea.
     DisposableEffect(hasLocation) {
@@ -351,9 +352,9 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
         val icon = controller.icons.me(ghostActive)
         if (go.recording && go.points.isNotEmpty()) {
             val (lat, lng) = go.points.last()
-            controller.setMe(lat, lng, fix.bearing, go.lastSpeedMps.toFloat(), icon)
+            controller.setMe(lat, lng, fix.bearing, go.lastSpeedMps.toFloat(), icon, ghostActive)
         } else {
-            controller.setMe(fix.lat, fix.lng, fix.bearing, fix.speed, icon)
+            controller.setMe(fix.lat, fix.lng, fix.bearing, fix.speed, icon, ghostActive)
         }
     }
     // La deschidere: zbor (900 ms) la ultima poziție cunoscută/actuală, zoom 15,5 — o singură dată per ecran.
@@ -412,11 +413,13 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
 
     Box(Modifier.fillMaxSize().background(Surface0)) {
         // Harta — un singur MapView; 3D = pitch real al camerei, cromul rămâne drept.
-        ForjaMap(controller = controller, modifier = Modifier.fillMaxSize(), bottomInsetDp = BOTTOM_BAR_DP + 8)
+        ForjaMap(controller = controller, modifier = Modifier.fillMaxSize(), bottomInsetDp = BOTTOM_BAR_DP)
 
         // ── UI peste hartă ──
-        TopScrim(Modifier.height(120.dp))
+        // Voalul de sus doar noaptea: pe hârtia de zi un fum negru ar fi ieftin, iar antetul stă oricum pe pastila lui.
+        if (night) TopScrim(Modifier.height(120.dp))
 
+        val headerShape = RoundedCornerShape(12.dp)
         Row(
             Modifier
                 .fillMaxWidth()
@@ -425,11 +428,18 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            // Antetul pe aceeași pastilă întunecată ca MapFab/MapChip: lizibil și pe cremul de zi, și pe noapte.
+            Column(
+                Modifier
+                    .clip(headerShape)
+                    .background(Color(0xE6101114))
+                    .border(1.dp, StrokeOnVideo, headerShape)
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Harta VIU", style = TitleModule.copy(fontSize = 22.sp))
+                    Text("Harta VIU", style = TitleModule.copy(fontSize = 22.sp, lineHeight = 26.sp))
                     Spacer(Modifier.width(10.dp))
-                    StampLabel("TEREN", fontSize = 8, rotationDeg = -4f, appear = false)
+                    StampLabel("TEREN", color = Accent2, fontSize = 8, rotationDeg = -4f, appear = false)
                 }
                 Text(
                     if (friends.isEmpty()) "invită-ți primul prieten"
@@ -468,7 +478,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
             Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
-                .padding(top = 62.dp)
+                .padding(top = 68.dp)
                 .padding(horizontal = 16.dp)
                 .fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -568,7 +578,8 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                     sel = sel,
                     onClose = { selectedPlace = null },
                     onEdit = { placesOpen = true },
-                    onNavigate = { lat, lng, label -> navigateTo(lat, lng, label) }
+                    onNavigate = { lat, lng, label -> navigateTo(lat, lng, label) },
+                    onCenter = { lat, lng -> controller.easeTo(lat, lng, null, 600) }
                 )
                 Spacer(Modifier.height(10.dp))
             } else if (f != null) {
@@ -719,13 +730,17 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                 }
             }
 
-            // Atribuirea (obligatorie): lângă butonul „i” al MapLibre, care deschide sursele.
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "© OpenFreeMap · OpenMapTiles · OpenStreetMap",
-                style = monoLabel(7, 0.06f).copy(color = if (night) TextDim else Color(0xFF6B675F)),
-                modifier = Modifier.padding(start = 28.dp)
-            )
+            // Atribuirea (obligatorie), pe un singur rând de 21 dp: butonul „i” al MapLibre (21 dp, la 16 dp de stânga și
+            // BOTTOM_BAR_DP de jos — vezi createView) + creditul, care începe 6 dp după el, în aceeași nuanță. Rândul e mereu
+            // ultimul copil, deci nici Straturi / banda cu prieteni, nici consola GO nu acoperă butonul.
+            Spacer(Modifier.height(4.dp))
+            Row(Modifier.height(21.dp), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.width(27.dp))
+                Text(
+                    "© OpenFreeMap · OpenMapTiles · OpenStreetMap",
+                    style = monoLabel(7, 0.06f).copy(color = if (night) TextDim else Color(0xFF6B675F))
+                )
+            }
         }
     }
 
@@ -935,13 +950,17 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
     }
 }
 
-/** Cardul locului selectat (al meu sau recomandat), jos, lat, peste hartă. */
+/**
+ * Cardul locului selectat (al meu sau recomandat), jos, lat, peste hartă.
+ * La recomandări, „Pe hartă” (`onCenter`) aduce camera pe loc și închide cardul (contractul, §2.5).
+ */
 @Composable
 private fun PlaceCardOnMap(
     sel: PlaceSel,
     onClose: () -> Unit,
     onEdit: () -> Unit,
-    onNavigate: (Double, Double, String) -> Unit
+    onNavigate: (Double, Double, String) -> Unit,
+    onCenter: (Double, Double) -> Unit
 ) {
     ForjaCard(
         Modifier.fillMaxWidth(),
@@ -957,7 +976,9 @@ private fun PlaceCardOnMap(
                     Column(Modifier.weight(1f)) {
                         Text(p.name.ifBlank { "Loc fără nume" }, style = BodyStrong.copy(fontSize = 15.sp))
                         Text(
-                            "${visitsLabel(p.visits)} · ai stat ${stayLabel(p.stayMs)} · ultima dată ${Fmt.freshness(p.lastAt)}",
+                            // Vizitele doar de la 2 în sus: locurile de dinainte de numărare au visits = 1 din migrare, nu din fapte.
+                            (if (p.visits >= 2) "${visitsLabel(p.visits)} · ai stat " else "Ai stat ") +
+                                "${stayLabel(p.stayMs)} · ultima dată ${Fmt.freshness(p.lastAt)}",
                             style = BodySmall.copy(color = TextSecondary)
                         )
                     }
@@ -986,7 +1007,7 @@ private fun PlaceCardOnMap(
                         Text(r.name.ifBlank { "Loc recomandat" }, style = BodyStrong.copy(fontSize = 15.sp))
                         Text(
                             "Recomandat de ${r.ownerName} · ${Fmt.freshness(r.at)}" +
-                                (if (r.visits >= 1) " · ${visitsLabel(r.visits, owner)}" else ""),
+                                (if (r.visits >= 2) " · ${visitsLabel(r.visits, owner)}" else ""),
                             style = BodySmall.copy(color = TextSecondary)
                         )
                     }
@@ -1002,7 +1023,7 @@ private fun PlaceCardOnMap(
                 Row {
                     PrimaryButton(text = "Navighează", small = true, onClick = { onNavigate(r.lat, r.lng, r.name) }, modifier = Modifier.weight(1f))
                     Spacer(Modifier.width(10.dp))
-                    SecondaryButton("Închide", onClick = onClose, modifier = Modifier.weight(1f))
+                    SecondaryButton("Pe hartă", onClick = { onCenter(r.lat, r.lng); onClose() }, modifier = Modifier.weight(1f))
                 }
             }
         }

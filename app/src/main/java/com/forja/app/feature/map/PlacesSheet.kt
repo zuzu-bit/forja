@@ -46,7 +46,10 @@ data class TerritorySummary(
     val ride: Int
 )
 
-/** „Ai fost o dată” · „Ai fost de 5 ori”; cu nume: „Ana a fost de 5 ori”. */
+/**
+ * „Ai fost de 5 ori”; cu nume: „Ana a fost de 5 ori”. Se arată doar de la 2 vizite în sus: locurile de dinainte de numărare
+ * au `visits = 1` din migrare, nu din fapte, iar „o dată” ar fi o afirmație pe care n-o putem susține.
+ */
 fun visitsLabel(visits: Int, who: String? = null): String {
     val subject = who ?: "Ai"
     val verb = if (who == null) "fost" else "a fost"
@@ -227,7 +230,7 @@ fun PlacesSheet(
                                 Text(r.name.ifBlank { "Loc recomandat" }, style = BodyStrong.copy(fontSize = 14.sp))
                                 Text(
                                     "de la ${r.ownerName} · ${Fmt.freshness(r.at)}" +
-                                        (if (r.visits >= 1) " · ${visitsLabel(r.visits, r.ownerName.split(' ').first())}" else ""),
+                                        (if (r.visits >= 2) " · ${visitsLabel(r.visits, r.ownerName.split(' ').first())}" else ""),
                                     style = BodyTiny.copy(color = TextDim)
                                 )
                             }
@@ -287,7 +290,8 @@ private fun PlaceCard(
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                "${visitsLabel(place.visits)} · ai stat ${stayLabel(place.stayMs)} · ultima dată ${Fmt.freshness(place.lastAt)}",
+                (if (place.visits >= 2) "${visitsLabel(place.visits)} · ai stat " else "Ai stat ") +
+                    "${stayLabel(place.stayMs)} · ultima dată ${Fmt.freshness(place.lastAt)}",
                 style = BodyTiny.copy(color = TextDim),
                 modifier = Modifier.weight(1f)
             )

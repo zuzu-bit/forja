@@ -22,6 +22,8 @@ import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.map.ForjaMap
 import com.forja.app.core.map.MapController
 import com.forja.app.core.map.MapGeo
+import com.forja.app.core.map.MapLayers
+import com.forja.app.core.map.MapPrefs
 import com.forja.app.core.util.Fmt
 
 /** Detaliul unei activități: traseul desenat + toate cifrele. */
@@ -78,15 +80,20 @@ fun ActivityDetailScreen(activityId: Long, onBack: () -> Unit) {
         if (points.size >= 2) {
             val reducedMotion = LocalReducedMotion.current
             val density = LocalDensity.current
+            // Aceeași zi/noapte ca harta mare (Auto 21:00–06:00 / Pornit / Oprit), știută înainte de crearea MapView-ului.
+            val mapPrefs = remember { MapPrefs(context) }
+            val layers by mapPrefs.layers.collectAsState(initial = MapLayers())
             val controller = remember(a.id) {
                 MapController(context, staticMode = true).also { c ->
                     c.reducedMotion = reducedMotion
+                    c.setNight(layers.isNight())
                     c.onStyleReady = {
                         c.setStreets(MapGeo.route(points, "mine"))
                         c.fitBounds(points, with(density) { 24.dp.roundToPx() })
                     }
                 }
             }
+            LaunchedEffect(layers) { controller.setNight(layers.isNight()) }
             Box(
                 Modifier
                     .fillMaxWidth()
