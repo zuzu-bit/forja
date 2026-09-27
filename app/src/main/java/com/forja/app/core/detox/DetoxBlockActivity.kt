@@ -36,7 +36,7 @@ class DetoxBlockActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setShowWhenLocked(true)
-        setContent { ForjaTheme { DetoxBlockScreen(onDone = { finish() }) } }
+        setContent { ForjaTheme { DetoxBlockScreen(onDone = { com.forja.app.core.focus.ReturnToForja.go(this) }) } }
     }
 }
 

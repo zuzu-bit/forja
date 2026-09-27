@@ -136,17 +136,27 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
 
-    // Notificarea „Organizarea din laptop așteaptă o atingere” (WP9) deschide direct Curățenia:
-    // extra „forja_route” = "cleanup", consumat o singură dată, doar când utilizatorul e deja pe Azi.
+    // Ruta cerută din afară (extra „forja_route”): notificarea Curățeniei (WP9) sau ecranele de blocare
+    // („Mă întorc la copac” → Focus). Consumată o singură dată, doar când utilizatorul e deja în aplicație.
     val hostActivity = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
     val intentTick = (hostActivity as? MainActivity)?.intentTick ?: 0
     LaunchedEffect(intentTick) {
         val wanted = hostActivity?.intent?.getStringExtra(com.forja.app.core.cleanup.OrganizerJobs.ROUTE_EXTRA) ?: return@LaunchedEffect
         hostActivity.intent?.removeExtra(com.forja.app.core.cleanup.OrganizerJobs.ROUTE_EXTRA)
-        if (wanted != Route.CLEANUP || startRoute != Route.DASHBOARD) return@LaunchedEffect
+        if (startRoute != Route.DASHBOARD) return@LaunchedEffect
+        if (wanted != Route.CLEANUP && wanted !in tabRoutes) return@LaunchedEffect
         var tries = 0
         while (nav.currentBackStackEntry == null && tries++ < 40) kotlinx.coroutines.delay(50)
-        try { nav.navigate(Route.CLEANUP) { launchSingleTop = true } } catch (_: Exception) { }
+        try {
+            if (wanted in tabRoutes) {
+                nav.navigate(wanted) {
+                    popUpTo(Route.DASHBOARD) { inclusive = false }
+                    launchSingleTop = true
+                }
+            } else {
+                nav.navigate(wanted) { launchSingleTop = true }
+            }
+        } catch (_: Exception) { }
     }
 
     val tabFor: Map<String, ForjaTab> = mapOf(
