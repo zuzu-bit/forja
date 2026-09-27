@@ -43,12 +43,21 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.forja.app.ForjaApp
 import com.forja.app.core.data.db.SleepEventEntity
 import com.forja.app.core.data.db.SleepSessionEntity
+import com.forja.app.core.network.SleepApi
+import com.forja.app.core.sleep.AacRecorder
+import com.forja.app.core.sleep.SleepStaging
+import com.forja.app.core.sleep.SleepTimeline
+import com.forja.app.core.sleep.SleepUpload
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.sleep.SleepTrackService
 import com.forja.app.core.util.Fmt
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
@@ -152,7 +161,7 @@ fun SleepScreen() {
             when {
                 notificationsDenied -> "Fără notificări, alarma nu poate porni ecranul."
                 alarmEnabled && !fullScreenOk -> "Permite alarma pe tot ecranul din cardul „Veghea de noapte”."
-                micOn -> "Noapte bună. Microfonul ascultă local — nimic nu pleacă de pe telefon."
+                micOn -> "Noapte bună. Microfonul ascultă. Dimineața, înregistrarea urcă pe server, pe Wi-Fi."
                 else -> "Noapte bună. Fără microfon: doar mișcarea se analizează."
             }
         )
@@ -163,6 +172,15 @@ fun SleepScreen() {
         val notifDenied = Build.VERSION.SDK_INT >= 33 &&
             !(result[Manifest.permission.POST_NOTIFICATIONS] ?: granted(Manifest.permission.POST_NOTIFICATIONS))
         beginSleep(mic, notifDenied)
+    }
+
+    // Raportul ultimei nopți de pe disc: manifestul bucăților, cronologia serverului, stadiile, starea urcării.
+    val report = rememberNightReport(app, last, refresh)
+    val nightChunks = report.manifest?.chunks ?: emptyList()
+    val nightPlayer = remember(last?.id, nightChunks) { ChunkPlayer(context, app, last?.id ?: 0L, nightChunks, scope, toast) }
+    DisposableEffect(nightPlayer) { onDispose { nightPlayer.release() } }
+    LaunchedEffect(nightPlayer, nightPlayer.playing) {
+        while (nightPlayer.playing) { delay(500); nightPlayer.tick() }
     }
 
     Column(
@@ -281,7 +299,7 @@ fun SleepScreen() {
                 Text("Sesiune de somn activă", style = BodyStrong)
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "De la ${Fmt.clock(active!!.startAt)} · ${if (hasMic) "microfon + mișcare, analizate local" else "doar mișcare (fără microfon)"}.",
+                    "De la ${Fmt.clock(active!!.startAt)} · ${if (hasMic) "microfon + mișcare; noaptea urcă dimineața pe server" else "doar mișcare (fără microfon)"}.",
                     style = BodySmall.copy(color = SleepTextDim)
                 )
                 Spacer(Modifier.height(12.dp))
@@ -519,10 +537,16 @@ fun SleepScreen() {
             Spacer(Modifier.height(20.dp))
         }
 
-        // Înregistrarea completă a nopții — disponibilă 24h, apoi dispare singură.
+        // Noaptea, ascultată — cronologia serverului, cu dovezi (8 s în jurul fiecărui moment).
         last?.let { s ->
-            if (s.recordedUntil > System.currentTimeMillis()) {
-                NightRecordingCard(session = s, app = app)
+            NightListenedSection(session = s, app = app, report = report, player = nightPlayer, onChanged = { refresh++ })
+            Spacer(Modifier.height(20.dp))
+        }
+
+        // Înregistrarea completă a nopții — pe telefon 24 h, pe server 7 zile, apoi dispare.
+        last?.let { s ->
+            if (s.recordedUntil > System.currentTimeMillis() && nightChunks.isNotEmpty()) {
+                NightRecordingCard(session = s, app = app, report = report, player = nightPlayer)
                 Spacer(Modifier.height(20.dp))
             }
         }
@@ -545,9 +569,26 @@ fun SleepScreen() {
                     PhaseLegend("Ușor", Fmt.durationHm(s.lightMin), SleepLight)
                     PhaseLegend("REM", Fmt.durationHm(s.remMin), SleepRem)
                 }
+                report.staging?.let { st ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Adormit în ${st.latencyMin} min · ${when (st.awakenings) { 0 -> "fără treziri"; 1 -> "o trezire"; else -> "${st.awakenings} treziri" }}" +
+                            if (st.awakeMin > 0) " · ${st.awakeMin} min treaz" else "",
+                        style = BodyTiny.copy(color = TextSecondary)
+                    )
+                    if (st.lines.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Scor ${st.score} = " + st.lines.joinToString(" · ") { l ->
+                                (if (l.delta < 0) "−${-l.delta}" else "${l.delta}") + ": ${l.reason}"
+                            },
+                            style = BodyTiny.copy(color = SleepTextDim)
+                        )
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Estimare din mișcare și cicluri de ~90 min · ${s.movements} mișcări",
+                    "Estimare din mișcare (ferestre de 1 min) și cicluri de ~90 min · ${s.movements} mișcări",
                     style = monoLabel(8, 0.10f).copy(color = SleepTextDim)
                 )
             }
@@ -682,7 +723,7 @@ fun SleepScreen() {
             Spacer(Modifier.width(8.dp))
             InfoDot(
                 title = "Despre somn",
-                text = "FORJA nu pune diagnostice. Sunetul se analizează local, clipurile rămân pe telefon și le ștergi tu. Dacă sforăitul revine des, vorbește cu un medic — ai istoricul aici."
+                text = "FORJA nu pune diagnostice. Clipurile de 5 s rămân pe telefon și le ștergi tu. Înregistrarea întreagă urcă pe serverul FORJA doar ca să fie ascultată de model; pe telefon stă 24 h, pe server 7 zile, apoi dispare. Stadiile somnului sunt estimate din mișcare. Dacă sforăitul revine des, vorbește cu un medic — ai istoricul aici."
             )
         }
     }
@@ -741,86 +782,16 @@ private fun NightRow(s: SleepSessionEntity, app: ForjaApp) {
 }
 
 /**
- * Player-ul întregii nopți: local dacă fișierul mai există, altfel din stocarea
- * companiei (se șterge automat la 24h). „Sari la moment” pentru fiecare eveniment.
+ * Player-ul întregii nopți, pe bucăți: fiecare bucată se redă local dacă mai există, altfel din
+ * server (7 zile). „Sari la moment” caută bucata potrivită și pornește 5 s înainte de eveniment.
  */
 @Composable
-private fun NightRecordingCard(session: com.forja.app.core.data.db.SleepSessionEntity, app: ForjaApp) {
+private fun NightRecordingCard(session: SleepSessionEntity, app: ForjaApp, report: NightReport, player: ChunkPlayer) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val toast = LocalToast.current
     val events by app.db.sleepDao().eventsForSession(session.id).collectAsState(initial = emptyList())
-
-    var player by remember { mutableStateOf<MediaPlayer?>(null) }
-    var preparing by remember { mutableStateOf(false) }
-    var playing by remember { mutableStateOf(false) }
-    var positionS by remember { mutableStateOf(0) }
-    var durationS by remember { mutableStateOf(0) }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            try { player?.release() } catch (_: Exception) { }
-        }
-    }
-    LaunchedEffect(playing) {
-        while (playing) {
-            kotlinx.coroutines.delay(500)
-            try {
-                player?.let {
-                    positionS = it.currentPosition / 1000
-                    if (durationS == 0 && it.duration > 0) durationS = it.duration / 1000
-                }
-            } catch (_: Exception) { }
-        }
-    }
-
-    fun preparePlayer(onReady: (MediaPlayer) -> Unit) {
-        val existing = player
-        if (existing != null) { onReady(existing); return }
-        if (preparing) return
-        preparing = true
-        scope.launch {
-            try {
-                val mp = MediaPlayer()
-                val local = java.io.File(java.io.File(context.filesDir, "sleep_full"), "${session.id}.m4a")
-                if (local.exists() && local.length() > 4000) {
-                    mp.setDataSource(local.absolutePath)
-                } else if (app.forjaApi.available) {
-                    val auth = app.forjaApi.authHeader()
-                    if (auth == null) {
-                        toast.show("Intră în cont ca să asculți înregistrarea.")
-                        preparing = false
-                        return@launch
-                    }
-                    mp.setDataSource(
-                        context,
-                        android.net.Uri.parse(app.forjaApi.sleepRecordingUrl(session.id)),
-                        mapOf("Authorization" to auth)
-                    )
-                } else {
-                    toast.show("Înregistrarea nu mai e disponibilă.")
-                    preparing = false
-                    return@launch
-                }
-                mp.setOnPreparedListener {
-                    preparing = false
-                    player = mp
-                    durationS = (mp.duration / 1000).coerceAtLeast(0)
-                    onReady(mp)
-                }
-                mp.setOnCompletionListener { playing = false; positionS = 0 }
-                mp.setOnErrorListener { _, _, _ ->
-                    preparing = false
-                    playing = false
-                    toast.show("Înregistrarea nu s-a putut reda — poate a expirat (24h).")
-                    true
-                }
-                mp.prepareAsync()
-            } catch (_: Exception) {
-                preparing = false
-                toast.show("Înregistrarea nu s-a putut deschide.")
-            }
-        }
+    val audioStart = report.manifest?.startedAt?.takeIf { it > 0L } ?: session.startAt
+    val localLeft = remember(report.manifest) {
+        report.manifest?.chunks?.count { c -> AacRecorder.chunkFile(context.filesDir, session.id, c).exists() } ?: 0
     }
 
     ForjaCard(
@@ -829,33 +800,37 @@ private fun NightRecordingCard(session: com.forja.app.core.data.db.SleepSessionE
     ) {
         SectionLabel("Înregistrarea nopții", color = SleepTextDim)
         Spacer(Modifier.height(4.dp))
+        // Unde e înregistrarea, onest: „pe server” doar dacă măcar o bucată a ajuns acolo.
+        val uploadedAny = report.progress?.uploaded?.isNotEmpty() == true
+        val serverPart = when {
+            report.legacy -> ""
+            uploadedAny -> "pe server 7 zile, apoi dispare."
+            report.progress?.done == true -> "pe server n-a putut urca."
+            else -> "pe server încă n-a urcat."
+        }
         Text(
-            "Toată noaptea, dacă vrei s-o auzi. Se șterge automat după 24 de ore — de peste tot.",
+            (if (report.legacy) "Înregistrare veche, într-un singur fișier. "
+            else "Toată noaptea, în ${player.chunks.size} ${if (player.chunks.size == 1) "bucată" else "bucăți"}. ") +
+                (if (localLeft > 0) "Pe telefon 24 de ore" else "Pe telefon nu mai e") +
+                (if (serverPart.isEmpty()) "." else "; $serverPart"),
             style = BodyTiny.copy(color = SleepTextDim)
         )
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             PrimaryButton(
                 text = when {
-                    preparing -> "se încarcă…"
-                    playing -> "Pauză"
+                    player.preparing -> "se încarcă…"
+                    player.playing -> "Pauză"
                     else -> "▶ Ascultă toată noaptea"
                 },
                 small = true,
-                onClick = {
-                    val p = player
-                    if (p != null && playing) {
-                        p.pause(); playing = false
-                    } else {
-                        preparePlayer { mp -> mp.start(); playing = true }
-                    }
-                },
+                onClick = { player.toggle() },
                 modifier = Modifier.weight(1f)
             )
             Spacer(Modifier.width(12.dp))
             Text(
-                if (durationS > 0) "${Fmt.durationMs(positionS.toLong())} / ${Fmt.durationMs(durationS.toLong())}"
-                else "--:-- / --:--",
+                if (player.totalMs > 0) "${Fmt.durationMs(player.positionMs / 1000)} / ${Fmt.durationMs(player.totalMs / 1000)}"
+                else "${Fmt.durationMs(player.positionMs / 1000)} / --:--",
                 style = monoLabel(10, 0.08f).copy(color = SleepTextDim)
             )
         }
@@ -870,14 +845,7 @@ private fun NightRecordingCard(session: com.forja.app.core.data.db.SleepSessionE
                         Modifier
                             .padding(end = 8.dp)
                             .background(Color(0x1A7896BE), ChipShape)
-                            .pressable({
-                                val offsetMs = (ev.at - session.startAt - 5000).coerceAtLeast(0)
-                                preparePlayer { mp ->
-                                    mp.seekTo(offsetMs.toInt())
-                                    mp.start()
-                                    playing = true
-                                }
-                            })
+                            .pressable({ player.playFrom(ev.at - audioStart - 5000) })
                             .padding(horizontal = 9.dp, vertical = 6.dp)
                     ) {
                         Text(
@@ -888,6 +856,419 @@ private fun NightRecordingCard(session: com.forja.app.core.data.db.SleepSessionE
                 }
             }
         }
+    }
+}
+
+/** Ce știm despre ultima noapte, de pe disc: bucățile, cronologia serverului, stadiile, starea urcării. */
+private data class NightReport(
+    val manifest: AacRecorder.Manifest? = null,
+    val timeline: SleepTimeline? = null,
+    val progress: SleepUpload.Progress? = null,
+    val staging: SleepStaging.Result? = null,
+    val uploadState: String = ""
+) {
+    /** Sesiune veche: un singur fișier `.m4a`, fără manifest (dur necunoscut) — doar redare, fără urcare/cronologie. */
+    val legacy: Boolean get() = manifest?.let { it.chunks.size == 1 && it.chunks[0].dur == 0L } == true
+}
+
+/** Se recitește la revenirea în ecran și la fiecare 30 s cât urcarea/analiza chiar lucrează. */
+@Composable
+private fun rememberNightReport(app: ForjaApp, session: SleepSessionEntity?, refresh: Int): NightReport {
+    val context = LocalContext.current
+    var report by remember(session?.id) { mutableStateOf(NightReport()) }
+    LaunchedEffect(session?.id, refresh) {
+        val s = session ?: return@LaunchedEffect
+        while (true) {
+            val r = withContext(Dispatchers.IO) {
+                val dir = AacRecorder.sessionDir(context.filesDir, s.id)
+                NightReport(
+                    manifest = AacRecorder.manifestFor(context.filesDir, s.id, s.startAt),
+                    timeline = SleepTimeline.load(dir),
+                    progress = SleepUpload.loadProgress(dir),
+                    staging = File(dir, SleepTrackService.STAGING_FILE).takeIf { it.exists() }?.let { SleepStaging.fromJson(it.readText()) },
+                    uploadState = SleepUpload.describe(context, s.id)
+                )
+            }
+            report = r
+            // Nu la nesfârșit: sesiunile vechi n-au ce aștepta, iar o noapte fără progres scris la câteva minute după
+            // STOP ori așteaptă Wi-Fi (WorkManager o pornește el), ori n-a fost programată — revenirea în ecran recitește.
+            val endedAgo = System.currentTimeMillis() - (s.endAt ?: s.startAt)
+            val pending = r.manifest != null && !r.legacy && r.progress?.done != true && app.forjaApi.available &&
+                (r.progress != null || endedAgo < 5 * 60_000L)
+            if (!pending) break
+            delay(30_000)
+        }
+    }
+    return report
+}
+
+/**
+ * Redare pe bucăți: un MediaPlayer per bucată (offset local = moment − `from`), trecere automată la
+ * bucata următoare, fragmente de N secunde („Ascultă” din cronologie). Sesiunile vechi = o singură bucată.
+ */
+private class ChunkPlayer(
+    private val context: android.content.Context,
+    private val app: ForjaApp,
+    private val sessionId: Long,
+    val chunks: List<AacRecorder.Chunk>,
+    private val scope: CoroutineScope,
+    private val toast: ToastState
+) {
+    private var player: MediaPlayer? = null
+    private var chunkIndex = -1
+    private var pendingSeekMs = 0L
+    private var stopAtMs = 0L
+    /** Crește la fiecare deschidere/eliberare: un player pregătit „târziu” (după release sau după altă deschidere) se eliberează singur. */
+    @Volatile private var generation = 0
+    @Volatile private var released = false
+    var playing by mutableStateOf(false)
+    var preparing by mutableStateOf(false)
+    var positionMs by mutableStateOf(0L)
+    var totalMs by mutableStateOf(chunks.sumOf { it.dur })
+
+    fun release() {
+        released = true
+        generation++
+        try { player?.release() } catch (_: Exception) { }
+        player = null
+        chunkIndex = -1
+        playing = false
+        preparing = false
+    }
+
+    fun toggle() {
+        val p = player
+        if (p != null && playing) { try { p.pause() } catch (_: Exception) { }; playing = false; return }
+        if (p != null && chunkIndex >= 0) { stopAtMs = 0L; try { p.start(); playing = true } catch (_: Exception) { }; return }
+        playFrom(0L)
+    }
+
+    /** Redă de la un moment global (ms de la începutul audio-ului); `snippetMs` > 0 → se oprește după atât. */
+    fun playFrom(globalMs: Long, snippetMs: Long = 0L) {
+        val target = globalMs.coerceAtLeast(0L)
+        val chunk = SleepTimeline.chunkFor(target, chunks)
+        if (chunk == null) { toast.show("Înregistrarea nu mai e disponibilă."); return }
+        stopAtMs = if (snippetMs > 0) target + snippetMs else 0L
+        val local = (target - chunk.from).coerceAtLeast(0L)
+        val p = player
+        if (p != null && chunkIndex == chunk.index) {
+            try { p.seekTo(local.toInt()); p.start(); playing = true; positionMs = target } catch (_: Exception) { }
+            return
+        }
+        pendingSeekMs = local
+        open(chunk)
+    }
+
+    private fun open(chunk: AacRecorder.Chunk) {
+        if (preparing) return
+        release()
+        released = false
+        val gen = generation
+        preparing = true
+        scope.launch {
+            var mp: MediaPlayer? = null
+            try {
+                val p = MediaPlayer()
+                mp = p
+                val f = AacRecorder.chunkFile(context.filesDir, sessionId, chunk)
+                if (f.exists() && f.length() > 4000) {
+                    p.setDataSource(f.absolutePath)
+                } else if (app.forjaApi.available) {
+                    val auth = app.forjaApi.authHeader()
+                    if (auth == null) {
+                        toast.show("Intră în cont ca să asculți înregistrarea.")
+                        try { p.release() } catch (_: Exception) { }
+                        preparing = false
+                        return@launch
+                    }
+                    p.setDataSource(
+                        context,
+                        Uri.parse(SleepApi.get(app.forjaApi).chunkUrl(sessionId, chunk.index)),
+                        mapOf("Authorization" to auth)
+                    )
+                } else {
+                    toast.show("Înregistrarea nu mai e pe telefon.")
+                    try { p.release() } catch (_: Exception) { }
+                    preparing = false
+                    return@launch
+                }
+                // Un player care ajunge pregătit după ce ecranul s-a închis (release) sau după altă deschidere
+                // se eliberează pe loc: nimic nu cântă fără o interfață care să-l poată opri.
+                fun orphaned(): Boolean = released || gen != generation
+                p.setOnPreparedListener {
+                    if (orphaned()) { try { p.release() } catch (_: Exception) { }; return@setOnPreparedListener }
+                    preparing = false
+                    player = p
+                    chunkIndex = chunk.index
+                    if (chunk.dur == 0L && chunks.size == 1) totalMs = p.duration.toLong().coerceAtLeast(0L)
+                    try {
+                        if (pendingSeekMs > 0) p.seekTo(pendingSeekMs.toInt())
+                        p.start()
+                        playing = true
+                    } catch (_: Exception) { }
+                    positionMs = chunk.from + pendingSeekMs
+                    pendingSeekMs = 0L
+                }
+                p.setOnCompletionListener {
+                    if (orphaned()) return@setOnCompletionListener
+                    val next = chunks.firstOrNull { it.index > chunk.index }
+                    if (next != null && stopAtMs == 0L) {
+                        pendingSeekMs = 0L
+                        open(next)
+                    } else {
+                        playing = false
+                        stopAtMs = 0L
+                    }
+                }
+                p.setOnErrorListener { _, _, _ ->
+                    if (orphaned()) { try { p.release() } catch (_: Exception) { }; return@setOnErrorListener true }
+                    preparing = false
+                    playing = false
+                    toast.show("Bucata nu s-a putut reda. Poate a expirat pe server (7 zile).")
+                    true
+                }
+                p.prepareAsync()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                try { mp?.release() } catch (_: Exception) { }
+                preparing = false
+                throw e
+            } catch (_: Exception) {
+                try { mp?.release() } catch (_: Exception) { }
+                preparing = false
+                toast.show("Înregistrarea nu s-a putut deschide.")
+            }
+        }
+    }
+
+    /** La 500 ms cât se redă: poziția globală și oprirea fragmentelor. */
+    fun tick() {
+        val p = player ?: return
+        try {
+            val chunk = chunks.firstOrNull { it.index == chunkIndex } ?: return
+            positionMs = chunk.from + p.currentPosition
+            if (stopAtMs > 0 && positionMs >= stopAtMs) {
+                p.pause()
+                playing = false
+                stopAtMs = 0L
+            }
+        } catch (_: Exception) { }
+    }
+}
+
+/**
+ * „Noaptea, ascultată”: acoperirea onestă, cronologia serverului (oră, tip, intensitate, transcriere
+ * EXACTĂ, încredere) cu „Ascultă” = 8 s în jurul momentului, starea urcării și opțiunea de date mobile.
+ * Fără analiză, spune exact de ce — nu pretinde mai mult.
+ */
+@Composable
+private fun NightListenedSection(session: SleepSessionEntity, app: ForjaApp, report: NightReport, player: ChunkPlayer, onChanged: () -> Unit) {
+    val context = LocalContext.current
+    val toast = LocalToast.current
+    var cellular by remember { mutableStateOf(SleepUpload.cellularAllowed(context)) }
+    var showAll by remember(session.id) { mutableStateOf(false) }
+    val t = report.timeline
+    val audioStart = t?.startedAt?.takeIf { it > 0L } ?: report.manifest?.startedAt?.takeIf { it > 0L } ?: session.startAt
+
+    SectionLabel("Noaptea, ascultată", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
+    Spacer(Modifier.height(10.dp))
+    ForjaCard(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        fill = SleepCard, stroke = SleepStroke
+    ) {
+        when {
+            report.manifest == null -> Text(
+                if (session.recordedUntil > 0L) "Înregistrarea acestei nopți nu mai e pe telefon. Ai doar clipurile prinse și mișcarea."
+                else "Fără înregistrare azi-noapte. Microfonul n-a fost pornit, așa că ai doar mișcarea.",
+                style = BodySmall.copy(color = SleepTextDim)
+            )
+            report.legacy -> Text(
+                "Înregistrare veche, într-un singur fișier: fără cronologie, doar redare.",
+                style = BodySmall.copy(color = SleepTextDim)
+            )
+            !app.forjaApi.available -> Text(
+                "Serverul FORJA nu e configurat în această versiune. Ai doar clipurile prinse pe telefon.",
+                style = BodySmall.copy(color = SleepTextDim)
+            )
+            t == null || t.status == "processing" -> {
+                Text(
+                    if ((report.progress?.attempts ?: 0) >= SleepUpload.MAX_ATTEMPTS) "Urcarea a renunțat. Ai doar clipurile prinse pe telefon."
+                    else "Raportul nopții se pregătește pe server.",
+                    style = BodyStrong.copy(fontSize = 14.sp)
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(report.uploadState, style = BodySmall.copy(color = SleepTextDim))
+                report.progress?.lastError?.takeIf { it.isNotBlank() }?.let {
+                    Text("Ultima problemă: $it", style = BodyTiny.copy(color = SleepTextDim))
+                }
+            }
+            t.status == "clips_only" -> Text(
+                if (t.reason.contains("gemini", ignoreCase = true) || t.reason.isBlank())
+                    "Serverul nu a putut asculta noaptea (lipsește cheia Gemini). Ai doar clipurile prinse pe telefon."
+                else "Serverul nu a putut asculta noaptea (${t.reason}). Ai doar clipurile prinse pe telefon.",
+                style = BodySmall.copy(color = SleepTextDim)
+            )
+            !t.listened && !t.partial -> {
+                Text(
+                    "Serverul n-a terminat de ascultat noaptea" + (if (t.reason.isNotBlank()) " (${t.reason})." else ".") +
+                        " Ai doar clipurile prinse pe telefon.",
+                    style = BodySmall.copy(color = SleepTextDim)
+                )
+                Spacer(Modifier.height(10.dp))
+                RetryAnalysisButton(session, onChanged)
+            }
+            else -> {
+                // ascultată de tot — sau parțial, când analiza s-a oprit pe drum: spunem exact cât
+                TimelineBody(t, audioStart, player, showAll, onShowAll = { showAll = true })
+                if (!t.listened) {
+                    Spacer(Modifier.height(10.dp))
+                    RetryAnalysisButton(session, onChanged)
+                }
+            }
+        }
+
+        // Opțiunea de rețea — implicit doar Wi-Fi.
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Și pe date mobile", style = BodyStrong.copy(fontSize = 13.sp))
+                Text(
+                    "O noapte are ~10 MB la fiecare 30 min. Implicit urcă doar pe Wi-Fi, cu bateria peste 15 %.",
+                    style = BodyTiny.copy(color = SleepTextDim)
+                )
+            }
+            ForjaSwitch(checked = cellular, onCheckedChange = { on ->
+                cellular = on
+                SleepUpload.setCellularAllowed(context, on)
+                if (report.manifest != null && report.progress?.done != true && app.forjaApi.available) {
+                    SleepUpload.reschedule(context, session.id)
+                }
+                onChanged()
+            })
+        }
+    }
+}
+
+/**
+ * Corpul cronologiei: acoperirea onestă (cu „analiza s-a oprit” când e parțială), statisticile — cu
+ * „sforăit: nu s-a putut detecta” când serverul a spus că n-a putut (doar Whisper) —, limitările în cuvintele
+ * serverului, evenimentele cu „Ascultă”.
+ */
+@Composable
+private fun TimelineBody(t: SleepTimeline, audioStart: Long, player: ChunkPlayer, showAll: Boolean, onShowAll: () -> Unit) {
+    val cov = t.stats.coverageMin
+    val tot = t.stats.totalMin
+    val stopped = !t.listened
+    val stoppedNote = if (stopped) " (analiza s-a oprit)." else "."
+    Text(
+        when {
+            cov > 0 && tot > 0 -> "Am ascultat ${Fmt.durationHm(cov)} din ${Fmt.durationHm(tot)}$stoppedNote"
+            cov > 0 -> "Am ascultat ${Fmt.durationHm(cov)}$stoppedNote"
+            tot > 0 -> "Am trimis ${Fmt.durationHm(tot)}. Serverul n-a raportat cât a ascultat."
+            else -> "Serverul a ascultat înregistrarea, fără să raporteze acoperirea."
+        },
+        style = BodyStrong.copy(fontSize = 14.sp)
+    )
+    Spacer(Modifier.height(4.dp))
+    Text(
+        listOf(
+            if (t.stats.snoreMin > 0 || t.stats.snoreEpisodes > 0)
+                "sforăit ${t.stats.snoreMin} min în ${t.stats.snoreEpisodes} ${if (t.stats.snoreEpisodes == 1) "episod" else "episoade"}"
+            else if (t.snoreUndetectable) "sforăit: nu s-a putut detecta"
+            else "fără sforăit",
+            when (t.stats.talkCount) { 0 -> "fără vorbit"; 1 -> "o frază"; else -> "${t.stats.talkCount} fraze" },
+            if (t.stats.coughCount > 0) "tuse ×${t.stats.coughCount}" else null
+        ).filterNotNull().joinToString(" · "),
+        style = BodySmall.copy(color = SleepTextDim)
+    )
+    // Ce n-a putut serverul, în cuvintele lui — se arată, nu se ascunde.
+    t.limits.forEach { l ->
+        Spacer(Modifier.height(2.dp))
+        Text(l, style = BodyTiny.copy(color = SleepTextDim))
+    }
+    if (stopped && t.reason.isNotBlank()) {
+        Spacer(Modifier.height(2.dp))
+        Text("Oprit: ${t.reason}.", style = BodyTiny.copy(color = SleepTextDim))
+    }
+    if (t.events.isEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        Text("Nimic auzit în ce s-a putut analiza.", style = BodySmall.copy(color = TextSecondary))
+    } else {
+        Spacer(Modifier.height(10.dp))
+        val shown = if (showAll) t.events else t.events.take(10)
+        shown.forEachIndexed { i, ev ->
+            TimelineEventRow(ev, audioStart, player)
+            if (i < shown.lastIndex) {
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.fillMaxWidth().height(1.dp).background(SleepStroke))
+                Spacer(Modifier.height(6.dp))
+            }
+        }
+        if (t.events.size > 10 && !showAll) {
+            Spacer(Modifier.height(8.dp))
+            MonoButton("Arată toate (${t.events.size})", onClick = onShowAll, color = SleepRem)
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Analiză cu model, pe server. Transcrierile sunt exact ce s-a auzit, fără completări. Unde încrederea e mică, ascultă tu.",
+        style = BodyTiny.copy(color = SleepTextDim)
+    )
+}
+
+/**
+ * „Încearcă din nou”: re-cere analiza. Bucățile refuzate primesc o nouă șansă (`rejected` gol), cele urcate rămân
+ * (nu se re-trimit), iar serverul continuă doar cu ce n-a ascultat.
+ */
+@Composable
+private fun RetryAnalysisButton(session: SleepSessionEntity, onChanged: () -> Unit) {
+    val context = LocalContext.current
+    val toast = LocalToast.current
+    SecondaryButton("Încearcă din nou", padV = 8.dp, onClick = {
+        val dir = AacRecorder.sessionDir(context.filesDir, session.id)
+        val p = SleepUpload.loadProgress(dir) ?: SleepUpload.Progress()
+        SleepUpload.saveProgress(dir, p.copy(rejected = emptyList(), analyzeRequestedAt = 0L, pollStartedAt = 0L, pollSpentMs = 0L, done = false, attempts = 0, lastError = ""))
+        try { File(dir, SleepTimeline.FILE).delete() } catch (_: Exception) { }
+        SleepUpload.schedule(context, session.id, replace = true)
+        toast.show("Am cerut analiza din nou. Serverul continuă de unde a rămas.")
+        onChanged()
+    })
+}
+
+/** Un rând din cronologie: oră · tip · intensitate, transcrierea exactă, încrederea și „Ascultă” (8 s). */
+@Composable
+private fun TimelineEventRow(ev: SleepTimeline.Event, audioStart: Long, player: ChunkPlayer) {
+    val typeName = when (ev.type) {
+        "talk" -> "Vorbit"
+        "snore" -> "Sforăit"
+        "cough" -> "Tuse"
+        "breath" -> "Respirație"
+        else -> "Zgomot"
+    }
+    val intensityWord = when {
+        ev.intensity >= 0.7 -> "puternic"
+        ev.intensity >= 0.4 -> "moderat"
+        ev.intensity > 0.0 -> "redus"
+        else -> ""
+    }
+    val dot = when (ev.type) { "snore" -> SleepDeep; "talk" -> SleepRem; "cough" -> Accent2; else -> SleepLight }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                listOf(Fmt.clock(audioStart + ev.at), typeName, intensityWord, if (ev.durMs >= 1000) "${ev.durMs / 1000} s" else "")
+                    .filter { it.isNotBlank() }.joinToString(" · "),
+                style = BodyStrong.copy(fontSize = 13.sp)
+            )
+            if (ev.transcript.isNotBlank()) {
+                Text("„${ev.transcript}”", style = BodySmall.copy(color = SleepRem))
+            }
+            if (ev.confidence > 0.0) {
+                Text("încredere ${(ev.confidence * 100).toInt()} %", style = monoLabel(8, 0.10f).copy(color = SleepTextDim))
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        SecondaryButton("Ascultă", padV = 6.dp, onClick = { player.playFrom(ev.at - 3000, 8000) })
     }
 }
 

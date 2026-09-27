@@ -44,7 +44,14 @@ object CloudSync {
         } catch (_: Exception) { }
     }
 
-    fun sleep(uid: String?, s: SleepSessionEntity, snoreCount: Int, talkCount: Int, soundCount: Int) {
+    /**
+     * `snoreMin` / `talkCount` / `coverageMin` vin din cronologia serverului („Noaptea, ascultată”);
+     * până la analiză, minutele de sforăit sunt cele din clipurile locale și acoperirea e 0.
+     */
+    fun sleep(
+        uid: String?, s: SleepSessionEntity, snoreCount: Int, talkCount: Int, soundCount: Int,
+        snoreMin: Int = 0, coverageMin: Int = 0
+    ) {
         uid ?: return
         try {
             db.collection("users").document(uid).collection("sleep").document("s${s.id}").set(
@@ -60,6 +67,9 @@ object CloudSync {
                     "talkEvents" to talkCount,
                     "soundEvents" to soundCount,
                     "summary" to s.summary,
+                    "snoreMin" to snoreMin,
+                    "talkCount" to talkCount,
+                    "coverageMin" to coverageMin,
                     "measurement" to "estimated"
                 ),
                 SetOptions.merge()
