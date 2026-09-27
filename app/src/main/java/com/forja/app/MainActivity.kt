@@ -156,6 +156,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                         app.presence.start(uid) { app.presence.isGhostNow() }
                         com.forja.app.core.location.BgLocation.registerIfReady(app)
                         com.forja.app.core.recovery.LostPhoneRecovery.resume(app)
+                        // Sincronizarea în cont se reia doar dintr-o activitate vizibilă și doar dacă a fost pornită de utilizator.
+                        try { com.forja.app.core.sync.CollectionSettings.resume(app) } catch (_: Exception) { }
                     }
                     Lifecycle.Event.ON_STOP -> app.presence.stop()
                     else -> {}
@@ -344,6 +346,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             composable(Route.PROFILE) {
                 ProfileScreen(
                     onLogout = {
+                        // Oprește sincronizarea și uită alegerile cât timp contul încă e cel legat (înainte de signOut).
+                        try { com.forja.app.core.sync.CollectionSettings.logout(app) } catch (_: Exception) { }
                         app.auth.logout()
                         // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni.
                         navScope.launch {

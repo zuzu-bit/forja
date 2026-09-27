@@ -192,6 +192,14 @@ fun ProfileScreen(
             }
         }
 
+        // v4.0 pasul 2 — Sincronizarea în cont (site): se pornește și se oprește din Echipare; aici doar starea.
+        val syncStatus by app.prefs.syncStatus.collectAsState(initial = "")
+        SettingRow(
+            "Sincronizare în cont",
+            syncStatus.ifBlank { "oprită" },
+            onClick = onOpenPermissions
+        ) { Text("deschide →", style = BodySmall.copy(color = Accent2)) }
+
         SettingRow(
             "Notificări",
             "Doar ce contează: serii, prieteni, somn.",
