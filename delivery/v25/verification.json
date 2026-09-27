@@ -29,5 +29,14 @@
   "dom_checks_passed": 32,
   "publish_tests_passed": 7,
   "unique_classes": 58409,
-  "duplicate_classes": 0
+  "duplicate_classes": 0,
+  "local_worker_bundle_smoke_passed": true,
+  "emulator_qa": {
+    "android_api": 35,
+    "boot_completed": true,
+    "install_command_timeout_seconds": 300,
+    "successful_app_launch_confirmed": false,
+    "visual_ui_verified": false,
+    "app_crash_confirmed": false
+  }
 }
