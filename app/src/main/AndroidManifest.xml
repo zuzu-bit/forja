@@ -77,6 +77,11 @@
             android:foregroundServiceType="location" />
 
         <service
+            android:name=".core.recovery.LostPhoneService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <service
             android:name=".core.sleep.SleepTrackService"
             android:exported="false"
             android:foregroundServiceType="microphone|specialUse">

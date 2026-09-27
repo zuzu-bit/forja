@@ -26,7 +26,12 @@ import java.time.format.DateTimeFormatter
 
 /** Profil: identitate + controale oneste, nimic îngropat. Statistici reale din Room. */
 @Composable
-fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermissions: () -> Unit = {}) {
+fun ProfileScreen(
+    onLogout: () -> Unit,
+    onOpenMapGhost: () -> Unit,
+    onOpenPermissions: () -> Unit = {},
+    onOpenLostPhone: () -> Unit = {}
+) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
     val scope = rememberCoroutineScope()
@@ -266,6 +271,15 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermis
                 onClose = { aiKeyOpen = false }
             )
         }
+
+        // v4.0 — Telefonul meu: găsirea telefonului pierdut din panoul online (opt-in, implicit oprit).
+        val lostPhoneOn = remember { com.forja.app.core.recovery.LostPhoneRecovery.enabled(context) }
+        SettingRow(
+            "Telefonul meu",
+            if (lostPhoneOn) "găsirea e activată — telefonul răspunde panoului online 5, 15 sau 30 de minute, la cererea ta"
+            else "oprit — dacă îl pierzi, îl cauți din panoul online; se activează cu o bifă",
+            onClick = onOpenLostPhone
+        ) { Text(if (lostPhoneOn) "activată →" else "deschide →", style = BodySmall.copy(color = if (lostPhoneOn) Positive else Accent2)) }
 
         SettingRow(
             "Date & confidențialitate",

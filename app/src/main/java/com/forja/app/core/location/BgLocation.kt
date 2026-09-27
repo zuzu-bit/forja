@@ -133,6 +133,8 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             BgLocation.registerIfReady(context)
+            // Găsirea telefonului: după restart, serviciul revine doar cu locația „Tot timpul”.
+            try { com.forja.app.core.recovery.LostPhoneRecovery.resume(context, boot = true) } catch (_: Exception) { }
             val app = context.applicationContext as? ForjaApp ?: return
             CoroutineScope(Dispatchers.Default).launch {
                 try {
