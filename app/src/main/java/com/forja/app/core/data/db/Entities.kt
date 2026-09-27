@@ -134,7 +134,9 @@ data class ExploreCellEntity(
     val maxLng: Double,
     val firstAt: Long,
     val lastAt: Long,
-    val visits: Int = 1
+    val visits: Int = 1,
+    /** Cum ai cucerit-o prima dată: walk · run · ride (după viteza medie). Din mașină nu se cucerește. */
+    val mode: String = "walk"
 )
 
 /** Un loc = ai stat ≥ prag (implicit 5 h). Nume, stele, notă; recomandat prietenilor → places/{remoteId}. */
@@ -153,5 +155,7 @@ data class PlaceEntity(
     val remoteId: String? = null,
     val cellId: String = "",
     /** Ultima editare (nume/stele/notă) — câștigă cea mai nouă între telefon și site. */
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    /** De câte ori ai fost aici (o ședere nouă la > 6 h de ultima = o vizită în plus). */
+    val visits: Int = 1
 )

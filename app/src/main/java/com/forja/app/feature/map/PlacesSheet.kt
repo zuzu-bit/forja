@@ -36,9 +36,29 @@ val PlaceAmber = Color(0xFFF3B952)
 
 private val ThresholdOptions = listOf(30 to "30 min", 60 to "1 h", 120 to "2 h", 300 to "5 h")
 
+/** Cifrele teritoriului pentru foaie: celule, „41 %” din zona ta, locul între prieteni (null = n-ai prieteni), pe moduri. */
+data class TerritorySummary(
+    val cells: Int,
+    val percentLabel: String,
+    val rank: Int?,
+    val walk: Int,
+    val run: Int,
+    val ride: Int
+)
+
 /**
- * Sheet „Locurile tale”: zonele deblocate, pragul de ședere, fiecare loc editabil
- * (nume, stele, notă), „Pe hartă”, „Recomandă prietenilor”, plus recomandările primite.
+ * „Ai fost de 5 ori”; cu nume: „Ana a fost de 5 ori”. Se arată doar de la 2 vizite în sus: locurile de dinainte de numărare
+ * au `visits = 1` din migrare, nu din fapte, iar „o dată” ar fi o afirmație pe care n-o putem susține.
+ */
+fun visitsLabel(visits: Int, who: String? = null): String {
+    val subject = who ?: "Ai"
+    val verb = if (who == null) "fost" else "a fost"
+    return if (visits <= 1) "$subject $verb o dată" else "$subject $verb de $visits ori"
+}
+
+/**
+ * Sheet „Locurile tale”: teritoriile cucerite (cu procentul din zona ta și locul între prieteni), pragul de ședere,
+ * fiecare loc editabil (nume, stele, notă, de câte ori ai fost), „Pe hartă”, „Recomandă prietenilor”, plus recomandările primite.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,7 +74,8 @@ fun PlacesSheet(
     onPick: (Double, Double) -> Unit,
     onClose: () -> Unit,
     syncSite: Boolean = false,
-    onSyncSite: (Boolean) -> Unit = {}
+    onSyncSite: (Boolean) -> Unit = {},
+    territory: TerritorySummary? = null
 ) {
     ModalBottomSheet(
         onDismissRequest = onClose,
@@ -72,11 +93,34 @@ fun PlacesSheet(
             Text("Locurile tale", style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(2.dp))
             Text(
-                "Din tot orașul ai deblocat $cellCount zone · ${places.size} locuri",
+                if (territory == null) "Ai cucerit $cellCount teritorii · ${places.size} locuri"
+                else "Ai cucerit ${territory.cells} teritorii · ${territory.percentLabel} din zona ta" +
+                    (territory.rank?.let { " · Loc #$it între prieteni" } ?: ""),
                 style = BodySmall.copy(color = TextSecondary)
             )
 
             Spacer(Modifier.height(16.dp))
+
+            // Teritoriile: cum le-ai cucerit. Din mașină nu se pune.
+            if (territory != null) {
+                ForjaCard(Modifier.fillMaxWidth(), fill = Surface2) {
+                    SectionLabel("Teritorii")
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TerritoryStat("PE JOS", territory.walk, Accent2)
+                        TerritoryStat("ALERGARE", territory.run, Positive)
+                        TerritoryStat("BICICLETĂ", territory.ride, Color(0xFF4FA3A0))
+                        TerritoryStat("ZONA TA", null, PlaceAmber, text = territory.percentLabel)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "O celulă de 150 m se cucerește pe jos, alergând sau pe bicicletă. Din mașină nu se pune. " +
+                            "Zona ta = un cerc de 5 km în jurul teritoriilor tale.",
+                        style = BodyTiny.copy(color = TextDim)
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+            }
 
             // Pragul: cât trebuie să STAI ca să fie loc.
             ForjaCard(Modifier.fillMaxWidth(), fill = Surface2) {
@@ -185,7 +229,8 @@ fun PlacesSheet(
                             Column(Modifier.weight(1f)) {
                                 Text(r.name.ifBlank { "Loc recomandat" }, style = BodyStrong.copy(fontSize = 14.sp))
                                 Text(
-                                    "de la ${r.ownerName} · ${Fmt.freshness(r.at)}",
+                                    "de la ${r.ownerName} · ${Fmt.freshness(r.at)}" +
+                                        (if (r.visits >= 2) " · ${visitsLabel(r.visits, r.ownerName.split(' ').first())}" else ""),
                                     style = BodyTiny.copy(color = TextDim)
                                 )
                             }
@@ -245,7 +290,8 @@ private fun PlaceCard(
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                "Ai stat ${stayLabel(place.stayMs)} · ultima dată ${Fmt.freshness(place.lastAt)}",
+                (if (place.visits >= 2) "${visitsLabel(place.visits)} · ai stat " else "Ai stat ") +
+                    "${stayLabel(place.stayMs)} · ultima dată ${Fmt.freshness(place.lastAt)}",
                 style = BodyTiny.copy(color = TextDim),
                 modifier = Modifier.weight(1f)
             )
@@ -323,6 +369,14 @@ private fun PlaceCard(
                 modifier = Modifier.pressable({ confirmDelete = true })
             )
         }
+    }
+}
+
+@Composable
+private fun TerritoryStat(label: String, value: Int?, color: Color, text: String? = null) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(text ?: "${value ?: 0}", style = heroNumeral(22).copy(color = color))
+        Text(label, style = monoLabel(8, 0.12f))
     }
 }
 

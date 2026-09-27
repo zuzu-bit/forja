@@ -19,6 +19,8 @@ android {
         versionCode = 61
         versionName = "4.0.1"
         vectorDrawables { useSupportLibrary = true }
+        // MapLibre aduce libmaplibre.so (~10-13 MB per ABI): doar ARM, fără x86 (emulatoarele x86 nu sunt ținta noastră).
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
         // Serverul central FORJA — injectat de CI după deploy; implicit = worker-ul deja publicat.
         val apiUrl = System.getenv("FORJA_API_URL")?.takeIf { it.isNotBlank() } ?: "https://forja-api.forja-22e7ea2d.workers.dev"
         buildConfigField("String", "FORJA_API_URL", "\"$apiUrl\"")
@@ -97,7 +99,7 @@ dependencies {
     implementation(libs.firebase.firestore)
 
     implementation(libs.play.services.location)
-    implementation(libs.osmdroid)
+    implementation(libs.maplibre)
     implementation(libs.mlkit.barcode)
 
     implementation(libs.camera.core)

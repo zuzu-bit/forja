@@ -11,9 +11,10 @@ import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 
 /**
- * Marker „bulă foto" din handoff: cerc 44dp cu inel amber și vârf-pin,
- * desenat pe Canvas (inițiale pe fundal închis — onest, fără poze false).
- * Iconițele sunt cache-uite per (nume, stare, eu, fantomă, familie) — nu re-rasterizăm la fiecare recompoziție.
+ * Marker „bulă foto" din handoff: cerc 52dp cu inel și vârf-pin, desenat pe Canvas — fotografia prietenului
+ * (users/{uid}.photoUrl) când există, altfel inițiale pe fundal închis. Pe MapLibre imaginile intră ca `Bitmap`
+ * în stil (`friendBitmap`/`placeBitmap`, cache-uite de `MapIcons` per uid/stare/selectat); variantele `Drawable`
+ * rămân pentru cod vechi.
  */
 object MapMarkers {
 
@@ -32,9 +33,49 @@ object MapMarkers {
     ): Drawable {
         val key = "f|$name|$state|$me|$ghost|$family"
         synchronized(cache) { cache[key]?.let { return it } }
-        val d = drawFriend(context, name, ghost, me, state, family)
+        val d = BitmapDrawable(context.resources, friendBitmap(context, name, null, ghost, me, state, family, false))
         synchronized(cache) { cache[key] = d }
         return d
+    }
+
+    /** Bitmapul avatarului (52 dp + vârf 10 dp): foto rotundă sau inițiale; inel după stare; selectat = inel amber mai gros. */
+    fun friendBitmap(
+        context: Context,
+        name: String,
+        photo: Bitmap?,
+        ghost: Boolean,
+        me: Boolean,
+        state: String,
+        family: Boolean,
+        selected: Boolean
+    ): Bitmap = drawFriend(context, name, photo, ghost, me, state, family, selected)
+
+    /** Bitmapul pinului de loc (34 dp + vârf 8 dp); selectat = puțin mai mare și cu inel mai gros. */
+    fun placeBitmap(context: Context, stars: Int, mine: Boolean, selected: Boolean): Bitmap =
+        drawPlace(context, stars.coerceIn(0, 5), mine, selected)
+
+    /** Conul de direcție (56 × 44 dp): vârful jos-centru, se deschide în sus; rotit de hartă după bearing. */
+    fun coneBitmap(context: Context): Bitmap {
+        val density = context.resources.displayMetrics.density
+        val w = (56 * density).toInt()
+        val h = (44 * density).toInt()
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = android.graphics.LinearGradient(
+                0f, h.toFloat(), 0f, 0f,
+                Color.argb(120, 111, 133, 90), Color.argb(0, 111, 133, 90),
+                android.graphics.Shader.TileMode.CLAMP
+            )
+        }
+        val path = Path().apply {
+            moveTo(w / 2f, h.toFloat())
+            lineTo(0f, 0f)
+            lineTo(w.toFloat(), 0f)
+            close()
+        }
+        c.drawPath(path, paint)
+        return bmp
     }
 
     /**
@@ -45,14 +86,15 @@ object MapMarkers {
         val s = stars.coerceIn(0, 5)
         val key = "p|$s|$mine"
         synchronized(cache) { cache[key]?.let { return it } }
-        val d = drawPlace(context, s, mine)
+        val d = BitmapDrawable(context.resources, drawPlace(context, s, mine, false))
         synchronized(cache) { cache[key] = d }
         return d
     }
 
     private fun drawFriend(
-        context: Context, name: String, ghost: Boolean, me: Boolean, state: String, family: Boolean
-    ): Drawable {
+        context: Context, name: String, photo: Bitmap?, ghost: Boolean, me: Boolean, state: String, family: Boolean,
+        selected: Boolean
+    ): Bitmap {
         val density = context.resources.displayMetrics.density
         val size = (52 * density).toInt()
         val tip = (10 * density).toInt()
@@ -60,9 +102,11 @@ object MapMarkers {
         val c = Canvas(bmp)
         val cx = size / 2f
         val cy = size / 2f
-        val r = size / 2f - 3 * density
+        val ringW = if (selected) 3.5f * density else 3 * density
+        val r = size / 2f - ringW
 
-        val alpha = if (ghost) 90 else 255
+        // Transparența fantomei o dă stratul (icon-opacity 0,55) — bitmapul rămâne întreg, ca să se poată cache-ui.
+        val alpha = 255
 
         // Vârf-pin
         val tipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -77,11 +121,12 @@ object MapMarkers {
         }
         c.drawPath(path, tipPaint)
 
-        // Inel
+        // Inel: selectat amber; fantomă/somn albastru; eu olive închis; prieten olive.
         val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 3 * density
+            strokeWidth = ringW
             color = when {
+                selected -> Color.parseColor("#F3B952")
                 ghost -> Color.parseColor("#9DBFE8")
                 state == "sleep" -> Color.parseColor("#9DBFE8")
                 me -> Color.parseColor("#4A5D3A")
@@ -96,21 +141,32 @@ object MapMarkers {
             color = Color.parseColor("#1A1A1E")
             this.alpha = alpha
         }
-        c.drawCircle(cx, cy, r - 2 * density, fill)
+        val inner = r - 2 * density
+        c.drawCircle(cx, cy, inner, fill)
 
-        // Inițiale
-        val initials = name.trim().split(Regex("\\s+")).take(2)
-            .mapNotNull { it.firstOrNull()?.uppercase() }.joinToString("")
-            .ifEmpty { "?" }
-        val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#F4F2EE")
-            this.alpha = alpha
-            textSize = 15 * density
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
+        if (photo != null) {
+            // Fotografia, decupată rotund, exact în interiorul inelului.
+            val save = c.save()
+            val clip = Path().apply { addCircle(cx, cy, inner, Path.Direction.CW) }
+            c.clipPath(clip)
+            val dst = android.graphics.RectF(cx - inner, cy - inner, cx + inner, cy + inner)
+            c.drawBitmap(photo, null, dst, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            c.restoreToCount(save)
+        } else {
+            // Inițiale
+            val initials = name.trim().split(Regex("\\s+")).take(2)
+                .mapNotNull { it.firstOrNull()?.uppercase() }.joinToString("")
+                .ifEmpty { "?" }
+            val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#F4F2EE")
+                this.alpha = alpha
+                textSize = 15 * density
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
+            val ty = cy - (text.descent() + text.ascent()) / 2
+            c.drawText(initials, cx, ty, text)
         }
-        val ty = cy - (text.descent() + text.ascent()) / 2
-        c.drawText(initials, cx, ty, text)
 
         // Punct de stare (verde = în mișcare, albastru = doarme)
         if (!ghost && state in setOf("run", "walk", "ride", "sleep")) {
@@ -145,12 +201,12 @@ object MapMarkers {
             c.drawText("♥", bx, hy, heart)
         }
 
-        return BitmapDrawable(context.resources, bmp)
+        return bmp
     }
 
-    private fun drawPlace(context: Context, stars: Int, mine: Boolean): Drawable {
+    private fun drawPlace(context: Context, stars: Int, mine: Boolean, selected: Boolean): Bitmap {
         val density = context.resources.displayMetrics.density
-        val size = (34 * density).toInt()
+        val size = ((if (selected) 38 else 34) * density).toInt()
         val tip = (8 * density).toInt()
         val bmp = Bitmap.createBitmap(size, size + tip, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
@@ -170,7 +226,7 @@ object MapMarkers {
 
         val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 2.5f * density
+            strokeWidth = (if (selected) 3.2f else 2.5f) * density
             color = ringColor
         }
         c.drawCircle(cx, cy, r, ring)
@@ -188,6 +244,6 @@ object MapMarkers {
         val ty = cy - (text.descent() + text.ascent()) / 2
         c.drawText(label, cx, ty, text)
 
-        return BitmapDrawable(context.resources, bmp)
+        return bmp
     }
 }

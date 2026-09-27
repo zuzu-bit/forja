@@ -21,7 +21,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import org.osmdroid.config.Configuration
+import okhttp3.OkHttpClient
+import org.maplibre.android.MapLibre
+import org.maplibre.android.module.http.HttpRequestUtil
+import org.maplibre.android.offline.OfflineManager
 
 class ForjaApp : Application(), coil.ImageLoaderFactory {
 
@@ -62,10 +65,24 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         // Locația în fundal (dacă utilizatorul a activat-o și permisiunea există).
         com.forja.app.core.location.BgLocation.registerIfReady(this)
 
-        // osmdroid: user agent identificabil (cerut de politica OSM) + cache intern (fără permisiuni de stocare).
-        Configuration.getInstance().userAgentValue = "FORJA/${BuildConfig.VERSION_NAME} ($packageName)"
-        Configuration.getInstance().osmdroidBasePath = getDir("osmdroid", MODE_PRIVATE)
-        Configuration.getInstance().osmdroidTileCache = getDir("osmdroid_tiles", MODE_PRIVATE)
+        // Harta (MapLibre + OpenFreeMap): inițializarea motorului ÎNAINTE de orice MapView, User-Agent identificabil
+        // pe dale/glife/sprite-uri și cache ambient de 150 MB (dalele văzute rămân pe telefon — harta merge și fără net).
+        try {
+            MapLibre.getInstance(this)
+            val ua = "FORJA/${BuildConfig.VERSION_NAME} ($packageName)"
+            HttpRequestUtil.setOkHttpClient(
+                OkHttpClient.Builder().addInterceptor { chain ->
+                    chain.proceed(chain.request().newBuilder().header("User-Agent", ua).build())
+                }.build()
+            )
+            OfflineManager.getInstance(this).setMaximumAmbientCacheSize(
+                150L * 1024 * 1024,
+                object : OfflineManager.FileSourceCallback {
+                    override fun onSuccess() {}
+                    override fun onError(message: String) {}
+                }
+            )
+        } catch (_: Exception) { }
 
         appScope.launch { Seed.ensure(db) }
         appScope.launch { com.forja.app.core.media.Media.refresh() }

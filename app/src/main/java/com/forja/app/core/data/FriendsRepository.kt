@@ -29,7 +29,13 @@ data class Friend(
     /** E în familia mea: mă vede și când sunt fantomă (users/{me}.familyUids). */
     val family: Boolean = false,
     /** Poziția vine din familyLoc — prietenul e fantomă pentru ceilalți, dar m-a pus în familia lui. */
-    val viaFamily: Boolean = false
+    val viaFamily: Boolean = false,
+    /** Teritorii cucerite (users/{uid}.exploreCells) — pentru „Loc #k între prieteni”. */
+    val exploreCells: Int = 0,
+    /** Locuri cucerite (users/{uid}.placesCount). */
+    val placesCount: Int = 0,
+    /** Fotografia de profil (users/{uid}.photoUrl), dacă și-a pus una; altfel inițiale. */
+    val photoUrl: String? = null
 )
 
 /** Poziția unui prieten care m-a pus în familie — scrisă mereu, și în fantomă. */
@@ -52,7 +58,9 @@ data class RecommendedPlace(
     val name: String,
     val stars: Int,
     val note: String,
-    val at: Long
+    val at: Long,
+    /** De câte ori a fost proprietarul aici (places/{id}.visits); 0 = necunoscut. */
+    val visits: Int = 0
 )
 
 class FriendsRepository(
@@ -130,7 +138,10 @@ class FriendsRepository(
                                 lastActivityType = u.getString("lastActivityType"),
                                 lastActivityKm = u.getDouble("lastActivityKm") ?: 0.0,
                                 lastActivityAt = u.getLong("lastActivityAt") ?: 0L,
-                                family = uid in myFamily
+                                family = uid in myFamily,
+                                exploreCells = (u.getLong("exploreCells") ?: 0L).toInt(),
+                                placesCount = (u.getLong("placesCount") ?: 0L).toInt(),
+                                photoUrl = u.getString("photoUrl")?.takeIf { it.isNotBlank() }
                             )
                             trySend(cache.values.toList())
                         }
@@ -268,6 +279,7 @@ class FriendsRepository(
                 "stars" to place.stars.coerceIn(1, 5),
                 "note" to place.note.trim().take(300),
                 "at" to System.currentTimeMillis(),
+                "visits" to place.visits.coerceAtLeast(1),
                 "visibleTo" to friendUids.distinct().filter { it != myUid }.take(100)
             )
         ).await()
@@ -293,7 +305,8 @@ class FriendsRepository(
                         name = d.getString("name") ?: "",
                         stars = (d.getLong("stars") ?: 0L).toInt(),
                         note = d.getString("note") ?: "",
-                        at = d.getLong("at") ?: 0L
+                        at = d.getLong("at") ?: 0L,
+                        visits = (d.getLong("visits") ?: 0L).toInt()
                     )
                 }.sortedByDescending { it.at }
                 trySend(list)

@@ -3,12 +3,16 @@ package com.forja.app.feature.map
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -19,6 +23,7 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -32,12 +37,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.forja.app.ForjaApp
 import com.forja.app.core.data.FamilyLoc
 import com.forja.app.core.data.Friend
@@ -48,23 +50,27 @@ import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.explore.ExploreSync
 import com.forja.app.core.location.BgLocation
 import com.forja.app.core.location.GoTrackService
-import com.forja.app.core.map.ForjaTiles
-import com.forja.app.core.map.TileState
+import com.forja.app.core.map.ExploreStats
+import com.forja.app.core.map.ForjaMap
+import com.forja.app.core.map.FriendPin
+import com.forja.app.core.map.MapController
+import com.forja.app.core.map.MapGeo
+import com.forja.app.core.map.MapLayers
+import com.forja.app.core.map.MapPrefs
 import com.forja.app.core.util.Fmt
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.Polyline
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
-private val Bucharest = GeoPoint(44.4268, 26.1025)
+/** Înălțimea barei de jos: butoanele hărții stau deasupra ei. */
+private const val BOTTOM_BAR_DP = 118
 
 /** Ce loc e selectat pe hartă: al meu (editabil) sau recomandat de un prieten. */
 private sealed class PlaceSel {
@@ -72,9 +78,13 @@ private sealed class PlaceSel {
     data class Rec(val r: RecommendedPlace) : PlaceSel()
 }
 
+/** Ultimul meu fix: poziție, direcție, viteză. */
+private data class MyFix(val lat: Double, val lng: Double, val bearing: Float, val speed: Float)
+
 /**
- * Harta VIU — prieteni reali, live, cu interpolare; mod fantomă (familia te vede și atunci);
- * GO recording; explorare (zone deblocate + locuri unde ai stat); recomandări de la prieteni; 2D/3D.
+ * Harta VIU pe MapLibre + OpenFreeMap: 3D real (clădiri extrudate), teritorii cucerite, străzile tale, prieteni cu avatar,
+ * mod fantomă (familia te vede și atunci), GO recording, locuri și recomandări, straturi, zi/noapte.
+ * Toată logica de hartă e în [MapController]; aici doar datele și cromul.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("MissingPermission")
@@ -85,6 +95,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
     val reducedMotion = LocalReducedMotion.current
+    val mapPrefs = remember { MapPrefs(context) }
 
     // Acceptă și locația aproximativă — mai bine ceva decât nimic; cerem precisă când lipsește.
     var hasLocation by remember {
@@ -106,13 +117,13 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
         }
     }
     val bgBannerDismissed by app.prefs.bgBannerDismissed.collectAsState(initial = true)
-    // Nu mai cerem locația automat la intrare — o cere doar butonul GO / recentrare.
+    // Nu cerem locația automat la intrare — o cere doar butonul GO / recentrare.
 
     // ── Prieteni + familie ──
     var friends by remember { mutableStateOf<List<Friend>>(emptyList()) }
     LaunchedEffect(Unit) {
         val uid = app.auth.currentUid ?: return@LaunchedEffect
-        app.friends.friendsFlow(uid).collect { friends = it }
+        try { app.friends.friendsFlow(uid).collect { friends = it } } catch (_: Exception) { }
     }
     var familyLocs by remember { mutableStateOf<Map<String, FamilyLoc>>(emptyMap()) }
     LaunchedEffect(Unit) {
@@ -133,57 +144,248 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
         }
     }
 
-    // ── Explorare: zone, locuri, recomandări ──
+    // ── Explorare: teritorii, locuri, recomandări, străzile tale ──
     val cellsFlow = remember { app.db.exploreDao().allCells() }
     val placesFlow = remember { app.db.exploreDao().places() }
+    val activitiesFlow = remember { app.db.activityDao().all() }
     val cells by cellsFlow.collectAsState(initial = emptyList())
     val places by placesFlow.collectAsState(initial = emptyList())
+    val activities by activitiesFlow.collectAsState(initial = emptyList())
     var recommended by remember { mutableStateOf<List<RecommendedPlace>>(emptyList()) }
     LaunchedEffect(Unit) {
         val uid = app.auth.currentUid ?: return@LaunchedEffect
         try { app.friends.recommendedPlacesFlow(uid).collect { recommended = it } } catch (_: Exception) { }
     }
-    val showExplore by app.prefs.showExplore.collectAsState(initial = true)
     val map3d by app.prefs.map3d.collectAsState(initial = false)
     val thresholdMin by app.prefs.placeThresholdMin.collectAsState(initial = 300)
+    val layers by mapPrefs.layers.collectAsState(initial = MapLayers())
     // „Și pe site”: la deschiderea hărții preluăm editările făcute din laptop (doar cu comutatorul pornit).
     val syncSite by app.prefs.exploreSyncSite.collectAsState(initial = false)
     LaunchedEffect(syncSite) {
         if (syncSite) try { ExploreSync.pull(app) } catch (_: Exception) { }
     }
-    var tileState by remember { mutableStateOf(TileState.OSM) }
-    var placesOpen by remember { mutableStateOf(false) }
-    var selectedPlace by remember { mutableStateOf<PlaceSel?>(null) }
-    val cellsState = rememberUpdatedState(cells)
-    val placesState = rememberUpdatedState(places)
 
+    // Cifrele teritoriului
+    val percentLabel = remember(cells) { ExploreStats.percentLabel(cells) }
+    // Locul între prieteni doar când există ce compara: am teritorii și cel puțin un prieten a publicat un număr — altfel ar ieși
+    // „Loc #1” pentru oricine are un prieten, iar tonul nu promite mai mult decât face aplicația.
+    val rank = remember(cells.size, friends) {
+        if (cells.isEmpty() || friends.none { it.exploreCells > 0 }) null else ExploreStats.rankAmongFriends(cells.size, friends)
+    }
+    val modeCounts = remember(cells) { ExploreStats.modeCounts(cells) }
+
+    var placesOpen by remember { mutableStateOf(false) }
+    var layersOpen by remember { mutableStateOf(false) }
+    var selectedPlace by remember { mutableStateOf<PlaceSel?>(null) }
     var ghostUntil by remember { mutableStateOf(0L) }
     val ghostActive = ghostUntil == -1L || ghostUntil > System.currentTimeMillis()
     var ghostOpen by remember { mutableStateOf(false) }
     var friendsOpen by remember { mutableStateOf(false) }
     var sportOpen by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<Friend?>(null) }
+    // Cardul prietenului arată selecția LIVE (poziție, stare), nu instantaneul de la atingere.
+    val selectedLive = remember(selected, shownFriends) { selected?.let { s -> shownFriends.firstOrNull { it.uid == s.uid } ?: s } }
+    val energySentToday = remember { mutableStateMapOf<String, Boolean>() }
+    // Ultima energie primită de la prietenul selectat (energy/{me}_{zi}_{el}) — o citire când îl alegi.
+    var energyFromSelectedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(selected?.uid) {
+        energyFromSelectedAt = 0L
+        val uid = app.auth.currentUid ?: return@LaunchedEffect
+        val other = selected?.uid ?: return@LaunchedEffect
+        try {
+            val snap = com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("energy")
+                .whereEqualTo("to", uid).whereEqualTo("from", other).get().await()
+            energyFromSelectedAt = snap.documents.maxOfOrNull { it.getLong("at") ?: 0L } ?: 0L
+        } catch (_: Exception) { }
+    }
 
     val go by GoTrackService.state.collectAsState()
 
-    // Referințe osmdroid ținute între recompoziții
-    val mapRef = remember { mutableStateOf<MapView?>(null) }
-    val mapDetached = remember { mutableStateOf(false) }
-    val exploreOverlay = remember { mutableStateOf<ExploreOverlay?>(null) }
-    val friendMarkers = remember { mutableMapOf<String, Marker>() }
-    val friendAnimTargets = remember { mutableMapOf<String, GeoPoint>() }
-    val placeMarkers = remember { mutableMapOf<Long, Marker>() }
-    val recMarkers = remember { mutableMapOf<String, Marker>() }
-    val myMarker = remember { mutableStateOf<Marker?>(null) }
-    val goLine = remember { mutableStateOf<Polyline?>(null) }
-    val goGlow = remember { mutableStateOf<Polyline?>(null) }
-    var hadFirstFix by remember { mutableStateOf(false) }
-
-    fun detachMap(m: MapView) {
-        if (!mapDetached.value) {
-            mapDetached.value = true
-            try { m.onDetach() } catch (_: Exception) { }
+    // ── Motorul hărții ──
+    var styleReady by remember { mutableStateOf(false) }
+    var mapFailed by remember { mutableStateOf(false) }
+    val controller = remember {
+        MapController(context).also {
+            it.reducedMotion = reducedMotion
+            // Noaptea se știe înainte de a crea MapView-ul (culoarea de încărcare, nuanța butonului „i”): implicit după ceas
+            // (Auto), corectată de preferințe imediat ce sosesc — fără fulger de hârtie crem la 23:00.
+            it.setNight(MapLayers().isNight())
+            // Legate la creare, nu într-un SideEffect: un stil servit din cache poate fi gata înainte de prima recompoziție.
+            it.onStyleReady = { styleReady = true; mapFailed = false }
+            it.onLoadFailed = { mapFailed = true }
         }
+    }
+    var online by remember { mutableStateOf(true) }
+    var myFix by remember { mutableStateOf<MyFix?>(null) }
+    var hadFirstFix by remember { mutableStateOf(false) }
+    var photoVersion by remember { mutableStateOf(0) }
+
+    // Noaptea se recalculează la fiecare minut (modul Auto: 21:00–06:00).
+    var minuteTick by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(60_000); minuteTick++ } }
+    val night = remember(layers, minuteTick) { layers.isNight() }
+
+    // Conectivitate: fără net → chip onest; când revine, reîncercăm stilul dacă nu s-a încărcat.
+    DisposableEffect(Unit) {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) { online = true }
+            override fun onLost(network: Network) { online = false }
+        }
+        try {
+            online = cm?.activeNetwork != null
+            cm?.registerDefaultNetworkCallback(cb)
+        } catch (_: Exception) { }
+        onDispose { try { cm?.unregisterNetworkCallback(cb) } catch (_: Exception) { } }
+    }
+    LaunchedEffect(online) { if (online && mapFailed) controller.reload() }
+
+    SideEffect {
+        controller.onTap = { hit ->
+            when (hit?.kind) {
+                "friend" -> shownFriends.firstOrNull { it.uid == hit.id }?.let { f ->
+                    selectedPlace = null
+                    selected = f
+                    if (f.lat != null && f.lng != null) controller.easeTo(f.lat, f.lng, null, 600)
+                }
+                "place" -> places.firstOrNull { it.id.toString() == hit.id }?.let { p ->
+                    selected = null
+                    selectedPlace = PlaceSel.Mine(p)
+                }
+                "rec" -> recommended.firstOrNull { it.id == hit.id }?.let { r ->
+                    selected = null
+                    selectedPlace = PlaceSel.Rec(r)
+                }
+                "me" -> Unit
+                else -> { selected = null; selectedPlace = null }
+            }
+        }
+    }
+
+    LaunchedEffect(night) { controller.setNight(night) }
+    LaunchedEffect(layers) { controller.setLayers(layers) }
+    LaunchedEffect(map3d, styleReady) { controller.set3d(map3d, animate = styleReady) }
+    // Pulsul pornește abia când există un fix (nu doar permisiunea) — altfel ar anima un strat gol.
+    LaunchedEffect(myFix != null, ghostActive, styleReady) { controller.setPulse(myFix != null && !ghostActive) }
+
+    // Fotografiile prietenilor (Coil → bitmap rotund); când apare una nouă, avatarele se redesenează.
+    LaunchedEffect(friends) {
+        for (f in friends) {
+            if (controller.icons.loadPhoto(f.uid, f.photoUrl)) photoVersion++
+        }
+    }
+
+    // Teritorii + strălucire: geometria se construiește în fundal, setGeoJson pe firul principal (≤ 1/s).
+    LaunchedEffect(cells, styleReady) {
+        val (cf, ef, hf) = withContext(Dispatchers.Default) { Triple(MapGeo.cells(cells), MapGeo.cellEdges(cells), MapGeo.heat(cells)) }
+        controller.setCells(cf, ef)
+        controller.setHeat(hf)
+    }
+    // Străzile tale: toate turele salvate.
+    LaunchedEffect(activities, styleReady) {
+        val fc = withContext(Dispatchers.Default) { MapGeo.streets(activities) }
+        controller.setStreets(fc)
+    }
+    // Locurile mele și recomandările (iconițele se înregistrează în stil la nevoie).
+    val selectedPlaceId = (selectedPlace as? PlaceSel.Mine)?.p?.id
+    val selectedRecId = (selectedPlace as? PlaceSel.Rec)?.r?.id
+    LaunchedEffect(places, selectedPlaceId, styleReady) {
+        controller.setPlaces(MapGeo.places(places, selectedPlaceId) { p -> controller.icons.place(p.stars, true, p.id == selectedPlaceId) })
+    }
+    LaunchedEffect(recommended, selectedRecId, styleReady) {
+        controller.setRecommended(MapGeo.recommended(recommended, selectedRecId) { r -> controller.icons.place(r.stars, false, r.id == selectedRecId) })
+    }
+    // Prietenii: avatar (foto sau inițiale), etichetă „Ana · 1,2 km”, selectatul deasupra, fantoma din familie la 0,55.
+    LaunchedEffect(shownFriends, selected?.uid, myFix, photoVersion, styleReady) {
+        val me = myFix
+        val pins = shownFriends
+            .filter { it.lat != null && it.lng != null && (!it.ghost || it.viaFamily) }
+            .map { f ->
+                val first = f.name.trim().split(' ').first().ifBlank { "Prieten" }
+                val dist = if (me != null) ExploreStats.distanceM(me.lat, me.lng, f.lat!!, f.lng!!) else null
+                val moving = f.state == "run" || f.state == "walk" || f.state == "ride"
+                val isSel = f.uid == selected?.uid
+                FriendPin(
+                    uid = f.uid, lat = f.lat!!, lng = f.lng!!,
+                    icon = controller.icons.friend(f.uid, f.name, f.state, ghost = f.viaFamily, family = f.viaFamily, selected = isSel),
+                    label = if (dist != null) "$first · ${ExploreStats.distanceLabel(dist)}" else first,
+                    sort = if (isSel) 2f else if (moving) 1f else 0f,
+                    alpha = if (f.viaFamily) 0.55f else 1f
+                )
+            }
+        controller.setFriends(pins)
+    }
+    // Linia punctată eu → prietenul selectat: controllerul o trage spre poziția GLISATĂ a prietenului, cadru cu cadru.
+    LaunchedEffect(selectedLive?.uid, styleReady) { controller.setLinkTo(selectedLive?.uid) }
+
+    // Poziția mea LIVE cât timp harta e deschisă: update la 3 s, hrănește Explorarea.
+    DisposableEffect(hasLocation) {
+        if (!hasLocation) return@DisposableEffect onDispose { }
+        val client = LocationServices.getFusedLocationProviderClient(context)
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
+            .setMinUpdateDistanceMeters(0f)
+            .build()
+        val cb = object : LocationCallback() {
+            override fun onLocationResult(result: LocationResult) {
+                val loc = result.lastLocation ?: return
+                try { app.explore.onLocation(loc, "map") } catch (_: Exception) { }
+                myFix = MyFix(
+                    loc.latitude, loc.longitude,
+                    if (loc.hasBearing()) loc.bearing else 0f,
+                    if (loc.hasSpeed()) loc.speed else 0f
+                )
+            }
+        }
+        try {
+            // Ultimul fix cunoscut — instant, ca să nu aștepți GPS-ul.
+            client.lastLocation.addOnSuccessListener { loc ->
+                if (loc != null) cb.onLocationResult(LocationResult.create(listOf(loc)))
+            }
+            client.requestLocationUpdates(request, cb, android.os.Looper.getMainLooper())
+        } catch (_: SecurityException) { }
+        onDispose { client.removeLocationUpdates(cb) }
+    }
+
+    // Markerul „Tu”: la fix, în GO stă pe ultimul punct al traseului; reflectă fantoma.
+    LaunchedEffect(myFix, ghostActive, go.points.size, go.recording, styleReady) {
+        val fix = myFix ?: return@LaunchedEffect
+        val icon = controller.icons.me(ghostActive)
+        if (go.recording && go.points.isNotEmpty()) {
+            val (lat, lng) = go.points.last()
+            controller.setMe(lat, lng, fix.bearing, go.lastSpeedMps.toFloat(), icon, ghostActive)
+        } else {
+            controller.setMe(fix.lat, fix.lng, fix.bearing, fix.speed, icon, ghostActive)
+        }
+    }
+    // La deschidere: zbor (900 ms) la ultima poziție cunoscută/actuală, zoom 15,5 — o singură dată per ecran.
+    LaunchedEffect(myFix != null, styleReady) {
+        val fix = myFix ?: return@LaunchedEffect
+        if (!styleReady || hadFirstFix) return@LaunchedEffect
+        hadFirstFix = true
+        controller.flyTo(fix.lat, fix.lng, 15.5, 900)
+    }
+
+    // Traseul GO — glow + linie verde; camera urmărește DOAR cât înregistrezi.
+    LaunchedEffect(go.points.size, go.recording, styleReady) {
+        if (go.recording && go.points.isNotEmpty()) {
+            controller.setLiveRoute(MapGeo.route(go.points))
+            val (lat, lng) = go.points.last()
+            controller.easeTo(lat, lng, null, 900)
+        } else {
+            controller.setLiveRoute(MapGeo.empty())
+        }
+    }
+
+    // Ghost inițial + familia din profilul meu (oglindă locală pentru publicatori)
+    LaunchedEffect(Unit) {
+        val uid = app.auth.currentUid ?: return@LaunchedEffect
+        try {
+            val snap = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                .collection("users").document(uid).get().await()
+            ghostUntil = snap.getLong("ghostUntil") ?: 0L
+            val fam = (snap.get("familyUids") as? List<*>)?.mapNotNull { it as? String }?.toSet()
+            if (fam != null && fam != familyUids) app.prefs.setFamilyUids(fam)
+        } catch (_: Exception) { }
     }
 
     fun navigateTo(lat: Double, lng: Double, label: String) {
@@ -196,276 +398,28 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
         }
     }
 
+    fun pickFriend(f: Friend) {
+        if (f.lat != null && f.lng != null && (!f.ghost || f.viaFamily)) {
+            selectedPlace = null
+            selected = f
+            controller.flyTo(f.lat, f.lng, maxOf(controller.zoom, 15.0), 900)
+        } else {
+            toast.show(
+                if (f.ghost) "${f.name} e în modul fantomă acum."
+                else "${f.name} nu și-a pornit încă locația."
+            )
+        }
+    }
+
     Box(Modifier.fillMaxSize().background(Surface0)) {
-        // Harta — în 3D înclinăm doar containerul ei (graphicsLayer), restul UI-ului rămâne drept.
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val w = maxWidth
-            val h = maxHeight
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .clip(RectangleShape)
-                    .graphicsLayer {
-                        rotationX = if (map3d) 38f else 0f
-                        cameraDistance = 16f * density
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                AndroidView(
-                    // În 3D harta e mai mare decât ecranul, ca planul înclinat să umple tot cadrul.
-                    modifier = if (map3d) Modifier.requiredSize(w * 1.2f, h * 1.45f) else Modifier.fillMaxSize(),
-                    factory = { ctx ->
-                        MapView(ctx).apply {
-                            ForjaTiles.setup(this)
-                            controller.setZoom(14.5)
-                            controller.setCenter(Bucharest)
-                            val ov = ExploreOverlay({ cellsState.value }, { placesState.value }).also {
-                                it.density = ctx.resources.displayMetrics.density
-                            }
-                            overlays.add(0, ov)
-                            exploreOverlay.value = ov
-                            mapRef.value = this
-                        }
-                    },
-                    update = { map ->
-                        exploreOverlay.value?.isEnabled = showExplore
-
-                        // Prieteni: markeri cu interpolare (fără teleport); fantomele din familie apar cu ♥.
-                        val valid = shownFriends.filter { it.lat != null && it.lng != null && (!it.ghost || it.viaFamily) }
-                        val validIds = valid.map { it.uid }.toSet()
-                        friendMarkers.keys.filter { it !in validIds }.forEach { uid ->
-                            friendMarkers.remove(uid)?.let { map.overlays.remove(it) }
-                            friendAnimTargets.remove(uid)
-                        }
-                        valid.forEach { f ->
-                            val target = GeoPoint(f.lat!!, f.lng!!)
-                            val icon = MapMarkers.friendMarker(
-                                context, f.name, ghost = f.viaFamily, state = f.state, family = f.viaFamily
-                            )
-                            val existing = friendMarkers[f.uid]
-                            if (existing == null) {
-                                val m = Marker(map).apply {
-                                    position = target
-                                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                                    this.icon = icon
-                                    title = f.name
-                                    setOnMarkerClickListener { _, _ ->
-                                        selectedPlace = null
-                                        selected = f
-                                        true
-                                    }
-                                }
-                                friendMarkers[f.uid] = m
-                                map.overlays.add(m)
-                            } else {
-                                if (existing.icon !== icon) existing.icon = icon
-                                existing.setOnMarkerClickListener { _, _ -> selectedPlace = null; selected = f; true }
-                                friendAnimTargets[f.uid] = target
-                            }
-                        }
-
-                        // Locurile mele — pin amber, sub prieteni.
-                        val placeIds = places.map { it.id }.toSet()
-                        placeMarkers.keys.filter { it !in placeIds }.forEach { id ->
-                            placeMarkers.remove(id)?.let { map.overlays.remove(it) }
-                        }
-                        places.forEach { p ->
-                            val icon = MapMarkers.placeMarker(context, p.stars, mine = true)
-                            val m = placeMarkers[p.id] ?: Marker(map).apply {
-                                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                                placeMarkers[p.id] = this
-                                map.overlays.add(minOf(1, map.overlays.size), this)
-                            }
-                            m.position = GeoPoint(p.lat, p.lng)
-                            if (m.icon !== icon) m.icon = icon
-                            m.title = p.name
-                            m.setOnMarkerClickListener { _, _ ->
-                                selected = null
-                                selectedPlace = PlaceSel.Mine(p)
-                                true
-                            }
-                        }
-
-                        // Recomandările prietenilor — pin albastru.
-                        val recIds = recommended.map { it.id }.toSet()
-                        recMarkers.keys.filter { it !in recIds }.forEach { id ->
-                            recMarkers.remove(id)?.let { map.overlays.remove(it) }
-                        }
-                        recommended.forEach { r ->
-                            val icon = MapMarkers.placeMarker(context, r.stars, mine = false)
-                            val m = recMarkers[r.id] ?: Marker(map).apply {
-                                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                                recMarkers[r.id] = this
-                                map.overlays.add(minOf(1, map.overlays.size), this)
-                            }
-                            m.position = GeoPoint(r.lat, r.lng)
-                            if (m.icon !== icon) m.icon = icon
-                            m.title = r.name
-                            m.setOnMarkerClickListener { _, _ ->
-                                selected = null
-                                selectedPlace = PlaceSel.Rec(r)
-                                true
-                            }
-                        }
-
-                        map.invalidate()
-                    },
-                    onRelease = { detachMap(it) }
-                )
-            }
-        }
-
-        // Ciclul de viață osmdroid: onResume la intrare, onPause + onDetach la ieșire (fără fire de tile-uri scăpate).
-        val liveMap = mapRef.value
-        DisposableEffect(liveMap) {
-            try { liveMap?.onResume() } catch (_: Exception) { }
-            onDispose {
-                if (liveMap != null) {
-                    try { liveMap.onPause() } catch (_: Exception) { }
-                    detachMap(liveMap)
-                }
-            }
-        }
-
-        // Sursa de tile-uri: CARTO → OSM întunecat → offline (doar zonele văzute).
-        LaunchedEffect(liveMap) {
-            val m = liveMap ?: return@LaunchedEffect
-            tileState = try { ForjaTiles.chooseOnline(m) } catch (_: Exception) { TileState.OFFLINE }
-        }
-
-        // Zonele noi se văd imediat, nu la următoarea mișcare de hartă.
-        LaunchedEffect(cells.size, showExplore) {
-            mapRef.value?.invalidate()
-        }
-
-        // Interpolare lină spre țintele noi — gentle, fără teleport (mișcare redusă = direct).
-        LaunchedEffect(Unit) {
-            while (true) {
-                kotlinx.coroutines.delay(60)
-                val map = mapRef.value ?: continue
-                var changed = false
-                val factor = if (reducedMotion) 1.0 else 0.12
-                friendAnimTargets.forEach { (uid, target) ->
-                    val m = friendMarkers[uid] ?: return@forEach
-                    val cur = m.position
-                    val dLat = target.latitude - cur.latitude
-                    val dLng = target.longitude - cur.longitude
-                    if (kotlin.math.abs(dLat) > 1e-7 || kotlin.math.abs(dLng) > 1e-7) {
-                        m.position = GeoPoint(cur.latitude + dLat * factor, cur.longitude + dLng * factor)
-                        changed = true
-                    }
-                }
-                if (changed) map.invalidate()
-            }
-        }
-
-        // Poziția mea LIVE cât timp harta e deschisă: update la 3s, centrare la primul fix, hrănește Explorarea.
-        DisposableEffect(hasLocation) {
-            if (!hasLocation) return@DisposableEffect onDispose { }
-            val client = LocationServices.getFusedLocationProviderClient(context)
-            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
-                .setMinUpdateDistanceMeters(0f)
-                .build()
-            val cb = object : LocationCallback() {
-                override fun onLocationResult(result: LocationResult) {
-                    val loc = result.lastLocation ?: return
-                    try { app.explore.onLocation(loc, "map") } catch (_: Exception) { }
-                    val map = mapRef.value ?: return
-                    if (mapDetached.value) return
-                    val p = GeoPoint(loc.latitude, loc.longitude)
-                    val existing = myMarker.value
-                    if (existing == null) {
-                        val m = Marker(map).apply {
-                            position = p
-                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                            icon = MapMarkers.friendMarker(context, "Tu", me = true, ghost = ghostActive)
-                            title = "Tu"
-                        }
-                        myMarker.value = m
-                        map.overlays.add(m)
-                    } else {
-                        existing.position = p
-                    }
-                    if (!hadFirstFix) {
-                        hadFirstFix = true
-                        map.controller.setZoom(16.0)
-                        map.controller.animateTo(p)
-                    }
-                    map.invalidate()
-                }
-            }
-            try {
-                // Ultimul fix cunoscut — instant, ca să nu aștepți GPS-ul.
-                client.lastLocation.addOnSuccessListener { loc ->
-                    if (loc != null) {
-                        cb.onLocationResult(LocationResult.create(listOf(loc)))
-                    }
-                }
-                client.requestLocationUpdates(request, cb, android.os.Looper.getMainLooper())
-            } catch (_: SecurityException) { }
-            onDispose {
-                client.removeLocationUpdates(cb)
-            }
-        }
-
-        // Markerul meu reflectă fantoma și când o pornești/oprești ulterior.
-        LaunchedEffect(ghostActive) {
-            val m = myMarker.value ?: return@LaunchedEffect
-            m.icon = MapMarkers.friendMarker(context, "Tu", me = true, ghost = ghostActive)
-            mapRef.value?.invalidate()
-        }
-
-        // Traseul GO — glow 13dp @16% + linie 4,5dp, camera follow. Glow-ul stă peste zonele explorate.
-        LaunchedEffect(go.points.size, go.recording) {
-            val map = mapRef.value ?: return@LaunchedEffect
-            if (go.recording && go.points.isNotEmpty()) {
-                val pts = go.points.map { GeoPoint(it.first, it.second) }
-                if (goLine.value == null) {
-                    val glow = Polyline().apply {
-                        outlinePaint.color = android.graphics.Color.parseColor("#296F855A")
-                        outlinePaint.strokeWidth = 13 * context.resources.displayMetrics.density
-                        outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
-                    }
-                    val line = Polyline().apply {
-                        outlinePaint.color = android.graphics.Color.parseColor("#6F855A")
-                        outlinePaint.strokeWidth = 4.5f * context.resources.displayMetrics.density
-                        outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
-                    }
-                    goGlow.value = glow
-                    goLine.value = line
-                    map.overlays.add(minOf(1, map.overlays.size), glow)
-                    map.overlays.add(line)
-                }
-                goGlow.value?.setPoints(pts)
-                goLine.value?.setPoints(pts)
-                myMarker.value?.position = pts.last()
-                map.controller.animateTo(pts.last())
-                map.invalidate()
-            }
-            if (!go.recording && goLine.value != null) {
-                map.overlays.remove(goLine.value)
-                map.overlays.remove(goGlow.value)
-                goLine.value = null
-                goGlow.value = null
-                map.invalidate()
-            }
-        }
-
-        // Ghost inițial + familia din profilul meu (oglindă locală pentru publicatori)
-        LaunchedEffect(Unit) {
-            val uid = app.auth.currentUid ?: return@LaunchedEffect
-            try {
-                val snap = com.google.firebase.firestore.FirebaseFirestore.getInstance()
-                    .collection("users").document(uid).get().await()
-                ghostUntil = snap.getLong("ghostUntil") ?: 0L
-                val fam = (snap.get("familyUids") as? List<*>)?.mapNotNull { it as? String }?.toSet()
-                if (fam != null && fam != familyUids) app.prefs.setFamilyUids(fam)
-            } catch (_: Exception) { }
-        }
+        // Harta — un singur MapView; 3D = pitch real al camerei, cromul rămâne drept.
+        ForjaMap(controller = controller, modifier = Modifier.fillMaxSize(), bottomInsetDp = BOTTOM_BAR_DP)
 
         // ── UI peste hartă ──
-        TopScrim(Modifier.height(120.dp))
+        // Voalul de sus doar noaptea: pe hârtia de zi un fum negru ar fi ieftin, iar antetul stă oricum pe pastila lui.
+        if (night) TopScrim(Modifier.height(120.dp))
 
+        val headerShape = RoundedCornerShape(12.dp)
         Row(
             Modifier
                 .fillMaxWidth()
@@ -474,10 +428,22 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Text("Harta VIU", style = TitleModule.copy(fontSize = 22.sp))
+            // Antetul pe aceeași pastilă întunecată ca MapFab/MapChip: lizibil și pe cremul de zi, și pe noapte.
+            Column(
+                Modifier
+                    .clip(headerShape)
+                    .background(Color(0xE6101114))
+                    .border(1.dp, StrokeOnVideo, headerShape)
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Harta VIU", style = TitleModule.copy(fontSize = 22.sp, lineHeight = 26.sp))
+                    Spacer(Modifier.width(10.dp))
+                    StampLabel("TEREN", color = Accent2, fontSize = 8, rotationDeg = -4f, appear = false)
+                }
                 Text(
-                    if (friends.isEmpty()) "invită-ți primul prieten" else "${friends.size} prieteni · ${friends.count { !it.ghost && System.currentTimeMillis() - it.locUpdatedAt < 15 * 60000 }} activi",
+                    if (friends.isEmpty()) "invită-ți primul prieten"
+                    else "${friends.size} prieteni · ${friends.count { !it.ghost && System.currentTimeMillis() - it.locUpdatedAt < 15 * 60000 }} activi",
                     style = monoLabel(8, 0.12f).copy(color = TextSecondary)
                 )
             }
@@ -507,27 +473,32 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
             }
         }
 
-        // Sub antet: chip-urile explorării, starea hărții, fantoma, bannerul — pe o singură coloană, fără suprapuneri.
+        // Sub antet: cipurile teritoriului, starea hărții, fantoma, bannerul — pe o singură coloană.
         Column(
             Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
-                .padding(top = 62.dp)
+                .padding(top = 68.dp)
                 .padding(horizontal = 16.dp)
                 .fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 MapChip(
-                    text = "▩ ${cells.size} zone",
-                    color = if (showExplore) Accent2 else TextDim,
-                    active = showExplore
-                ) { scope.launch { app.prefs.setShowExplore(!showExplore) } }
+                    text = "▩ ${cells.size} teritorii · $percentLabel",
+                    color = if (layers.territories) Accent2 else TextDim,
+                    active = layers.territories
+                ) { placesOpen = true }
                 MapChip(text = "● ${places.size} locuri", color = PlaceAmber) { placesOpen = true }
-                when (tileState) {
-                    TileState.OFFLINE -> MapChip(text = "Hartă offline · doar zonele văzute", color = TextSecondary)
-                    TileState.OSM -> {}
-                    TileState.CARTO -> {}
+                if (rank != null) {
+                    MapChip(text = "Loc #$rank între prieteni", color = SleepRem) { placesOpen = true }
+                }
+                if (mapFailed || !online) {
+                    MapChip(text = "Fără net · harta din memorie", color = TextSecondary)
                 }
             }
 
@@ -554,7 +525,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                         style = BodySmall.copy(color = TextPrimary),
                         modifier = Modifier.pressable({
                             scope.launch {
-                                app.auth.currentUid?.let { app.friends.setGhost(it, 0L) }
+                                try { app.auth.currentUid?.let { app.friends.setGhost(it, 0L) } } catch (_: Exception) { }
                                 app.prefs.setGhostUntilLocal(0L)
                                 ghostUntil = 0L
                                 toast.show("Ești din nou vizibil pe hartă.")
@@ -592,13 +563,50 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
             }
         }
 
-        // Consola GO / butoanele hărții
+        // ── Jos: cardul selecției, consola GO sau butoanele, banda cu prieteni, atribuirea ──
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 118.dp)
+                .padding(bottom = BOTTOM_BAR_DP.dp)
                 .padding(horizontal = 16.dp)
+                .fillMaxWidth()
         ) {
+            val sel = selectedPlace
+            val f = selectedLive
+            if (sel != null) {
+                PlaceCardOnMap(
+                    sel = sel,
+                    onClose = { selectedPlace = null },
+                    onEdit = { placesOpen = true },
+                    onNavigate = { lat, lng, label -> navigateTo(lat, lng, label) },
+                    onCenter = { lat, lng -> controller.easeTo(lat, lng, null, 600) }
+                )
+                Spacer(Modifier.height(10.dp))
+            } else if (f != null) {
+                FriendCardOnMap(
+                    f = f,
+                    myFix = myFix,
+                    energySent = energySentToday[f.uid] == true,
+                    energyReceivedAt = energyFromSelectedAt,
+                    onClose = { selected = null },
+                    onEnergy = {
+                        scope.launch {
+                            val uid = app.auth.currentUid ?: return@launch
+                            val myName = try { app.auth.loadProfile()?.name ?: "Un prieten" } catch (_: Exception) { "Un prieten" }
+                            val sent = try { app.friends.sendEnergy(uid, myName, f.uid) } catch (_: Exception) { false }
+                            energySentToday[f.uid] = true
+                            toast.show(
+                                if (sent) "${f.name.split(' ').first()} a primit energia ta."
+                                else "I-ai trimis deja energie azi. Un fulger pe zi."
+                            )
+                            selected = null
+                        }
+                    },
+                    onNavigate = { if (f.lat != null && f.lng != null) navigateTo(f.lat, f.lng, f.name) }
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+
             if (go.recording) {
                 var tick by remember { mutableStateOf(0L) }
                 LaunchedEffect(Unit) {
@@ -648,236 +656,90 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                     }
                 }
             } else {
-                Column(
-                    Modifier.align(Alignment.End),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    // 2D / 3D — înclinare persistată
-                    MapFab(
-                        icon = {
-                            Text(
-                                if (map3d) "2D" else "3D",
-                                style = monoLabel(10, 0.10f).copy(color = if (map3d) Accent2 else TextSecondary)
-                            )
-                        },
-                        active = map3d
-                    ) {
-                        scope.launch {
-                            val next = !map3d
-                            app.prefs.setMap3d(next)
-                            if (next) toast.show("Vedere înclinată. Apasă din nou pentru 2D.")
-                        }
-                    }
-                    // Recentrare pe mine
-                    MapFab(icon = {
-                        Icon(
-                            Icons.Filled.MyLocation, "Centrează pe mine",
-                            tint = if (hadFirstFix) Accent2 else TextDim,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }) {
-                        val p = myMarker.value?.position
-                        if (p != null) {
-                            mapRef.value?.controller?.setZoom(16.0)
-                            mapRef.value?.controller?.animateTo(p)
-                        } else if (!hasLocation) {
-                            permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                        } else {
-                            toast.show("Aștept semnalul GPS — ieși sub cer liber dacă ești în casă.")
-                        }
-                    }
-                    // GO — pornește înregistrarea (alergare / mers / ciclism)
-                    Box(
-                        Modifier
-                            .size(54.dp)
-                            .clip(CircleShape)
-                            .background(AccentGradient)
-                            .border(1.dp, Color(0x66EDF3E4), CircleShape)
-                            .pressable({
-                                if (!hasLocation) {
-                                    permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                                } else {
-                                    sportOpen = true
-                                }
-                            }),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Filled.PlayArrow, "GO", tint = OnAccent, modifier = Modifier.size(28.dp))
-                    }
-                }
-            }
-        }
-
-        // Card loc selectat (al meu sau recomandat) — același loc ca cardul de prieten.
-        val sel = selectedPlace
-        if (sel != null) {
-            ForjaCard(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 190.dp)
-                    .padding(horizontal = 16.dp)
-                    .fillMaxWidth(),
-                fill = Color(0xF0121214),
-                stroke = StrokeOnVideo
-            ) {
-                when (sel) {
-                    is PlaceSel.Mine -> {
-                        val p = sel.p
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(10.dp).clip(CircleShape).background(PlaceAmber))
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(p.name.ifBlank { "Loc fără nume" }, style = BodyStrong.copy(fontSize = 15.sp))
-                                Text(
-                                    "Ai stat ${stayLabel(p.stayMs)} · ultima dată ${Fmt.freshness(p.lastAt)}",
-                                    style = BodySmall.copy(color = TextSecondary)
-                                )
-                            }
-                            Text(
-                                "închide",
-                                style = BodyTiny.copy(color = TextDim),
-                                modifier = Modifier.pressable({ selectedPlace = null })
-                            )
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        StarRow(stars = p.stars, size = 16.dp, tint = PlaceAmber, onPick = null)
-                        if (p.note.isNotBlank()) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(p.note, style = BodySmall.copy(color = TextSecondary))
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        Row {
-                            PrimaryButton(
-                                text = "Editează",
-                                small = true,
-                                onClick = { placesOpen = true },
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            SecondaryButton(
-                                "Navighează",
-                                onClick = { navigateTo(p.lat, p.lng, p.name) },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                    is PlaceSel.Rec -> {
-                        val r = sel.r
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(10.dp).clip(CircleShape).background(SleepRem))
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(r.name.ifBlank { "Loc recomandat" }, style = BodyStrong.copy(fontSize = 15.sp))
-                                Text(
-                                    "Recomandat de ${r.ownerName} · ${Fmt.freshness(r.at)}",
-                                    style = BodySmall.copy(color = TextSecondary)
-                                )
-                            }
-                            Text(
-                                "închide",
-                                style = BodyTiny.copy(color = TextDim),
-                                modifier = Modifier.pressable({ selectedPlace = null })
-                            )
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        StarRow(stars = r.stars, size = 16.dp, tint = SleepRem, onPick = null)
-                        if (r.note.isNotBlank()) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(r.note, style = BodySmall.copy(color = TextSecondary))
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        Row {
-                            PrimaryButton(
-                                text = "Navighează",
-                                small = true,
-                                onClick = { navigateTo(r.lat, r.lng, r.name) },
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            SecondaryButton(
-                                "Pe hartă",
-                                onClick = {
-                                    mapRef.value?.controller?.animateTo(GeoPoint(r.lat, r.lng))
-                                    selectedPlace = null
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Card prieten selectat
-        if (sel == null) selected?.let { f ->
-            ForjaCard(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 190.dp)
-                    .padding(horizontal = 16.dp)
-                    .fillMaxWidth(),
-                fill = Color(0xF0121214),
-                stroke = StrokeOnVideo
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(name = f.name, size = 44.dp, ring = true, ringColor = if (f.viaFamily) SleepRem else Accent2, live = !f.viaFamily)
-                    Spacer(Modifier.width(12.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                    // Stânga: Straturi + banda cu prieteni
                     Column(Modifier.weight(1f)) {
-                        Text(
-                            when {
-                                f.viaFamily -> "${f.name} · fantomă, dar familia te vede"
-                                f.state == "run" -> "${f.name} aleargă acum"
-                                f.state == "ride" -> "${f.name} e pe roți"
-                                f.state == "walk" -> "${f.name} se plimbă"
-                                f.state == "sleep" -> "${f.name} doarme"
-                                else -> f.name
-                            },
-                            style = BodyStrong.copy(fontSize = 15.sp)
-                        )
-                        Text(
-                            String.format(Locale.ROOT, "%.1f", f.speedMps * 3.6).replace('.', ',') +
-                                " km/h · Actualizat ${Fmt.freshness(f.locUpdatedAt)}",
-                            style = BodySmall.copy(color = TextSecondary)
-                        )
+                        MapFab(
+                            icon = { Icon(Icons.Outlined.Layers, "Straturi", tint = TextSecondary, modifier = Modifier.size(20.dp)) }
+                        ) { layersOpen = true }
+                        if (shownFriends.isNotEmpty()) {
+                            Spacer(Modifier.height(10.dp))
+                            FriendsStrip(
+                                friends = shownFriends.sortedByDescending { it.locUpdatedAt },
+                                selectedUid = selected?.uid,
+                                onPick = { pickFriend(it) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
-                    Text(
-                        "închide",
-                        style = BodyTiny.copy(color = TextDim),
-                        modifier = Modifier.pressable({ selected = null })
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
-                Row {
-                    PrimaryButton(
-                        text = "Trimite-i energie",
-                        small = true,
-                        onClick = {
-                            scope.launch {
-                                val uid = app.auth.currentUid ?: return@launch
-                                val myName = try { app.auth.loadProfile()?.name ?: "Un prieten" } catch (_: Exception) { "Un prieten" }
-                                val sent = try { app.friends.sendEnergy(uid, myName, f.uid) } catch (_: Exception) { false }
-                                toast.show(
-                                    if (sent) "${f.name.split(' ').first()} a primit energia ta."
-                                    else "I-ai trimis deja energie azi. Un fulger pe zi."
+                    Spacer(Modifier.width(12.dp))
+                    // Dreapta: 3D/2D, recentrare, GO
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        MapFab(
+                            icon = {
+                                Text(
+                                    if (map3d) "2D" else "3D",
+                                    style = monoLabel(10, 0.10f).copy(color = if (map3d) Accent2 else TextSecondary)
                                 )
-                                selected = null
+                            },
+                            active = map3d
+                        ) {
+                            scope.launch {
+                                val next = !map3d
+                                app.prefs.setMap3d(next)
+                                if (next) toast.show("Vedere înclinată. Apasă din nou pentru 2D.")
                             }
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    SecondaryButton(
-                        "Pe hartă",
-                        onClick = {
-                            if (f.lat != null && f.lng != null) {
-                                mapRef.value?.controller?.animateTo(GeoPoint(f.lat, f.lng))
+                        }
+                        MapFab(icon = {
+                            Icon(
+                                Icons.Filled.MyLocation, "Centrează pe mine",
+                                tint = if (myFix != null) Accent2 else TextDim,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }) {
+                            val fix = myFix
+                            if (fix != null) {
+                                controller.recenter(fix.lat, fix.lng)
+                            } else if (!hasLocation) {
+                                permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                            } else {
+                                toast.show("Aștept semnalul GPS — ieși sub cer liber dacă ești în casă.")
                             }
-                            selected = null
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
+                        }
+                        Box(
+                            Modifier
+                                .size(54.dp)
+                                .clip(CircleShape)
+                                .background(AccentGradient)
+                                .border(1.dp, Color(0x66EDF3E4), CircleShape)
+                                .pressable({
+                                    if (!hasLocation) {
+                                        permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                                    } else {
+                                        sportOpen = true
+                                    }
+                                }),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Filled.PlayArrow, "GO", tint = OnAccent, modifier = Modifier.size(28.dp))
+                        }
+                    }
                 }
+            }
+
+            // Atribuirea (obligatorie), pe un singur rând de 21 dp: butonul „i” al MapLibre (21 dp, la 16 dp de stânga și
+            // BOTTOM_BAR_DP de jos — vezi createView) + creditul, care începe 6 dp după el, în aceeași nuanță. Rândul e mereu
+            // ultimul copil, deci nici Straturi / banda cu prieteni, nici consola GO nu acoperă butonul.
+            Spacer(Modifier.height(4.dp))
+            Row(Modifier.height(21.dp), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.width(27.dp))
+                Text(
+                    "© OpenFreeMap · OpenMapTiles · OpenStreetMap",
+                    style = monoLabel(7, 0.06f).copy(color = if (night) TextDim else Color(0xFF6B675F))
+                )
             }
         }
     }
@@ -951,7 +813,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                             .padding(bottom = 8.dp)
                             .pressable({
                                 scope.launch {
-                                    app.auth.currentUid?.let { app.friends.setGhost(it, until) }
+                                    try { app.auth.currentUid?.let { app.friends.setGhost(it, until) } } catch (_: Exception) { }
                                     app.prefs.setGhostUntilLocal(until)
                                     ghostUntil = until
                                     ghostOpen = false
@@ -981,7 +843,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                         "Oprește fantoma",
                         onClick = {
                             scope.launch {
-                                app.auth.currentUid?.let { app.friends.setGhost(it, 0L) }
+                                try { app.auth.currentUid?.let { app.friends.setGhost(it, 0L) } } catch (_: Exception) { }
                                 app.prefs.setGhostUntilLocal(0L)
                                 ghostUntil = 0L
                                 ghostOpen = false
@@ -1002,21 +864,21 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
             onClose = { friendsOpen = false },
             onPick = { f ->
                 friendsOpen = false
-                if (f.lat != null && f.lng != null && (!f.ghost || f.viaFamily)) {
-                    mapRef.value?.controller?.animateTo(GeoPoint(f.lat, f.lng))
-                    selectedPlace = null
-                    selected = f
-                } else {
-                    toast.show(
-                        if (f.ghost) "${f.name} e în modul fantomă acum."
-                        else "${f.name} nu și-a pornit încă locația."
-                    )
-                }
+                pickFriend(f)
             }
         )
     }
 
-    // Sheet locuri
+    // Sheet straturi
+    if (layersOpen) {
+        LayersSheet(
+            layers = layers,
+            onChange = { l -> scope.launch { mapPrefs.save(l) } },
+            onClose = { layersOpen = false }
+        )
+    }
+
+    // Sheet locuri (+ teritorii)
     if (placesOpen) {
         PlacesSheet(
             places = places,
@@ -1061,8 +923,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
             },
             onPick = { lat, lng ->
                 placesOpen = false
-                mapRef.value?.controller?.setZoom(16.0)
-                mapRef.value?.controller?.animateTo(GeoPoint(lat, lng))
+                controller.flyTo(lat, lng, 16.0, 900)
             },
             onClose = { placesOpen = false },
             syncSite = syncSite,
@@ -1080,8 +941,151 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                         toast.show("Oprit. Explorarea rămâne doar în telefon.")
                     }
                 }
-            }
+            },
+            territory = TerritorySummary(
+                cells = cells.size, percentLabel = percentLabel, rank = rank,
+                walk = modeCounts.walk, run = modeCounts.run, ride = modeCounts.ride
+            )
         )
+    }
+}
+
+/**
+ * Cardul locului selectat (al meu sau recomandat), jos, lat, peste hartă.
+ * La recomandări, „Pe hartă” (`onCenter`) aduce camera pe loc și închide cardul (contractul, §2.5).
+ */
+@Composable
+private fun PlaceCardOnMap(
+    sel: PlaceSel,
+    onClose: () -> Unit,
+    onEdit: () -> Unit,
+    onNavigate: (Double, Double, String) -> Unit,
+    onCenter: (Double, Double) -> Unit
+) {
+    ForjaCard(
+        Modifier.fillMaxWidth(),
+        fill = Color(0xF0121214),
+        stroke = StrokeOnVideo
+    ) {
+        when (sel) {
+            is PlaceSel.Mine -> {
+                val p = sel.p
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(PlaceAmber))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(p.name.ifBlank { "Loc fără nume" }, style = BodyStrong.copy(fontSize = 15.sp))
+                        Text(
+                            // Vizitele doar de la 2 în sus: locurile de dinainte de numărare au visits = 1 din migrare, nu din fapte.
+                            (if (p.visits >= 2) "${visitsLabel(p.visits)} · ai stat " else "Ai stat ") +
+                                "${stayLabel(p.stayMs)} · ultima dată ${Fmt.freshness(p.lastAt)}",
+                            style = BodySmall.copy(color = TextSecondary)
+                        )
+                    }
+                    Text("închide", style = BodyTiny.copy(color = TextDim), modifier = Modifier.pressable(onClose))
+                }
+                Spacer(Modifier.height(6.dp))
+                StarRow(stars = p.stars, size = 16.dp, tint = PlaceAmber, onPick = null)
+                if (p.note.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(p.note, style = BodySmall.copy(color = TextSecondary))
+                }
+                Spacer(Modifier.height(12.dp))
+                Row {
+                    PrimaryButton(text = "Editează", small = true, onClick = onEdit, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(10.dp))
+                    SecondaryButton("Navighează", onClick = { onNavigate(p.lat, p.lng, p.name) }, modifier = Modifier.weight(1f))
+                }
+            }
+            is PlaceSel.Rec -> {
+                val r = sel.r
+                val owner = r.ownerName.split(' ').first()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(SleepRem))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(r.name.ifBlank { "Loc recomandat" }, style = BodyStrong.copy(fontSize = 15.sp))
+                        Text(
+                            "Recomandat de ${r.ownerName} · ${Fmt.freshness(r.at)}" +
+                                (if (r.visits >= 2) " · ${visitsLabel(r.visits, owner)}" else ""),
+                            style = BodySmall.copy(color = TextSecondary)
+                        )
+                    }
+                    Text("închide", style = BodyTiny.copy(color = TextDim), modifier = Modifier.pressable(onClose))
+                }
+                Spacer(Modifier.height(6.dp))
+                StarRow(stars = r.stars, size = 16.dp, tint = SleepRem, onPick = null)
+                if (r.note.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(r.note, style = BodySmall.copy(color = TextSecondary))
+                }
+                Spacer(Modifier.height(12.dp))
+                Row {
+                    PrimaryButton(text = "Navighează", small = true, onClick = { onNavigate(r.lat, r.lng, r.name) }, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(10.dp))
+                    SecondaryButton("Pe hartă", onClick = { onCenter(r.lat, r.lng); onClose() }, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+/** Cardul prietenului selectat: avatar, stare, distanță + timp pe jos, „acum N min” pentru familie, energie, butoane. */
+@Composable
+private fun FriendCardOnMap(
+    f: Friend,
+    myFix: MyFix?,
+    energySent: Boolean,
+    energyReceivedAt: Long,
+    onClose: () -> Unit,
+    onEnergy: () -> Unit,
+    onNavigate: () -> Unit
+) {
+    ForjaCard(
+        Modifier.fillMaxWidth(),
+        fill = Color(0xF0121214),
+        stroke = StrokeOnVideo
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FriendAvatar(friend = f, size = 44.dp, selected = true)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    when {
+                        f.viaFamily -> "${f.name} · fantomă, dar familia te vede"
+                        f.state == "run" -> "${f.name} aleargă acum"
+                        f.state == "ride" -> "${f.name} e pe roți"
+                        f.state == "walk" -> "${f.name} se plimbă"
+                        f.state == "sleep" -> "${f.name} doarme"
+                        else -> f.name
+                    },
+                    style = BodyStrong.copy(fontSize = 15.sp)
+                )
+                val dist = if (myFix != null && f.lat != null && f.lng != null)
+                    ExploreStats.distanceM(myFix.lat, myFix.lng, f.lat, f.lng) else null
+                val moving = f.state == "run" || f.state == "walk" || f.state == "ride"
+                val parts = ArrayList<String>(3)
+                if (dist != null) parts.add("la ${ExploreStats.distanceLabel(dist)} · ${ExploreStats.walkEtaLabel(dist)}")
+                if (moving) parts.add(String.format(Locale.ROOT, "%.1f", f.speedMps * 3.6).replace('.', ',') + " km/h")
+                // Familia/fantoma: cât de veche e poziția, spus simplu — „acum 12 min”.
+                parts.add(if (f.viaFamily || f.ghost) Fmt.freshness(f.locUpdatedAt) else "actualizat ${Fmt.freshness(f.locUpdatedAt)}")
+                Text(parts.joinToString(" · "), style = BodySmall.copy(color = TextSecondary))
+                val energyLine = buildString {
+                    if (energyReceivedAt > 0) append("Ți-a trimis energie ${Fmt.freshness(energyReceivedAt)}.")
+                    if (energySent) { if (isNotEmpty()) append(" "); append("I-ai trimis energie azi.") }
+                }
+                if (energyLine.isNotEmpty()) {
+                    Text(energyLine, style = BodyTiny.copy(color = Accent2))
+                }
+            }
+            Text("închide", style = BodyTiny.copy(color = TextDim), modifier = Modifier.pressable(onClose))
+        }
+        Spacer(Modifier.height(12.dp))
+        Row {
+            PrimaryButton(text = "Energie", small = true, onClick = onEnergy, modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(10.dp))
+            SecondaryButton("Navighează", onClick = onNavigate, modifier = Modifier.weight(1f))
+        }
     }
 }
 
@@ -1098,7 +1102,7 @@ private fun MapFab(icon: @Composable () -> Unit, active: Boolean = false, onClic
     ) { icon() }
 }
 
-/** Chip mic, mono, peste hartă: zone deblocate, locuri, starea hărții. */
+/** Chip mic, mono, peste hartă: teritorii, locuri, locul între prieteni, starea hărții. */
 @Composable
 private fun MapChip(text: String, color: Color = TextSecondary, active: Boolean = false, onClick: (() -> Unit)? = null) {
     val shape = RoundedCornerShape(10.dp)
@@ -1108,7 +1112,7 @@ private fun MapChip(text: String, color: Color = TextSecondary, active: Boolean 
         .border(1.dp, if (active) Color(0x666F855A) else StrokeOnVideo, shape)
     val m = if (onClick != null) base.pressable(onClick) else base
     Box(m.padding(horizontal = 10.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
-        Text(text, style = monoLabel(9, 0.10f).copy(color = color))
+        Text(text, style = monoLabel(9, 0.10f).copy(color = color), maxLines = 1)
     }
 }
 
