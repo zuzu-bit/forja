@@ -4,10 +4,10 @@ import vm from 'node:vm';
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 const source=fs.readFileSync(new URL('./map-renderer.js.txt',import.meta.url),'utf8');
-function fixture({supported=null,reduced=false}={}){
+function fixture({supported=null,reduced=false,constructorError=null}={}){
  const timers=[],maps=[];
  class Map{
-  constructor(options){this.options=options;this.events={};this.sources={};this.layers={};this.loaded=false;maps.push(this);}
+  constructor(options){if(constructorError)throw constructorError;this.options=options;this.events={};this.sources={};this.layers={};this.loaded=false;maps.push(this);}
   addControl(){} on(name,callback){this.events[name]=callback;return this;} getStyle(){return {layers:[{id:'label',type:'symbol'}]};}
   addSource(id,data){this.sources[id]={...data,setData(value){this.data=value;}};} getSource(id){return this.sources[id];}
   addLayer(layer,before){this.layers[layer.id]={...layer,before};} setLayoutProperty(id,key,value){this.layers[id].layout[key]=value;}
@@ -43,4 +43,12 @@ test('the actual pinned MapLibre exports Map without the removed supported helpe
  const library=createRequire(import.meta.url)('./vendor/maplibre-5.10.0.js.txt');
  assert.equal(library.getVersion(),'5.10.0');assert.equal(typeof library.Map,'function');assert.equal(library.supported,undefined);
  const f=fixture();assert.doesNotThrow(()=>f.api.create('map'));
+});
+
+test('a synchronous WebGL constructor failure is propagated to the raster host',()=>{
+ const error=Error('Failed to initialize WebGL'),f=fixture({constructorError:error});
+ assert.throws(()=>f.api.create('map'),/Failed to initialize WebGL/);
+});
+test('post-ready WebGL loss and style source errors revoke vector readiness',()=>{
+ for(const event of ['webglcontextlost','error']){const f=fixture();let error;const renderer=f.api.create('map',{onError(value){error=value;}}),map=f.maps[0];map.emit('load');assert.equal(renderer.ready,true);map.emit(event,{error:Error('Tile source unavailable')});assert(error);assert.equal(renderer.ready,false);assert.equal(renderer.set3D(true),false);}
 });

@@ -8,13 +8,16 @@
   if(!global.maplibregl?.Map||(typeof global.maplibregl.supported==='function'&&!global.maplibregl.supported()))throw Error('Randarea vectorială nu este disponibilă pe acest dispozitiv.');
   let loaded=false,disposed=false,mode3d=false,data={},failed=false;
   const motion=()=>!global.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  const map=new global.maplibregl.Map({container,style:'https://tiles.openfreemap.org/styles/liberty',center:options.center||[24.9,45.8],zoom:options.zoom||6,attributionControl:true,pitch:0,maxPitch:65,canvasContextAttributes:{antialias:true}});
-  map.addControl(new global.maplibregl.NavigationControl({showCompass:true}),'bottom-right');
-  const fail=()=>{if(!loaded&&!disposed&&!failed){failed=true;options.onError?.('Harta vectorială nu s-a încărcat. Harta 2D rămâne disponibilă.');}};
-  const timeout=setTimeout(fail,20000);
+  let map;
+  const fail=error=>{if(disposed||failed)return;failed=true;loaded=false;clearTimeout(timeout);options.onError?.(error instanceof Error?error:Error(String(error?.message||error||'Harta vectorială nu s-a încărcat.')));};
+  // Install the deadline before WebGL/worker initialization; the constructor itself may throw.
+  const timeout=setTimeout(()=>fail(Error('3D loading timed out')),15000);
+  try{map=new global.maplibregl.Map({container,style:'https://tiles.openfreemap.org/styles/liberty',center:options.center||[24.9,45.8],zoom:options.zoom||6,attributionControl:true,pitch:0,maxPitch:65,canvasContextAttributes:{antialias:false}});
+   map.addControl(new global.maplibregl.NavigationControl({showCompass:true}),'bottom-right');
+  }catch(error){clearTimeout(timeout);try{map?.remove();}catch{}throw error;}
   function paint(){if(!loaded)return;for(const key of ['routes','zones','visits','people','places','devices'])map.getSource('forja-'+key)?.setData(collection(data[key]));}
   map.on('load',()=>{
-   if(disposed||failed)return;clearTimeout(timeout);
+   if(disposed||failed)return;try{
    // Heights are geographic attributes from OpenMapTiles/OSM, not random blocks.
    const before=map.getStyle().layers.find(l=>l.type==='symbol')?.id;
    map.addSource('forja-buildings',{type:'vector',url:'https://tiles.openfreemap.org/planet',attribution:'<a href="https://openfreemap.org">OpenFreeMap</a> · <a href="https://www.openmaptiles.org">© OpenMapTiles</a> · <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>'});
@@ -27,16 +30,18 @@
    map.addLayer({id:'forja-names',type:'symbol',source:'forja-people',layout:{'text-field':['get','label'],'text-size':12,'text-font':['Noto Sans Regular'],'text-allow-overlap':true},paint:{'text-color':'#20352a'}});
    map.on('click',event=>{const f=map.queryRenderedFeatures(event.point,{layers:['forja-people','forja-visits','forja-places','forja-devices']})[0];if(f){const p=f.properties;options.onPick?.({kind:p.kind,id:p.id,name:p.name||'',lon:f.geometry.coordinates[0],lat:f.geometry.coordinates[1]});}});
    map.on('mousemove',event=>{map.getCanvas().style.cursor=map.queryRenderedFeatures(event.point,{layers:['forja-people','forja-visits','forja-places','forja-devices']}).length?'pointer':'';});
-   loaded=true;paint();options.onReady?.();
+   if(failed||disposed)return;loaded=true;paint();clearTimeout(timeout);options.onReady?.();
+   }catch(error){fail(error);}
   });
-  map.on('error',()=>{if(!map.isStyleLoaded())fail();});
+  map.on('error',event=>fail(event?.error||'Vector map source failed'));
+  map.on('webglcontextlost',()=>fail(Error('WebGL context lost')));
   map.on('moveend',()=>{const p=map.getCenter();options.onMove?.({lat:p.lat,lon:p.lng,zoom:map.getZoom()});});
   return {
    setData(value){data=value||{};paint();},
-   set3D(enabled){if(!loaded)return false;mode3d=!!enabled;map.setLayoutProperty('forja-buildings-3d','visibility',mode3d?'visible':'none');map.easeTo({pitch:mode3d?55:0,duration:motion()?600:0});return true;},
+   set3D(enabled){if(!loaded||failed||disposed)return false;mode3d=!!enabled;map.setLayoutProperty('forja-buildings-3d','visibility',mode3d?'visible':'none');map.easeTo({pitch:mode3d?55:0,duration:motion()?600:0});return true;},
    focus(p,zoom=16){map.flyTo({center:[p.lon,p.lat],zoom,duration:motion()?650:0});},
    fit(points){if(!points.length)return;const bounds=new global.maplibregl.LngLatBounds();points.forEach(p=>bounds.extend([p.lon,p.lat]));map.fitBounds(bounds,{padding:70,maxZoom:15,duration:motion()?600:0});},
-   getCenter(){const p=map.getCenter();return {lat:p.lat,lon:p.lng,lng:p.lng};},
+   getCenter(){const p=map.getCenter();return {lat:p.lat,lon:p.lng,lng:p.lng,zoom:map.getZoom()};},
    resize(){map.resize();},
    destroy(){disposed=true;clearTimeout(timeout);map.remove();},
    get ready(){return loaded&&!failed;},get mode3d(){return mode3d;}
