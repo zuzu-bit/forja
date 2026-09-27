@@ -29,7 +29,9 @@ data class Friend(
     /** E în familia mea: mă vede și când sunt fantomă (users/{me}.familyUids). */
     val family: Boolean = false,
     /** Poziția vine din familyLoc — prietenul e fantomă pentru ceilalți, dar m-a pus în familia lui. */
-    val viaFamily: Boolean = false
+    val viaFamily: Boolean = false,
+    /** A venit din agendă (potrivire reciprocă a numerelor) — etichetă „din agendă”; se completează din Prefs.contactMatches. */
+    val fromContacts: Boolean = false
 )
 
 /** Poziția unui prieten care m-a pus în familie — scrisă mereu, și în fantomă. */
@@ -76,6 +78,19 @@ class FriendsRepository(
         ).await()
         val other = db.collection("users").document(otherUid).get().await()
         return Result.success(other.getString("name") ?: "Prieten nou")
+    }
+
+    /**
+     * Prietenie directă, fără cod: potrivire reciprocă din agendă (ambii au rulat sincronizarea). Idempotentă —
+     * `friendships/{a_b}` se scrie doar dacă nu există. Întoarce true când a fost creată acum.
+     */
+    suspend fun addFriendDirect(myUid: String, otherUid: String): Boolean {
+        if (otherUid.isBlank() || otherUid == myUid) return false
+        val id = friendshipId(myUid, otherUid)
+        val ref = db.collection("friendships").document(id)
+        if (ref.get().await().exists()) return false
+        ref.set(mapOf("members" to listOf(myUid, otherUid).sorted(), "since" to System.currentTimeMillis())).await()
+        return true
     }
 
     suspend fun removeFriend(myUid: String, otherUid: String) {

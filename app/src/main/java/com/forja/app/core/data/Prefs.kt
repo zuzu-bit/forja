@@ -65,6 +65,12 @@ class Prefs(private val context: Context) {
         val cleanupDocsTree = stringPreferencesKey("cleanup_docs_tree")
         val cleanupAiOn = booleanPreferencesKey("cleanup_ai_on")
         val cleanupDocsUndo = stringPreferencesKey("cleanup_docs_undo")
+        // v4.1 — prieteni din agendă (ca la Telegram)
+        val phoneDeclared = stringPreferencesKey("phone_declared")
+        val contactsOn = booleanPreferencesKey("contacts_on")
+        val contactsSyncedAt = longPreferencesKey("contacts_synced_at")
+        val contactMatches = stringPreferencesKey("contact_matches")
+        val contactsStatus = stringPreferencesKey("contacts_status")
     }
 
     companion object {
@@ -263,6 +269,22 @@ class Prefs(private val context: Context) {
     /** Cuvintele-declanșator, setate de el. NU pleacă niciodată de pe telefon. */
     val detoxWords: Flow<String> = context.dataStore.data.map { it[K.detoxWords] ?: "" }
     suspend fun setDetoxWords(v: String) = context.dataStore.edit { it[K.detoxWords] = v }
+
+    // ── Prieteni din agendă (ca la Telegram) ──
+    /** Numărul MEU, declarat de mine în format E.164 (+407…). Pleacă doar ca antet `x-forja-phone-declared`; serverul ține o amprentă. */
+    val phoneDeclared: Flow<String> = context.dataStore.data.map { it[K.phoneDeclared] ?: "" }
+    suspend fun setPhoneDeclared(v: String) = context.dataStore.edit { it[K.phoneDeclared] = v.trim() }
+    /** Comutatorul „Pot fi găsit după număr” + compararea zilnică a agendei — strict opt-in. */
+    val contactsOn: Flow<Boolean> = context.dataStore.data.map { it[K.contactsOn] ?: false }
+    suspend fun setContactsOn(v: Boolean) = context.dataStore.edit { it[K.contactsOn] = v }
+    val contactsSyncedAt: Flow<Long> = context.dataStore.data.map { it[K.contactsSyncedAt] ?: 0L }
+    suspend fun setContactsSyncedAt(v: Long) = context.dataStore.edit { it[K.contactsSyncedAt] = v }
+    /** Potrivirile (JSON: uid, numele din agendă, mutual, verified, at) — doar pe telefon. */
+    val contactMatches: Flow<String> = context.dataStore.data.map { it[K.contactMatches] ?: "" }
+    suspend fun setContactMatches(v: String) = context.dataStore.edit { it[K.contactMatches] = v }
+    /** Starea ultimei sincronizări, în cuvinte — arătată în Echipare și Profil. */
+    val contactsStatus: Flow<String> = context.dataStore.data.map { it[K.contactsStatus] ?: "" }
+    suspend fun setContactsStatus(v: String) = context.dataStore.edit { it[K.contactsStatus] = v }
 
     /** Ecranul de pornire cu permisiuni a fost arătat o dată. */
     val permsIntroSeen: Flow<Boolean> = context.dataStore.data.map { it[K.permsIntroSeen] ?: false }

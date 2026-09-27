@@ -26,6 +26,8 @@ export { SocialGraph } from './social.mjs';
 export { InsightsAccount } from './insights-store.mjs';
 
 const project = 'forja-65093';
+/** The number typed in the app: forwarded ONLY under this name (never as x-forja-phone, which is the SMS-verified claim). */
+const declaredPhone = request => { const v = request.headers.get('x-forja-phone-declared') || ''; return /^\+[1-9][0-9]{7,14}$/.test(v) ? v : ''; };
 const keys = createRemoteJWKSet(new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'));
 export default {
   async fetch(request, env) {
@@ -43,7 +45,7 @@ export default {
     if(request.method==='GET'&&['/insights/leaflet.js','/insights/leaflet.css'].includes(path))return new Response(path.endsWith('.css')?leafletCSS:leaflet,{headers:{'content-type':path.endsWith('.css')?'text/css':'text/javascript','cache-control':'public, max-age=86400','x-content-type-options':'nosniff'}});
     if (request.method === 'GET' && ['/insights/pdf.mjs','/insights/pdf.worker.mjs'].includes(path)) return new Response(path.endsWith('pdf.worker.mjs')?pdfWorker:pdfClient,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'public, max-age=3600','x-content-type-options':'nosniff'}});
     if (request.method === 'GET' && path === '/insights/app.js') return new Response(client+"\n"+sleepClient+"\n"+filePreview+"\n"+fileClient+"\n"+cleanupClient+"\n"+organizerClient+"\n"+socialClient+"\n"+recoveryClient+"\n"+journeyClient, { headers: { 'content-type':'text/javascript; charset=utf-8', 'cache-control':'no-cache', 'x-content-type-options':'nosniff' } });
-    if (request.method === 'GET' && path === '/health') return reply({ ok:true, service:'forja-insights', version:16, organizer_jobs:4, journey:1, explore_sync:1, map3d:1, content_ai:2, visual_ui:1, sleep_audio:1, lost_phone:1, partners:1, contacts:1, social:1, organizer_modes:1, files_sync:1, cleanup_schedule:1, background_audio:1, organizer:1 });
+    if (request.method === 'GET' && path === '/health') return reply({ ok:true, service:'forja-insights', version:17, organizer_jobs:4, journey:1, explore_sync:1, map3d:1, content_ai:2, visual_ui:1, sleep_audio:1, lost_phone:1, partners:1, contacts:2, social:1, organizer_modes:1, files_sync:1, cleanup_schedule:1, background_audio:1, organizer:1 });
     if (!path.startsWith('/v2/') && !path.startsWith('/insights/api/')) return reply({error:'Not found'},404);
     const auth = request.headers.get('Authorization') || ''; let uid,verifiedPhone='',tokenIssued=0;
     try {
@@ -53,7 +55,7 @@ export default {
       if (typeof uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw Error();
     } catch { return reply({error:'Conectează-te cu contul FORJA.'},401); }
     try {
-      if (path.startsWith('/v2/social/')) {const headers=new Headers(request.headers);headers.set('x-forja-owner',uid);headers.set('x-forja-phone',verifiedPhone);headers.set('x-forja-token-issued',String(tokenIssued));return await env.SOCIAL.get(env.SOCIAL.idFromName('friends-v1')).fetch(new Request(request,{headers}));}
+      if (path.startsWith('/v2/social/')) {const headers=new Headers(request.headers);headers.set('x-forja-owner',uid);headers.set('x-forja-phone',verifiedPhone);headers.set('x-forja-phone-declared',declaredPhone(request));headers.set('x-forja-token-issued',String(tokenIssued));return await env.SOCIAL.get(env.SOCIAL.idFromName('friends-v1')).fetch(new Request(request,{headers}));}
       if(path.startsWith('/v2/sleep/'))return await handleSleepAPI(request,env,uid);
       if(path==='/insights/api/organizer-analysis'&&request.method==='POST')return await organizeJobAI(request,env,uid,accountStub(env,uid));
       if (path.startsWith('/insights/api/')) return await handleInsights(request, env, uid);

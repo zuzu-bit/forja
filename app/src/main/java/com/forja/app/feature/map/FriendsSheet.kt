@@ -1,5 +1,10 @@
 package com.forja.app.feature.map
 
+import android.Manifest
+import android.content.Intent
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -21,14 +26,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.forja.app.ForjaApp
 import com.forja.app.core.data.Friend
+import com.forja.app.core.location.BgLocation
+import com.forja.app.core.social.ContactsSync
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.util.Fmt
 import kotlinx.coroutines.launch
 
-/** Sheet „Prietenii tăi" — doar oameni reali, stări live, freshness onest, invitație prin cod, familie. */
+/** Sheet „Prietenii tăi" — doar oameni reali, stări live, freshness onest, invitație prin cod, agendă, familie. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FriendsSheet(
@@ -51,6 +61,38 @@ fun FriendsSheet(
     // Comutatorul „Familie” răspunde pe loc; Firestore confirmă imediat după.
     val familyOverride = remember { mutableStateMapOf<String, Boolean>() }
     val familyBusy = remember { mutableStateMapOf<String, Boolean>() }
+
+    // Din agendă: potrivirile salvate local (numele din agenda MEA; nu pleacă nicăieri).
+    val matchesRaw by app.prefs.contactMatches.collectAsState(initial = "")
+    val matches = remember(matchesRaw) { ContactsSync.decode(matchesRaw) }
+    val mutualUids = remember(matches) { matches.filter { it.mutual }.map { it.uid }.toSet() }
+    val friendUids = remember(friends) { friends.map { it.uid }.toSet() }
+    val fromAgenda = remember(matches, friendUids) { matches.filter { !it.mutual && it.uid !in friendUids } }
+
+    // Familie mereu pornită: cere „Tot timpul” dacă lipsește (starea se reface la revenirea din setări).
+    var permTick by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) permTick++ }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+    val bgOk = remember(permTick) { BgLocation.hasBackground(context) }
+    val fineOk = remember(permTick) { BgLocation.hasFine(context) || BgLocation.hasCoarse(context) }
+    val bgLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permTick++; BgLocation.registerIfReady(context) }
+    val fineLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        permTick++
+        if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true && Build.VERSION.SDK_INT >= 29 && !BgLocation.hasBackground(context)) {
+            bgLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+    }
+    fun askAlways() {
+        when {
+            !fineOk -> fineLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+            Build.VERSION.SDK_INT >= 29 -> bgLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+    }
+    val familyAny = friends.any { familyOverride[it.uid] ?: it.family }
 
     val activeCount = friends.count { !it.ghost && System.currentTimeMillis() - it.locUpdatedAt < 15 * 60_000 }
 
@@ -149,6 +191,21 @@ fun FriendsSheet(
                 }
             }
 
+            // Familia te vede și când FORJA e închisă — doar cu locația „Tot timpul”.
+            if (familyAny && !bgOk) {
+                Spacer(Modifier.height(12.dp))
+                ForjaCard(Modifier.fillMaxWidth(), fill = Surface2, stroke = EmberWarm.copy(alpha = 0.45f)) {
+                    Text("Familia ta nu te vede încă tot timpul.", style = BodyStrong.copy(fontSize = 14.sp))
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Ca să te vadă și când FORJA e închisă, permite locația tot timpul. Android deschide pagina lui; alege „Se permite tot timpul”.",
+                        style = BodyTiny.copy(color = TextSecondary)
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    PrimaryButton("Permite tot timpul", onClick = ::askAlways, small = true)
+                }
+            }
+
             Spacer(Modifier.height(18.dp))
             SectionLabel("Pe hartă acum")
             Spacer(Modifier.height(8.dp))
@@ -176,7 +233,13 @@ fun FriendsSheet(
                         Avatar(name = f.name, size = 40.dp, ring = fresh, live = fresh && f.state in setOf("run", "walk", "ride"))
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(f.name, style = BodyStrong.copy(fontSize = 14.sp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(f.name, style = BodyStrong.copy(fontSize = 14.sp))
+                                if (f.fromContacts || f.uid in mutualUids) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("din agendă", style = monoLabel(8, 0.1f).copy(color = Accent2))
+                                }
+                            }
                             Text(
                                 when {
                                     f.viaFamily -> "fantomă · te vede familia lui"
@@ -241,6 +304,8 @@ fun FriendsSheet(
                                 scope.launch {
                                     try {
                                         app.friends.setFamily(uid, f.uid, on, app.prefs)
+                                        // Familia schimbă cadența (120 s) și pornește urmărirea chiar fără „Locație în fundal”.
+                                        BgLocation.registerIfReady(context)
                                         // Documentul meu s-a actualizat; Friend.family vine prin flow, nu mai avem nevoie de override.
                                         familyOverride.remove(f.uid)
                                         val first = f.name.split(' ').first()
@@ -255,6 +320,48 @@ fun FriendsSheet(
                                     familyBusy.remove(f.uid)
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // Din agendă: au FORJA, dar nu te au (încă) în agenda lor — nicio vizibilitate fără acordul lor.
+            if (fromAgenda.isNotEmpty()) {
+                Spacer(Modifier.height(18.dp))
+                SectionLabel("Din agendă")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Au FORJA, dar nu te au în agenda lor. Trimite-le codul tău; te adaugă ei.",
+                    style = BodyTiny.copy(color = TextDim)
+                )
+                Spacer(Modifier.height(8.dp))
+                fromAgenda.sortedBy { it.name.lowercase() }.forEach { m ->
+                    ForjaCard(Modifier.fillMaxWidth().padding(bottom = 8.dp), fill = Surface2, padding = 12.dp) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Avatar(name = m.name, size = 40.dp, ring = false, live = false)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(m.name, style = BodyStrong.copy(fontSize = 14.sp))
+                                Text(
+                                    buildString {
+                                        append("are FORJA")
+                                        if (m.forjaName.isNotBlank() && m.forjaName != m.name) append(" ca „${m.forjaName}”")
+                                        append(if (m.verified) " · număr verificat" else " · număr declarat")
+                                    },
+                                    style = BodyTiny.copy(color = TextDim)
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            MonoButton("Trimite-i codul tău", color = Accent2, onClick = {
+                                if (myCode.isEmpty()) { toast.show("Codul tău se încarcă. Încearcă imediat."); return@MonoButton }
+                                val share = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, "Sunt pe FORJA. Adaugă-mă cu codul FORJA-$myCode.")
+                                }
+                                try {
+                                    context.startActivity(Intent.createChooser(share, "Trimite codul"))
+                                } catch (_: Exception) { toast.show("Nu am găsit o aplicație de mesaje. Copiază codul de mai sus.") }
+                            })
                         }
                     }
                 }

@@ -33,6 +33,19 @@ aplicația „3.7-online” de pe telefon, cu același cont și aceleași date l
   documentele analizate urcă în cont, aprobarea și organizarea se pot face din laptop), **Gemini 2.5 Flash pe site** când există cheia
   (altfel Cloudflare Workers AI).
 - **Firestore**: regulile au colecții noi (`places`, `familyLoc`) — lipește din nou `firestore.rules` în consola Firebase → Publish.
+- **Prieteni din agendă (ca la Telegram)** — Echipare are a șasea bifă, **Agendă**: cere `READ_CONTACTS`, apoi „Numărul tău” (E.164,
+  normalizat local: `+` păstrat, `00` → `+`, `0…` → prefixul din SIM/rețea, RO implicit) și „Gata”. Numărul MEU e **declarat**
+  (antetul `x-forja-phone-declared`; serverul păstrează o amprentă HMAC, nu numărul) sau **verificat** (claim `phone_number`
+  în tokenul Firebase, când Phone Auth e activat în consolă — „Verifică prin SMS” din Profil; verificatul are prioritate și
+  poate revendica un număr declarat de alt cont, invers nu: 409). Un lucrător WorkManager (24 h + „Sincronizează acum”)
+  citește agenda, trimite loturi ≤ 200 la `POST /v2/social/contacts/match` și primește `mutual` când **și el mă are în
+  agendă** (serverul ține doar amprentele numerelor din agenda mea, `contacts-of:{uid}`, ≤ 5000, 30 de zile) — atunci
+  prietenia `friendships/{a_b}` apare singură la amândoi, cu notificarea „Ana din agenda ta e pe FORJA”. Potrivirile
+  nereciproce stau în „Prietenii tăi” → **Din agendă** cu „Trimite-i codul tău” (nicio vizibilitate fără acordul lui).
+  Numele și numerele nu se scriu pe server și nu apar în jurnale. Comutatorul „Pot fi găsit după număr” (Profil) oprit =
+  DELETE pe site + lucrătorul anulat + potrivirile șterse local. Site-ul e versiunea 17 (`contacts:2`).
+- **Familie mereu pornită**: cu cineva în familie, locația în fundal pornește chiar fără „Locație în fundal” (doar `familyLoc`
+  se scrie), la 120 s în loc de 180 s; „Prietenii tăi” arată un rând cald cu „Permite tot timpul” când lipsește locația „Tot timpul”.
 
 ## Cum obții aplicația (APK)
 

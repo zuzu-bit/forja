@@ -191,6 +191,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                         com.forja.app.core.recovery.LostPhoneRecovery.resume(app)
                         // Sincronizarea în cont se reia doar dintr-o activitate vizibilă și doar dacă a fost pornită de utilizator.
                         try { com.forja.app.core.sync.CollectionSettings.resume(app) } catch (_: Exception) { }
+                        // Prieteni din agendă: lucrătorul zilnic există doar cât timp comutatorul e pornit și numărul e scris.
+                        try { com.forja.app.core.social.ContactsSync.scheduleIfOn(app) } catch (_: Exception) { }
                     }
                     Lifecycle.Event.ON_STOP -> app.presence.stop()
                     else -> {}
@@ -381,9 +383,12 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     onLogout = {
                         // Oprește sincronizarea și uită alegerile cât timp contul încă e cel legat (înainte de signOut).
                         try { com.forja.app.core.sync.CollectionSettings.logout(app) } catch (_: Exception) { }
-                        app.auth.logout()
-                        // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni.
                         navScope.launch {
+                            // Prieteni din agendă: numărul, comutatorul și potrivirile sunt ale ACESTUI cont — nu trec la următorul.
+                            // DELETE-ul pe site are nevoie de token, deci înainte de signOut (cel mult 4 s; altfel expiră singur în 30 de zile).
+                            try { com.forja.app.core.social.ContactsSync.logout(app) } catch (_: Exception) { }
+                            app.auth.logout()
+                            // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni.
                             app.prefs.resetFirstRun()
                             nav.navigate(Route.ONBOARDING) { popUpTo(Route.DASHBOARD) { inclusive = true } }
                         }

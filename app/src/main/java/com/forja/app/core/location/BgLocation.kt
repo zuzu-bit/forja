@@ -25,10 +25,15 @@ import kotlinx.coroutines.launch
  * cu o singură excepție, aleasă de tine: modul fantomă (familia te vede și atunci).
  * Merge și cu aplicația închisă (updates livrate unui receiver), repornit la boot.
  * Același fix hrănește și Explorarea (zone + locuri).
+ * Familia e „mereu pornită”: cu familyUids nevid cadența urcă la 120 s și urmărirea pornește chiar și cu
+ * „Locație în fundal” oprită (prietenii obișnuiți tot nu te văd — doar familyLoc se scrie).
  */
 object BgLocation {
 
     private const val REQUEST_CODE = 21
+    /** Cadența obișnuită (prieteni) și cea de familie („te vede și când FORJA e închisă”). */
+    const val DEFAULT_INTERVAL_MS = 180_000L
+    const val FAMILY_INTERVAL_MS = 120_000L
 
     fun hasFine(context: Context) =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
@@ -53,11 +58,13 @@ object BgLocation {
         CoroutineScope(Dispatchers.Default).launch {
             try {
                 if (app.auth.currentUid == null) return@launch
-                if (!app.prefs.bgShareOn.first()) return@launch
+                val family = app.prefs.familyUids.first().isNotEmpty()
+                if (!app.prefs.bgShareOn.first() && !family) return@launch
                 if (!(hasFine(context) || hasCoarse(context)) || !hasBackground(context)) return@launch
-                val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 180_000L)
+                val interval = if (family) FAMILY_INTERVAL_MS else DEFAULT_INTERVAL_MS
+                val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, interval)
                     .setMinUpdateDistanceMeters(20f)
-                    .setMaxUpdateDelayMillis(360_000L)
+                    .setMaxUpdateDelayMillis(interval * 2)
                     .build()
                 LocationServices.getFusedLocationProviderClient(context)
                     .requestLocationUpdates(request, pendingIntent(context))

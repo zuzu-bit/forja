@@ -4,20 +4,32 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.forja.app.ForjaApp
 import com.forja.app.core.data.Friend
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
+import com.forja.app.core.social.ContactsReader
+import com.forja.app.core.social.ContactsSync
+import com.forja.app.core.social.Discovery
+import com.forja.app.core.social.PhoneNumbers
+import com.forja.app.core.social.PhoneVerify
 import com.forja.app.core.util.Fmt
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -177,7 +189,7 @@ fun ProfileScreen(
 
         SettingRow(
             "Echipare",
-            "Notificări, locație, microfon, poze, baterie — cinci bife, o singură dată.",
+            "Notificări, locație, microfon, poze, baterie, agendă — șase bife, o singură dată.",
             onClick = onOpenPermissions
         ) { Text("deschide →", style = BodySmall.copy(color = Accent2)) }
 
@@ -237,6 +249,9 @@ fun ProfileScreen(
                 }
             }
         ) { Text("copiază", style = BodySmall.copy(color = Accent2)) }
+
+        // Prieteni din agendă (ca la Telegram): numărul tău, comutatorul, verificarea prin SMS (opțional), sincronizarea.
+        ContactsRow(onOpenPermissions = onOpenPermissions)
 
         // Locația în fundal — harta VIU trăiește și cu aplicația închisă.
         val bgShareOn by app.prefs.bgShareOn.collectAsState(initial = false)
@@ -322,6 +337,182 @@ fun ProfileScreen(
             style = BodyTiny.copy(color = TextDim2),
             modifier = Modifier.align(Alignment.CenterHorizontally)
         )
+    }
+}
+
+/**
+ * „Numărul tău · Prieteni din agendă”: numărul (declarat sau verificat), comutatorul „Pot fi găsit după număr”,
+ * „Verifică prin SMS” (opțional; dacă Phone Auth nu e activat în consolă, spunem sec), „Sincronizează acum”.
+ */
+@Composable
+private fun ContactsRow(onOpenPermissions: () -> Unit) {
+    val context = LocalContext.current
+    val app = remember { ForjaApp.from(context) }
+    val scope = rememberCoroutineScope()
+    val toast = LocalToast.current
+
+    val phoneDeclared by app.prefs.phoneDeclared.collectAsState(initial = "")
+    val contactsOn by app.prefs.contactsOn.collectAsState(initial = false)
+    val status by app.prefs.contactsStatus.collectAsState(initial = "")
+    val syncedAt by app.prefs.contactsSyncedAt.collectAsState(initial = 0L)
+    var tick by remember { mutableIntStateOf(0) }
+    val verified = remember(tick) { Discovery.verifiedPhone() }
+    val number = verified ?: phoneDeclared
+    val hasNumber = PhoneNumbers.isValid(number)
+    var busy by remember { mutableStateOf(false) }
+
+    // Verificarea prin SMS: codul trimis → câmp de cod → legare de cont.
+    var verificationId by remember { mutableStateOf<String?>(null) }
+    var code by remember { mutableStateOf("") }
+    var smsBusy by remember { mutableStateOf(false) }
+    fun activity(): android.app.Activity? {
+        var c: android.content.Context = context
+        while (c is android.content.ContextWrapper) { if (c is android.app.Activity) return c; c = c.baseContext }
+        return null
+    }
+    fun afterLink(res: Result<String>) {
+        smsBusy = false
+        res.fold(
+            onSuccess = {
+                verificationId = null; code = ""
+                tick++
+                toast.show("Număr verificat prin SMS.")
+                // Listarea trece pe „verificat” (poate revendica un număr declarat de alt cont).
+                scope.launch { if (contactsOn) Discovery.register(app) }
+            },
+            onFailure = { toast.show(it.message ?: "Nu a mers. Numărul declarat merge.") }
+        )
+    }
+
+    ForjaCard(Modifier.fillMaxWidth().padding(bottom = 8.dp), padding = 14.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).pressable(onOpenPermissions)) {
+                Text("Numărul tău · Prieteni din agendă", style = BodyStrong.copy(fontSize = 14.sp))
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    when {
+                        verified != null -> "$verified · verificat prin SMS"
+                        hasNumber -> "$number · declarat, neverificat"
+                        else -> "fără număr — scrie-l în Echipare"
+                    },
+                    style = BodyTiny.copy(color = TextSecondary)
+                )
+                Spacer(Modifier.height(2.dp))
+                Text("Pot fi găsit după număr", style = BodyTiny.copy(color = TextDim))
+            }
+            Spacer(Modifier.width(12.dp))
+            if (busy) {
+                CircularProgressIndicator(color = Accent2, modifier = Modifier.size(20.dp))
+            } else {
+                ForjaSwitch(contactsOn) { on ->
+                    if (!on) {
+                        busy = true
+                        scope.launch {
+                            try { ContactsSync.disable(app) } catch (_: Exception) { }
+                            busy = false
+                            toast.show("Nu mai poți fi găsit după număr. Potrivirile s-au șters de pe telefon.")
+                        }
+                        return@ForjaSwitch
+                    }
+                    if (!hasNumber) { toast.show("Scrie întâi numărul tău, în Echipare."); onOpenPermissions(); return@ForjaSwitch }
+                    if (!ContactsReader.granted(context)) { toast.show("Bifează „Agendă” în Echipare."); onOpenPermissions(); return@ForjaSwitch }
+                    busy = true
+                    scope.launch {
+                        try {
+                            app.prefs.setContactsOn(true)
+                            val r = Discovery.register(app)
+                            if (r.isSuccess) {
+                                app.prefs.setContactsStatus("")
+                                ContactsSync.scheduleIfOn(app)
+                                ContactsSync.runNow(app)
+                                toast.show("Poți fi găsit după număr. Agenda se compară acum.")
+                            } else {
+                                app.prefs.setContactsOn(false)
+                                toast.show(Discovery.humanError(r.exceptionOrNull() ?: Exception()))
+                            }
+                        } catch (_: Exception) {
+                            app.prefs.setContactsOn(false)
+                            toast.show("Nu a mers. Verifică internetul.")
+                        }
+                        busy = false
+                    }
+                }
+            }
+        }
+        if (contactsOn || (hasNumber && verified == null)) {
+            Spacer(Modifier.height(10.dp))
+            if (contactsOn) {
+                Text(
+                    buildString {
+                        append(status.ifBlank { "se compară zilnic, cu net" })
+                        if (syncedAt > 0) append(" · ${Fmt.freshness(syncedAt)}")
+                    },
+                    style = BodyTiny.copy(color = TextSecondary)
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (contactsOn) {
+                    MonoButton("Sincronizează acum", color = Accent2, onClick = {
+                        ContactsSync.runNow(context)
+                        toast.show("Compar agenda. Durează sub un minut cu net.")
+                    })
+                    Spacer(Modifier.width(8.dp))
+                }
+                if (hasNumber && verified == null && verificationId == null) {
+                    if (smsBusy) {
+                        CircularProgressIndicator(color = Accent2, modifier = Modifier.size(18.dp))
+                    } else {
+                        MonoButton("Verifică prin SMS", onClick = {
+                            val act = activity() ?: return@MonoButton
+                            smsBusy = true
+                            PhoneVerify.start(act, number) { step ->
+                                when (step) {
+                                    is PhoneVerify.Step.CodeSent -> { smsBusy = false; verificationId = step.verificationId; toast.show("Cod trimis prin SMS.") }
+                                    is PhoneVerify.Step.Completed -> scope.launch { afterLink(PhoneVerify.link(step.credential)) }
+                                    is PhoneVerify.Step.Failed -> { smsBusy = false; toast.show(step.message) }
+                                }
+                            }
+                        })
+                    }
+                }
+            }
+            if (verificationId != null) {
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextField(
+                        value = code,
+                        onValueChange = { code = it.filter { ch -> ch.isDigit() }.take(6) },
+                        singleLine = true,
+                        placeholder = { Text("Codul din SMS", style = BodySmall) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        textStyle = BodyStrong.copy(fontSize = 14.sp),
+                        modifier = Modifier.weight(1f).clip(SecondaryShape).border(1.dp, StrokeCardStrong, SecondaryShape),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Surface2, unfocusedContainerColor = Surface2,
+                            focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                            cursorColor = Accent2,
+                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
+                        )
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    if (smsBusy) {
+                        CircularProgressIndicator(color = Accent2, modifier = Modifier.size(20.dp))
+                    } else {
+                        PrimaryButton("Confirmă", small = true, enabled = code.length >= 4, onClick = {
+                            val id = verificationId ?: return@PrimaryButton
+                            smsBusy = true
+                            scope.launch { afterLink(PhoneVerify.confirm(id, code)) }
+                        })
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Serverul păstrează o amprentă a numărului, nu numărul. Numele din agendă nu pleacă de pe telefon.",
+                style = BodyTiny.copy(color = TextDim)
+            )
+        }
     }
 }
 
