@@ -170,7 +170,13 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(Modifier.height(8.dp))
-            Text("Focus", style = TitleModule, modifier = Modifier.align(Alignment.Start))
+            // Antetul postului: ștampilă, numele filei, ordinul — vocea „armată serioasă”.
+            ModuleHeader(
+                stamp = "POST DE PAZĂ",
+                title = "Focus",
+                order = "Timpul tău, apărat. Paznicul e la post, tu ții frontul.",
+                modifier = Modifier.fillMaxWidth()
+            )
             Spacer(Modifier.height(24.dp))
 
             // Pădurea de azi — copaci care cresc cât te ții de focus, se ofilesc la renunțare
@@ -181,7 +187,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             val activeRule = rules.firstOrNull { it.enabled }
             if (activeRule != null) {
                 Text(
-                    "${activeRule.label} e blocat până la ${"%02d:%02d".format(activeRule.untilHour, activeRule.untilMinute)}.",
+                    "${activeRule.label} e consemnat până la ${"%02d:%02d".format(activeRule.untilHour, activeRule.untilMinute)}.",
                     style = Body.copy(fontSize = 15.sp, color = TextPrimary),
                     textAlign = TextAlign.Center
                 )
@@ -189,11 +195,15 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             }
             Text(
                 if (screenTimeMin >= 0)
-                    "Timp de ecran azi: ${Fmt.durationHm(screenTimeMin)}" +
+                    "Ecran azi · ${Fmt.durationHm(screenTimeMin)}" +
                         (if (opensToday >= 0) " · $opensToday deschideri" else "")
-                else "Timpul de ecran apare după ce dai permisiunea.",
+                else "Timpul de ecran apare după ce dai accesul la utilizare.",
                 style = monoLabel(9, 0.12f).copy(color = Accent2)
             )
+
+            // Un singur citat cald pe ecran — același toată ziua, altul mâine.
+            Spacer(Modifier.height(18.dp))
+            WarmQuote(Tone.ofDay(Tone.focus), Modifier.fillMaxWidth())
 
             Spacer(Modifier.height(20.dp))
 
@@ -206,8 +216,8 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                         Text(
                             if (detoxOn) {
                                 val left = ((detoxUntil - System.currentTimeMillis()) / 60000).toInt() + tick.toInt() * 0
-                                "activ · mai sunt ${Fmt.durationHm(left.coerceAtLeast(1))} · doar telefon, mesaje și FORJA"
-                            } else "blochează tot, în afară de telefon, mesaje și FORJA",
+                                "în post · mai sunt ${Fmt.durationHm(left.coerceAtLeast(1))} · doar telefon, mesaje și FORJA"
+                            } else "un schimb de pază: totul în pauză, în afară de telefon, mesaje și FORJA",
                             style = BodyTiny.copy(color = if (detoxOn) Accent2 else TextSecondary)
                         )
                     }
@@ -218,7 +228,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                         scope.launch {
                             app.prefs.setDetoxUntil(0L)
                             app.prefs.witherFocusTree()
-                            toast.show("Detox oprit. Ai rezistat — contează.")
+                            toast.show("Detox oprit. Cât ai rezistat, contează.")
                         }
                     }, modifier = Modifier.fillMaxWidth())
                 } else {
@@ -231,7 +241,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                                         scope.launch {
                                             app.prefs.setDetoxUntil(System.currentTimeMillis() + min * 60_000L)
                                             FocusMonitorService.start(context)
-                                            toast.show("Detox pornit. Ne vedem peste ${Fmt.durationHm(min)}.")
+                                            toast.show("Detox pornit. Schimbul a început. Ne vedem peste ${Fmt.durationHm(min)}.")
                                         }
                                     }
                                 },
@@ -277,7 +287,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                 Spacer(Modifier.height(20.dp))
                 // Săptămâna ta de ecran
                 if (weekMinutes.size == 7) {
-                    NatureSectionHeader("Săptămâna ta de ecran")
+                    NatureSectionHeader("Raportul săptămânii")
                     Spacer(Modifier.height(8.dp))
                     ForjaCard(Modifier.fillMaxWidth(), fill = FocusCardFill, stroke = FocusCardStroke) {
                         val maxW = (weekMinutes.maxOrNull() ?: 0).coerceAtLeast(60)
@@ -318,9 +328,9 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             Spacer(Modifier.height(4.dp))
 
             if (!hasUsage) {
-                PrimaryButton("Vezi permisiunea", onClick = { permOpen = true }, modifier = Modifier.fillMaxWidth())
+                PrimaryButton("Permite accesul", onClick = { permOpen = true }, modifier = Modifier.fillMaxWidth())
             } else if (!hasOverlay) {
-                PrimaryButton("Permite blocarea (peste alte aplicații)", onClick = { overlayOpen = true }, modifier = Modifier.fillMaxWidth())
+                PrimaryButton("Permite blocarea", onClick = { overlayOpen = true }, modifier = Modifier.fillMaxWidth())
             } else if (!focusActive) {
                 PrimaryButton(
                     "Pornește Focus",
@@ -348,7 +358,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                             app.prefs.setFocusActive(false)
                             app.prefs.witherFocusTree()
                         }
-                        toast.show("Focus oprit. Copacul început s-a ofilit — cronometrul pleacă de la zero.")
+                        toast.show("Focus oprit. Copacul început s-a ofilit. Data viitoare pornești de la zero.")
                     },
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -357,11 +367,11 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             Spacer(Modifier.height(20.dp))
 
             // Lista de aplicații blocate
-            NatureSectionHeader("Aplicații în pauză")
+            NatureSectionHeader("Aplicații consemnate")
             Spacer(Modifier.height(8.dp))
             if (rules.isEmpty()) {
                 Text(
-                    "Încă nimic. Adaugă aplicațiile care îți mănâncă serile.",
+                    "Niciuna încă. Adaugă aplicațiile care îți mănâncă serile.",
                     style = BodySmall.copy(color = TextSecondary),
                     modifier = Modifier.align(Alignment.Start)
                 )
@@ -375,7 +385,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                         Column(Modifier.weight(1f)) {
                             Text(r.label, style = BodyStrong.copy(fontSize = 14.sp))
                             Text(
-                                "blocat până la ${"%02d:%02d".format(r.untilHour, r.untilMinute)}",
+                                "consemnat până la ${"%02d:%02d".format(r.untilHour, r.untilMinute)}",
                                 style = BodyTiny.copy(color = TextSecondary)
                             )
                         }
@@ -421,17 +431,17 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Telefon mai ușor, minte mai limpede",
+                        "Telefon ușor. Minte limpede.",
                         style = BodyStrong.copy(fontSize = 15.sp),
                         modifier = Modifier.weight(1f)
                     )
                     InfoDot(
                         title = "Curățenie de azi",
-                        text = "Treci prin pozele și fișierele adunate — app-ul îți sugerează ce pare gunoi, tu decizi. Nimic nu se șterge singur, nimic nu pleacă de pe telefon."
+                        text = "Treci prin pozele și fișierele adunate. FORJA îți arată ce pare de aruncat, tu decizi. Nimic nu se șterge singur, nimic nu pleacă de pe telefon."
                     )
                 }
                 Spacer(Modifier.height(2.dp))
-                Text("Sugestii pentru azi — tu hotărăști ce pleacă.", style = BodyTiny.copy(color = TextSecondary))
+                Text("Inventarul de azi. Tu hotărăști ce pleacă.", style = BodyTiny.copy(color = TextSecondary))
                 Spacer(Modifier.height(10.dp))
                 Text("Fă curat →", style = BodySmall.copy(color = Accent2))
             }
@@ -453,7 +463,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                 Text("Afișare peste alte aplicații", style = TitleModule.copy(fontSize = 20.sp))
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Ca să apară ecranul de respirație PESTE aplicația blocată (exact ca la Forest), Android cere permisiunea „Afișare peste alte aplicații”.",
+                    "Ca să apară ecranul de blocare peste aplicația consemnată, Android cere permisiunea „Afișare peste alte aplicații”.",
                     style = Body
                 )
                 Spacer(Modifier.height(6.dp))
@@ -498,7 +508,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                 Text("Acces la utilizare", style = TitleModule.copy(fontSize = 20.sp))
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Ca să blocheze aplicațiile alese, FORJA are nevoie de permisiunea „Usage Access” din Android.",
+                    "Ca să oprească aplicațiile consemnate, FORJA are nevoie de permisiunea „Usage Access” din Android.",
                     style = Body
                 )
                 Spacer(Modifier.height(6.dp))
@@ -533,7 +543,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             onPick = { pkg, label, hour ->
                 scope.launch {
                     app.db.focusDao().upsert(FocusRuleEntity(pkg, label, hour, 0, true))
-                    toast.show("$label intră în pauză până la %02d:00.".format(hour))
+                    toast.show("$label e consemnat până la %02d:00.".format(hour))
                 }
                 pickerOpen = false
             }
@@ -561,10 +571,10 @@ private fun DetoxAddictionSection() {
     var mascotLine by remember { mutableStateOf<String?>(null) }
     val guardianLines = listOf(
         "Sunt aici cu tine. Respiră — momentul trece.",
-        "Ți-ai scris de ce vrei asta. Vrei să recitim împreună?",
+        "Ți-ai scris de ce vrei asta. Recitește scrisoarea acum, cu mine.",
         "Ești mai puternic decât impulsul de acum.",
         "Un pas mic acum, mândrie mare mâine.",
-        "Nu ești singur în asta — eu țin de baston, tu ții de tine."
+        "Nu ești singur în asta. Eu stau de pază, tu ții de tine."
     )
     val mascotUrl = remember { com.forja.app.core.media.Media.mediaUrl("paznic.jpg") }
 
@@ -583,7 +593,7 @@ private fun DetoxAddictionSection() {
         NatureSectionHeader("Detox de adicție", trailing = {
             InfoDot(
                 title = "Paznicul tău",
-                text = "Un paznic blând care te ajută să reziști. Totul rămâne pe telefonul tău — nimic, dar absolut nimic, nu pleacă la vreun server. E instrumentul tău, nu al nostru."
+                text = "Un paznic care stă în post pentru tine, nu împotriva ta. Totul rămâne pe telefonul tău — nimic nu pleacă la vreun server. E instrumentul tău, nu al nostru."
             )
         })
         Spacer(Modifier.height(12.dp))
@@ -604,13 +614,13 @@ private fun DetoxAddictionSection() {
                                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize().clip(CircleShape)
                             )
-                        } else Text("👮", fontSize = 30.sp)
+                        } else Text("PAZĂ", style = monoLabel(9, 0.14f).copy(color = Accent2))
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text("Paznicul e cu tine", style = BodyStrong.copy(fontSize = 15.sp))
                         Text(
-                            if (guardOn) "activ — te oprește la tentația aleasă de tine"
+                            if (guardOn) "în post — te oprește la tentația aleasă de tine"
                             else "mai e un pas ca să te poată opri",
                             style = BodyTiny.copy(color = if (guardOn) Positive else Accent2)
                         )
@@ -642,7 +652,7 @@ private fun DetoxAddictionSection() {
                     Text("Mai e un pas", style = BodyStrong.copy(fontSize = 14.sp))
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "Pornește paznicul în 3 pași simpli — te ghidez eu, ecran cu ecran.",
+                        "Paznicul intră în post în 3 pași. Te conduc eu, ecran cu ecran.",
                         style = BodyTiny.copy(color = TextSecondary)
                     )
                     Spacer(Modifier.height(10.dp))
@@ -651,13 +661,13 @@ private fun DetoxAddictionSection() {
             }
 
             SecondaryButton(
-                if (letter.isBlank()) "Scrie-ți scrisoarea (de ce vreau să scap)" else "Scrisoarea mea ✓ · atinge ca s-o schimbi",
+                if (letter.isBlank()) "Scrie scrisoarea" else "Schimbă scrisoarea",
                 onClick = { letterOpen = true },
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
             SecondaryButton(
-                if (words.isBlank()) "Cuvinte de blocat (le alegi tu)" else "Cuvinte de blocat ✓ · atinge ca să le schimbi",
+                if (words.isBlank()) "Alege cuvintele" else "Schimbă cuvintele",
                 onClick = { wordsOpen = true },
                 modifier = Modifier.fillMaxWidth()
             )
@@ -667,7 +677,7 @@ private fun DetoxAddictionSection() {
                 onClick = {
                     scope.launch {
                         app.prefs.setDetoxOn(true)
-                        toast.show("Ești pe drum. Îți scrii scrisoarea și alegi cuvintele mai jos.")
+                        toast.show("Detox pornit. Mai jos: scrie-ți scrisoarea și alege cuvintele.")
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -722,11 +732,11 @@ private fun DetoxAddictionSection() {
     if (letterOpen) {
         DetoxTextSheet(
             title = "Scrisoarea către tine",
-            hint = "De ce vreau să scap. Cui vreau să devin. Ce pierd dacă alunec. Scrie din inimă — o vei citi fix în momentul greu.",
+            hint = "De ce vreau să scap. Cine vreau să devin. Ce pierd dacă alunec. Scrie din inimă — o citești fix în momentul greu.",
             placeholder = "Vreau să scap pentru că…",
             initial = letter,
             singleLine = false,
-            onSave = { scope.launch { app.prefs.setDetoxLetter(it); letterOpen = false; toast.show("Salvat. Cuvintele tale te vor aștepta acolo.") } },
+            onSave = { scope.launch { app.prefs.setDetoxLetter(it); letterOpen = false; toast.show("Salvat. Cuvintele tale te așteaptă acolo.") } },
             onClose = { letterOpen = false }
         )
     }
@@ -974,10 +984,10 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawVine(seed: Int)
 private fun DetoxWordsSheet(initial: String, onSave: (String) -> Unit, onClose: () -> Unit) {
     var text by remember { mutableStateOf(initial) }
     val packs = listOf(
-        Triple("🍸", "Club & băutură", listOf("shots", "hai la shots", "hai să ne îmbătăm", "ies la băut", "beau ceva", "tequila", "vodka", "whisky", "bere", "club", "chef", "mahmureală", "alcool")),
-        Triple("🎰", "Pariuri & jocuri", listOf("pariuri", "betting", "casino", "ruletă", "poker", "superbet", "betano", "unibet", "fortuna", "mostbet", "1xbet", "mize", "cotă", "bilet", "jackpot")),
-        Triple("🔞", "Conținut +18", listOf("porn", "porno", "xxx", "sex", "xvideos", "pornhub", "onlyfans", "nsfw", "hentai")),
-        Triple("🌀", "Anime & manga", listOf("anime", "manga", "crunchyroll", "mangadex", "9anime", "otaku", "webtoon", "naruto", "one piece"))
+        Triple("01", "Club & băutură", listOf("shots", "hai la shots", "hai să ne îmbătăm", "ies la băut", "beau ceva", "tequila", "vodka", "whisky", "bere", "club", "chef", "mahmureală", "alcool")),
+        Triple("02", "Pariuri & jocuri", listOf("pariuri", "betting", "casino", "ruletă", "poker", "superbet", "betano", "unibet", "fortuna", "mostbet", "1xbet", "mize", "cotă", "bilet", "jackpot")),
+        Triple("03", "Conținut +18", listOf("porn", "porno", "xxx", "sex", "xvideos", "pornhub", "onlyfans", "nsfw", "hentai")),
+        Triple("04", "Anime & manga", listOf("anime", "manga", "crunchyroll", "mangadex", "9anime", "otaku", "webtoon", "naruto", "one piece"))
     )
     fun addPack(pack: List<String>) {
         val cur = text.split("\n").map { it.trim() }.filter { it.isNotBlank() }
@@ -995,16 +1005,16 @@ private fun DetoxWordsSheet(initial: String, onSave: (String) -> Unit, onClose: 
             Text("Cuvinte de blocat", style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(6.dp))
             Text(
-                "Alege un pachet gata făcut sau scrie-ți cuvintele tale. Când le tastezi oriunde pe telefon, paznicul te oprește. Rămân DOAR pe telefonul tău.",
+                "Alege un pachet sau scrie-ți cuvintele tale. Când le tastezi oriunde pe telefon, paznicul te oprește. Rămân doar pe telefonul tău.",
                 style = BodySmall.copy(color = TextSecondary)
             )
             Spacer(Modifier.height(14.dp))
             SectionLabel("Pachete după tipul de adicție")
             Spacer(Modifier.height(8.dp))
-            packs.forEach { (emoji, name, pack) ->
+            packs.forEach { (tag, name, pack) ->
                 ForjaCard(Modifier.fillMaxWidth().padding(bottom = 8.dp), fill = Surface2, padding = 12.dp) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(emoji, fontSize = 22.sp)
+                        Text(tag, style = monoLabel(10, 0.14f).copy(color = Accent2))
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(name, style = BodyStrong.copy(fontSize = 14.sp))
@@ -1015,7 +1025,7 @@ private fun DetoxWordsSheet(initial: String, onSave: (String) -> Unit, onClose: 
                 }
             }
             Spacer(Modifier.height(10.dp))
-            SectionLabel("Personalizat — cuvintele tale")
+            SectionLabel("Cuvintele tale")
             Spacer(Modifier.height(8.dp))
             androidx.compose.material3.TextField(
                 value = text,
@@ -1065,7 +1075,7 @@ private fun GuardWizardSheet(
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "E normal — chiar acest blocaj deblochează opțiunea de care avem nevoie la pasul 2.",
+                        "E normal. Chiar acest blocaj deblochează opțiunea de la pasul 2.",
                         style = BodySmall.copy(color = Accent2, lineHeight = 19.sp)
                     )
                     Spacer(Modifier.height(16.dp))
@@ -1093,7 +1103,7 @@ private fun GuardWizardSheet(
                     Text("Pornește paznicul", style = TitleModule.copy(fontSize = 20.sp))
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "Revii în Accesibilitate și pornește „FORJA · Detox de adicție”. Acum comutatorul merge — paznicul e activ și te oprește la tentația aleasă de tine.",
+                        "Revino în Accesibilitate și pornește „FORJA · Detox de adicție”. Acum comutatorul merge. Paznicul intră în post și te oprește la tentația aleasă de tine.",
                         style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
                     )
                     Spacer(Modifier.height(16.dp))
@@ -1177,9 +1187,9 @@ private fun AppPickerSheet(onClose: () -> Unit, onPick: (pkg: String, label: Str
                 .padding(bottom = 28.dp)
                 .fillMaxHeight(0.85f)
         ) {
-            Text("Ce aplicație intră în pauză?", style = TitleModule.copy(fontSize = 20.sp))
+            Text("Ce aplicație oprești?", style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(12.dp))
-            SectionLabel("Blocată până la ora")
+            SectionLabel("Consemnată până la ora")
             Spacer(Modifier.height(8.dp))
             Row {
                 listOf(12, 15, 18, 20, 22).forEach { h ->
