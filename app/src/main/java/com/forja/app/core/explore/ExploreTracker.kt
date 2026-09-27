@@ -226,12 +226,14 @@ class ExploreTracker(private val app: ForjaApp) {
                 lat = c.lat, lng = c.lng,
                 firstAt = c.since, lastAt = atMs,
                 stayMs = c.stayMs, name = "", stars = 0, note = "",
-                cellId = ExploreGrid.cellOf(c.lat, c.lng)
+                cellId = ExploreGrid.cellOf(c.lat, c.lng),
+                updatedAt = atMs
             )
             val id = dao.insertPlace(place)
             val saved = place.copy(id = id)
             mirrorPlace(saved)
             notifyNewPlace(saved)
+            ExploreSync.kick(app)
             return c.copy(placeId = id, syncedMs = c.stayMs, placeSyncAt = atMs)
         }
         if (atMs - c.placeSyncAt < PLACE_SYNC_MS) return c
@@ -252,15 +254,18 @@ class ExploreTracker(private val app: ForjaApp) {
 
     // ── API pentru UI: salvare / ștergere cu oglindă ──
 
-    /** Salvează editările (nume, stele, notă, recomandare) și le oglindește în cont. */
+    /** Salvează editările (nume, stele, notă, recomandare), le oglindește în cont și, dacă e pornit „Și pe site”, le trimite. */
     suspend fun savePlace(p: PlaceEntity) {
-        app.db.exploreDao().updatePlace(p)
-        mirrorPlace(p)
+        val stamped = p.copy(updatedAt = System.currentTimeMillis())
+        app.db.exploreDao().updatePlace(stamped)
+        mirrorPlace(stamped)
+        ExploreSync.kick(app)
     }
 
     /** Șterge locul local, din cont și — dacă era recomandat — din places/. */
     suspend fun deletePlace(p: PlaceEntity) {
         app.db.exploreDao().deletePlace(p.id)
+        ExploreSync.onPlaceDeleted(app, p)
         val uid = app.auth.currentUid ?: return
         try {
             val db = FirebaseFirestore.getInstance()

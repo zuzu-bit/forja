@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
 const site = 'https://forja-insights.forja-22e7ea2d.workers.dev';
-const flags = { journey: 1, map3d: 1, content_ai: 2, sleep_audio: 1, visual_ui: 1, files_sync: 1, cleanup_schedule: 1, background_audio: 1, organizer: 1, organizer_modes: 1, social: 1, partners: 1, contacts: 1, lost_phone: 1 };
+const flags = { journey: 1, explore_sync: 1, map3d: 1, content_ai: 2, sleep_audio: 1, visual_ui: 1, files_sync: 1, cleanup_schedule: 1, background_audio: 1, organizer: 1, organizer_modes: 1, social: 1, partners: 1, contacts: 1, lost_phone: 1 };
 const sha = value => createHash('sha256').update(value).digest('hex');
 async function get(path) {
   return fetch(site + path, { cache: 'no-store', signal: AbortSignal.timeout(20000) });

@@ -25,6 +25,7 @@ function createFixture(now = Date.now()) {
       ], incoming: [],
       groups: [{id: id(5), name: 'O tură prin parc', mode: 'walk', at: now + 7200000, place: 'Fântâna din parc', lat: 44.4127, lon: 26.0966, going: ['demo-owner','demo-ana'], members: ['demo-owner','demo-ana','demo-mihai']}]
     },
+    explore: {owner:'self',grid_m:150,cells:{type:'FeatureCollection',features:[]},places:[],next_cursor:null,updated_at:0},
     journey: {owner:'self',session:null,last_sample_at:null,routes:{type:'FeatureCollection',features:[]},zones:{type:'FeatureCollection',features:[]},visits:[],next_cursor:null,rules:{gap_ms:300000,radius_m:100,accuracy_m:50,grid_m:200,visit_ms:18000000}},
     visibility: {ghost:false,grants:[],updated_at:0,revision:0},
     recovery: [{id: deviceId, name: 'Telefonul meu', enabled: true, seen_at: now, online: true, status: 'ready', command: null, position: null}],
@@ -57,6 +58,8 @@ function installMockFetch(win, fixture) {
     if (route === '/v2/sessions') return response({sessions: fixture.state.sessions});
     if (route === '/v2/social/state') return response(fixture.social);
     if(route==='/v2/social/journey/state')return response(fixture.journey);
+    if(route==='/v2/social/explore/state')return response(fixture.explore);
+    if(route.startsWith('/v2/social/explore/places/')&&method==='PATCH'){const place=fixture.explore.places.find(p=>route.endsWith('/'+encodeURIComponent(p.id)));if(!place)return response({error:'Loc indisponibil.'},404);Object.assign(place,body,{updated_at:Date.now()});return response(place);}
     if(route==='/v2/social/visibility'){if(method==='POST'){if(body.revision!==(fixture.visibility.revision||0))return response({error:'Vizibilitatea s-a schimbat.'},409);fixture.visibility={...body,updated_at:Date.now(),revision:(fixture.visibility.revision||0)+1};}return response(fixture.visibility);}
     if(route==='/v2/social/journey/session'){if(method==='POST')fixture.journey.session={id:body.id,started_at:Date.now()};else fixture.journey.session=null;return response(fixture.journey.session||{ok:true});}
     if (route === '/v2/social/chat') {

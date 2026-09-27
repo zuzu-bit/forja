@@ -1,7 +1,7 @@
 /* v26: private exploration is independent of every social sharing grant. */
-const journeyUI={data:null,owner:null,loading:false,vector:null,vectorReady:false,threeD:false,mapLoading:false,mapGeneration:0,leafLayer:null,watch:null,recording:null,queue:[],sending:false,flush:null,pages:1,visibility:null,selection:null,generation:0};
+const journeyUI={data:null,explore:null,owner:null,loading:false,vector:null,vectorReady:false,threeD:false,mapLoading:false,mapGeneration:0,leafLayer:null,watch:null,recording:null,queue:[],sending:false,flush:null,pages:1,visibility:null,selection:null,generation:0};
 function journeyMerge(old,page){if(!old)return page;const result={...page};for(const key of ['routes','zones'])result[key]={type:'FeatureCollection',features:[...new Map([...(old[key]?.features||[]),...(page[key]?.features||[])].map(f=>[f.properties.id,f])).values()]};result.visits=[...new Map([...(old.visits||[]),...(page.visits||[])].map(v=>[v.id,v])).values()];return result;}
-function clearJourney(){journeyUI.generation++;journeyUI.mapGeneration++;journeyUI.mapLoading=false;if(journeyUI.watch!==null)navigator.geolocation?.clearWatch(journeyUI.watch);journeyUI.watch=null;journeyUI.recording=null;journeyUI.queue=[];journeyUI.sending=false;journeyUI.flush=null;journeyUI.pages=1;journeyUI.data=null;journeyUI.owner=null;journeyUI.loading=false;journeyUI.visibility=null;journeyUI.selection=null;journeyUI.vector?.destroy();journeyUI.vector=null;journeyUI.vectorReady=false;journeyUI.threeD=false;journeyUI.leafLayer?.clearLayers();journeyUI.leafLayer=null;$('social-vector')?.replaceChildren();if($('social-vector'))$('social-vector').hidden=true;for(const id of ['journey-visits','journey-selection','social-visibility-form'])$(id)?.replaceChildren();}
+function clearJourney(){journeyUI.generation++;journeyUI.mapGeneration++;journeyUI.mapLoading=false;if(journeyUI.watch!==null)navigator.geolocation?.clearWatch(journeyUI.watch);journeyUI.watch=null;journeyUI.recording=null;journeyUI.queue=[];journeyUI.sending=false;journeyUI.flush=null;journeyUI.pages=1;journeyUI.data=null;journeyUI.explore=null;journeyUI.owner=null;journeyUI.loading=false;journeyUI.visibility=null;journeyUI.selection=null;journeyUI.vector?.destroy();journeyUI.vector=null;journeyUI.vectorReady=false;journeyUI.threeD=false;journeyUI.leafLayer?.clearLayers();journeyUI.leafLayer=null;$('social-vector')?.replaceChildren();if($('social-vector'))$('social-vector').hidden=true;for(const id of ['journey-visits','journey-places','journey-selection','social-visibility-form'])$(id)?.replaceChildren();}
 function journeyModeButton(){const button=$('map-dimension');if(!button)return;button.disabled=journeyUI.mapLoading;button.textContent=journeyUI.mapLoading?'…':journeyUI.threeD?'2D':'3D';button.setAttribute('aria-pressed',String(journeyUI.threeD));}
 function journeyLeave3D(error){
  journeyUI.mapGeneration++;journeyUI.mapLoading=false;
@@ -22,6 +22,14 @@ function journeyEnter3D(){
 }
 function openJourney(){journeyModeButton();journeyUI.vector?.resize();refreshJourney();}
 
+/* v4.0: the phone mirrors its 150 m cells and places (stars, notes) through explore/sync; the site reads them here. */
+function exploreMerge(old,page){if(!old)return page;return {...page,cells:{type:'FeatureCollection',features:[...(old.cells?.features||[]),...(page.cells?.features||[])]},places:page.places?.length?page.places:old.places||[]};}
+async function refreshExplore(current,target,generation){
+ let result=null,cursor=null;
+ for(let n=0;n<25;n++){const query=new URLSearchParams();if(target)query.set('owner',target);if(cursor)query.set('cursor',cursor);const qs=query.toString(),page=await socialCall('explore/state'+(qs?'?'+qs:''));if(auth!==current||target!==journeyUI.owner||generation!==journeyUI.generation)return null;result=exploreMerge(result,page);cursor=page.next_cursor;if(!cursor)break;}
+ return result;
+}
+function exploreMeta(v){return ('★'.repeat(v.stars||0)||'fără stele')+(v.stay_ms?' · '+(v.stay_ms/3600000).toFixed(1)+' h stat':'')+(v.recommended?' · recomandat prietenilor':'');}
 function journeyInvalidate(){journeyUI.generation++;journeyUI.loading=false;}
 function journeyCenter(){return journeyUI.vectorReady?journeyUI.vector.getCenter():socialUI.map.getCenter();}
 function journeyFocus(p,zoom){journeyUI.vector?.focus(p,zoom);}
@@ -37,9 +45,10 @@ async function refreshJourney(more=false){
    result=journeyMerge(result,page);cursor=page.next_cursor;if(!cursor)break;
   }
   journeyUI.data=result;if(more)journeyUI.pages++;
+  if(!more){try{const explore=await refreshExplore(current,target,generation);if(auth!==current||target!==journeyUI.owner||generation!==journeyUI.generation)return;journeyUI.explore=explore;}catch(e){if(e.name==='AbortError')throw e;journeyUI.explore=null;}}
   if(!target&&journeyUI.recording&&result.session?.id!==journeyUI.recording){navigator.geolocation?.clearWatch(journeyUI.watch);journeyUI.watch=null;journeyUI.recording=null;journeyUI.queue=[];journeyUI.flush=null;journeyUI.sending=false;notice('Explorarea a fost oprită din cont.');}
   renderJourney();
- }catch(e){if(auth===current&&generation===journeyUI.generation&&e.name!=='AbortError'){if(target){journeyUI.data=null;journeyUI.selection=null;$('journey-selection').replaceChildren();$('journey-visits').replaceChildren();$('journey-status').textContent=e.message;$('journey-more').hidden=true;renderJourneyMap();}notice(e.message);}}
+ }catch(e){if(auth===current&&generation===journeyUI.generation&&e.name!=='AbortError'){if(target){journeyUI.data=null;journeyUI.selection=null;$('journey-selection').replaceChildren();$('journey-visits').replaceChildren();$('journey-places')?.replaceChildren();journeyUI.explore=null;$('journey-status').textContent=e.message;$('journey-more').hidden=true;renderJourneyMap();}notice(e.message);}}
  finally{if(generation===journeyUI.generation)journeyUI.loading=false;}
 }
 function renderJourney(){
@@ -50,20 +59,32 @@ function renderJourney(){
  $('journey-more').hidden=!d.next_cursor;
  const list=$('journey-visits');list.replaceChildren();if(!d.visits.length)socialEmpty(list,'⌖','Locurile apar după o vizită de peste 5 ore confirmate.');
  for(const v of d.visits){const row=el('article',undefined,'social-card');row.append(el('strong',v.name||'Loc vizitat'),el('p',(v.observed_ms/3600000).toFixed(1)+' h confirmate'+(v.rating?' · '+v.rating+'/5 ★':''),'social-meta'),button('Vezi locul',()=>{socialShowMap(v);journeyVisit(v);},'social-primary'));list.append(row);}
+ const mine=$('journey-places');
+ if(mine){mine.replaceChildren();const explore=journeyUI.explore,rows=explore?.places||[];mine.append(el('h3',owned?'Locurile mele':'Locuri din aplicație'));
+  const never=!explore||(owned&&!explore.updated_at&&!explore.cells.features.length&&!rows.length);
+  if(never)mine.append(el('p',owned?'Pornește „Și pe site” din harta aplicației FORJA: zonele și locurile tale apar aici, cu același cont.':'Nimic trimis din aplicație.','social-meta'));
+  else mine.append(el('p',`${explore.cells.features.length} zone de ${explore.grid_m} m din aplicație · ${rows.length} locuri`,'social-meta'));
+  if(!never&&!rows.length)mine.append(el('p',owned?'Locurile apar după ce stai undeva destul. Dă-le nume și stele din telefon sau de aici.':'Nu ți-a recomandat încă un loc.','social-meta'));
+  for(const v of rows){const row=el('article',undefined,'social-card');row.append(el('strong',v.name||'Loc fără nume'),el('p',exploreMeta(v),'social-meta'));if(v.note)row.append(el('p',v.note,'social-status'));row.append(button(owned?'Vezi și editează':'Vezi locul',()=>{socialShowMap(v);explorePlace(v);},'social-primary'));mine.append(row);}
+ }
  renderJourneyMap();
 }
 function journeyPayload(){
  const make=window.ForjaMapRenderer?.feature||((kind,id,p,name)=>({type:'Feature',geometry:{type:'Point',coordinates:[p.lon,p.lat]},properties:{id,kind,name}})),fc=features=>({type:'FeatureCollection',features}),d=socialUI.data;
- return {routes:journeyUI.data?.routes||fc([]),zones:journeyUI.data?.zones||fc([]),visits:fc((journeyUI.data?.visits||[]).map(v=>make('visit',v.id,v,v.name))),people:fc(d?[{...d.me,name:'Tu'},...d.friends].filter(f=>socialFresh(f.location)).map(f=>make('person',f.id,f.location,f.name)):[]),places:fc((d?.me.places||[]).map(p=>make('place',p.id,p,p.name))),devices:fc((recoveryUI.data||[]).filter(d=>d.position?.at>Date.now()-86400000).map(d=>make('device',d.id,d.position,d.name)))};
+ const explore=journeyUI.explore,zones=[...(journeyUI.data?.zones?.features||[]),...(explore?.cells?.features||[]).map(f=>({...f,properties:{...f.properties,explore:true}}))];
+ const places=[...(d?.me.places||[]).map(p=>make('place',p.id,p,p.name)),...(explore?.places||[]).map(p=>{const f=make('place',p.id,p,p.name||'Loc fără nume');f.properties={...f.properties,stars:p.stars||0,note:p.note||'',explore:true};return f;})];
+ return {routes:journeyUI.data?.routes||fc([]),zones:fc(zones),visits:fc((journeyUI.data?.visits||[]).map(v=>make('visit',v.id,v,v.name))),people:fc(d?[{...d.me,name:'Tu'},...d.friends].filter(f=>socialFresh(f.location)).map(f=>make('person',f.id,f.location,f.name)):[]),places:fc(places),devices:fc((recoveryUI.data||[]).filter(d=>d.position?.at>Date.now()-86400000).map(d=>make('device',d.id,d.position,d.name)))};
 }
 function renderJourneyMap(){
  if(!socialUI.map)return;const data=journeyPayload();journeyUI.vector?.setData(data);
  if(!journeyUI.leafLayer)journeyUI.leafLayer=L.layerGroup().addTo(socialUI.map);journeyUI.leafLayer.clearLayers();
- if(L.geoJSON){L.geoJSON(data.zones,{style:{color:'#37875d',weight:1,fillColor:'#71C99B',fillOpacity:.26}}).addTo(journeyUI.leafLayer);L.geoJSON(data.routes,{style:{color:'#4F92FF',weight:4}}).addTo(journeyUI.leafLayer);for(const v of journeyUI.data?.visits||[]){const icon=el('span','★','journey-visit-pin');L.marker([v.lat,v.lon],{title:v.name,icon:L.divIcon({html:icon,className:'journey-visit-marker',iconSize:[32,32]})}).addTo(journeyUI.leafLayer).on('click',()=>journeyVisit(v));}}
+ if(L.geoJSON){L.geoJSON(data.zones,{style:f=>f?.properties?.explore?{color:'#4A5D3A',weight:1,fillColor:'#6F855A',fillOpacity:.35}:{color:'#37875d',weight:1,fillColor:'#71C99B',fillOpacity:.26}}).addTo(journeyUI.leafLayer);L.geoJSON(data.routes,{style:{color:'#4F92FF',weight:4}}).addTo(journeyUI.leafLayer);for(const v of journeyUI.data?.visits||[]){const icon=el('span','★','journey-visit-pin');L.marker([v.lat,v.lon],{title:v.name,icon:L.divIcon({html:icon,className:'journey-visit-marker',iconSize:[32,32]})}).addTo(journeyUI.leafLayer).on('click',()=>journeyVisit(v));}
+  for(const v of journeyUI.explore?.places||[]){const icon=el('span',v.stars?'★ '+v.stars:'●','journey-place-pin');L.marker([v.lat,v.lon],{title:v.name||'Loc din aplicație',icon:L.divIcon({html:icon,className:'journey-visit-marker',iconSize:[40,24]})}).addTo(journeyUI.leafLayer).on('click',()=>explorePlace(v));}}
 }
 function journeyPick(p){
  const box=$('journey-selection');box.replaceChildren();
  if(p.kind==='visit'){const v=journeyUI.data?.visits.find(v=>v.id===p.id);if(v)journeyVisit(v);return;}
+ if(p.kind==='place'&&journeyUI.explore){const v=journeyUI.explore.places.find(v=>String(v.id)===String(p.id));if(v){explorePlace(v);return;}}
  const person=socialUI.data?.friends.find(f=>f.id===p.id);box.append(el('h3',p.name||'Loc selectat'),socialNav(p));const device=p.kind==='device'?(recoveryUI.data||[]).find(d=>d.id===p.id):null;if(device?.position)box.append(el('p',(socialFresh(device.position)?'Poziție recentă':'Ultima poziție cunoscută')+' · '+socialAge(device.position.at)+' · ±'+Math.round(device.position.accuracy)+' m','social-meta'));if(person?.location)box.append(el('p',socialAge(person.location.at)+' · ±'+Math.round(person.location.accuracy)+' m','social-meta'));if(person)box.append(button('Mesaj',()=>socialChat(person)),button('Istoric partajat',()=>journeyShared(person.id)));box.append(button('Închide',()=>box.replaceChildren()));
 }
 function journeyVisit(v){
@@ -74,7 +95,18 @@ function journeyVisit(v){
  }
  box.append(button('Închide',()=>box.replaceChildren()));box.scrollIntoView({behavior:socialMotion()?'smooth':'instant',block:'nearest'});
 }
-async function journeyShared(id){journeyUI.generation++;journeyUI.loading=false;journeyUI.pages=1;journeyUI.owner=id;journeyUI.data=null;journeyUI.selection=null;$('journey-selection').replaceChildren();$('journey-visits').replaceChildren();$('journey-title').textContent=id?'Istoric partajat':'Harta mea';$('journey-own').hidden=!id;renderJourneyMap();await refreshJourney();$('journey-panel').open=true;}
+function explorePlace(v){
+ journeyUI.selection='explore:'+v.id;const box=$('journey-selection');box.replaceChildren();box.append(el('h3',v.name||'Loc fără nume'),el('p',exploreMeta(v),'social-meta'));if(v.note)box.append(el('p',v.note,'social-status'));box.append(socialNav(v));
+ if(!journeyUI.owner){
+  const name=el('input');name.value=v.name||'';name.maxLength=80;name.placeholder='Numele locului';name.setAttribute('aria-label','Numele locului');
+  const stars=el('select');stars.setAttribute('aria-label','Stelele locului');const blank=el('option','Alege stelele');blank.value='';stars.append(blank);for(let n=1;n<=5;n++){const option=el('option','★'.repeat(n));option.value=String(n);option.selected=n===v.stars;stars.append(option);}
+  const note=el('textarea');note.value=v.note||'';note.maxLength=300;note.rows=2;note.placeholder='Ce e bun aici, cu cine ai fost…';note.setAttribute('aria-label','Nota locului');
+  box.append(name,stars,note,button('Salvează',async()=>{const payload={name:name.value.trim(),note:note.value.trim()};if(stars.value)payload.stars=Number(stars.value);if(await socialAction('explore/places/'+encodeURIComponent(v.id),payload,'PATCH','Loc salvat. Telefonul îl preia când deschizi harta.')){journeyInvalidate();await refreshJourney();}}));
+  box.append(el('p','Editările de aici ajung în telefon; cea mai nouă modificare câștigă.','social-meta'));
+ }
+ box.append(button('Închide',()=>box.replaceChildren()));box.scrollIntoView({behavior:socialMotion()?'smooth':'instant',block:'nearest'});
+}
+async function journeyShared(id){journeyUI.generation++;journeyUI.loading=false;journeyUI.pages=1;journeyUI.owner=id;journeyUI.data=null;journeyUI.explore=null;journeyUI.selection=null;$('journey-selection').replaceChildren();$('journey-visits').replaceChildren();$('journey-places')?.replaceChildren();$('journey-title').textContent=id?'Istoric partajat':'Harta mea';$('journey-own').hidden=!id;renderJourneyMap();await refreshJourney();$('journey-panel').open=true;}
 async function startJourney(){
  if(!navigator.geolocation){notice('Browserul nu oferă acces la locație. Folosește aplicația.');return;}
  const current=auth,id=crypto.randomUUID();try{const session=await socialCall('journey/session',{id,consent:true});if(auth!==current)return;journeyInvalidate();journeyUI.recording=id;let lastAt=0;
@@ -105,4 +137,5 @@ $('map-dimension')?.addEventListener('click',()=>journeyUI.threeD?journeyLeave3D
 $('journey-start')?.addEventListener('click',()=>$('journey-consent-dialog').showModal());$('journey-consent')?.addEventListener('change',()=>$('journey-confirm').disabled=!$('journey-consent').checked);$('journey-confirm')?.addEventListener('click',async()=>{const b=$('journey-confirm');b.disabled=true;try{await startJourney();}finally{b.disabled=!$('journey-consent').checked;}});
 $('journey-stop')?.addEventListener('click',stopJourney);$('journey-more')?.addEventListener('click',()=>refreshJourney(true));$('journey-own')?.addEventListener('click',()=>journeyShared(null));$('social-visibility')?.addEventListener('click',openVisibility);
 $('journey-erase')?.addEventListener('click',async()=>{if(!confirm('Ștergi toate traseele, zonele și vizitele? Explorarea se oprește.'))return;if(journeyUI.watch!==null)navigator.geolocation.clearWatch(journeyUI.watch);journeyUI.watch=null;journeyUI.recording=null;journeyUI.queue=[];journeyUI.flush=null;journeyUI.sending=false;await socialAction('journey/history',null,'DELETE','Istoric șters.');$('journey-selection').replaceChildren();journeyInvalidate();refreshJourney();});
+$('journey-erase-explore')?.addEventListener('click',async()=>{if(!confirm('Ștergi de pe site zonele și locurile trimise din aplicație? Telefonul le păstrează și le poate retrimite.'))return;await socialAction('explore/history',null,'DELETE','Zonele din aplicație au fost șterse de pe site.');$('journey-selection').replaceChildren();journeyInvalidate();refreshJourney();});
 for(const id of ['visibility-dialog','journey-consent-dialog'])$(id)?.querySelector('[data-close]')?.addEventListener('click',()=>$(id).close());
