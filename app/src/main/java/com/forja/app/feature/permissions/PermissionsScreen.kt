@@ -1,18 +1,20 @@
 package com.forja.app.feature.permissions
 
 import android.Manifest
+import android.app.Activity
+import android.app.NotificationManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -20,6 +22,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.BatteryChargingFull
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.MyLocation
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -28,23 +35,41 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
+import com.forja.app.core.media.Media
 
-/** „Pornire FORJA" — cald, cu ghid, un singur buton pentru esențial + panou cu bifare. */
+/** Cele cinci piese de echipament — o bifă fiecare. */
+private enum class Gear(val title: String, val sub: String, val icon: ImageVector) {
+    Notifications("Notificări", "raportul de dimineață, alarma, prietenii", Icons.Outlined.Notifications),
+    Location("Locație (precisă + în fundal)", "harta, alergarea, prietenii te văd", Icons.Outlined.MyLocation),
+    Microphone("Microfon", "somnul măsurat local — sforăit, vorbit", Icons.Outlined.Mic),
+    Photos("Poze & galerie", "curățenia galeriei, analiza meselor", Icons.Outlined.PhotoLibrary),
+    Battery("Baterie & alarmă pe ecran", "FORJA rămâne trează noaptea și te trezește", Icons.Outlined.BatteryChargingFull)
+}
+
+// Videoul ghidului (încărcat manual în R2); când nu există server, trezirea de dimineață.
+private const val FALLBACK_VIDEO = "https://v.ftcdn.net/05/12/88/79/700_F_512887976_190EN7woFkvAws5F4qzRxGMIOuIjvyPY_ST.mp4"
+private const val FALLBACK_POSTER = "https://t3.ftcdn.net/jpg/04/70/98/78/500_F_470987805_jsREzUZZZNUDZ56fG4J9Cpz4UquN6zJg.jpg"
+
+/** „Echipare” — cinci bife, o singură dată; apoi FORJA nu te mai întrerupe. */
 @Composable
 fun PermissionsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val toast = LocalToast.current
+    val activity = remember(context) { context.findActivity() }
 
-    var refresh by remember { mutableStateOf(0) }
+    var refresh by remember { mutableIntStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) refresh++ }
@@ -53,42 +78,148 @@ fun PermissionsScreen(onBack: () -> Unit) {
     }
 
     fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
-    fun essentials(): Array<String> {
-        val l = mutableListOf(
-            Manifest.permission.CAMERA,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.RECORD_AUDIO
-        )
-        if (Build.VERSION.SDK_INT >= 33) {
-            l.add(Manifest.permission.POST_NOTIFICATIONS)
-            l.add(Manifest.permission.READ_MEDIA_IMAGES)
-        } else l.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-        return l.toTypedArray()
-    }
+    fun rationale(p: String) = activity != null && ActivityCompat.shouldShowRequestPermissionRationale(activity, p)
 
-    val bgLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
-    val batchLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+    // ── Starea fiecărei bife (recalculată la ON_RESUME și după fiecare răspuns) ──
+    val notifPermOn = remember(refresh) { Build.VERSION.SDK_INT < 33 || granted(Manifest.permission.POST_NOTIFICATIONS) }
+    val notifEnabled = remember(refresh) { NotificationManagerCompat.from(context).areNotificationsEnabled() }
+    val notifOn = notifPermOn && notifEnabled
+    val fineOn = remember(refresh) { granted(Manifest.permission.ACCESS_FINE_LOCATION) }
+    val bgOn = remember(refresh) { Build.VERSION.SDK_INT < 29 || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION) }
+    val locationOn = fineOn && bgOn
+    val micOn = remember(refresh) { granted(Manifest.permission.RECORD_AUDIO) }
+    val photosFull = remember(refresh) {
+        when {
+            Build.VERSION.SDK_INT >= 33 -> granted(Manifest.permission.READ_MEDIA_IMAGES)
+            else -> granted(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+    val photosPartial = remember(refresh) {
+        Build.VERSION.SDK_INT >= 34 && !photosFull && granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+    }
+    val photosOn = photosFull || photosPartial
+    val batteryOn = remember(refresh) {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        pm.isIgnoringBatteryOptimizations(context.packageName)
+    }
+    val fsiOn = remember(refresh) {
+        if (Build.VERSION.SDK_INT >= 34) {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.canUseFullScreenIntent()
+        } else true
+    }
+    val powerOn = batteryOn && fsiOn
+    val done = listOf(notifOn, locationOn, micOn, photosOn, powerOn).count { it }
+
+    var deniedForever by remember { mutableStateOf(false) }
+    var pendingSingle by remember { mutableStateOf<String?>(null) }
+
+    // ── Lansatoare (unul pentru fiecare fel de cerere) ──
+    val single = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         refresh++
-        // După esențial, cerem și locația în fundal (Android o cere separat).
-        if (Build.VERSION.SDK_INT >= 29 &&
-            granted(Manifest.permission.ACCESS_FINE_LOCATION) &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED
+        val p = pendingSingle
+        pendingSingle = null
+        if (!ok && p != null && !rationale(p)) deniedForever = true
+    }
+    fun askSingle(p: String) {
+        pendingSingle = p
+        single.launch(p)
+    }
+    val multi = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        refresh++
+        // Locația: după „precisă”, Android cere „în fundal” separat (pe 11+ deschide pagina de setări).
+        if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true &&
+            Build.VERSION.SDK_INT >= 29 &&
+            !granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         ) {
-            bgLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            askSingle(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+        // Pozele pe 14+: accesul parțial e un răspuns bun, nu un refuz.
+        val partialOk = Build.VERSION.SDK_INT >= 34 && grants[Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED] == true
+        if (!partialOk && grants.any { (p, ok) -> !ok && !rationale(p) }) deniedForever = true
+    }
+    val settings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { refresh++ }
+
+    fun openSafe(intent: Intent, fallback: Intent? = null) {
+        try {
+            settings.launch(intent)
+        } catch (_: Exception) {
+            if (fallback != null) {
+                try { settings.launch(fallback); return } catch (_: Exception) { }
+            }
+            toast.show("Deschide manual din Setări → Aplicații → FORJA.")
         }
     }
 
-    val essentialsOn = remember(refresh) { essentials().all { granted(it) } }
-    val bgOn = remember(refresh) {
-        Build.VERSION.SDK_INT < 29 || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+    fun request(g: Gear) {
+        when (g) {
+            Gear.Notifications -> {
+                if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) {
+                    askSingle(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    openSafe(
+                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+                        fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+                    )
+                }
+            }
+            Gear.Location -> {
+                if (!fineOn) {
+                    multi.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                } else if (!bgOn && Build.VERSION.SDK_INT >= 29) {
+                    // Android 11+: sistemul deschide pagina „Se permite tot timpul”.
+                    askSingle(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                }
+            }
+            Gear.Microphone -> askSingle(Manifest.permission.RECORD_AUDIO)
+            Gear.Photos -> when {
+                Build.VERSION.SDK_INT >= 34 -> multi.launch(
+                    arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+                )
+                Build.VERSION.SDK_INT >= 33 -> askSingle(Manifest.permission.READ_MEDIA_IMAGES)
+                else -> askSingle(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            Gear.Battery -> {
+                val pkg = Uri.parse("package:${context.packageName}")
+                if (!batteryOn) {
+                    // Necesită REQUEST_IGNORE_BATTERY_OPTIMIZATIONS în manifest; arată un dialog de sistem.
+                    openSafe(
+                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg),
+                        fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    )
+                } else if (!fsiOn && Build.VERSION.SDK_INT >= 34) {
+                    openSafe(
+                        Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg),
+                        fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)
+                    )
+                }
+            }
+        }
     }
-    val usageOn = remember(refresh) { com.forja.app.core.focus.FocusMonitorService.hasUsageAccess(context) }
-    val overlayOn = remember(refresh) { Settings.canDrawOverlays(context) }
-    val doneCount = listOf(essentialsOn && bgOn, usageOn, overlayOn).count { it }
 
-    val guideVideo = remember { com.forja.app.core.media.Media.mediaUrl("guide.mp4") ?: "" }
-    val guidePoster = remember { com.forja.app.core.media.Media.mediaUrl("guide.jpg") }
+    fun stateOf(g: Gear): Boolean = when (g) {
+        Gear.Notifications -> notifOn
+        Gear.Location -> locationOn
+        Gear.Microphone -> micOn
+        Gear.Photos -> photosOn
+        Gear.Battery -> powerOn
+    }
+
+    fun detailOf(g: Gear): String? = when (g) {
+        Gear.Notifications -> if (notifPermOn && !notifEnabled) "Sunt oprite din setările Android — pornește-le de acolo." else null
+        Gear.Location -> if (fineOn && !bgOn) "Mai lipsește „Tot timpul” — apasă din nou și alege-l." else null
+        Gear.Microphone -> null
+        Gear.Photos -> if (photosPartial) "Acces parțial — e suficient. Poți alege mai multe oricând." else null
+        Gear.Battery -> when {
+            !batteryOn -> null
+            !fsiOn -> "Bateria e gata. Mai lipsește alarma pe tot ecranul."
+            else -> null
+        }
+    }
+
+    val guideVideo = remember { Media.mediaUrl("guide.mp4") ?: FALLBACK_VIDEO }
+    val guidePoster = remember { Media.mediaUrl("guide.jpg") ?: FALLBACK_POSTER }
 
     Box(Modifier.fillMaxSize().topoBackground(decor = false)) {
         Column(
@@ -98,7 +229,7 @@ fun PermissionsScreen(onBack: () -> Unit) {
                 .padding(bottom = 30.dp)
         ) {
             // Ghidul — te întâmpină
-            Box(Modifier.fillMaxWidth().height(360.dp)) {
+            Box(Modifier.fillMaxWidth().height(300.dp)) {
                 VideoSurface(url = guideVideo, posterUrl = guidePoster, modifier = Modifier.fillMaxSize())
                 Box(
                     Modifier.fillMaxSize().background(
@@ -112,50 +243,66 @@ fun PermissionsScreen(onBack: () -> Unit) {
                     modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(16.dp)
                 )
                 Column(Modifier.align(Alignment.BottomStart).padding(20.dp)) {
-                    Text("BINE AI VENIT LA FORJA", style = monoLabel(10, 0.16f).copy(color = Accent2))
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Obosit să juggling 5 aplicații ca să-ți ții viața la un loc?",
-                        style = TitleModule.copy(fontSize = 24.sp, lineHeight = 28.sp)
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Antrenament, alergare, mese mai bune, somn mai bun — și motivația ta și-a prietenilor. FORJA le are pe toate. Hai să le pornim, o dată, aici.",
-                        style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp)
-                    )
+                    Reveal(index = 0) { StampLabel("ECHIPARE") }
+                    Spacer(Modifier.height(12.dp))
+                    Reveal(index = 1) {
+                        Text("Echipare completă.", style = TitleModule.copy(fontSize = 26.sp, lineHeight = 29.sp))
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Reveal(index = 2) {
+                        Text(
+                            "Cinci bife. O singură dată. Apoi FORJA nu te mai întrerupe.",
+                            style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp)
+                        )
+                    }
                 }
             }
 
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(14.dp))
 
-            // Un singur panou, cu totul
             Column(Modifier.padding(horizontal = 20.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    SectionLabel("Pornește FORJA")
-                    Text("$doneCount din 3 gata", style = monoLabel(9, 0.12f).copy(color = if (doneCount == 3) Positive else Accent2))
-                }
-                Spacer(Modifier.height(10.dp))
-
-                Column(
-                    Modifier.fillMaxWidth().clip(CardShape).background(Surface1).border(1.dp, StrokeCard, CardShape).padding(6.dp)
+                // Progresul echipării
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Butonul mare: tot esențialul dintr-o apăsare
-                    PermRow(
-                        icon = "✨", title = "Tot esențialul",
-                        sub = "scanezi mâncarea, prinzi sforăitul, cureți galeria, alergi pe hartă",
-                        on = essentialsOn && bgOn,
-                        helpTitle = "Pornește FORJA",
-                        helpText = "Ca să devină verde, apasă „Permite” și acceptă tot ce cere Android. Așa deblochezi în aplicație Detoxul și scannerul de mâncare.",
-                        onActivate = { batchLauncher.launch(essentials()) }
+                    SectionLabel("Echipare")
+                    Text(
+                        "$done din 5",
+                        style = monoLabel(9, 0.12f).copy(color = if (done == 5) Positive else Accent2)
                     )
-                    Divider()
-                    PermRow("👁", "Acces la utilizare", "pentru rapoartele de folosire a ecranului", usageOn) {
-                        openSafe(context, Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS), toast)
+                }
+                Spacer(Modifier.height(8.dp))
+                ProgressBar(progress = done / 5f)
+                Spacer(Modifier.height(12.dp))
+
+                ForjaCard(Modifier.fillMaxWidth(), stroke = StrokeCard, padding = 6.dp) {
+                    Gear.entries.forEachIndexed { i, g ->
+                        if (i > 0) Divider()
+                        GearRow(
+                            g = g,
+                            on = stateOf(g),
+                            detail = detailOf(g),
+                            onActivate = { request(g) }
+                        )
                     }
-                    Divider()
-                    PermRow("🪟", "Afișare peste aplicații", "pentru Focus și ecranul de Detox", overlayOn) {
-                        openSafe(context, Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")), toast)
-                    }
+                }
+
+                if (deniedForever) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Android a închis dialogul pentru una dintre bife. O poți porni doar din setările aplicației.",
+                        style = BodyTiny.copy(color = TextSecondary)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    SecondaryButton(
+                        "Deschide setările Android",
+                        onClick = {
+                            openSafe(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -166,23 +313,22 @@ fun PermissionsScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Ultimele două se deschid în setările Android — nicio aplicație nu le poate porni singură.",
+                        "Bateria și alarma pe ecran se deschid în setările Android — nicio aplicație nu le poate porni singură. Focusul își cere accesul special direct din modulul lui.",
                         style = BodyTiny.copy(color = TextDim), modifier = Modifier.weight(1f)
                     )
                     Spacer(Modifier.width(8.dp))
                     InfoDot(
                         title = "De ce se deschid Setările?",
-                        text = "Acces la utilizare și Afișare peste aplicații sunt permisiuni speciale Android. Din motive de siguranță, doar tu le poți porni din Setări — nicio aplicație nu le poate activa singură. Le poți lăsa și pe mai târziu."
+                        text = "Scoaterea de la optimizarea bateriei și alarma pe tot ecranul sunt permisiuni speciale Android. Din motive de siguranță, doar tu le poți porni din Setări — nicio aplicație nu le poate activa singură. Fără ele, alarma de dimineață poate rămâne mută. Le poți lăsa și pe mai târziu."
                     )
                 }
                 Spacer(Modifier.height(20.dp))
                 PrimaryButton(
-                    if (doneCount == 3) "Gata — hai în FORJA" else "Continuă în FORJA",
+                    if (done == 5) "Gata — la datorie" else "Continuă în FORJA",
                     onClick = onBack, modifier = Modifier.fillMaxWidth()
                 )
             }
         }
-
     }
 }
 
@@ -191,58 +337,67 @@ private fun Divider() {
     Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x0DFFFFFF)))
 }
 
+/** Un rând de echipament: icon, titlu/subtitlu, „Bifează” și căsuța pătrată de bifat. */
 @Composable
-private fun PermRow(
-    icon: String,
-    title: String,
-    sub: String,
-    on: Boolean,
-    helpTitle: String? = null,
-    helpText: String? = null,
-    onHelp: (() -> Unit)? = null,
-    onActivate: () -> Unit
-) {
+private fun GearRow(g: Gear, on: Boolean, detail: String?, onActivate: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(12.dp),
+        Modifier
+            .fillMaxWidth()
+            .then(if (on) Modifier else Modifier.pressable(onActivate, scaleDown = 0.99f, haptic = false))
+            .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             Modifier.size(40.dp).clip(CircleShape).background(if (on) Color(0x1F2FBE71) else Surface2),
             contentAlignment = Alignment.Center
-        ) { Text(icon, fontSize = 18.sp) }
+        ) {
+            Icon(g.icon, contentDescription = null, tint = if (on) Positive else Accent2, modifier = Modifier.size(20.dp))
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = BodyStrong.copy(fontSize = 14.sp))
-            Text(sub, style = BodyTiny.copy(color = TextSecondary))
+            Text(g.title, style = BodyStrong.copy(fontSize = 14.sp))
+            Text(g.sub, style = BodyTiny.copy(color = TextSecondary))
+            if (detail != null) {
+                Spacer(Modifier.height(3.dp))
+                Text(detail, style = BodyTiny.copy(color = if (on) Positive else EmberHot))
+            }
         }
         Spacer(Modifier.width(10.dp))
-        // Ajutor: „!" discret (InfoDot) sau butonul special (onHelp) — doar cât permisiunea nu e pornită
-        if (!on && helpText != null) {
-            InfoDot(title = helpTitle, text = helpText, size = 26)
-            Spacer(Modifier.width(8.dp))
-        } else if (!on && onHelp != null) {
-            Box(
-                Modifier.size(26.dp).clip(CircleShape)
-                    .background(Color(0x1F6F855A)).border(1.dp, Color(0x4D6F855A), CircleShape)
-                    .pressable(onHelp),
-                contentAlignment = Alignment.Center
-            ) { Text("!", style = BodyStrong.copy(color = Accent2, fontSize = 15.sp)) }
-            Spacer(Modifier.width(8.dp))
-        }
-        if (on) {
-            Box(
-                Modifier.size(28.dp).clip(CircleShape).background(Positive),
-                contentAlignment = Alignment.Center
-            ) { Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
-        } else {
+        if (!on) {
             Box(
                 Modifier.clip(RoundedCornerShape(10.dp)).background(AccentGradient).pressable(onActivate)
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
-            ) { Text("Permite", style = ButtonTextSmall) }
+                    .padding(horizontal = 12.dp, vertical = 7.dp)
+            ) { Text("Bifează", style = ButtonTextSmall) }
+            Spacer(Modifier.width(10.dp))
+        }
+        GearCheckbox(on = on)
+    }
+}
+
+/** Căsuța de bifat: pătrat 22dp, colțuri 4dp; plină cu bifă când e gata. */
+@Composable
+private fun GearCheckbox(on: Boolean) {
+    val shape = RoundedCornerShape(4.dp)
+    Box(
+        Modifier
+            .size(22.dp)
+            .clip(shape)
+            .background(if (on) Positive else Surface2)
+            .border(1.dp, if (on) Positive else StrokeCardStrong, shape),
+        contentAlignment = Alignment.Center
+    ) {
+        PopIn(visible = on, fromScale = 0.4f) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
         }
     }
 }
 
-private fun openSafe(context: Context, intent: Intent, toast: ToastState) {
-    try { context.startActivity(intent) } catch (_: Exception) { toast.show("Deschide manual din Setări → Aplicații → FORJA.") }
+/** Activitatea din spatele contextului Compose (pentru shouldShowRequestPermissionRationale). */
+private fun Context.findActivity(): Activity? {
+    var c: Context = this
+    while (c is ContextWrapper) {
+        if (c is Activity) return c
+        c = c.baseContext
+    }
+    return null
 }

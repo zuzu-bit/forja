@@ -4,9 +4,17 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,12 +26,15 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.forja.app.core.data.Prefs
 import com.forja.app.core.designsystem.ForjaTheme
+import com.forja.app.core.designsystem.LocalReducedMotion
 import com.forja.app.core.designsystem.Surface0
 import com.forja.app.core.designsystem.components.ForjaTab
 import com.forja.app.core.designsystem.components.ForjaTabBar
@@ -61,15 +72,17 @@ private fun ForjaRoot() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val app = remember { ForjaApp.from(context) }
     val toast = remember { ToastState() }
-    val scope = rememberCoroutineScope()
 
     var splashDone by remember { mutableStateOf(false) }
     var startRoute by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
+        // Prezentarea se arată o dată pentru fiecare versiune — și conturilor existente (v3.x → v4.0).
         val onboardingDone = app.prefs.onboardingDone.first()
+        val introVersion = app.prefs.introSeenVersion.first()
+        val needsIntro = !onboardingDone || introVersion < Prefs.INTRO_VERSION
         startRoute = when {
-            !onboardingDone -> Route.ONBOARDING
+            needsIntro -> Route.ONBOARDING
             !app.auth.isLoggedIn -> Route.LOGIN
             else -> Route.DASHBOARD
         }
@@ -92,14 +105,19 @@ private fun ForjaRoot() {
         }
     }
 
-    // Energie de la prieteni → toast live.
+    // Energie de la prieteni → toast live. Colectăm în chiar corpul efectului: la schimbarea
+    // cheilor, colectorul vechi e anulat odată cu efectul — fără dubluri.
     LaunchedEffect(startRoute, splashDone) {
         val uid = app.auth.currentUid ?: return@LaunchedEffect
-        scope.launch {
-            app.friends.energyFlow(uid).collect { toast.show(it) }
-        }
+        app.friends.energyFlow(uid).collect { toast.show(it) }
     }
 }
+
+// Tab-urile de jos: între ele doar un fade scurt; restul ecranelor alunecă.
+private val tabRoutes = setOf(Route.DASHBOARD, Route.WORKOUT, Route.MAP, Route.NUTRITION, Route.SLEEP, Route.FOCUS, Route.BREATH)
+
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.isTabSwitch(): Boolean =
+    initialState.destination.route in tabRoutes && targetState.destination.route in tabRoutes
 
 @Composable
 private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
@@ -163,31 +181,105 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
         }
     }
 
+    // ── Tranziții între ecrane (sub „mișcare redusă”: schimbare instantanee) ──
+    val reduced = LocalReducedMotion.current
+    val slideSpec = tween<androidx.compose.ui.unit.IntOffset>(340, easing = FastOutSlowInEasing)
+    val enter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+        when {
+            reduced -> fadeIn(snap())
+            isTabSwitch() -> fadeIn(tween(220))
+            else -> fadeIn(tween(260)) +
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, slideSpec) { it / 5 }
+        }
+    }
+    val exit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+        when {
+            reduced -> fadeOut(snap())
+            isTabSwitch() -> fadeOut(tween(180))
+            else -> fadeOut(tween(220)) +
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Start, slideSpec) { it / 8 }
+        }
+    }
+    val popEnter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+        when {
+            reduced -> fadeIn(snap())
+            isTabSwitch() -> fadeIn(tween(220))
+            else -> fadeIn(tween(260)) +
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.End, slideSpec) { it / 8 }
+        }
+    }
+    val popExit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+        when {
+            reduced -> fadeOut(snap())
+            isTabSwitch() -> fadeOut(tween(180))
+            else -> fadeOut(tween(220)) +
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, slideSpec) { it / 5 }
+        }
+    }
+    // Fluxul de început (prezentare → cont → azi): cross-fade cu o ușoară ridicare.
+    val riseEnter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+        if (reduced) fadeIn(snap()) else fadeIn(tween(400)) + slideInVertically(tween(400)) { it / 12 }
+    }
+    val fadeExit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+        if (reduced) fadeOut(snap()) else fadeOut(tween(250))
+    }
+    // „Echipare” — ca un panou modal: urcă de jos, coboară la închidere.
+    val modalEnter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+        if (reduced) fadeIn(snap()) else fadeIn(tween(260)) + slideInVertically(slideSpec) { it / 6 }
+    }
+    val modalExit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+        if (reduced) fadeOut(snap()) else fadeOut(tween(260)) + slideOutVertically(slideSpec) { it / 6 }
+    }
+
     Box(Modifier.fillMaxSize()) {
-        NavHost(navController = nav, startDestination = startRoute) {
-            composable(Route.ONBOARDING) {
+        NavHost(
+            navController = nav,
+            startDestination = startRoute,
+            enterTransition = enter,
+            exitTransition = exit,
+            popEnterTransition = popEnter,
+            popExitTransition = popExit
+        ) {
+            composable(
+                Route.ONBOARDING,
+                enterTransition = riseEnter, exitTransition = fadeExit,
+                popEnterTransition = riseEnter, popExitTransition = fadeExit
+            ) {
                 OnboardingScreen(onFinished = {
                     nav.navigate(if (app.auth.isLoggedIn) Route.DASHBOARD else Route.LOGIN) {
                         popUpTo(Route.ONBOARDING) { inclusive = true }
                     }
                 })
             }
-            composable(Route.LOGIN) {
+            composable(
+                Route.LOGIN,
+                enterTransition = riseEnter, exitTransition = fadeExit,
+                popEnterTransition = riseEnter, popExitTransition = fadeExit
+            ) {
                 AuthScreens(startInLogin = true, onAuthed = {
                     nav.navigate(Route.DASHBOARD) { popUpTo(Route.LOGIN) { inclusive = true } }
                 })
             }
-            composable(Route.REGISTER) {
+            composable(
+                Route.REGISTER,
+                enterTransition = riseEnter, exitTransition = fadeExit,
+                popEnterTransition = riseEnter, popExitTransition = fadeExit
+            ) {
                 AuthScreens(startInLogin = false, onAuthed = {
                     nav.navigate(Route.DASHBOARD) { popUpTo(Route.REGISTER) { inclusive = true } }
                 })
             }
-            composable(Route.DASHBOARD) {
-                // Prima dată: arată o singură dată ecranul „Pornire FORJA" cu permisiunile la un loc.
+            composable(
+                Route.DASHBOARD,
+                enterTransition = { if (isTabSwitch()) enter() else riseEnter() },
+                // „Azi” e ancora: la întoarcere apare doar prin fade, sub ecranul care pleacă.
+                popEnterTransition = { if (reduced) fadeIn(snap()) else fadeIn(tween(260)) }
+            ) {
+                // „Echipare”: o singură dată pentru fiecare versiune (bifele noi — baterie, alarmă — merită încă o trecere).
                 LaunchedEffect(Unit) {
-                    if (!app.prefs.permsIntroSeen.first()) {
-                        app.prefs.setPermsIntroSeen()
-                        nav.navigate(Route.PERMISSIONS)
+                    if (app.prefs.gearSeenVersion.first() < Prefs.GEAR_VERSION) {
+                        app.prefs.setGearSeen()
+                        nav.navigate(Route.PERMISSIONS) { launchSingleTop = true }
                     }
                 }
                 DashboardScreen(
@@ -241,7 +333,11 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             composable(Route.CLEANUP) {
                 com.forja.app.feature.cleanup.CleanupScreen(onBack = { nav.popBackStack() })
             }
-            composable(Route.PERMISSIONS) {
+            composable(
+                Route.PERMISSIONS,
+                enterTransition = modalEnter, exitTransition = fadeExit,
+                popEnterTransition = riseEnter, popExitTransition = modalExit
+            ) {
                 com.forja.app.feature.permissions.PermissionsScreen(onBack = { nav.popBackStack() })
             }
             composable(Route.PROFILE) {
