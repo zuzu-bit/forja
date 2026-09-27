@@ -36,8 +36,17 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
     val kcalToday: StateFlow<Int> = dao.kcalForDay(Fmt.epochDay())
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    val kcalTarget: StateFlow<Int> = forja.prefs.kcalTarget
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 2250)
+    private val nutritionPrefs = NutritionPrefs.of(app)
+
+    /** Obiectivul zilnic — DataStore-ul modulului (`forja_nutrition`), implicit 2000. */
+    val kcalTarget: StateFlow<Int> = nutritionPrefs.kcalTarget
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), NutritionPrefs.DEFAULT_KCAL)
+
+    /** Zile la rând cu cel puțin o masă notată (local, onest). */
+    val streak: StateFlow<Int> = nutritionPrefs.streak(Fmt.epochDay())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    fun setKcalTarget(v: Int) { viewModelScope.launch { nutritionPrefs.setKcalTarget(v) } }
 
     private val _pending = MutableStateFlow<PendingProduct?>(null)
     val pending: StateFlow<PendingProduct?> = _pending.asStateFlow()
@@ -115,6 +124,7 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
             )
             val id = dao.insert(meal)
             com.forja.app.core.data.CloudSync.meal(forja.auth.currentUid, meal.copy(id = id))
+            nutritionPrefs.noteMeal(meal.epochDay)
             _pending.value = null
         }
     }
@@ -129,6 +139,7 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
             )
             val id = dao.insert(meal)
             com.forja.app.core.data.CloudSync.meal(forja.auth.currentUid, meal.copy(id = id))
+            nutritionPrefs.noteMeal(meal.epochDay)
         }
     }
 

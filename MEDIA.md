@@ -53,3 +53,13 @@ Notă: dacă un fișier lipsește din bucket, aplicația folosește în continua
 nimic nu se strică; înlocuirea e per-fișier, în ritmul tău. Alternativa pe termen lung
 (din brief): înlocuirea cu materiale generate AI — prompturile complete sunt în
 `design_handoff_forja/FORJA Direction.dc.html`, secțiunea „KIT DE PRODUCȚIE AI”.
+
+## Pozele generate (FLUX, în CI — `build-apk.yml`, lista MEDIAEOF)
+
+Se generează o singură dată în bucket-ul `forja-media` dacă lipsesc; nu cer licență.
+
+| Nume fișier | Unde apare | Prompt |
+|---|---|---|
+| guide.jpg | Echipare, Panou (ghidul) | vezi lista din CI |
+| paznic.jpg | Focus — paznicul detoxului | vezi lista din CI |
+| mascot_chef.jpg | Rație — bucătarul (cardul zilei, ecranul „Analiză”); rezervă `guide.jpg` | friendly cartoon mascot of a small clay ember-spirit wearing a white chef hat, holding a wooden spoon, warm olive and amber palette, soft studio light, transparent-looking neutral background, square, high quality, no text |
