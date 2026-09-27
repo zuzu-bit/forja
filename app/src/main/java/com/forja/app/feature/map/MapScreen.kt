@@ -183,13 +183,32 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
     // Cardul prietenului arată selecția LIVE (poziție, stare), nu instantaneul de la atingere.
     val selectedLive = remember(selected, shownFriends) { selected?.let { s -> shownFriends.firstOrNull { it.uid == s.uid } ?: s } }
     val energySentToday = remember { mutableStateMapOf<String, Boolean>() }
+    // Ultima energie primită de la prietenul selectat (energy/{me}_{zi}_{el}) — o citire când îl alegi.
+    var energyFromSelectedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(selected?.uid) {
+        energyFromSelectedAt = 0L
+        val uid = app.auth.currentUid ?: return@LaunchedEffect
+        val other = selected?.uid ?: return@LaunchedEffect
+        try {
+            val snap = com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("energy")
+                .whereEqualTo("to", uid).whereEqualTo("from", other).get().await()
+            energyFromSelectedAt = snap.documents.maxOfOrNull { it.getLong("at") ?: 0L } ?: 0L
+        } catch (_: Exception) { }
+    }
 
     val go by GoTrackService.state.collectAsState()
 
     // ── Motorul hărții ──
-    val controller = remember { MapController(context).also { it.reducedMotion = reducedMotion } }
     var styleReady by remember { mutableStateOf(false) }
     var mapFailed by remember { mutableStateOf(false) }
+    val controller = remember {
+        MapController(context).also {
+            it.reducedMotion = reducedMotion
+            // Legate la creare, nu într-un SideEffect: un stil servit din cache poate fi gata înainte de prima recompoziție.
+            it.onStyleReady = { styleReady = true; mapFailed = false }
+            it.onLoadFailed = { mapFailed = true }
+        }
+    }
     var online by remember { mutableStateOf(true) }
     var myFix by remember { mutableStateOf<MyFix?>(null) }
     var hadFirstFix by remember { mutableStateOf(false) }
@@ -216,8 +235,6 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
     LaunchedEffect(online) { if (online && mapFailed) controller.reload() }
 
     SideEffect {
-        controller.onStyleReady = { styleReady = true; mapFailed = false }
-        controller.onLoadFailed = { mapFailed = true }
         controller.onTap = { hit ->
             when (hit?.kind) {
                 "friend" -> shownFriends.firstOrNull { it.uid == hit.id }?.let { f ->
@@ -559,6 +576,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                     f = f,
                     myFix = myFix,
                     energySent = energySentToday[f.uid] == true,
+                    energyReceivedAt = energyFromSelectedAt,
                     onClose = { selected = null },
                     onEnergy = {
                         scope.launch {
@@ -997,6 +1015,7 @@ private fun FriendCardOnMap(
     f: Friend,
     myFix: MyFix?,
     energySent: Boolean,
+    energyReceivedAt: Long,
     onClose: () -> Unit,
     onEnergy: () -> Unit,
     onNavigate: () -> Unit
@@ -1024,18 +1043,18 @@ private fun FriendCardOnMap(
                 val dist = if (myFix != null && f.lat != null && f.lng != null)
                     ExploreStats.distanceM(myFix.lat, myFix.lng, f.lat, f.lng) else null
                 val moving = f.state == "run" || f.state == "walk" || f.state == "ride"
-                Text(
-                    buildString {
-                        if (dist != null) append("la ${ExploreStats.distanceLabel(dist)} · ${ExploreStats.walkEtaLabel(dist)}")
-                        else if (moving) append(String.format(Locale.ROOT, "%.1f", f.speedMps * 3.6).replace('.', ',') + " km/h")
-                        else append("poziția lui, nu a ta")
-                        if (f.viaFamily || f.ghost) append(" · ${Fmt.freshness(f.locUpdatedAt)}")
-                        else append(" · actualizat ${Fmt.freshness(f.locUpdatedAt)}")
-                    },
-                    style = BodySmall.copy(color = TextSecondary)
-                )
-                if (energySent) {
-                    Text("I-ai trimis energie azi.", style = BodyTiny.copy(color = Accent2))
+                val parts = ArrayList<String>(3)
+                if (dist != null) parts.add("la ${ExploreStats.distanceLabel(dist)} · ${ExploreStats.walkEtaLabel(dist)}")
+                if (moving) parts.add(String.format(Locale.ROOT, "%.1f", f.speedMps * 3.6).replace('.', ',') + " km/h")
+                // Familia/fantoma: cât de veche e poziția, spus simplu — „acum 12 min”.
+                parts.add(if (f.viaFamily || f.ghost) Fmt.freshness(f.locUpdatedAt) else "actualizat ${Fmt.freshness(f.locUpdatedAt)}")
+                Text(parts.joinToString(" · "), style = BodySmall.copy(color = TextSecondary))
+                val energyLine = buildString {
+                    if (energyReceivedAt > 0) append("Ți-a trimis energie ${Fmt.freshness(energyReceivedAt)}.")
+                    if (energySent) { if (isNotEmpty()) append(" "); append("I-ai trimis energie azi.") }
+                }
+                if (energyLine.isNotEmpty()) {
+                    Text(energyLine, style = BodyTiny.copy(color = Accent2))
                 }
             }
             Text("închide", style = BodyTiny.copy(color = TextDim), modifier = Modifier.pressable(onClose))

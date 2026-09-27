@@ -10,10 +10,15 @@ reali (Firebase) și Focus (blocare de aplicații, onestă, fără Accessibility
 Pachetul aplicației este acum `com.forja.app.research` (versionCode 60), ca 4.0 să se instaleze **peste**
 aplicația „3.7-online” de pe telefon, cu același cont și aceleași date locale (baza Room migrează fără pierderi).
 
-- **Hartă**: dale CARTO → OSM întunecat → offline (chip de stare, niciodată gri la nesfârșit), ciclu de viață corect,
-  butonul GO înapoi, 2D/3D (înclinare), **Explorare** — zonele (~150 m) prin care treci se deblochează pe hartă (măsliniu),
-  **locurile** unde ai STAT ≥ prag (30 min / 1 h / 2 h / 5 h, implicit 5 h) primesc pin amber, nume, stele, notă și
-  „Recomandă prietenilor” (pin albastru la ei). **Familia**: prietenii marcați „Familie” te văd și în modul fantomă.
+- **Hartă (MapLibre + OpenFreeMap)**: motor vectorial nativ cu stilul `liberty` (fără cheie, fără limite) recolorat
+  la runtime în paleta „FORJA zi” (caldă, ca Plimb) și „FORJA noapte” (Auto 21:00–06:00 / Pornit / Oprit), **3D real**
+  (pitch 55°, clădiri extrudate din `building-3d`), etichete în română. **Teritorii cucerite** — celulele de ~150 m prin care
+  treci pe jos / alergând / pe bicicletă (nu din mașină) se colorează după mod, cu strălucire la zoom mic, „X % din zona ta”
+  (cerc de 5 km) și „Loc #k între prieteni”; **străzile tale** (toate turele GO, amber); **locurile** unde ai STAT ≥ prag
+  (30 min / 1 h / 2 h / 5 h, implicit 5 h) cu pin amber, nume, stele, notă, „ai fost de N ori” și „Recomandă prietenilor”
+  (pin albastru la ei); **prietenii** cu avatar (foto sau inițiale), „Ana · 1,2 km”, bandă cu prieteni, card cu distanță și
+  timp pe jos, linie punctată până la el; foaia **Straturi**; „Fără net · harta din memorie” (cache ambient 150 MB).
+  **Familia**: prietenii marcați „Familie” te văd și în modul fantomă.
 - **Somn**: ecranul original (alarmă circadiană + istoric „Nopțile tale”); serviciul nu mai crapă pe Android 14/15
   (tip de prim-plan după permisiuni), STOP/SNOOZE sigure, „Încă 10 minute”, alarma nu tace niciodată,
   „Veghea de noapte” (excepție de baterie + alarmă pe tot ecranul).
@@ -64,8 +69,11 @@ Notă despre release: pagina de release afișează starea acestor servicii la mo
   DataStore — preferințe. Mesele și somnul NU pleacă de pe telefon.
 - **Cloud (între prieteni)**: Firebase Auth (email+parolă) + Firestore — profil, cod de
   invitație, prietenii (reciproc, prin cod), poziția live (doar când nu ești fantomă), energie (kudos).
-- **Hartă**: osmdroid + tiles CARTO dark cu tentă caldă (paleta din prototip), markeri cu
-  interpolare (fără teleport), mod fantomă, înregistrare GO cu serviciu foreground.
+- **Hartă**: MapLibre Native (`org.maplibre.gl:android-sdk-opengl`) + OpenFreeMap `liberty`, recolorat la runtime
+  (`core/map/ForjaStyle.kt`); toată logica într-un `MapController` (`core/map/ForjaMap.kt`): surse GeoJSON create o dată,
+  `setGeoJson` pe firul principal, prieteni glisați 400 ms, „Tu” cu puls, cameră 2D/3D; mod fantomă, înregistrare GO
+  cu serviciu foreground. Straturile și modul de noapte stau în DataStore-ul propriu `forja_map` (`core/map/MapPrefs.kt`).
+  Atribuire: butonul „i” al MapLibre + „© OpenFreeMap · OpenMapTiles · OpenStreetMap”.
 - **Nutriție**: ML Kit (cod de bare, on-device) → OpenFoodFacts (valori verificate).
   Principiu din handoff: AI-ul identifică, baza de date dă valorile. Analiza pozelor cu AI
   e pregătită ca pas următor.
@@ -82,7 +90,8 @@ app/src/main/java/com/forja/app/
   core/network/        ForjaApi (serverul central), InsightsApi (site-ul), OpenFoodFacts
   core/location|sleep|focus/  servicii foreground (GO, somn, blocare)
   core/explore/        ExploreTracker — zone deblocate + locuri unde ai stat
-  core/map/            ForjaTiles — dale cu rezervă și offline
+  core/map/            ForjaMap (MapController + gazda Compose), ForjaStyle (liberty recolorat zi/noapte),
+                       MapLayers (surse/straturi/GeoJSON), MapIcons (avataruri, foto), MapPrefs, ExploreStats
   core/cleanup/        CleanupEngine, DocumentOrganizer
   feature/             splash, onboarding, auth, dashboard, workout, nutrition,
                        sleep, map (explorare, locuri, familie), focus, cleanup, permissions (Echipare), profile

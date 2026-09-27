@@ -264,7 +264,8 @@ object MapLayerStack {
                 PropertyFactory.iconAllowOverlap(true),
                 PropertyFactory.iconIgnorePlacement(true),
                 PropertyFactory.iconOpacity(Expression.toNumber(Expression.get("alpha"))),
-                PropertyFactory.symbolZOrder(Property.SYMBOL_Z_ORDER_VIEWPORT_Y),
+                // AUTO = ordinea după symbol-sort-key (cheie mai mare = desenat deasupra): selectatul sus, cei în mișcare peste cei opriți.
+                PropertyFactory.symbolZOrder(Property.SYMBOL_Z_ORDER_AUTO),
                 PropertyFactory.symbolSortKey(Expression.toNumber(Expression.get("sort"))),
                 PropertyFactory.textField(Expression.get("label")),
                 PropertyFactory.textFont(arrayOf(FONT_BOLD)),
