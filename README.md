@@ -26,6 +26,12 @@ aplicația „3.7-online” de pe telefon, cu același cont și aceleași date l
   `POST /v1/organize` pe serverul FORJA (Gemini 2.5 Flash când există cheie, altfel banca de modele Cloudflare).
 - **Site-ul FORJA** (`server/insights-worker.mjs`, https://forja-insights.forja-22e7ea2d.workers.dev) e acum în acest repo,
   cu testele lui, și se publică automat din CI (`insights-deploy.yml`). Harta 2D/3D reparată (v27) e live ca versiunea 16.
+- **Online, în sursa reală** (toate opt-in, implicit oprite): **Sincronizare în cont** (Echipare → secțiunea de jos: locație și opriri,
+  activitate în aplicații, fotografii/fișiere alese, microfon live → `/v2/sessions` pe site), **Telefonul meu** (Profil → găsirea telefonului
+  pierdut din panoul online, 5/15/30 min), **Explorarea „Și pe site”** (zonele și locurile tale, cu stele și note, pe aceeași hartă din panou;
+  editările din laptop se întorc pe telefon), **Curățenia „Și pe site (copii 24 h)”** (protocolul 4: job-uri comune telefon–site, pozele și
+  documentele analizate urcă în cont, aprobarea și organizarea se pot face din laptop), **Gemini 2.5 Flash pe site** când există cheia
+  (altfel Cloudflare Workers AI).
 - **Firestore**: regulile au colecții noi (`places`, `familyLoc`) — lipește din nou `firestore.rules` în consola Firebase → Publish.
 
 ## Cum obții aplicația (APK)
