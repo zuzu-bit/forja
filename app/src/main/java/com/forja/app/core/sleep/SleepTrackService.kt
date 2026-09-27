@@ -42,13 +42,14 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import kotlin.math.abs
-import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * Somn à la Sleep as Android — totul LOCAL, nimic în cloud:
- * · microfonul detectează sforăit/vorbit și salvează clipuri de 5s pe telefon
- * · accelerometrul numără mișcările → cicluri de somn (hipnogramă estimată)
+ * Somn à la Sleep as Android:
+ * · microfonul detectează sforăit/vorbit și salvează clipuri de 5s pe telefon (clasificate live pe server)
+ * · toată noaptea se înregistrează în bucăți de ~30 min (AAC) și urcă dimineața pe server, pe Wi-Fi,
+ *   pentru cronologia „Noaptea, ascultată” ([SleepUpload])
+ * · accelerometrul numără mișcările → stadii estimate ([SleepStaging]) → hipnogramă
  * · alarma deșteaptă: sună în fereastra de somn ușor, nu în mijlocul somnului profund
  */
 class SleepTrackService : Service(), SensorEventListener {
@@ -61,6 +62,8 @@ class SleepTrackService : Service(), SensorEventListener {
     private var movements = 0
     private var lastMovementAt = 0L
     private val movementTimes = mutableListOf<Long>()
+    /** Micro-mișcări (delta > 0,35 m/s²) pe minut de la începutul sesiunii — intrare pentru [SleepStaging]. */
+    private val microPerMinute = HashMap<Int, Int>()
 
     // Audio — 32 kHz pentru claritate; clipurile Whisper se reduc la 16 kHz.
     private var audioRecord: AudioRecord? = null
@@ -71,7 +74,7 @@ class SleepTrackService : Service(), SensorEventListener {
     private var ringPos = 0
     private var totalWritten = 0L
     private var fullRecorder: AacRecorder? = null
-    private var fullFile: File? = null
+    private var fullDir: File? = null
     private var baseline = 250.0
     private var lastSnoreEventAt = 0L
     private var lastTalkEventAt = 0L
@@ -225,21 +228,18 @@ class SleepTrackService : Service(), SensorEventListener {
                 SleepSessionEntity(startAt = sessionStartAt)
             )
             if (existing != null) sessionStartAt = existing.startAt
-            // Înregistrarea completă a nopții (AAC) — pornită după ce știm sesiunea.
+            // Înregistrarea completă a nopții (AAC, bucăți de ~30 min) — pornită după ce știm sesiunea.
             try {
-                val dir = File(filesDir, "sleep_full").apply { mkdirs() }
-                // Curățenie: fișierele mai vechi de 24h dispar și local.
-                dir.listFiles()?.forEach {
-                    if (System.currentTimeMillis() - it.lastModified() > 24 * 3600_000) it.delete()
-                }
+                val root = File(filesDir, "sleep_full").apply { mkdirs() }
+                cleanupRecordings(root)
                 // Clipurile de 5 s se păstrează 7 zile, apoi pleacă singure.
                 File(filesDir, "sleep_clips").listFiles()?.forEach {
                     if (System.currentTimeMillis() - it.lastModified() > 7 * 24 * 3600_000L) it.delete()
                 }
                 if (micType) {
-                    val f = File(dir, "$sessionId.m4a")
-                    fullFile = f
-                    fullRecorder = AacRecorder(sampleRate, f)
+                    val dir = AacRecorder.sessionDir(filesDir, sessionId)
+                    fullDir = dir
+                    fullRecorder = AacRecorder(sampleRate, dir, sessionId)
                 }
             } catch (_: Exception) { }
         }
@@ -253,6 +253,35 @@ class SleepTrackService : Service(), SensorEventListener {
         if (micType) startAudio()
         // Alarma deșteaptă
         startAlarmWatcher(app)
+    }
+
+    /**
+     * Curățenie locală în `sleep_full/`:
+     * · fișierele vechi cu o singură înregistrare (`<id>.m4a`) dispar după 24 h, ca înainte;
+     * · bucățile unei sesiuni dispar după 24 h dacă au urcat (serverul le ține 7 zile), altfel după 3 zile;
+     * · `timeline.json` / `staging.json` / manifestul rămân 30 de zile (raportul se citește din ele).
+     */
+    private fun cleanupRecordings(root: File) {
+        val now = System.currentTimeMillis()
+        root.listFiles()?.forEach { f ->
+            try {
+                if (f.isFile) {
+                    if (now - f.lastModified() > 24 * 3600_000L) f.delete()
+                    return@forEach
+                }
+                if (!f.isDirectory) return@forEach
+                val age = now - f.lastModified()
+                if (age > 30L * 24 * 3600_000L) { f.deleteRecursively(); return@forEach }
+                val progress = SleepUpload.loadProgress(f)
+                f.listFiles()?.forEach { c ->
+                    if (!c.name.endsWith(".m4a")) return@forEach
+                    val idx = c.name.removePrefix("chunk_").removeSuffix(".m4a").toIntOrNull()
+                    val uploaded = progress != null && (progress.done || (idx != null && idx in progress.uploaded))
+                    val keepMs = if (uploaded) 24 * 3600_000L else 3L * 24 * 3600_000L
+                    if (now - c.lastModified() > keepMs) c.delete()
+                }
+            } catch (_: Exception) { }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -557,37 +586,40 @@ class SleepTrackService : Service(), SensorEventListener {
         app.auth.currentUid?.let { app.presence.publishState(it, "idle") }
         val moves = movements
         val moveTimes = synchronized(movementTimes) { movementTimes.toList() }
+        val micro = synchronized(microPerMinute) { HashMap(microPerMinute) }
+        val recDir = fullDir
         scope.launch {
             val dao = app.db.sleepDao()
             dao.activeSessionOnce()?.let { s ->
                 val end = System.currentTimeMillis()
                 val totalMin = ((end - s.startAt) / 60000).toInt().coerceAtLeast(1)
-                val (phases, deep, light, rem) = buildPhases(s.startAt, totalMin, moveTimes)
-                val movePenalty = (moves * 1.2).coerceAtMost(25.0)
-                val durationScore = when {
-                    totalMin >= 450 -> 92
-                    totalMin >= 390 -> 84
-                    totalMin >= 330 -> 72
-                    totalMin >= 270 -> 58
-                    else -> 40
-                }
-                val score = (durationScore - movePenalty).roundToInt().coerceIn(15, 98)
+                // Stadii estimate din mișcare (Cole-Kripke simplificat) — vezi SleepStaging.
+                val staging = SleepStaging.stage(SleepStaging.epochs(s.startAt, totalMin, moveTimes, micro))
+                val phases = staging.phases
+                val deep = staging.deepMin
+                val light = staging.lightMin
+                val rem = staging.remMin
+                val score = staging.score
+                try { recDir?.let { File(it, STAGING_FILE).writeText(SleepStaging.toJson(staging)) } } catch (_: Exception) { }
 
-                // Înregistrarea completă → stocarea companiei, disponibilă 24h.
+                // Înregistrarea completă: bucățile rămân local 24 h; urcarea pe server o face SleepUpload
+                // (Wi-Fi, baterie ≥ 15 %), care prelungește la 7 zile când bucățile au ajuns pe server.
                 var recordedUntil = 0L
-                val f = fullFile
-                if (f != null && f.exists() && f.length() > 4000 && app.forjaApi.available) {
-                    val ok = try { app.forjaApi.uploadSleepRecording(s.id, f) } catch (_: Exception) { false }
-                    if (ok) recordedUntil = end + 24 * 3600_000
+                val manifest = AacRecorder.manifestFor(filesDir, s.id, s.startAt)
+                val hasAudio = manifest != null && manifest.chunks.any { c ->
+                    AacRecorder.chunkFile(filesDir, s.id, c).length() > 4000
                 }
-                if (f != null && f.exists() && f.length() > 4000 && recordedUntil == 0L) {
-                    // n-a urcat — rămâne local, tot 24h (curățată la următoarea sesiune)
-                    recordedUntil = end + 24 * 3600_000
+                if (hasAudio) {
+                    recordedUntil = end + 24 * 3600_000L
+                    if (app.forjaApi.available) {
+                        try { SleepUpload.schedule(this@SleepTrackService, s.id) } catch (_: Exception) { }
+                    }
                 }
 
                 val events = dao.eventsForSessionOnce(s.id)
                 val snoreCount = events.count { it.type == "snore" }
                 val talkCount = events.count { it.type == "talk" }
+                val snoreMinLocal = (events.filter { it.type == "snore" }.sumOf { it.durationS } / 60).coerceAtLeast(if (snoreCount > 0) 1 else 0)
 
                 // Rezumatul de dimineață — două propoziții din cifre reale.
                 val summary = if (app.forjaApi.available) {
@@ -603,12 +635,15 @@ class SleepTrackService : Service(), SensorEventListener {
                 )
                 dao.update(updated)
                 // Raportul urcă în baza companiei — cifrele + rezumatul, nu audio-ul brut.
+                // Minutele de sforăit/acoperirea se completează după analiza serverului (SleepUpload).
                 try {
                     com.forja.app.core.data.CloudSync.sleep(
                         app.auth.currentUid, updated,
                         snoreCount = snoreCount,
                         talkCount = talkCount,
-                        soundCount = events.count { it.type == "sound" }
+                        soundCount = events.count { it.type == "sound" },
+                        snoreMin = snoreMinLocal,
+                        coverageMin = 0
                     )
                 } catch (_: Exception) { }
             }
@@ -619,55 +654,17 @@ class SleepTrackService : Service(), SensorEventListener {
         }
     }
 
-    /**
-     * Hipnogramă estimată din cicluri de ~90 min + mișcare:
-     * minutele cu mișcare → somn ușor / treaz; adânc mai ales în prima parte a nopții.
-     */
-    private fun buildPhases(startAt: Long, totalMin: Int, moveTimes: List<Long>): PhaseResult {
-        val moveMinutes = moveTimes.map { ((it - startAt) / 60000).toInt() }.toSet()
-        val segs = StringBuilder()
-        var deep = 0; var light = 0; var rem = 0
-        var segStart = 0
-        var segType = ""
-        fun typeAt(min: Int): String {
-            if (min < 8) return "light"
-            if (moveMinutes.any { abs(it - min) <= 1 }) return if (min in moveMinutes) "awake" else "light"
-            val cyclePos = (min - 8) % 90
-            val cycleNo = (min - 8) / 90
-            return when {
-                cyclePos < 12 -> "light"
-                cyclePos < 42 -> if (cycleNo < 3) "deep" else "light"
-                cyclePos < 68 -> "light"
-                else -> "rem"
-            }
-        }
-        for (min in 0 until totalMin) {
-            val t = typeAt(min)
-            if (t != segType) {
-                if (segType.isNotEmpty()) {
-                    segs.append("$segStart,$min,$segType;")
-                }
-                segType = t
-                segStart = min
-            }
-            when (t) {
-                "deep" -> deep++
-                "rem" -> rem++
-                "light" -> light++
-            }
-        }
-        if (segType.isNotEmpty()) segs.append("$segStart,$totalMin,$segType;")
-        return PhaseResult(segs.toString(), deep, light, rem)
-    }
-
-    data class PhaseResult(val phases: String, val deep: Int, val light: Int, val rem: Int)
-
     override fun onSensorChanged(event: SensorEvent) {
         val x = event.values[0]; val y = event.values[1]; val z = event.values[2]
         val magnitude = sqrt(x * x + y * y + z * z)
         val delta = abs(magnitude - lastMagnitude)
         lastMagnitude = magnitude
         val now = System.currentTimeMillis()
+        // Micro-mișcări: sub pragul „relevant”, dar peste zgomotul senzorului — numărate pe minut.
+        if (delta > 0.35f && delta <= 1.2f && sessionStartAt > 0) {
+            val minute = ((now - sessionStartAt) / 60_000L).toInt()
+            synchronized(microPerMinute) { microPerMinute[minute] = (microPerMinute[minute] ?: 0) + 1 }
+        }
         if (delta > 1.2f && now - lastMovementAt > 20_000) {
             lastMovementAt = now
             movements++
@@ -687,7 +684,7 @@ class SleepTrackService : Service(), SensorEventListener {
         return NotificationCompat.Builder(this, "sleep")
             .setSmallIcon(android.R.drawable.star_on)
             .setContentTitle("FORJA veghează somnul")
-            .setContentText("Sunet + mișcare, analizate local. Nimic nu pleacă de pe telefon.")
+            .setContentText("Sunet + mișcare. Înregistrarea urcă dimineața pe server, pe Wi-Fi.")
             .setOngoing(true)
             .setContentIntent(pi)
             .build()
@@ -714,6 +711,8 @@ class SleepTrackService : Service(), SensorEventListener {
         const val ACTION_STOP = "com.forja.app.sleep.STOP"
         const val ACTION_SNOOZE = "com.forja.app.sleep.SNOOZE"
         const val SNOOZE_MS = 10 * 60_000L
+        /** Stadiile estimate ale nopții, scrise lângă înregistrare: `sleep_full/<id>/staging.json`. */
+        const val STAGING_FILE = "staging.json"
 
         /** true cât timp o sesiune de somn e vie în ACEST proces. */
         @Volatile

@@ -34,6 +34,35 @@ aplicația „3.7-online” de pe telefon, cu același cont și aceleași date l
   (altfel Cloudflare Workers AI).
 - **Firestore**: regulile au colecții noi (`places`, `familyLoc`) — lipește din nou `firestore.rules` în consola Firebase → Publish.
 
+## Somn — noaptea, ascultată (pachetul „sleep-app”)
+
+Ce se întâmplă cu o noapte, pas cu pas (totul e estimare, nu diagnostic — și textele o spun):
+
+1. **Înregistrare în bucăți** (`core/sleep/AacRecorder.kt`): AAC-LC 48 kbps mono, fișiere de ~30 min în
+   `filesDir/sleep_full/<sesiune>/chunk_<i>.m4a`, cu manifestul `chunks.json`
+   (`{session, startedAt, sampleRate, chunks:[{index, file, from, dur}], closed}`; `from`/`dur` în ms față de începutul
+   audio-ului). Rotația se face la granița de mostre, fără pierderi între bucăți. Sesiunile vechi cu un singur
+   `sleep_full/<id>.m4a` se tratează ca bucata 0 și rămân redabile.
+2. **Stadii din mișcare** (`core/sleep/SleepStaging.kt`, funcții pure): epoci de 1 min din mișcările accelerometrului
+   (+ micro-mișcări), scor ponderat ±2 min (stil Cole-Kripke), prag treaz/somn, latența de adormire (10 min liniștite),
+   „profund” = ≥ 20 min fără mișcare la > 30 min după adormire (plafonat pe ciclu), REM ≈ finalul ciclurilor de ~90 min,
+   treziri (≥ 2 min), scor 0–100 explicat linie cu linie („−8: 3 treziri”). Rezultatul stă în `staging.json`,
+   hipnograma și scorul din baza Room vin de aici; `measurement` rămâne `estimated`.
+3. **Urcare automată** (`core/sleep/SleepUpload.kt`, WorkManager): la „M-am trezit”, pe Wi-Fi (sau „și pe date mobile”,
+   din ecranul de somn) și cu bateria ≥ 15 %: `PUT /v1/sleep-chunk?session=s<id>&index&from&dur` pentru fiecare bucată,
+   apoi `POST /v1/sleep-analyze`, apoi sondaj `GET /v1/sleep-analysis` la 20 s (cel mult 20 min, împărțite pe rulări).
+   Progresul e în `upload.json`; rezultatul normalizat în `timeline.json`
+   (`{status: done|processing|clips_only|failed|timeout, reason, events:[{at, end, type, intensity, transcript, confidence}],
+   stats:{snoreMin, snoreEpisodes, talkCount, coughCount, coverageMin, totalMin}, startedAt}`). La final: rezumatul de
+   dimineață refăcut cu cronologia (`POST /v1/sleep-summary` + `timeline`), Firestore (`snoreMin`, `talkCount`,
+   `coverageMin`) și notificarea „Raportul nopții e gata” pe canalul „sleep”. Clientul HTTP e `core/network/SleepApi.kt`.
+4. **Raportul** (`feature/sleep/SleepScreen.kt`): secțiunea „Noaptea, ascultată” — acoperirea onestă („Am ascultat 7 h 42 min
+   din 7 h 50”), cronologia cu oră, tip, intensitate, transcriere EXACTĂ între ghilimele și încredere, „Ascultă” = 8 s din
+   bucata potrivită (offset − `from`), „Ascultă toată noaptea” + „SARI LA MOMENT” pe bucăți. Fără cheie Gemini pe server:
+   „Serverul nu a putut asculta noaptea (lipsește cheia Gemini). Ai doar clipurile prinse pe telefon.”
+5. **Păstrare**: clipurile de 5 s rămân locale (7 zile) și se clasifică live ca înainte; bucățile stau pe telefon 24 h după
+   urcare (3 zile dacă n-au urcat), pe server 7 zile; `timeline.json`/`staging.json` 30 de zile.
+
 ## Cum obții aplicația (APK)
 
 La fiecare push pe `main`, GitHub Actions construiește APK-ul și îl publică la
