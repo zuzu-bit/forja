@@ -28,7 +28,7 @@ import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.util.Fmt
 import kotlinx.coroutines.launch
 
-/** Sheet „Prietenii tăi" — doar oameni reali, stări live, freshness onest, invitație prin cod. */
+/** Sheet „Prietenii tăi" — doar oameni reali, stări live, freshness onest, invitație prin cod, familie. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FriendsSheet(
@@ -47,6 +47,10 @@ fun FriendsSheet(
     LaunchedEffect(Unit) {
         try { myCode = app.auth.loadProfile()?.inviteCode ?: "" } catch (_: Exception) {}
     }
+
+    // Comutatorul „Familie” răspunde pe loc; Firestore confirmă imediat după.
+    val familyOverride = remember { mutableStateMapOf<String, Boolean>() }
+    val familyBusy = remember { mutableStateMapOf<String, Boolean>() }
 
     val activeCount = friends.count { !it.ghost && System.currentTimeMillis() - it.locUpdatedAt < 15 * 60_000 }
 
@@ -154,20 +158,24 @@ fun FriendsSheet(
 
             friends.sortedByDescending { it.locUpdatedAt }.forEach { f ->
                 val fresh = System.currentTimeMillis() - f.locUpdatedAt < 15 * 60_000
+                val familyOn = familyOverride[f.uid] ?: f.family
                 ForjaCard(
                     Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 8.dp)
-                        .pressable({ onPick(f) }),
+                        .padding(bottom = 8.dp),
                     fill = Surface2, padding = 12.dp
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        Modifier.pressable({ onPick(f) }),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Avatar(name = f.name, size = 40.dp, ring = fresh, live = fresh && f.state in setOf("run", "walk", "ride"))
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(f.name, style = BodyStrong.copy(fontSize = 14.sp))
                             Text(
                                 when {
+                                    f.viaFamily -> "fantomă · te vede familia lui"
                                     f.ghost -> "mod fantomă"
                                     f.state == "run" -> "aleargă acum"
                                     f.state == "ride" -> "pe roți acum"
@@ -203,9 +211,47 @@ fun FriendsSheet(
                             }
                         }
                         Text(
-                            if (f.lat != null && !f.ghost) "Pe hartă" else "Salută",
+                            if (f.lat != null && (!f.ghost || f.viaFamily)) "Pe hartă" else "Salută",
                             style = BodySmall.copy(color = Accent2)
                         )
+                    }
+
+                    // Familie: excepția de la fantomă, aleasă de tine, om cu om.
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Familie", style = BodyStrong.copy(fontSize = 13.sp))
+                            Text(
+                                "Te vede și în modul fantomă (mama, iubita)",
+                                style = BodyTiny.copy(color = TextDim)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        if (familyBusy[f.uid] == true) {
+                            CircularProgressIndicator(color = Accent2, modifier = Modifier.size(20.dp))
+                        } else {
+                            ForjaSwitch(checked = familyOn) { on ->
+                                val uid = app.auth.currentUid ?: return@ForjaSwitch
+                                familyOverride[f.uid] = on
+                                familyBusy[f.uid] = true
+                                scope.launch {
+                                    try {
+                                        app.friends.setFamily(uid, f.uid, on, app.prefs)
+                                        // Documentul meu s-a actualizat; Friend.family vine prin flow, nu mai avem nevoie de override.
+                                        familyOverride.remove(f.uid)
+                                        val first = f.name.split(' ').first()
+                                        toast.show(
+                                            if (on) "$first te vede și când ești fantomă."
+                                            else "$first nu te mai vede în modul fantomă."
+                                        )
+                                    } catch (_: Exception) {
+                                        familyOverride.remove(f.uid)
+                                        toast.show("Nu s-a putut. Verifică internetul.")
+                                    }
+                                    familyBusy.remove(f.uid)
+                                }
+                            }
+                        }
                     }
                 }
             }

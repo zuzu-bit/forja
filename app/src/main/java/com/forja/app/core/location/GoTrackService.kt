@@ -6,9 +6,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.forja.app.ForjaApp
 import com.forja.app.MainActivity
 import com.forja.app.core.data.db.ActivityEntity
@@ -25,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -39,7 +43,8 @@ data class GoState(
 
 /**
  * Înregistrare traseu (GO) à la Strava: alergare / mers / ciclism.
- * Serviciu foreground cu FusedLocation la 1s — polilinie live + consolă.
+ * Serviciu foreground (tip LOCATION) cu FusedLocation la 1s — polilinie live + consolă.
+ * Respectă fantoma pentru users/{uid}; familia primește poziția mereu; fixurile hrănesc Explorarea.
  */
 class GoTrackService : Service() {
 
@@ -50,20 +55,33 @@ class GoTrackService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                finish()
-                return START_NOT_STICKY
-            }
-            else -> begin(intent?.getStringExtra(EXTRA_SPORT) ?: "run")
+        if (intent == null) {
+            // Repornit de sistem după moartea procesului: nu pornim o înregistrare-fantomă.
+            stopSelf()
+            return START_NOT_STICKY
         }
-        return START_STICKY
+        when (intent.action) {
+            ACTION_STOP -> finish()
+            else -> begin(intent.getStringExtra(EXTRA_SPORT) ?: "run")
+        }
+        return START_NOT_STICKY
     }
 
     @SuppressLint("MissingPermission")
     private fun begin(sport: String) {
         if (state.value.recording) return
-        startForeground(NOTIF_ID, buildNotification(sport))
+        // Fără permisiune de locație nu avem ce înregistra — și Android 14+ ar refuza startForeground.
+        if (!(BgLocation.hasFine(this) || BgLocation.hasCoarse(this))) {
+            stopSelf()
+            return
+        }
+        try {
+            val type = if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+            ServiceCompat.startForeground(this, NOTIF_ID, buildNotification(sport), type)
+        } catch (_: Exception) {
+            stopSelf()
+            return
+        }
         state.value = GoState(recording = true, sport = sport, startedAt = System.currentTimeMillis())
         val app = ForjaApp.from(this)
         val client = LocationServices.getFusedLocationProviderClient(this)
@@ -75,6 +93,7 @@ class GoTrackService : Service() {
                 val loc = result.lastLocation ?: return
                 val s = state.value
                 if (!s.recording) return
+                try { app.explore.onLocation(loc, "go") } catch (_: Exception) { }
                 val pts = s.points
                 var dist = s.distanceM
                 if (pts.isNotEmpty()) {
@@ -83,24 +102,35 @@ class GoTrackService : Service() {
                     android.location.Location.distanceBetween(plat, plng, loc.latitude, loc.longitude, res)
                     if (res[0] < 300) dist += res[0]   // ignoră salturi GPS
                 }
+                val speed = if (loc.hasSpeed()) loc.speed.toDouble() else 0.0
                 state.value = s.copy(
                     distanceM = dist,
                     points = pts + (loc.latitude to loc.longitude),
-                    lastSpeedMps = if (loc.hasSpeed()) loc.speed.toDouble() else 0.0
+                    lastSpeedMps = speed
                 )
-                // Publică live către prieteni — max la 5s.
+                // Publică live către prieteni — max la 5s; fantoma oprește users/{uid}, nu și familia.
                 val now = System.currentTimeMillis()
                 if (now - lastFirestorePush > 5000) {
                     lastFirestorePush = now
-                    app.auth.currentUid?.let { uid ->
+                    val uid = app.auth.currentUid ?: return
+                    val sportNow = state.value.sport
+                    if (!app.presence.isGhostNow()) {
                         FirebaseFirestore.getInstance().collection("users").document(uid).set(
                             mapOf(
                                 "lat" to loc.latitude, "lng" to loc.longitude,
-                                "speedMps" to (if (loc.hasSpeed()) loc.speed.toDouble() else 0.0),
-                                "state" to state.value.sport,
+                                "speedMps" to speed,
+                                "state" to sportNow,
                                 "locUpdatedAt" to now
                             ), SetOptions.merge()
                         )
+                    }
+                    scope.launch {
+                        try {
+                            val fam = app.prefs.familyUids.first()
+                            if (fam.isNotEmpty()) {
+                                app.friends.writeFamilyLoc(uid, loc.latitude, loc.longitude, speed, sportNow, fam, now)
+                            }
+                        } catch (_: Exception) { }
                     }
                 }
             }
@@ -108,6 +138,8 @@ class GoTrackService : Service() {
         try {
             client.requestLocationUpdates(request, callback!!, Looper.getMainLooper())
         } catch (_: SecurityException) {
+            state.value = GoState(sport = sport)
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
@@ -149,10 +181,12 @@ class GoTrackService : Service() {
                     } catch (_: Exception) { }
                 }
                 state.value = GoState(sport = s.sport)
+                ServiceCompat.stopForeground(this@GoTrackService, ServiceCompat.STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         } else {
             state.value = GoState(sport = s.sport)
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
@@ -179,6 +213,7 @@ class GoTrackService : Service() {
         callback?.let {
             LocationServices.getFusedLocationProviderClient(this).removeLocationUpdates(it)
         }
+        callback = null
         scope.cancel()
         super.onDestroy()
     }
@@ -199,14 +234,18 @@ class GoTrackService : Service() {
         }
 
         fun start(context: Context, sport: String = "run") {
-            context.startForegroundService(
-                Intent(context, GoTrackService::class.java).putExtra(EXTRA_SPORT, sport)
-            )
+            try {
+                context.startForegroundService(
+                    Intent(context, GoTrackService::class.java).putExtra(EXTRA_SPORT, sport)
+                )
+            } catch (_: Exception) { }
         }
         fun stop(context: Context) {
-            context.startForegroundService(
-                Intent(context, GoTrackService::class.java).setAction(ACTION_STOP)
-            )
+            try {
+                context.startForegroundService(
+                    Intent(context, GoTrackService::class.java).setAction(ACTION_STOP)
+                )
+            } catch (_: Exception) { }
         }
     }
 }

@@ -1,5 +1,7 @@
 package com.forja.app.core.data
 
+import com.forja.app.core.data.db.PlaceEntity
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
@@ -23,7 +25,34 @@ data class Friend(
     val ghost: Boolean,
     val lastActivityType: String? = null,
     val lastActivityKm: Double = 0.0,
-    val lastActivityAt: Long = 0L
+    val lastActivityAt: Long = 0L,
+    /** E în familia mea: mă vede și când sunt fantomă (users/{me}.familyUids). */
+    val family: Boolean = false,
+    /** Poziția vine din familyLoc — prietenul e fantomă pentru ceilalți, dar m-a pus în familia lui. */
+    val viaFamily: Boolean = false
+)
+
+/** Poziția unui prieten care m-a pus în familie — scrisă mereu, și în fantomă. */
+data class FamilyLoc(
+    val uid: String,
+    val lat: Double,
+    val lng: Double,
+    val speedMps: Double,
+    val state: String,
+    val locUpdatedAt: Long
+)
+
+/** Un loc recomandat de un prieten (places/{id}, vizibil doar prietenilor lui). */
+data class RecommendedPlace(
+    val id: String,
+    val ownerUid: String,
+    val ownerName: String,
+    val lat: Double,
+    val lng: Double,
+    val name: String,
+    val stars: Int,
+    val note: String,
+    val at: Long
 )
 
 class FriendsRepository(
@@ -53,10 +82,25 @@ class FriendsRepository(
         db.collection("friendships").document(friendshipId(myUid, otherUid)).delete().await()
     }
 
-    /** Flow live cu prietenii + starea lor publicată. */
+    /** Flow live cu prietenii + starea lor publicată (+ steagul „familie” din documentul meu). */
     fun friendsFlow(myUid: String): Flow<List<Friend>> = callbackFlow {
         var userRegs: List<ListenerRegistration> = emptyList()
         val cache = LinkedHashMap<String, Friend>()
+        var myFamily: Set<String> = emptySet()
+
+        // Familia mea — ca fiecare prieten să știe dacă mă vede și în fantomă.
+        val meReg = db.collection("users").document(myUid).addSnapshotListener { me, _ ->
+            val fam = (me?.get("familyUids") as? List<*>)?.mapNotNull { it as? String }?.toSet() ?: emptySet()
+            if (fam != myFamily) {
+                myFamily = fam
+                if (cache.isNotEmpty()) {
+                    for (k in cache.keys.toList()) {
+                        cache[k]?.let { cache[k] = it.copy(family = k in myFamily) }
+                    }
+                    trySend(cache.values.toList())
+                }
+            }
+        }
 
         val friendshipsReg = db.collection("friendships")
             .whereArrayContains("members", myUid)
@@ -85,7 +129,8 @@ class FriendsRepository(
                                 ghost = ghost,
                                 lastActivityType = u.getString("lastActivityType"),
                                 lastActivityKm = u.getDouble("lastActivityKm") ?: 0.0,
-                                lastActivityAt = u.getLong("lastActivityAt") ?: 0L
+                                lastActivityAt = u.getLong("lastActivityAt") ?: 0L,
+                                family = uid in myFamily
                             )
                             trySend(cache.values.toList())
                         }
@@ -93,6 +138,7 @@ class FriendsRepository(
                 }
             }
         awaitClose {
+            meReg.remove()
             friendshipsReg.remove()
             userRegs.forEach { it.remove() }
         }
@@ -140,5 +186,118 @@ class FriendsRepository(
     suspend fun publishWeekKm(myUid: String, km: Double) {
         db.collection("users").document(myUid)
             .set(mapOf("weekKm" to km), SetOptions.merge()).await()
+    }
+
+    // ── Familie: cei care te văd și în fantomă ──
+
+    /**
+     * Pune/scoate un prieten din familie (users/{me}.familyUids, arrayUnion/arrayRemove).
+     * Dacă primește `prefs`, oglindește și local (publicatorii citesc de acolo, fără Firestore).
+     * Returnează setul rezultat.
+     */
+    suspend fun setFamily(myUid: String, otherUid: String, on: Boolean, prefs: Prefs? = null): Set<String> {
+        val op = if (on) FieldValue.arrayUnion(otherUid) else FieldValue.arrayRemove(otherUid)
+        db.collection("users").document(myUid)
+            .set(mapOf("familyUids" to op), SetOptions.merge()).await()
+        val doc = db.collection("users").document(myUid).get().await()
+        val result = (doc.get("familyUids") as? List<*>)?.mapNotNull { it as? String }?.toSet()
+            ?: (if (on) setOf(otherUid) else emptySet())
+        try { prefs?.setFamilyUids(result) } catch (_: Exception) { }
+        return result
+    }
+
+    /** Pozițiile prietenilor care m-au pus în familia lor — vin și când ei sunt fantomă. */
+    fun familyLocFlow(myUid: String): Flow<Map<String, FamilyLoc>> = callbackFlow {
+        val reg = db.collection("familyLoc")
+            .whereArrayContains("allowed", myUid)
+            .addSnapshotListener { snap, _ ->
+                if (snap == null) return@addSnapshotListener
+                val out = LinkedHashMap<String, FamilyLoc>()
+                for (d in snap.documents) {
+                    val lat = d.getDouble("lat") ?: continue
+                    val lng = d.getDouble("lng") ?: continue
+                    out[d.id] = FamilyLoc(
+                        uid = d.id,
+                        lat = lat, lng = lng,
+                        speedMps = d.getDouble("speedMps") ?: 0.0,
+                        state = d.getString("state") ?: "idle",
+                        locUpdatedAt = d.getLong("locUpdatedAt") ?: 0L
+                    )
+                }
+                trySend(out)
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
+     * Scrie familyLoc/{uid} — MEREU când familia nu e goală, inclusiv în fantomă.
+     * Fire-and-forget: cache-ul Firestore o livrează și fără net.
+     */
+    fun writeFamilyLoc(
+        uid: String, lat: Double, lng: Double, speedMps: Double, state: String,
+        allowed: Collection<String>, at: Long = System.currentTimeMillis()
+    ) {
+        if (allowed.isEmpty()) return
+        try {
+            db.collection("familyLoc").document(uid).set(
+                mapOf(
+                    "lat" to lat, "lng" to lng,
+                    "speedMps" to speedMps, "state" to state,
+                    "locUpdatedAt" to at,
+                    "allowed" to allowed.toList()
+                )
+            )
+        } catch (_: Exception) { }
+    }
+
+    // ── Locuri recomandate prietenilor ──
+
+    /**
+     * Publică un loc al meu către toți prietenii (places/{id}, visibleTo = prietenii de acum).
+     * Reutilizează documentul dacă locul a mai fost recomandat. Returnează id-ul.
+     */
+    suspend fun recommendPlace(myUid: String, myName: String, place: PlaceEntity, friendUids: List<String>): String {
+        val ref = place.remoteId?.takeIf { it.isNotBlank() }?.let { db.collection("places").document(it) }
+            ?: db.collection("places").document()
+        ref.set(
+            mapOf(
+                "ownerUid" to myUid,
+                "ownerName" to myName,
+                "lat" to place.lat, "lng" to place.lng,
+                "name" to place.name.trim().take(80),
+                "stars" to place.stars.coerceIn(1, 5),
+                "note" to place.note.trim().take(300),
+                "at" to System.currentTimeMillis(),
+                "visibleTo" to friendUids.distinct().filter { it != myUid }.take(100)
+            )
+        ).await()
+        return ref.id
+    }
+
+    /** Locurile recomandate mie de prieteni — live. */
+    fun recommendedPlacesFlow(myUid: String): Flow<List<RecommendedPlace>> = callbackFlow {
+        val reg = db.collection("places")
+            .whereArrayContains("visibleTo", myUid)
+            .addSnapshotListener { snap, _ ->
+                if (snap == null) return@addSnapshotListener
+                val list = snap.documents.mapNotNull { d ->
+                    val lat = d.getDouble("lat") ?: return@mapNotNull null
+                    val lng = d.getDouble("lng") ?: return@mapNotNull null
+                    val owner = d.getString("ownerUid") ?: return@mapNotNull null
+                    if (owner == myUid) return@mapNotNull null
+                    RecommendedPlace(
+                        id = d.id,
+                        ownerUid = owner,
+                        ownerName = d.getString("ownerName") ?: "Un prieten",
+                        lat = lat, lng = lng,
+                        name = d.getString("name") ?: "",
+                        stars = (d.getLong("stars") ?: 0L).toInt(),
+                        note = d.getString("note") ?: "",
+                        at = d.getLong("at") ?: 0L
+                    )
+                }.sortedByDescending { it.at }
+                trySend(list)
+            }
+        awaitClose { reg.remove() }
     }
 }

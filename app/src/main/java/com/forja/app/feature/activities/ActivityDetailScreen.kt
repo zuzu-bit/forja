@@ -1,7 +1,5 @@
 package com.forja.app.feature.activities
 
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -21,22 +19,12 @@ import com.forja.app.ForjaApp
 import com.forja.app.core.data.db.ActivityEntity
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
+import com.forja.app.core.map.ForjaTiles
 import com.forja.app.core.util.Fmt
-import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Polyline
-
-private val CartoDarkDetail = XYTileSource(
-    "CartoDarkDetail", 1, 20, 256, ".png",
-    arrayOf(
-        "https://a.basemaps.cartocdn.com/dark_all/",
-        "https://b.basemaps.cartocdn.com/dark_all/",
-        "https://c.basemaps.cartocdn.com/dark_all/"
-    ),
-    "© OpenStreetMap contributors © CARTO"
-)
 
 /** Detaliul unei activități: traseul desenat + toate cifrele. */
 @Composable
@@ -97,6 +85,15 @@ fun ActivityDetailScreen(activityId: Long, onBack: () -> Unit) {
             }
         }
         if (points.size >= 2) {
+            // Aceeași sursă de tile-uri ca harta mare (CARTO → OSM → offline) + ciclu de viață corect.
+            val mapRef = remember { mutableStateOf<MapView?>(null) }
+            val detached = remember { mutableStateOf(false) }
+            fun detach(m: MapView) {
+                if (!detached.value) {
+                    detached.value = true
+                    try { m.onDetach() } catch (_: Exception) { }
+                }
+            }
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -108,18 +105,7 @@ fun ActivityDetailScreen(activityId: Long, onBack: () -> Unit) {
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         MapView(ctx).apply {
-                            setTileSource(CartoDarkDetail)
-                            setMultiTouchControls(true)
-                            zoomController.setVisibility(org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER)
-                            val warm = ColorMatrix(
-                                floatArrayOf(
-                                    1.10f, 0f, 0f, 0f, 8f,
-                                    0f, 0.98f, 0f, 0f, 4f,
-                                    0f, 0f, 0.86f, 0f, 0f,
-                                    0f, 0f, 0f, 1f, 0f
-                                )
-                            )
-                            overlayManager.tilesOverlay.setColorFilter(ColorMatrixColorFilter(warm))
+                            ForjaTiles.setup(this)
                             val glow = Polyline().apply {
                                 outlinePaint.color = android.graphics.Color.parseColor("#296F855A")
                                 outlinePaint.strokeWidth = 13 * ctx.resources.displayMetrics.density
@@ -137,9 +123,26 @@ fun ActivityDetailScreen(activityId: Long, onBack: () -> Unit) {
                             post {
                                 zoomToBoundingBox(BoundingBox.fromGeoPoints(points).increaseByScale(1.35f), false)
                             }
+                            mapRef.value = this
                         }
-                    }
+                    },
+                    onRelease = { detach(it) }
                 )
+            }
+            val map = mapRef.value
+            DisposableEffect(map) {
+                map?.onResume()
+                onDispose {
+                    if (map != null) {
+                        try { map.onPause() } catch (_: Exception) { }
+                        detach(map)
+                    }
+                }
+            }
+            LaunchedEffect(map) {
+                if (map != null) {
+                    try { ForjaTiles.chooseOnline(map) } catch (_: Exception) { }
+                }
             }
             Spacer(Modifier.height(16.dp))
         }

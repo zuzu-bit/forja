@@ -22,8 +22,9 @@ import kotlinx.coroutines.launch
 
 /**
  * Locația în FUNDAL, à la Zenly/Bump: prietenii te văd oriunde, oricând —
- * cu o singură excepție, aleasă de tine: modul fantomă.
+ * cu o singură excepție, aleasă de tine: modul fantomă (familia te vede și atunci).
  * Merge și cu aplicația închisă (updates livrate unui receiver), repornit la boot.
+ * Același fix hrănește și Explorarea (zone + locuri).
  */
 object BgLocation {
 
@@ -72,7 +73,7 @@ object BgLocation {
     }
 }
 
-/** Primește pozițiile și în fundal → le publică prietenilor (dacă nu ești fantomă). */
+/** Primește pozițiile și în fundal → Explorare + prieteni (dacă nu ești fantomă) + familie (mereu). */
 class BgLocationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val result = LocationResult.extractResult(intent) ?: return
@@ -82,27 +83,43 @@ class BgLocationReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.Default).launch {
             try {
+                val speed = if (loc.hasSpeed()) loc.speed.toDouble() else 0.0
+                val state = when {
+                    speed >= 5.0 -> "ride"
+                    speed >= 2.2 -> "run"
+                    speed >= 0.4 -> "walk"
+                    else -> "idle"
+                }
+                val now = System.currentTimeMillis()
                 val ghostUntil = app.prefs.ghostUntilLocal.first()
-                val ghost = ghostUntil == -1L || ghostUntil > System.currentTimeMillis()
+                val ghost = ghostUntil == -1L || ghostUntil > now
                 if (!ghost && app.prefs.bgShareOn.first()) {
-                    val speed = if (loc.hasSpeed()) loc.speed.toDouble() else 0.0
-                    val state = when {
-                        speed >= 5.0 -> "ride"
-                        speed >= 2.2 -> "run"
-                        speed >= 0.4 -> "walk"
-                        else -> "idle"
-                    }
                     FirebaseFirestore.getInstance().collection("users").document(uid).set(
                         mapOf(
                             "lat" to loc.latitude,
                             "lng" to loc.longitude,
                             "speedMps" to speed,
                             "state" to state,
-                            "locUpdatedAt" to System.currentTimeMillis()
+                            "locUpdatedAt" to now
                         ),
                         SetOptions.merge()
                     )
                 }
+                // Familia te vede și în fantomă.
+                val fam = app.prefs.familyUids.first()
+                if (fam.isNotEmpty()) {
+                    app.friends.writeFamilyLoc(uid, loc.latitude, loc.longitude, speed, state, fam, now)
+                }
+                // Explorarea: așteptăm prelucrarea, receiverul are fereastra goAsync.
+                try {
+                    app.explore.ingest(
+                        lat = loc.latitude, lng = loc.longitude,
+                        accuracyM = if (loc.hasAccuracy()) loc.accuracy else 999f,
+                        speedMps = if (loc.hasSpeed()) loc.speed else 0f,
+                        atMs = loc.time.takeIf { it > 0 } ?: now,
+                        source = "bg"
+                    )
+                } catch (_: Exception) { }
             } catch (_: Exception) {
             } finally {
                 pending.finish()
