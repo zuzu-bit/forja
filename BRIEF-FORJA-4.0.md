@@ -1,50 +1,60 @@
-# BRIEF FORJA 4.0 — de dat lui Claude într-o sesiune nouă („continuă FORJA după brief”)
+# BRIEF FORJA — de dat lui Claude într-o sesiune nouă („continuă FORJA după brief”)
 
-## Stare (27 septembrie 2026)
+## Stare (27 septembrie 2026, seara) — FORJA 4.1 (cod 62)
 
-- Sursa reală, completă și construibilă a lui **FORJA 4.0** este pe branch-ul `claude/quirky-hamilton-7nbpi8`
-  (GitHub `zuzu-bit/forja`). `main` a rămas la v3.7 — se poate face merge oricând (fast-forward nu; e un branch cu multe merge-uri).
-- **APK-ul 4.0** e publicat la Releases → „FORJA — ultimul APK” (build-ul din Actions `build-apk.yml`, rulat manual pe branch cu
-  `publish=true`). Pachet `com.forja.app.research`, versionCode 60, semnat cu `app/debug.keystore` (același semnatar ca 3.7-online.xx,
-  SHA-256 `6fc56c1f…ed74`) → se instalează PESTE aplicația de pe telefon; baza Room migrează 5→6→7 fără pierderi.
-- **Site-ul** (`https://forja-insights.forja-22e7ea2d.workers.dev`) e publicat din CI (`insights-deploy.yml`, la orice push în
-  `main`/`claude/**` care atinge `server/**`). Versiunea `/health` = 16, cu `explore_sync:1`, `content_ai:2`. Harta 2D/3D reparată (v27).
-- Worker-ul aplicației (`server/worker.js`, forja-api) are `POST /v1/organize` (sugestii de curățenie) și lista Gemini
-  `gemini-2.5-flash → gemini-2.0-flash`; fără cheie folosește banca de modele Cloudflare.
+- Sursa reală, completă și construibilă e pe branch-ul `claude/quirky-hamilton-7nbpi8` (GitHub `zuzu-bit/forja`). `main` a rămas la v3.7;
+  merge-ul în `main` e opțional (după merge, orice push pe `main` construiește și publică singur).
+- **APK-ul** e publicat la Releases → „FORJA — ultimul APK” (Actions `build-apk.yml`, rulat manual pe branch cu `publish=true`).
+  Pachet `com.forja.app.research`, semnat cu `app/debug.keystore` (același semnatar ca 3.7-online.xx) → se instalează PESTE aplicația de pe
+  telefon; Room migrează 5→6→7→8 fără pierderi. Versiuni: 4.0 (cod 60) → 4.0.1 (61, hartă OSM provizorie) → 4.1 (62, tot ce e mai jos).
+- **Serverul aplicației** (`server/worker.js`, forja-api pe Cloudflare, gratuit): routerul de AI `server/ai-router.mjs` cu ordinea
+  Gemini (cheie gratuită) → Groq (cheie gratuită) → Claude/OpenAI (doar dacă ar exista chei plătite) → Cloudflare Workers AI; contoare de
+  limită zilnică pe model, trecere automată la următorul furnizor; `/v1/diag` arată furnizorii configurați (fără chei). Secretele GitHub:
+  `GEMINI_API_TOKEN` (CI acceptă și `GEMINI_API_KEY`), `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN`. Decizia Lanei: FĂRĂ bani, FĂRĂ server local.
+- **Site-ul** (`https://forja-insights.forja-22e7ea2d.workers.dev`) se publică din CI la orice push pe `main`/`claude/**` care atinge `server/**`;
+  `/health` versiunea 17 (`contacts:2`, `explore_sync:1`, `content_ai:2`).
 
-## Ce s-a livrat (v4.0 + pasul 2)
+## Ce s-a livrat în 4.1 (peste 4.0 + pasul 2)
 
-Hartă (ForjaTiles cu rezervă CARTO→OSM→offline, ciclu de viață, GO înapoi, 2D/3D), Explorare (celule ~150 m, locuri = ai stat ≥ prag,
-stele/notă/recomandă prietenilor, Familie te vede și în fantomă, `firestore.rules` cu `places`, `familyLoc`), Somn (serviciu sigur pe
-Android 14/15, STOP/SNOOZE, „Încă 10 minute”, alarmă care nu tace, „Veghea de noapte”, „Nopțile tale”), Start (Effects.kt, splash, 4 ordine
-de zi, cont peste video, Echipare cu 5 bife, tranziții, `INTRO_VERSION=2`), Curățenie v2 (scop, reluare obligatorie, SHA-256/dHash/capturi/
-neclare/mici/mari, dosare `Pictures/FORJA Curățenie/…`, documente în `Organizate/…`, AI opt-in), Dashboard cu tile-uri Explorare/Curățenie,
-Profil cu „Panoul meu online”, „Echipare”, „Explorare”, „Sincronizare în cont”, „Telefonul meu”.
-Pasul 2 (toate opt-in, implicit oprite): Sincronizare în cont (`core/sync`, secțiune în Echipare, `/v2/sessions`), Telefonul meu
-(`core/recovery`, `/v2/recovery`), Explorarea „Și pe site” (`core/explore/ExploreSync.kt` + `server/social-journey.mjs` rute
-`/v2/social/explore/*`, hartă și listă „Locurile mele” pe site), Curățenia „Și pe site (copii 24 h)” (`core/cleanup/OrganizerJobs.kt`,
-protocol 4, `/v2/organizer`, `/v2/files`), Gemini 2.5 Flash pe site (`server/gemini.mjs`, folosit când există `GEMINI_API_KEY`).
+1. **Harta** (pachetul cel mai mare): motor MapLibre 13.6.1 (OpenGL) + OpenFreeMap „liberty” recolorat la runtime (paleta FORJA zi, mod noapte
+   Auto/Pornit/Oprit), clădiri 3D reale (înclinare 55°), teritorii cucerite (celule 150 m, colorate după mers/alergare/bicicletă; nu se cuceresc
+   din mașină) cu strălucire la zoom mic, „străzile tale” din toate traseele, avataruri cu poză și „nume · distanță”, card cu „la 1,2 km · ~15 min
+   pe jos”, bara cu prieteni, foaia „Straturi”, „X % din zona ta” și „Loc #k între prieteni”, locuri cu „ai fost de N ori”, chip onest de offline,
+   atribuire. Fișiere: `core/map/{ForjaMap,ForjaStyle,MapLayers,MapIcons,MapPrefs,ExploreStats}.kt`, `feature/map/*`. osmdroid a dispărut.
+2. **Focus**: „Mă întorc la copac” aduce în FORJA la Focus (`core/focus/ReturnToForja.kt`); ecran de blocare = post de gardă cu copac.
+3. **Agenda (ca la Telegram)**: al 6-lea rând în Echipare („Agendă” + numărul tău), `core/social/*` (normalizare E.164, citire contacte,
+   `ContactsSync` zilnic), număr „declarat” sau „verificat prin SMS” (Phone Auth opțional în consolă), potrivire reciprocă → prietenie automată
+   (aplicație + site), nereciprocă → „Din agendă” cu „Trimite-i codul tău”; pe server doar amprente HMAC (`server/social-contacts.mjs`, site v17).
+   Familie: rând cald pentru locația „tot timpul”, cadență de fundal 120 s când ai familie.
+4. **Nutriție**: rezultat v2 (inel kcal, bare macro, scor de rație, porții editabile, „ce nu se vede”), cardul zilei cu serie, mascota
+   „Bucătarul” (`mascot_chef.jpg`, generată de CI cu FLUX), `core/network/MealApi.kt`. Serverul: mese v2 cu verificare în două treceri.
+5. **Somn**: înregistrare în bucăți de 30 min, urcare automată (Wi-Fi implicit) la `/v1/sleep-chunk`, analiză integrală `/v1/sleep-analyze`
+   (Gemini ascultă; altfel Whisper), raport „Noaptea, ascultată” cu transcrieri exacte, sforăit cu intensitate, „Ascultă” pe eveniment,
+   acoperire onestă; stadii din mișcare pe epoci de 1 min (`core/sleep/SleepStaging.kt`), `core/network/SleepApi.kt`.
+6. **Curățenie**: „Și pe site” pornește implicit odată cu curățenia; sugestii AI implicit, PDF-uri citite pe server (`/v1/organize` v2:
+   rezumat, dosar, ștergere recomandată cu motiv, duplicat); nimic nu se șterge singur.
+7. **Vocea** „armată serioasă + citate calde” în toate modulele (`core/designsystem/components/Tone.kt`, ștampile pe fiecare ecran).
 
 ## Pași manuali pentru Lana (o singură dată)
 
-1. Firebase → Firestore → Rules: lipește conținutul din `firestore.rules` → Publish (colecțiile noi `places`, `familyLoc`).
-2. (Opțional) GitHub → Settings → Secrets → `GEMINI_API_KEY`: cu ea, mesele, curățenia și site-ul folosesc Gemini 2.5 Flash.
-3. (Opțional) Merge `claude/quirky-hamilton-7nbpi8` → `main`; după merge, orice push pe `main` construiește și publică APK-ul singur.
-4. Clipurile Veo/Adobe originale în bucketul `forja-media` (vezi `MEDIA.md` / `VIDEO.md`) — aplicația le ia automat.
+1. Firebase → Firestore → Rules: lipește `firestore.rules` → Publish (v4.1 adaugă `places.visits`; v4.0 a adăugat `places`, `familyLoc`).
+2. (Opțional) Phone Auth în consolă, după `server/PARTNERS_CONTACTS.md`, dacă vrei numere verificate prin SMS; fără el merge „declarat”.
+3. (Opțional) Merge `claude/quirky-hamilton-7nbpi8` → `main`.
+4. Clipurile originale în bucketul `forja-media` (`MEDIA.md`).
 
 ## Cum se lucrează (sesiunea următoare)
 
-- Build de verificare fără să atingă release-ul: Actions → „Build FORJA APK” → Run workflow pe branch, `publish=false` (artifact).
-- Type-check local fără SDK Android (dl.google.com e blocat în container): harnașamentul `kc/` din scratchpad-ul sesiunii anterioare
-  nu persistă; se reconstruiește în ~40 min după rețeta din `kc/README.md` (kotlinc 2.1.0 + android.jar din Sable/android-platforms +
-  dependențe din NuGet/Maven Central). Merită.
-- Spec-urile de lucru folosite: `SPEC-v4.0.md` și `SPEC-step2.md` (în scratchpad; ideile principale sunt în README).
+- Build de verificare fără release: Actions → „Build FORJA APK” → Run workflow pe branch, `publish=false`.
+- Type-check local fără SDK Android (dl.google.com e blocat în container): harnașamentul `kc/` din scratchpad nu persistă între sesiuni;
+  se reconstruiește după `kc/README.md` (kotlinc 2.1.0 + android.jar + dependențe din Maven Central; MapLibre 13.6.1 opengl classes.jar în
+  `libs-extra/`). ~40 min. Merită.
+- Spec-urile folosite (scratchpad): SPEC-v4.0, SPEC-step2, SPEC-map, SPEC-social, SPEC-ai, SPEC-nutrition, SPEC-sleep-app, SPEC-cleanup-online,
+  TONE.md; rapoartele map-contract / maplibre-api / maplibre-design; reperele Plimb/Bump (`reference-plimb.md`).
 
 ## Ce urmează
 
-1. Test real pe telefon (Lana): instalare peste 3.7-online, prezentarea nouă o dată, Echipare, hartă (dale, zone, locuri după prag),
-   somn cu alarmă, curățenie cu reluare, sincronizare/telefonul meu/explorare pe site — și lista de bug-uri.
-2. Tonul „armată serioasă + citate calde” extins în restul aplicației (Antrenament, Nutriție, Focus); aspectul să nu pară „AI”.
-3. Descoperirea prietenilor din agendă (contacte) — cere Firebase Phone Auth + facturare Blaze; amânat până se activează în consolă.
-4. Harta 3D reală în aplicație (MapLibre în WebView, ca pe site) — acum e înclinare 2.5D; de decis după testul pe telefon.
-5. Curățare: branch-urile GPT (`research/*`, `ux/*`, `delivery/*`, PR #17–#20) pot fi închise — tot ce era util e în sursa reală.
+1. Test real pe telefon (Lana): harta 3D (dale, teritorii, prieteni, GO), agenda (număr + potrivire cu un al doilea telefon), nutriția v2,
+   o noapte de somn cu urcare și raport, curățenia cu PDF — și lista de bug-uri. Lucruri de verificat pe dispozitiv sunt listate în
+   rapoartele pachetelor (SurfaceView în tranziții, atribuirea OpenFreeMap, cadența MapLibre pe telefonul ei).
+2. Contul de conversație/chat și muzica din Bump — în afara scopului; colectabile/„dopamină” pe hartă — de decis.
+3. Curățare: branch-urile GPT (`research/*`, `ux/*`, `delivery/*`, PR #17–#20) pot fi închise.
