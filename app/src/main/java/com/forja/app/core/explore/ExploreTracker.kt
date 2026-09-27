@@ -80,9 +80,11 @@ private data class DwellCandidate(
  * Explorarea: ține minte zonele prin care ai trecut și locurile unde ai STAT.
  * Primește fixuri din toate sursele de locație (prezență, fundal, GO, hartă).
  *
- * Reguli: fix acceptat doar cu precizie ≤ 60 m; celula se marchează la prima trecere (vizită nouă
- * după 30 min); un LOC apare când ai stat ≥ prag (implicit 5 h) pe o rază de 100 m, cu viteză ≤ 2,5 m/s —
- * pauzele GPS și plimbatul nu se numără. Oglindă în Firestore (users/{uid}/explore, users/{uid}/places).
+ * Reguli: fix acceptat doar cu precizie ≤ 60 m; celula („teritoriul”) se cucerește la prima trecere pe jos, alergând
+ * sau pe bicicletă — peste 12 m/s (43 km/h) nu se cucerește nimic, decât dacă sursa e GO (sport ales explicit);
+ * vizită nouă după 30 min. Un LOC apare când ai stat ≥ prag (implicit 5 h) pe o rază de 100 m, cu viteză ≤ 2,5 m/s —
+ * pauzele GPS și plimbatul nu se numără; o ședere nouă la > 6 h de ultima = încă o vizită. Oglindă în Firestore
+ * (users/{uid}/explore, users/{uid}/places) + cifrele de clasament pe users/{uid} (exploreCells, placesCount).
  */
 class ExploreTracker(private val app: ForjaApp) {
 
@@ -126,14 +128,28 @@ class ExploreTracker(private val app: ForjaApp) {
         if (accuracyM > MAX_ACCURACY_M) return
         mutex.withLock {
             if (!app.prefs.exploreOn.first()) return
-            touchCell(lat, lng, atMs)
+            // Din mașină nu cucerești teritorii: peste 12 m/s ignorăm celula (GO rămâne valid — sportul e ales explicit).
+            if (source == "go" || speedMps <= MAX_CONQUER_SPEED) touchCell(lat, lng, speedMps, atMs, source)
             dwell(lat, lng, speedMps, atMs, source)
         }
     }
 
     // ── Celule ──
 
-    private suspend fun touchCell(lat: Double, lng: Double, atMs: Long) {
+    /** Cum cucerești: la GO după sportul ales, altfel după viteză (≥ 6 m/s bicicletă, ≥ 2,2 m/s alergare, restul pe jos). */
+    private fun modeFor(speedMps: Float, source: String): String {
+        if (source == "go") {
+            val sport = com.forja.app.core.location.GoTrackService.state.value.sport
+            if (sport == "run" || sport == "ride" || sport == "walk") return sport
+        }
+        return when {
+            speedMps >= RIDE_SPEED -> "ride"
+            speedMps >= RUN_SPEED -> "run"
+            else -> "walk"
+        }
+    }
+
+    private suspend fun touchCell(lat: Double, lng: Double, speedMps: Float, atMs: Long, source: String) {
         val id = ExploreGrid.cellOf(lat, lng)
         val dao = app.db.exploreDao()
         val existing = dao.cell(id)
@@ -141,7 +157,7 @@ class ExploreTracker(private val app: ForjaApp) {
         val mirror: Boolean
         if (existing == null) {
             val b = ExploreGrid.bounds(id)
-            updated = ExploreCellEntity(id, b[0], b[1], b[2], b[3], atMs, atMs, 1)
+            updated = ExploreCellEntity(id, b[0], b[1], b[2], b[3], atMs, atMs, 1, modeFor(speedMps, source))
             mirror = true
         } else {
             val revisit = atMs - existing.lastAt > REVISIT_MS
@@ -156,6 +172,7 @@ class ExploreTracker(private val app: ForjaApp) {
         }
         dao.upsertCell(updated)
         if (mirror) mirrorCell(updated)
+        if (existing == null) publishCounts(atMs)
     }
 
     private fun mirrorCell(c: ExploreCellEntity) {
@@ -163,7 +180,19 @@ class ExploreTracker(private val app: ForjaApp) {
         try {
             FirebaseFirestore.getInstance().collection("users").document(uid)
                 .collection("explore").document(c.id)
-                .set(mapOf("firstAt" to c.firstAt, "lastAt" to c.lastAt, "visits" to c.visits), SetOptions.merge())
+                .set(mapOf("firstAt" to c.firstAt, "lastAt" to c.lastAt, "visits" to c.visits, "mode" to c.mode), SetOptions.merge())
+        } catch (_: Exception) { }
+    }
+
+    /** Cifrele de clasament pe users/{uid} — prietenii le citesc pentru „Loc #k între prieteni”. La fiecare celulă/loc nou. */
+    private suspend fun publishCounts(atMs: Long) {
+        val uid = app.auth.currentUid ?: return
+        try {
+            val dao = app.db.exploreDao()
+            val cells = dao.countCellsOnce()
+            val places = dao.countPlacesOnce()
+            FirebaseFirestore.getInstance().collection("users").document(uid)
+                .set(mapOf("exploreCells" to cells, "placesCount" to places, "exploreUpdatedAt" to atMs), SetOptions.merge())
         } catch (_: Exception) { }
     }
 
@@ -216,8 +245,9 @@ class ExploreTracker(private val app: ForjaApp) {
         if (c.placeId == 0L) {
             val near = nearbyPlace(c.lat, c.lng)
             if (near != null) {
-                // Loc deja cunoscut: o vizită nouă adaugă timpul ei.
-                val upd = near.copy(lastAt = atMs, stayMs = near.stayMs + c.stayMs)
+                // Loc deja cunoscut: o ședere nouă adaugă timpul ei; după > 6 h de la ultima dată e încă o vizită.
+                val again = atMs - near.lastAt > REVISIT_PLACE_MS
+                val upd = near.copy(lastAt = atMs, stayMs = near.stayMs + c.stayMs, visits = near.visits + if (again) 1 else 0)
                 dao.updatePlace(upd)
                 mirrorPlace(upd)
                 return c.copy(placeId = near.id, syncedMs = c.stayMs, placeSyncAt = atMs)
@@ -232,6 +262,7 @@ class ExploreTracker(private val app: ForjaApp) {
             val id = dao.insertPlace(place)
             val saved = place.copy(id = id)
             mirrorPlace(saved)
+            publishCounts(atMs)
             notifyNewPlace(saved)
             ExploreSync.kick(app)
             return c.copy(placeId = id, syncedMs = c.stayMs, placeSyncAt = atMs)
@@ -287,7 +318,8 @@ class ExploreTracker(private val app: ForjaApp) {
                         "lat" to p.lat, "lng" to p.lng,
                         "firstAt" to p.firstAt, "lastAt" to p.lastAt, "stayMs" to p.stayMs,
                         "name" to p.name, "stars" to p.stars, "note" to p.note,
-                        "recommended" to p.recommended, "remoteId" to p.remoteId, "cellId" to p.cellId
+                        "recommended" to p.recommended, "remoteId" to p.remoteId, "cellId" to p.cellId,
+                        "visits" to p.visits
                     ),
                     SetOptions.merge()
                 )
@@ -333,6 +365,12 @@ class ExploreTracker(private val app: ForjaApp) {
         const val CELL_WRITE_MIN_MS = 60_000L
         const val MIN_GAP_MS = 5_000L
         const val PLACE_SYNC_MS = 5 * 60_000L
+        /** Peste 12 m/s (43 km/h) ești în mașină — nu cucerești teritorii. */
+        const val MAX_CONQUER_SPEED = 12f
+        const val RUN_SPEED = 2.2f
+        const val RIDE_SPEED = 6f
+        /** O ședere la > 6 h de ultima = vizită nouă la același loc. */
+        const val REVISIT_PLACE_MS = 6 * 3_600_000L
         private const val NOTIF_BASE = 4100
     }
 }

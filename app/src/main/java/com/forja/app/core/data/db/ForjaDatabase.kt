@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ActivityEntity::class, FocusRuleEntity::class,
         ExploreCellEntity::class, PlaceEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class ForjaDatabase : RoomDatabase() {
@@ -60,13 +60,21 @@ abstract class ForjaDatabase : RoomDatabase() {
             }
         }
 
+        // v8: teritoriile țin minte cum le-ai cucerit (pe jos / alergând / bicicletă); locurile numără vizitele.
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE explore_cells ADD COLUMN mode TEXT NOT NULL DEFAULT 'walk'")
+                db.execSQL("ALTER TABLE places ADD COLUMN visits INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
         fun get(context: Context): ForjaDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     ForjaDatabase::class.java,
                     "forja.db"
-                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     .fallbackToDestructiveMigration()
                     .build().also { instance = it }
             }

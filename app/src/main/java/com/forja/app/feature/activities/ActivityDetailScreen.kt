@@ -12,19 +12,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.forja.app.ForjaApp
 import com.forja.app.core.data.db.ActivityEntity
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
-import com.forja.app.core.map.ForjaTiles
+import com.forja.app.core.map.ForjaMap
+import com.forja.app.core.map.MapController
+import com.forja.app.core.map.MapGeo
 import com.forja.app.core.util.Fmt
-import org.osmdroid.util.BoundingBox
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Polyline
 
 /** Detaliul unei activități: traseul desenat + toate cifrele. */
 @Composable
@@ -75,23 +73,18 @@ fun ActivityDetailScreen(activityId: Long, onBack: () -> Unit) {
             return@Column
         }
 
-        // Traseul pe hartă
-        val points = remember(a.id) {
-            a.polyline.split(';').mapNotNull { pair ->
-                val parts = pair.split(',')
-                val lat = parts.getOrNull(0)?.toDoubleOrNull()
-                val lng = parts.getOrNull(1)?.toDoubleOrNull()
-                if (lat != null && lng != null) GeoPoint(lat, lng) else null
-            }
-        }
+        // Traseul pe hartă: aceeași ForjaMap ca harta mare, în mod static (doar pinch, 2D), traseul amber, încadrat cu 35 % margine.
+        val points = remember(a.id) { MapGeo.parsePolyline(a.polyline) }
         if (points.size >= 2) {
-            // Aceeași sursă de tile-uri ca harta mare (CARTO → OSM → offline) + ciclu de viață corect.
-            val mapRef = remember { mutableStateOf<MapView?>(null) }
-            val detached = remember { mutableStateOf(false) }
-            fun detach(m: MapView) {
-                if (!detached.value) {
-                    detached.value = true
-                    try { m.onDetach() } catch (_: Exception) { }
+            val reducedMotion = LocalReducedMotion.current
+            val density = LocalDensity.current
+            val controller = remember(a.id) {
+                MapController(context, staticMode = true).also { c ->
+                    c.reducedMotion = reducedMotion
+                    c.onStyleReady = {
+                        c.setStreets(MapGeo.route(points, "mine"))
+                        c.fitBounds(points, with(density) { 24.dp.roundToPx() })
+                    }
                 }
             }
             Box(
@@ -101,48 +94,7 @@ fun ActivityDetailScreen(activityId: Long, onBack: () -> Unit) {
                     .height(260.dp)
                     .clip(RoundedCornerShape(Radii.card))
             ) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { ctx ->
-                        MapView(ctx).apply {
-                            ForjaTiles.setup(this)
-                            val glow = Polyline().apply {
-                                outlinePaint.color = android.graphics.Color.parseColor("#296F855A")
-                                outlinePaint.strokeWidth = 13 * ctx.resources.displayMetrics.density
-                                outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
-                                setPoints(points)
-                            }
-                            val line = Polyline().apply {
-                                outlinePaint.color = android.graphics.Color.parseColor("#6F855A")
-                                outlinePaint.strokeWidth = 4.5f * ctx.resources.displayMetrics.density
-                                outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
-                                setPoints(points)
-                            }
-                            overlays.add(glow)
-                            overlays.add(line)
-                            post {
-                                zoomToBoundingBox(BoundingBox.fromGeoPoints(points).increaseByScale(1.35f), false)
-                            }
-                            mapRef.value = this
-                        }
-                    },
-                    onRelease = { detach(it) }
-                )
-            }
-            val map = mapRef.value
-            DisposableEffect(map) {
-                map?.onResume()
-                onDispose {
-                    if (map != null) {
-                        try { map.onPause() } catch (_: Exception) { }
-                        detach(map)
-                    }
-                }
-            }
-            LaunchedEffect(map) {
-                if (map != null) {
-                    try { ForjaTiles.chooseOnline(map) } catch (_: Exception) { }
-                }
+                ForjaMap(controller = controller, modifier = Modifier.fillMaxSize(), bottomInsetDp = 6)
             }
             Spacer(Modifier.height(16.dp))
         }

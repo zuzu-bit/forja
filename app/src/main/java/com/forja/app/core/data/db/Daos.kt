@@ -159,6 +159,12 @@ interface ExploreDao {
     @Query("SELECT COUNT(*) FROM explore_cells")
     fun countCells(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM explore_cells")
+    suspend fun countCellsOnce(): Int
+
+    @Query("SELECT COUNT(*) FROM places")
+    suspend fun countPlacesOnce(): Int
+
     @Insert
     suspend fun insertPlace(p: PlaceEntity): Long
 
