@@ -172,7 +172,7 @@ fun MealCameraScreen(onClose: () -> Unit) {
             ) {
                 Text("Fără cameră, fără poze.", style = TitleModule.copy(fontSize = 22.sp))
                 Spacer(Modifier.height(8.dp))
-                Text("Poza pleacă doar spre serverul FORJA, se analizează și dispare.", style = Body)
+                Text("Poza pleacă la analiză cu model și se întoarce ca estimare. Nimic nu se salvează fără confirmarea ta.", style = Body)
                 Spacer(Modifier.height(16.dp))
                 SecondaryButton("Dă permisiunea", onClick = { launcher.launch(Manifest.permission.CAMERA) })
             }

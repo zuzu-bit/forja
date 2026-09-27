@@ -72,7 +72,7 @@ fun ScannerScreen(onClose: () -> Unit) {
                     .border(2.dp, Color(0x996F855A), RoundedCornerShape(16.dp))
             )
             Text(
-                "Îndreaptă camera spre codul de bare",
+                "Îndreaptă camera spre codul de bare.",
                 style = BodyStrong,
                 modifier = Modifier
                     .align(Alignment.Center)

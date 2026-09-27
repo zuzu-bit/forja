@@ -76,7 +76,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 val bytes = MealAnalyze.readUri(context, uri)
                 if (bytes == null) {
                     galleryAnalyzing = false
-                    toast.show("Poza nu s-a putut citi.")
+                    toast.show("Poza nu s-a putut citi. Alege alta.")
                     return@launch
                 }
                 galleryBytes = bytes
@@ -141,21 +141,23 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 Spacer(Modifier.height(6.dp))
                 Text(
                     if (kcal <= target) "mai ai ${target - kcal}"
-                    else "peste cu ${kcal - target} — e în regulă, mâine e o zi nouă",
+                    else "peste cu ${kcal - target} — notat. Mâine ții rândul.",
                     style = BodySmall.copy(color = if (kcal <= target) TextSecondary else Error)
                 )
             }
-            Text(
-                "Nutriție",
-                style = TitleModule,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .statusBarsPadding()
-                    .padding(20.dp)
-            )
         }
 
         Spacer(Modifier.height(18.dp))
+
+        // Ordinul de zi al modulului: ștampilă + două bătăi + ordin (sub poză, ca să nu se bată cu bugetul kcal).
+        ModuleHeader(
+            stamp = "RAȚIE",
+            title = "Mănânci real. Vezi clar.",
+            order = "Scanezi codul sau fotografiezi farfuria. Codul e exact, poza e estimare. Tu confirmi porția.",
+            modifier = Modifier.padding(horizontal = 20.dp)
+        )
+
+        Spacer(Modifier.height(20.dp))
 
         // Jurnalul meselor de azi
         SectionLabel("Mesele de azi", Modifier.padding(horizontal = 20.dp))
@@ -298,9 +300,13 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
             Spacer(Modifier.width(8.dp))
             InfoDot(
                 title = "Cum funcționează",
-                text = "Analiza rulează pe serverul FORJA — fără nicio cheie la tine. AI-ul estimează din poză; codul de bare dă valori exacte din OpenFoodFacts. Totul rămâne editabil înainte de salvare."
+                text = "Poza pleacă la analiză cu model — pe serverul FORJA sau, dacă ai pus cheia ta Gemini, direct la Google. Modelul estimează, nu cântărește. Codul de bare dă valori exacte din OpenFoodFacts. Nimic nu se salvează până nu confirmi."
             )
         }
+
+        // Un singur citat cald pe ecran — același toată ziua.
+        Spacer(Modifier.height(24.dp))
+        WarmQuote(Tone.ofDay(Tone.nutrition), Modifier.padding(horizontal = 20.dp))
     }
 
     if (keyOpen) {
@@ -309,7 +315,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 scope.launch {
                     app.prefs.setGeminiKey(key)
                     keyOpen = false
-                    toast.show("Cheie salvată. Fotografiază prima masă!")
+                    toast.show("Cheie salvată. Fotografiază prima masă.")
                 }
             },
             onClose = { keyOpen = false }
@@ -427,7 +433,7 @@ fun PortionSheet(
             }
 
             Spacer(Modifier.height(16.dp))
-            SectionLabel("Cât ai mâncat?")
+            SectionLabel("Porția")
             Spacer(Modifier.height(8.dp))
             Row {
                 listOf("Tot" to defaultGrams, "½" to defaultGrams / 2, "⅓" to defaultGrams / 3, "¼" to defaultGrams / 4)
@@ -483,7 +489,7 @@ fun AiKeySheet(onSaved: (String) -> Unit, onClose: () -> Unit) {
             Text("Activează analiza pozelor", style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(6.dp))
             Text(
-                "FORJA folosește AI-ul Google (Gemini) cu cheia TA gratuită — pozele pleacă doar către contul tău, nu prin serverele FORJA.",
+                "Analiza folosește modelul Gemini (Google) cu cheia ta gratuită. Pozele pleacă direct la contul tău Google, nu prin serverele FORJA. Ce primești e o estimare — o corectezi înainte de salvare.",
                 style = Body
             )
             Spacer(Modifier.height(12.dp))
@@ -491,7 +497,7 @@ fun AiKeySheet(onSaved: (String) -> Unit, onClose: () -> Unit) {
             Spacer(Modifier.height(6.dp))
             Text(
                 "1. Deschide aistudio.google.com/apikey (logat cu contul Google)\n" +
-                    "2. Apasă „Create API key\" și copiază codul\n" +
+                    "2. Apasă „Create API key” și copiază codul\n" +
                     "3. Lipește-l aici",
                 style = BodySmall.copy(lineHeight = 19.sp)
             )
@@ -601,7 +607,7 @@ private fun ManualAddSheet(vm: NutritionViewModel, onClose: () -> Unit) {
         shape = SheetShape
     ) {
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-            Text("Adaug manual", style = TitleModule.copy(fontSize = 20.sp))
+            Text("Adaugă manual", style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(4.dp))
             Text("Tu știi cel mai bine ce ai în farfurie.", style = BodySmall)
             Spacer(Modifier.height(12.dp))
