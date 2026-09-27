@@ -22,7 +22,7 @@
   ],
   "permission_ui_patch_applied": false,
   "android_device_tested": false,
-  "live_server_tested": false,
+  "live_server_tested": true,
   "kotlin_unit_tests_passed": 47,
   "java_policy_checks_passed": 94,
   "backend_tests_passed": 155,
@@ -38,5 +38,9 @@
     "successful_app_launch_confirmed": false,
     "visual_ui_verified": false,
     "app_crash_confirmed": false
-  }
+  },
+  "live_verification_scope": "Public health/version/features, exact HTML and client hashes, anonymous access denied. Owner login and phone flow untested.",
+  "owner_login_tested": false,
+  "phone_tested": false,
+  "deployment_report": "deployment.json"
 }
