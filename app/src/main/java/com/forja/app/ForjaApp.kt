@@ -107,7 +107,6 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
             NotificationChannel("alarm", getString(R.string.notif_channel_alarm), NotificationManager.IMPORTANCE_HIGH).apply {
                 setSound(null, null)
                 enableVibration(false)
-                setBypassDnd(true)
             }
         )
     }
