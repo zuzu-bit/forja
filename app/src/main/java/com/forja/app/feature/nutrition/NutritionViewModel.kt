@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -36,8 +37,17 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
     val kcalToday: StateFlow<Int> = dao.kcalForDay(Fmt.epochDay())
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    val kcalTarget: StateFlow<Int> = forja.prefs.kcalTarget
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 2250)
+    private val nutritionPrefs = NutritionPrefs.of(app)
+
+    /** Obiectivul zilnic — DataStore-ul modulului (`forja_nutrition`), implicit 2000. */
+    val kcalTarget: StateFlow<Int> = nutritionPrefs.kcalTarget
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), NutritionPrefs.DEFAULT_KCAL)
+
+    /** Zile la rând cu cel puțin o masă notată (local, onest); „azi” e calculat în flux, nu prins la crearea modelului. */
+    val streak: StateFlow<Int> = nutritionPrefs.streak()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    fun setKcalTarget(v: Int) { viewModelScope.launch { nutritionPrefs.setKcalTarget(v) } }
 
     private val _pending = MutableStateFlow<PendingProduct?>(null)
     val pending: StateFlow<PendingProduct?> = _pending.asStateFlow()
@@ -115,6 +125,7 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
             )
             val id = dao.insert(meal)
             com.forja.app.core.data.CloudSync.meal(forja.auth.currentUid, meal.copy(id = id))
+            nutritionPrefs.noteMeal(meal.epochDay)
             _pending.value = null
         }
     }
@@ -129,13 +140,17 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
             )
             val id = dao.insert(meal)
             com.forja.app.core.data.CloudSync.meal(forja.auth.currentUid, meal.copy(id = id))
+            nutritionPrefs.noteMeal(meal.epochDay)
         }
     }
 
+    /** Șterge masa; dacă ziua ei rămâne fără mese, seria nu o mai numără (o masă adăugată din greșeală nu face „zi”). */
     fun deleteMeal(id: Long) {
+        val day = meals.value.firstOrNull { it.id == id }?.epochDay ?: Fmt.epochDay()
         viewModelScope.launch {
             dao.delete(id)
             com.forja.app.core.data.CloudSync.deleteMeal(forja.auth.currentUid, id)
+            if (dao.mealsForDay(day).first().isEmpty()) nutritionPrefs.noteMealRemoved(day)
         }
     }
 }

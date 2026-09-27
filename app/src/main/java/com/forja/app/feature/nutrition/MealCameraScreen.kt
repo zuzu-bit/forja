@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,7 +37,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.forja.app.ForjaApp
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
-import com.forja.app.core.network.MealAnalysis
+import com.forja.app.core.network.MealReport
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -59,14 +60,17 @@ fun MealCameraScreen(onClose: () -> Unit) {
     LaunchedEffect(Unit) { if (!hasPermission) launcher.launch(Manifest.permission.CAMERA) }
 
     var analyzing by remember { mutableStateOf(false) }
-    var analysis by remember { mutableStateOf<MealAnalysis?>(null) }
+    var stages by remember { mutableStateOf(AnalyzeStages.idle) }
+    var report by remember { mutableStateOf<MealReport?>(null) }
     var lastBytes by remember { mutableStateOf<ByteArray?>(null) }
+    val dayTarget by remember { NutritionPrefs.of(context).kcalTarget }.collectAsState(initial = NutritionPrefs.DEFAULT_KCAL)
     val imageCapture = remember { ImageCapture.Builder().build() }
 
     fun capture() {
         if (analyzing) return
         val file = File(context.cacheDir, "meal_${System.currentTimeMillis()}.jpg")
         analyzing = true
+        stages = AnalyzeStages.idle
         imageCapture.takePicture(
             ImageCapture.OutputFileOptions.Builder(file).build(),
             ContextCompat.getMainExecutor(context),
@@ -82,8 +86,10 @@ fun MealCameraScreen(onClose: () -> Unit) {
                             return@launch
                         }
                         lastBytes = bytes
-                        when (val res = MealAnalyze.analyzeJpeg(app, bytes)) {
-                            is AnalyzeOutcome.Ok -> { analyzing = false; analysis = res.analysis }
+                        val res = MealAnalyze.analyzeJpeg(app, bytes) { stages = it }
+                        MealAnalyze.holdVerifyStep(res) // pasul 3 (v2) rămâne pe ecran o bătaie înainte de foaia de rezultat
+                        when (res) {
+                            is AnalyzeOutcome.Ok -> { analyzing = false; report = res.report }
                             is AnalyzeOutcome.Fail -> { analyzing = false; toast.show(res.message) }
                         }
                     }
@@ -160,9 +166,19 @@ fun MealCameraScreen(onClose: () -> Unit) {
                         )
                     }
                 }
-                if (analyzing) {
-                    Spacer(Modifier.height(10.dp))
-                    Text("se analizează masa…", style = monoLabel(10, 0.14f).copy(color = Accent2))
+            }
+            // Ecranul „Analiză…”: mascota + pașii reali, peste previzualizare. Vălul oprește atingerile
+            // (declanșatorul de sub el nu mai primește nimic); „Înapoi” e desenat deasupra și rămâne activ.
+            if (analyzing) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) { }
+                        .background(Color(0x99000000))
+                        .padding(horizontal = 20.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AnalyzeStagePanel(stages, Modifier.fillMaxWidth())
                 }
             }
         } else {
@@ -184,20 +200,22 @@ fun MealCameraScreen(onClose: () -> Unit) {
         )
     }
 
-    analysis?.let { a ->
+    report?.let { r ->
         MealResultSheet(
-            analysis = a,
+            report = r,
             initialMealType = MealAnalyze.mealTypeForTime(System.currentTimeMillis()),
             onConfirm = { components, mealType ->
                 scope.launch {
                     val photoPath = lastBytes?.let { MealAnalyze.savePhoto(context, it) }
-                    val meal = MealAnalyze.saveMeal(app, a, components, mealType, System.currentTimeMillis(), photoPath)
+                    val meal = MealAnalyze.saveMeal(app, r, components, mealType, System.currentTimeMillis(), photoPath)
                     toast.show("Salvat: ${meal.kcal} kcal · P ${meal.protein} · C ${meal.carbs} · G ${meal.fat}.")
-                    analysis = null
+                    report = null
                     onClose()
                 }
             },
-            onDismiss = { analysis = null }
+            onDismiss = { report = null },
+            onRetake = { report = null },
+            dayTarget = dayTarget
         )
     }
 }
