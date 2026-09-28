@@ -78,7 +78,6 @@ internal object Notifier {
             .setContentText(r.body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(r.body))
             .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
             .setGroup(spec.group)
             .setContentIntent(content)
             .setVisibility(if (r.private) NotificationCompat.VISIBILITY_PRIVATE else NotificationCompat.VISIBILITY_PUBLIC)

@@ -45,6 +45,8 @@ object NudgeBank {
     }
 
     private fun s(d: NudgeData) = slot(d.hour)
+    /** Mesajele despre mese: niciodată după 21:30 (§D.13). */
+    private fun mealHours(d: NudgeData) = d.hour * 60 + d.minute < 21 * 60 + 30
     private fun day(d: NudgeData) = s(d) in 1..3
 
     // ───────────── 1. Notificarea permanentă de sincronizare (titlu ≤ 28, fără „acum”, fără prieteni) ─────────────
@@ -91,6 +93,9 @@ object NudgeBank {
         Template("2.w", Morning, "Dimineață de iarnă.", "Zece minute de mers și tot orașul pare al tău. Ia fularul.", Wink) { it.isWinter },
         Template("2.v", Morning, "Dimineață de vară.", "Aerul e cel mai bun înainte de căldură. Zece minute afară îl prind.", Wink) { it.isSummer },
         Template("5.8", Morning, "Seria s-a oprit la {serie_veche|zi|zile}.", "Nimic din ce ai făcut nu s-a pierdut. Ziua 1 începe azi.", Sorry) { it.broke != null },
+        Template("N2", Morning, "O tură scurtă ajunge.", "Corpul ține minte fiecare pas.", Happy, reserve = true),
+        Template("N5", Morning, "Scuza de azi e mai mică decât tine.", "Un pas, acum. Restul vine după el.", Wink, reserve = true),
+        Template("N10", Morning, "Un minut azi.", "Pentru somn, masă sau mișcare. Tot contează.", Talking, reserve = true),
         Template("2.r1", Morning, "Bună dimineața, {nume}.", "Apă, lumină, zece pași afară. Restul zilei se aliniază după ei.", Happy, reserve = true),
         Template("2.r0", Morning, "Bună dimineața.", "Apă, lumină, zece pași afară. Restul zilei se aliniază după ei.", Happy, reserve = true)
     )
@@ -98,12 +103,16 @@ object NudgeBank {
     // ───────────── 3. Prânzul (12:00–14:30) + notarea mesei, fără rușine ─────────────
     val midday = listOf(
         Template("3.1", Midday, "Pauza de prânz.", "Ți-au rămas {kcal_ramase} kcal. Alegi tu, eu doar țin socoteala.", Thinking),
-        Template("3.2", Midday, "O poză cât mănânci.", "Nu contează cât, contează că ții firul zilei. O secundă.", Talking) { it.mealsToday == 0 },
+        Template("3.2", Midday, "O poză cât mănânci.", "Nu contează cât, contează că ții firul zilei. O secundă.", Talking) { !it.lunchLogged },
         Template("3.3", Midday, "Nicio tură notată azi.", "Zece minute de mers după masă limpezesc capul.", Wink) { it.kmToday < 0.1 },
         Template("3.4", Midday, "{km} km până la prânz.", "Ritm bun. O tură scurtă diseară și ziua e rotundă.", Happy) { it.kmToday >= 1.0 },
         Template("3.5", Midday, "{serie_mese|zi|zile} de mese notate.", "Prânzul de azi ține seria întreagă. O poză și gata.", Happy) { it.mealsToday == 0 },
         Template("3.6", Midday, "E vară afară.", "Masa afară, pe o bancă, e altă masă. Ieși cinci minute.", Wink) { it.isSummer },
-        Template("13.5", Midday, "Mâncarea e doar mâncare.", "O notezi ca să vezi tiparul, nu ca să te judeci. Atât.", Thinking) { it.mealsToday == 0 },
+        Template("13.5", Midday, "Mâncarea e doar mâncare.", "O notezi ca să vezi tiparul, nu ca să te judeci. Atât.", Thinking) { !it.lunchLogged },
+        Template("N1", Midday, "Cinci minute de repaus.", "Deschide FORJA și respiră rar. Restul așteaptă.", Thinking, reserve = true),
+        Template("N3", Midday, "Notează masa de azi.", "Sinceritatea începe în farfurie.", Talking, reserve = true) { !it.lunchLogged },
+        Template("N7", Midday, "O apă, o respirație.", "Un gând limpede. Le ai pe toate în FORJA.", Thinking, reserve = true),
+        Template("N9", Midday, "Mândria de diseară.", "Se clădește din alegerea de acum.", Wink, reserve = true),
         Template("3.r1", Midday, "Jumătatea zilei.", "O apă, un pas, o respirație. Reîncepi de aici, fără grabă.", Thinking, reserve = true),
         Template("3.r2", Midday, "Pauză de amiază.", "Ridică-te, umerii jos, trei respirații lungi. Apoi înapoi la post.", Talking, reserve = true)
     )
@@ -120,7 +129,7 @@ object NudgeBank {
         Template("4.2", Evening, "Peste media ta.", "{km} km azi, media ta e {km_medie} km. Picioarele țin minte asta.", Happy) {
             it.kmAvg7 >= 0.5 && it.kmToday > it.kmAvg7 * 1.1
         },
-        Template("4.3", Evening, "Ziua nu s-a terminat.", "Mai e timp. Cinci minute de mers sau o masă notată o închid.", Thinking) { it.emptyDay },
+        Template("4.3", Evening, "Ziua nu s-a terminat.", "Mai e timp. Cinci minute de mers sau o masă notată o închid.", Thinking) { it.emptyDay && mealHours(it) },
         Template("4.4", Evening, "Azi: un loc nou pe hartă.", "{loc} e {locuri@m} loc de pe harta ta. Fiecare are o zi în spate.", Wink) { it.newPlaceToday != null },
         Template("4.6", Evening, "Seria: {serie_zile|zi|zile}.", "Încă o zi pusă în raft. Mâine se adaugă una, nu toate deodată.", Happy) {
             it.longest?.let { l -> l.current >= 3 && l.doneToday } == true
@@ -130,8 +139,10 @@ object NudgeBank {
             !it.dinnerLogged && it.hour < 21
         },
         Template("13.4", Evening, "{serie_mese|zi|zile} de mese.", "O poză diseară și seria rămâne întreagă. Doar una.", Wink) {
-            it.mealsToday == 0 && it.streak(StreakKind.Meals)?.current == 2
+            it.mealsToday == 0 && it.streak(StreakKind.Meals)?.current == 2 && mealHours(it)
         },
+        Template("N4", Evening, "Somnul bun începe de cu seară.", "Pregătește stingerea în FORJA. Dimineața o simți.", Talking, reserve = true),
+        Template("N8", Evening, "Progresul e suma zilelor mici.", "Azi e una dintre ele.", Happy, reserve = true),
         Template("4.r1", Evening, "Ziua se închide.", "Ce ai făcut azi rămâne făcut. Pregătește stingerea, mâine continui.", Talking, reserve = true),
         Template("4.r2", Evening, "Seara e a ta.", "Pune telefonul jos după asta. Ziua s-a scris deja.", Talking, reserve = true)
     )
@@ -152,9 +163,11 @@ object NudgeBank {
                 Voice.Antrenor to "Poză, notat, serie salvată. Mergem.",
                 Voice.Ghid to "Notezi orice masă de azi și seria continuă. Estimarea o corectezi tu."
             ),
-            cond = risk(StreakKind.Meals)
+            cond = { risk(StreakKind.Meals)(it) && mealHours(it) }
         ),
-        Template("R5", StreakRisk, "O poză ține seria.", "O farfurie fotografiată și seria de {serie_mese|zi|zile} merge mai departe.", Wink, cond = risk(StreakKind.Meals)),
+        Template("R5", StreakRisk, "O poză ține seria.", "O farfurie fotografiată și seria de {serie_mese|zi|zile} merge mai departe.", Wink) {
+            risk(StreakKind.Meals)(it) && mealHours(it)
+        },
         Template("R8", StreakRisk, "Un tur de bloc salvează tot.", "Seria de {serie_mers|zi|zile} nu cere kilometri. Cere doar să ieși din casă.", Thinking, cond = risk(StreakKind.Walk)),
         Template("5.5", StreakRisk, "Drumul de azi e încă liber.", "Seria de mers: {serie_mers|zi|zile}. O tură scurtă până la stingere o ține.", Talking, cond = risk(StreakKind.Walk)),
         Template("5.6", StreakRisk, "Seara ține seria.", "{serie_risc|zi|zile} nu se pierd pentru o seară. Cinci minute. Atât.", Thinking) {
