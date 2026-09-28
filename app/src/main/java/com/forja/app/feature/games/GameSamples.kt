@@ -2,6 +2,7 @@ package com.forja.app.feature.games
 
 import com.forja.app.core.games.GameId
 import com.forja.app.core.games.GameProgress
+import com.forja.app.core.games.ZID_ENDLESS
 import com.forja.app.core.games.asalt.AsaltEngine
 import com.forja.app.core.games.asalt.AsaltLevels
 import com.forja.app.core.games.asalt.AsaltPhase
@@ -57,6 +58,9 @@ internal object GameSamples {
     }
 
     fun zidPlay(): ZidEngine = ZidEngine.restore(zidMid, ZidConfig())
+
+    /** Aceeași tablă în „Fără sfârșit”: 37 de linii → RANG 4, scorul din cardul de final. */
+    fun zidEndlessPlay(): ZidEngine = ZidEngine.restore(zidMid.copy(level = ZID_ENDLESS, lines = 37, score = 24_600), ZidConfig())
 
     /** Nivelul 1, neînceput: tabla goală și degetul care pulsează. */
     fun zidReady(): ZidEngine = ZidEngine.create(ZidLevels.byId(1), 7L)

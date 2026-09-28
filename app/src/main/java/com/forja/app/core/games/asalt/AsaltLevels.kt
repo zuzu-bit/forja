@@ -16,7 +16,7 @@ object AsaltLevels {
 
     val all: List<AsaltLevel> = listOf(
         AsaltLevel(
-            1, "Primul zid", listOf(
+            1, "Primul val", listOf(
                 "aaaaaaaaaaaaa",
                 "aaaaaawaaaaaa",
                 "aaaaaaaaaaaaa"
