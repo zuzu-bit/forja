@@ -77,6 +77,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
     val accessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { vm.refreshMusic() }
+    LaunchedEffect(Unit) { Music.ensureStarted(context) }
     val art = track?.art
     val artBitmap = remember(art) { art?.asImageBitmap() }
     val disc = discUi(start, origin == MusicSource.WORKOUT, track, artBitmap, track?.positionMs ?: 0L, queue != null)
