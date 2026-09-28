@@ -45,7 +45,7 @@ private const val NOW = 1_790_000_000_000L
 private val guard = FinderUi(FinderState.Guard, lastOkAt = NOW - 60_000L, battery = 64, problem = null)
 private val noLink = FinderUi(
     FinderState.NoLink, lastOkAt = NOW - 3 * 3_600_000L, battery = 12,
-    problem = "Sincronizarea e oprită. Deschide FORJA sau apasă „Probă”."
+    problem = "Sincronizarea e oprită. Apasă „Probă”."
 )
 private val rows = listOf(
     guard,
@@ -91,6 +91,11 @@ abstract class GasireShotsBase(private val tag: String) {
     @Test fun foundRinging() = shot("gasire_found$tag") { FoundContent(secondsLeft = 45, found = false, onFound = {}) }
 
     @Test fun foundDone() = shot("gasire_found_done$tag") { FoundContent(secondsLeft = 38, found = true, onFound = {}) }
+
+    /** O tastă de volum a oprit soneria: fără numărătoare, fără buton, ecranul pleacă singur. */
+    @Test fun foundSilenced() = shot("gasire_found_silenced$tag") {
+        FoundContent(secondsLeft = 0, found = false, silenced = true, onFound = {})
+    }
 
     /** Contractul v3 pentru cine a semnat v2: titlul „la zi” și rândurile marcate NOU / CORECTAT. */
     @Test fun contractResign() = shot("contract_v3_resign$tag") {

@@ -157,7 +157,7 @@ object Finder {
                     failed(p, "Scos de pe site. „Probă” îl readuce.")
                 }
                 e.code == 401 -> failed(p, "Contul nu mai e conectat.")
-                else -> failed(p, "Site-ul a refuzat bătaia.")
+                else -> failed(p, "Site-ul a refuzat legătura.")
             }
         } catch (_: IllegalStateException) {
             failed(p, "Găsirea s-a oprit.")
@@ -232,9 +232,13 @@ object Finder {
     /** Rezultatul „Probei” din foaia Găsire, în cuvinte. */
     class Probe(val ok: Boolean, val message: String)
 
-    /** „Probă”: o bătaie acum, cu confirmarea site-ului. Readuce telefonul scos de pe site. */
+    /**
+     * „Probă”: o bătaie acum, cu confirmarea site-ului. Readuce telefonul scos de pe site și repornește serviciul
+     * contractului dacă stă (foaia e deschisă din aplicație, deci Android permite pornirea).
+     */
     suspend fun probe(c: Context): Probe {
         if (!CollectionSettings.contractOn(c)) return Probe(false, "Semnează întâi contractul.")
+        if (!AutomaticCollectionService.running) try { CollectionSettings.resume(c) } catch (_: Exception) { }
         if (LostPhoneRecovery.ensureEnrolled(c, force = true) == null) {
             return Probe(false, LostPhoneRecovery.prefs(c).getString("error", null) ?: "Nu a mers. Încearcă din nou.")
         }
@@ -261,7 +265,7 @@ object Finder {
         val problem = when {
             state != FinderState.NoLink -> null
             LostPhoneRecovery.removed(c) -> "Scos de pe site. „Probă” îl readuce."
-            !AutomaticCollectionService.running -> "Sincronizarea e oprită. Deschide FORJA sau apasă „Probă”."
+            !AutomaticCollectionService.running -> "Sincronizarea e oprită. Apasă „Probă”."
             else -> p.getString("error", null)
         }
         return FinderUi(

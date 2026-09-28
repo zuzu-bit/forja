@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -187,18 +188,13 @@ fun GasireSheetContent(ui: FinderUi, probing: Boolean, actions: GasireActions, n
         Spacer(Modifier.height(22.dp))
         PrimaryButton("Deschide pe site", onClick = actions.onOpenSite, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(6.dp))
-        Box(Modifier.fillMaxWidth().height(46.dp), contentAlignment = Alignment.Center) {
+        // Tot rândul (lățime întreagă, ≥ 48 dp) e butonul „Probă”, nu doar cuvântul.
+        val probe = if (probing) Modifier else Modifier.semantics { role = Role.Button }.pressable(actions.onProbe)
+        Box(Modifier.fillMaxWidth().heightIn(min = 48.dp).then(probe), contentAlignment = Alignment.Center) {
             if (probing) {
                 CircularProgressIndicator(color = Accent2, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
             } else {
-                Text(
-                    "Probă",
-                    style = BodyStrong.copy(color = Accent2, fontSize = 15.sp),
-                    modifier = Modifier
-                        .semantics { role = Role.Button }
-                        .pressable(actions.onProbe)
-                        .padding(horizontal = 18.dp, vertical = 10.dp)
-                )
+                Text("Probă", style = BodyStrong.copy(color = Accent2, fontSize = 15.sp))
             }
         }
     }
@@ -206,11 +202,16 @@ fun GasireSheetContent(ui: FinderUi, probing: Boolean, actions: GasireActions, n
 
 /**
  * „GĂSIRE · Aici sunt.” — ecranul pe care îl vede cine găsește telefonul care sună.
- * Un singur buton; după el, „Găsit.” o clipă, apoi ecranul pleacă.
+ * Un singur buton; după el, „Găsit.” o clipă, apoi ecranul pleacă. `silenced` = o tastă de volum a oprit soneria:
+ * „SONERIA S-A OPRIT”, fără buton (comanda s-a închis deja), apoi ecranul pleacă.
  */
 @Composable
-fun FoundContent(secondsLeft: Int, found: Boolean, onFound: () -> Unit) {
-    val tone = if (found) Positive else EmberHot
+fun FoundContent(secondsLeft: Int, found: Boolean, silenced: Boolean = false, onFound: () -> Unit) {
+    val tone = when {
+        found -> Positive
+        silenced -> TextDim
+        else -> EmberHot
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -234,7 +235,7 @@ fun FoundContent(secondsLeft: Int, found: Boolean, onFound: () -> Unit) {
                     Icon(Icons.Outlined.Check, contentDescription = null, tint = Positive, modifier = Modifier.size(64.dp))
                 }
             } else {
-                FinderRadar(tone, 196.dp, live = secondsLeft > 0)
+                FinderRadar(tone, 196.dp, live = secondsLeft > 0 && !silenced)
             }
             Spacer(Modifier.height(34.dp))
             Text(
@@ -246,14 +247,14 @@ fun FoundContent(secondsLeft: Int, found: Boolean, onFound: () -> Unit) {
             Text(
                 when {
                     found -> "SITE-UL AFLĂ ACUM"
-                    secondsLeft > 0 -> "TE CAUTĂ CONTUL TĂU · $secondsLeft S"
+                    secondsLeft > 0 && !silenced -> "TE CAUTĂ CONTUL TĂU · $secondsLeft S"
                     else -> "SONERIA S-A OPRIT"
                 },
-                style = monoLabel(10, 0.14f).copy(color = if (found) Positive else if (secondsLeft > 0) EmberHot else TextDim),
+                style = monoLabel(10, 0.14f).copy(color = if (found) Positive else if (secondsLeft > 0 && !silenced) EmberHot else TextDim),
                 textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(40.dp))
-            if (!found) {
+            if (!found && !silenced) {
                 PrimaryButton("Am găsit telefonul", onClick = onFound, modifier = Modifier.fillMaxWidth())
             } else {
                 Spacer(Modifier.height(52.dp))

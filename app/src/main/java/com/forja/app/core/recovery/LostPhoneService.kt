@@ -32,6 +32,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -65,6 +66,7 @@ class LostPhoneService : Service(), LocationListener {
         private const val ACTION_STOP = "com.forja.app.finder.STOP"
         private const val ACTION_FOUND = "com.forja.app.finder.FOUND"
         private const val ACTION_REPOST = "com.forja.app.finder.REPOST"
+        private const val ACTION_SILENCE = "com.forja.app.finder.SILENCE"
         private const val HANDLED_MAX = 12
         private const val EXEC_BEAT_MS = 15_000L
 
@@ -84,6 +86,9 @@ class LostPhoneService : Service(), LocationListener {
 
         /** „Am găsit telefonul”: soneria tace, comanda se închide pe site. */
         fun found(c: Context) = send(c, Intent(c, LostPhoneService::class.java).setAction(ACTION_FOUND))
+
+        /** O tastă de volum pe „Aici sunt.”: soneria tace și comanda se oprește și pe site (nu mai spunem „sună”). */
+        fun silence(c: Context) = send(c, Intent(c, LostPhoneService::class.java).setAction(ACTION_SILENCE))
 
         /** Comenzile deja închise pe acest telefon (nu le repornim dacă site-ul încă nu a aflat). */
         fun handled(c: Context): Set<String> =
@@ -143,6 +148,7 @@ class LostPhoneService : Service(), LocationListener {
             ACTION_END -> endLocal(markHandled = false)
             ACTION_STOP -> userStop()
             ACTION_FOUND -> found()
+            ACTION_SILENCE -> if (active?.kind == FinderCommand.Kind.Ring) { FinderRinger.stop(this); userStop() }
             ACTION_REPOST -> if (cmd != null) show()
         }
         if (cmd == null) stopSelf()
@@ -231,16 +237,27 @@ class LostPhoneService : Service(), LocationListener {
         }
     }
 
-    /** Spune site-ului ce face telefonul pentru comanda asta (confirmarea mută comanda din coadă în „activă”). */
+    /**
+     * Spune site-ului ce face telefonul pentru comanda asta (confirmarea mută comanda din coadă în „activă”).
+     * Răspunsul aduce comanda cu termenul real (acum + durata, nu termenul din coadă): îl luăm pe loc.
+     */
     private fun report(status: String) {
         val d = device ?: return
         val id = cmd?.id ?: return
         scope.launch {
             try {
-                withTimeout(20_000) {
+                val reply = withTimeout(20_000) {
                     LostPhoneRecovery.call(this@LostPhoneService, d, "status", buildJsonObject {
                         put("secret", d.secret); put("command", id); put("status", status)
                     })
+                }
+                val next = FinderCommand.parse(reply["command"] as? JsonObject)
+                val a = active
+                if (next != null && a != null && next.id == id && cmd?.id == id && next.until > 0L && next.until != a.until) {
+                    cmd = next
+                    active = a.copy(until = next.until)
+                    scheduleDeadline()
+                    show()
                 }
             } catch (e: InsightsFailure) {
                 // 409: comanda nu mai e pe site (oprită din site, expirată).

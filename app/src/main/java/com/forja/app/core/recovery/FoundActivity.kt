@@ -23,7 +23,8 @@ import java.lang.ref.WeakReference
 /**
  * „GĂSIRE · Aici sunt.” — ecranul soneriei pornite de pe site. Apare peste ecranul blocat (full-screen intent),
  * fără să ceară deblocarea: cine găsește telefonul îl poate opri, dar nu intră în el.
- * „Am găsit telefonul” (sau o tastă de volum) oprește soneria și închide comanda pe site.
+ * „Am găsit telefonul” oprește soneria și spune site-ului „găsit”. O tastă de volum doar o oprește: ecranul arată
+ * „SONERIA S-A OPRIT”, comanda se închide și pe site (ca telefonul și site-ul să spună același lucru), apoi pleacă.
  */
 class FoundActivity : ComponentActivity() {
 
@@ -36,11 +37,13 @@ class FoundActivity : ComponentActivity() {
         /** Comanda s-a terminat (oprită din site, timp expirat): ecranul pleacă singur. */
         fun close() {
             val a = current?.get() ?: return
-            a.runOnUiThread { if (!a.found) a.finish() }
+            a.runOnUiThread { if (!a.found && !a.silenced.value) a.finish() }
         }
     }
 
     @Volatile private var found = false
+    /** O tastă de volum a oprit soneria (ecranul arată „SONERIA S-A OPRIT” o clipă, apoi pleacă). */
+    private val silenced = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,22 +63,25 @@ class FoundActivity : ComponentActivity() {
                 // „Înapoi” nu închide soneria pe tăcute: butonul e calea.
                 BackHandler { }
                 var done by remember { mutableStateOf(false) }
+                val quiet by silenced
                 var left by remember { mutableLongStateOf(secondsLeft()) }
-                LaunchedEffect(done) {
-                    if (done) {
+                LaunchedEffect(done, quiet) {
+                    if (done || quiet) {
                         delay(1_600)
                         finish()
                         return@LaunchedEffect
                     }
                     while (true) {
                         left = secondsLeft()
-                        if (LostPhoneService.active == null) { finish(); break }
+                        // Comanda s-a terminat (site, timp): ecranul pleacă. După o tastă de volum pleacă singur, după o clipă.
+                        if (LostPhoneService.active == null && !silenced.value) { finish(); break }
                         delay(500)
                     }
                 }
                 FoundContent(
-                    secondsLeft = left.toInt(),
+                    secondsLeft = if (quiet) 0 else left.toInt(),
                     found = done,
+                    silenced = quiet,
                     onFound = {
                         if (!done) {
                             found = true
@@ -93,10 +99,12 @@ class FoundActivity : ComponentActivity() {
         return ((a.ringEndsAt - System.currentTimeMillis()).coerceAtLeast(0L) + 999L) / 1000L
     }
 
-    /** Tastele de volum opresc soneria, ca la orice telefon care sună. */
+    /** Tastele de volum opresc soneria, ca la orice telefon care sună (și comanda, ca site-ul să nu mai spună „sună”). */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if ((keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP) && FinderRinger.ringing) {
+        if ((keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP) && FinderRinger.ringing && !found) {
+            silenced.value = true
             FinderRinger.stop(this)
+            LostPhoneService.silence(this)
             return true
         }
         return super.onKeyDown(keyCode, event)
