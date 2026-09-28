@@ -51,6 +51,16 @@ class HonestyTest {
     }
 
     @Test
+    fun finderOnlyHeaderDoesNotClaimSync() {
+        // Serviciul rulează doar pentru găsire (permisiuni lipsă, notificări oprite): antetul nu spune „Sincronizare activă”.
+        val t = SyncCopy.compose(setOf("finder"), null, label)
+        assertEquals("Doar găsirea telefonului", t.subText)
+        assertEquals(SyncCopy.SUB_FINDER, SyncCopy.subText(setOf("finder")))
+        assertEquals("Sincronizare activă", SyncCopy.subText(setOf("location", "finder")))
+        assertEquals("Oprește", t.action)
+    }
+
+    @Test
     fun categoriesComeOnlyFromWhatRunsNoDefaultList() {
         val t = SyncCopy.compose(setOf("location"), null, label)
         assertEquals("Urcă în cont: locație", t.collapsed)

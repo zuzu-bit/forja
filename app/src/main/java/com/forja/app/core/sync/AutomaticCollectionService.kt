@@ -122,7 +122,11 @@ class AutomaticCollectionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         stopping = false
-        if (intent?.action == STOP) { finish(); Config.stop(this); Finder.disarm(this); return START_NOT_STICKY }
+        if (intent?.action == STOP) {
+            // Oprit de tine: nici găsirea nu mai repornește singură până deschizi FORJA ([Config.userStopped]).
+            Config.setUserStopped(this, true)
+            finish(); Config.stop(this); Finder.disarm(this); return START_NOT_STICKY
+        }
         // Pornirile noastre trec toate prin startForegroundService (Profil, boot, alarma găsirii); repornirea „sticky”
         // a sistemului vine fără intent și fără această obligație.
         if (intent != null && !foreground) fgPending = true
@@ -148,9 +152,12 @@ class AutomaticCollectionService : Service() {
         val selected = Config.enabled(this)
         val granted = grants()
         val rev = Config.revision(this)
-        if (selected.isEmpty() || owner == null || owner != auth.currentUser?.uid) {
+        // Un set gol nu mai oprește serviciul: cu contractul semnat, rulează doar pentru găsire (mai jos, `allowedNow` gol).
+        // Oprit rămâne doar după „Oprește” din notificare sau fără contul care a semnat.
+        val stoppedByUser = selected.isEmpty() && Config.userStopped(this)
+        if (stoppedByUser || owner == null || owner != auth.currentUser?.uid) {
             status(
-                if (selected.isEmpty()) "Sincronizarea este oprită."
+                if (stoppedByUser) "Sincronizarea este oprită."
                 else "Sincronizarea este oprită: conectează-te în contul tău FORJA."
             )
             finish(); return
@@ -160,7 +167,8 @@ class AutomaticCollectionService : Service() {
         if (allowedNow.isNotEmpty() && allowedNow != selected) Config.save(this, allowedNow)
         // Sincronizarea cere o notificare vizibilă; găsirea nu (site-ul primește atunci `notification_missing`).
         val notices = NotificationManagerCompat.from(this).areNotificationsEnabled()
-        val syncable = if (notices) allowedNow else emptySet()
+        // Bugetul dataSync consumat (Android 15): fișierele alese așteaptă și în notificare, nu doar în starea din Profil.
+        val syncable = (if (notices) allowedNow else emptySet()).let { if (noDataSync) it - setOf("photos", "files") else it }
         runningRevision = Config.revision(this)
         val snapshotRevision = runningRevision
         val allowed = promote(syncable) ?: run {
@@ -501,7 +509,7 @@ class AutomaticCollectionService : Service() {
         stopping = true
         halt()
         // Oprit de tine sau fără contract: alarma găsirii nu îl mai repornește. Altfel rămâne, ca auto-vindecare.
-        if (Config.enabled(this).isEmpty() || !Config.contractOn(this)) Finder.disarm(this)
+        if (!Config.contractOn(this) || Config.userStopped(this)) Finder.disarm(this)
         // Pornit cu startForegroundService și oprit înainte de prim-plan: întâi startForeground (tipul minim), apoi oprirea.
         if (fgPending && !foreground) {
             try {

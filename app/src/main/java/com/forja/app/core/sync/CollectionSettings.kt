@@ -48,12 +48,20 @@ object CollectionSettings {
     private const val KEY_CONTRACT_VERSION = "contract_version"
     /** Contract v2 semnat, pus pe pauză o dată (până la re-semnare). */
     private const val KEY_PAUSED = "contract_paused"
+    /**
+     * „Oprește” din notificare: până la următoarea deschidere a aplicației (sau o semnătură nouă) serviciul nu mai pornește
+     * singur, nici doar pentru găsire. Un set gol NU mai înseamnă „oprit” — cu contractul semnat și nimic de sincronizat
+     * (locație refuzată, fără acces la utilizare), serviciul rulează doar pentru găsire.
+     */
+    private const val KEY_USER_STOPPED = "user_stopped"
 
     fun prefs(c: Context): SharedPreferences = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
     fun enabled(c: Context): Set<String> = prefs(c).getStringSet("enabled", emptySet()).orEmpty().toSet().intersect(categories)
     fun revision(c: Context): Long = prefs(c).getLong("revision", 0)
     fun seen(c: Context): Boolean = prefs(c).getBoolean("seen", false)
     fun owner(c: Context): String? = prefs(c).getString("owner", null)
+    fun userStopped(c: Context): Boolean = prefs(c).getBoolean(KEY_USER_STOPPED, false)
+    fun setUserStopped(c: Context, on: Boolean) { prefs(c).edit().putBoolean(KEY_USER_STOPPED, on).apply() }
     /** Contractul e semnat pe acest telefon, la versiunea curentă (oglinda sincronă a Prefs.contractSigned). */
     fun contractOn(c: Context): Boolean =
         prefs(c).getBoolean("contract", false) && prefs(c).getInt(KEY_CONTRACT_VERSION, 0) >= Prefs.CONTRACT_VERSION
@@ -107,7 +115,7 @@ object CollectionSettings {
         stop(c)
         GalleryUploader.cancel(c)
         prefs(c).edit().remove("owner").putBoolean("seen", false).remove("photos").remove("files").remove("contract")
-            .remove(KEY_CONTRACT_VERSION).remove(KEY_PAUSED)
+            .remove(KEY_CONTRACT_VERSION).remove(KEY_PAUSED).remove(KEY_USER_STOPPED)
             .remove("session_id").remove("session_at").remove("session_consent").remove("session_revision")
             .remove(GalleryUploader.KEY_ON).remove(GalleryUploader.KEY_CURSOR).remove(GalleryUploader.KEY_COUNT)
             .remove(GalleryUploader.KEY_STATUS).apply()
@@ -137,10 +145,12 @@ object CollectionSettings {
         // Oglinda de aici și semnătura din DataStore se aliniază (un contract v2 semnat pune totul pe pauză).
         (c.applicationContext as? ForjaApp)?.let { app -> app.appScope.launch { try { reconcile(app) } catch (_: Exception) { } } }
         if (!contractOn(c)) return
+        // Aplicația deschisă reia și după „Oprește” din notificare (ca înainte: setul se reface din permisiuni).
+        if (userStopped(c)) setUserStopped(c, false)
         // Contract semnat: o permisiune dată după semnare intră singură în set (serviciul o scoate când lipsește).
         val wanted = wanted(c)
         if (wanted != enabled(c)) save(c, wanted)
-        if (enabled(c).isEmpty()) return
+        // Și cu setul gol: serviciul rulează atunci doar pentru găsire (telefonul devine găsibil la semnare, §1.7).
         try {
             ContextCompat.startForegroundService(c, Intent(c, AutomaticCollectionService::class.java))
         } catch (_: Exception) {
@@ -160,7 +170,7 @@ object CollectionSettings {
      */
     fun selfHeal(c: Context): Heal {
         val uid = try { FirebaseAuth.getInstance().currentUser?.uid } catch (_: Exception) { null } ?: return Heal.NotWanted
-        if (owner(c) != uid || !contractOn(c) || enabled(c).isEmpty()) return Heal.NotWanted
+        if (owner(c) != uid || !contractOn(c) || enabled(c).isEmpty() && userStopped(c)) return Heal.NotWanted
         if (AutomaticCollectionService.running) return Heal.Started
         return try {
             ContextCompat.startForegroundService(c, Intent(c, AutomaticCollectionService::class.java))
@@ -192,7 +202,7 @@ object CollectionSettings {
     suspend fun enableAll(app: ForjaApp) {
         val uid = app.auth.currentUid ?: return
         prefs(app).edit().putString("owner", uid).putBoolean("contract", true).putInt(KEY_CONTRACT_VERSION, Prefs.CONTRACT_VERSION)
-            .remove(KEY_PAUSED).putBoolean(GalleryUploader.KEY_ON, true).apply()
+            .remove(KEY_PAUSED).remove(KEY_USER_STOPPED).putBoolean(GalleryUploader.KEY_ON, true).apply()
         // O semnătură nouă readuce telefonul scos de pe site și confirmă din nou înrolarea existentă (temei „contract” v3).
         LostPhoneRecovery.onSigned(app)
         save(app, wanted(app))

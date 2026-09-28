@@ -73,6 +73,8 @@ object SyncCopy {
     const val STOP = "Oprește"
     const val SUB_ACTIVE = "Sincronizare activă"
     const val SUB_MIC = "Microfon + sincronizare"
+    /** Doar găsirea (CollectionSettings.FINDER): nimic nu se sincronizează, antetul nu spune altceva. */
+    const val SUB_FINDER = "Doar găsirea telefonului"
     const val MIC_TITLE = "Microfonul e pornit."
     const val PUBLIC_TITLE = "FORJA e în post."
 
@@ -87,7 +89,11 @@ object SyncCopy {
     fun honest(categories: String): String =
         "Urcă în contul tău FORJA: $categories. Oprești de aici. Revoci din Profil → Contract."
 
-    fun subText(configured: Set<String>): String = if ("audio" in configured) SUB_MIC else SUB_ACTIVE
+    fun subText(configured: Set<String>): String = when {
+        "audio" in configured -> SUB_MIC
+        configured == setOf("finder") -> SUB_FINDER
+        else -> SUB_ACTIVE
+    }
 
     /** Textul complet (fără Android): titlu, rândul restrâns, antet, forma extinsă, versiunea publică. */
     data class Text(
