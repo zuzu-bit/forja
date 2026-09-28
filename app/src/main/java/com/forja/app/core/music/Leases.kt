@@ -7,7 +7,8 @@ class Lease internal constructor(val id: Long, val source: MusicSource)
  * Cine a pornit muzica acum (workout-music.md §4.3). Un singur împrumut odată: Antrenamentul îl ia peste Inventar.
  * Kotlin pur.
  *
- * - Sfârșitul unui inventar în timpul antrenamentului nu oprește muzica de sală ([owner] == WORKOUT).
+ * - Sfârșitul unui inventar în timpul antrenamentului nu oprește muzica de sală ([inventoryMayPause]): nici cea pornită
+ *   de FORJA, nici a ei (a pornit-o singură, a schimbat lista, a apăsat Play din ecranul Muzică).
  * - La finalul antrenamentului se oprește doar muzica pornită de FORJA ([release] întoarce true doar dacă împrumutul
  *   mai e al lui — dacă ea a pornit altceva între timp, împrumutul a căzut).
  */
@@ -15,7 +16,13 @@ class LeaseBook {
     private var seq = 0L
     private var current: Lease? = null
 
+    /** O sesiune de Antrenament e în curs (cu sau fără muzica pornită de FORJA). */
+    var workoutLive: Boolean = false
+
     fun acquire(source: MusicSource): Lease {
+        // Muzica de sală rămâne a Antrenamentului: un Play din ecranul Muzică în timpul sesiunii nu-i ia împrumutul.
+        val cur = current
+        if (source == MusicSource.INVENTORY && cur != null && cur.source == MusicSource.WORKOUT) return cur
         val l = Lease(++seq, source)
         current = l
         return l
@@ -38,4 +45,7 @@ class LeaseBook {
     }
 
     fun current(): Lease? = current
+
+    /** Finalul unui inventar are voie să pună pauză? Niciodată cât ține un antrenament. */
+    fun inventoryMayPause(): Boolean = !workoutLive && current?.source != MusicSource.WORKOUT
 }

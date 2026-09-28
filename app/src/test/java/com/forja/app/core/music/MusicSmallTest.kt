@@ -122,6 +122,35 @@ class MusicSmallTest {
         assertNull(book.owner())
     }
 
+    @Test fun inventoryFinishNeverPausesDuringAWorkoutEvenWithoutAWorkoutLease() {
+        // Muzica ei cânta deja la „Începe sesiunea” (fără împrumut), sau a schimbat lista: sala tot nu tace.
+        val book = LeaseBook()
+        assertTrue(book.inventoryMayPause())
+        book.workoutLive = true
+        assertFalse(book.inventoryMayPause())
+        book.acquire(MusicSource.INVENTORY)
+        assertFalse(book.inventoryMayPause())
+        book.workoutLive = false
+        assertTrue(book.inventoryMayPause())
+    }
+
+    @Test fun inventoryPlayDuringAWorkoutKeepsTheWorkoutLease() {
+        val book = LeaseBook()
+        val gym = book.acquire(MusicSource.WORKOUT)
+        book.acquire(MusicSource.INVENTORY)
+        assertEquals(MusicSource.WORKOUT, book.owner())
+        assertFalse(book.inventoryMayPause())
+        assertTrue("la final, muzica de sală se oprește tot", book.release(gym))
+    }
+
+    @Test fun aMediaIdFromAnotherPlayerIsNeverSentToThisOne() {
+        val ytm = TrackRef("Piesa", "Artist", YTM, "ytm-video-id", "https://music.youtube.com/watch?v=x")
+        assertEquals(TrackRef("Piesa", "Artist", YTM), ytm.forPlayer(SPOTIFY))
+        assertEquals(ytm, ytm.forPlayer(YTM))
+        val unknown = TrackRef("Piesa", "Artist", null, "id")
+        assertEquals(unknown, unknown.forPlayer(SPOTIFY))
+    }
+
     @Test fun takeoverDropsTheLease() {
         val book = LeaseBook()
         val gym = book.acquire(MusicSource.WORKOUT)

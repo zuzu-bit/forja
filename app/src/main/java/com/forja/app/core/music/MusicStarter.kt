@@ -63,6 +63,12 @@ object MusicStarter {
     private val versions = HashMap<String, String>()
     private var keyToken: MediaSession.Token? = null
 
+    /** Ultima intenție pornită (pentru „Încearcă din nou”: aceeași, nu altă muzică). */
+    private var lastWant: Want? = null
+    /** Ce cânta deja când pornirea a rămas la „Nu a pornit.” / „Deschide Spotify” (doar ce pornește după le șterge). */
+    private var stuckSessions: Set<String> = emptySet()
+    private var stuckConfigs: Set<Int> = emptySet()
+
     private var musicQueue: MusicQueue? = null
     private var queueMix: Mix = Mix.MIX
     private var pendingList: FPlaylist? = null
@@ -93,6 +99,10 @@ object MusicStarter {
             h.postDelayed(tick, (atMs - now()).coerceAtLeast(16L))
         }
         override fun emit(state: StartState) {
+            if (state is StartState.Failed || state is StartState.NeedsTap) {
+                stuckSessions = Music.sessions.value.filter { it.state == PState.PLAYING }.map { it.id }.toSet()
+                stuckConfigs = Music.configs.value.map { it.id }.toSet()
+            }
             _state.value = state
         }
         override fun log(event: AttemptEvent) {
@@ -247,10 +257,20 @@ object MusicStarter {
             _state.value = StartState.Starting(Rung.ALREADY, shown)
             startJob = scope.launch {
                 val want = prepare()
+                lastWant = want
                 refresh(app)
                 machine.start(want, source, tap)
             }
         }
+    }
+
+    /**
+     * „Încearcă din nou”: exact intenția care n-a pornit (Reia pe carte reia cartea, nu pornește muzica), altfel
+     * „Pornește muzica”.
+     */
+    fun retry(context: Context, source: MusicSource) {
+        val w = lastWant?.takeIf { it !is Want.Workout && it !is Want.Probe } ?: Want.MyMusic
+        start(context, w, source, tap = true)
     }
 
     /** Atingerea pe „Deschide Spotify” / „Deschide playerul” (NeedsTap, Failed). */
@@ -280,15 +300,19 @@ object MusicStarter {
         }
     }
 
-    /** Pauză pe ce cântă (sesiunea care cântă; fără acces, tasta PAUSE doar dacă se aude ceva). Anulează o pornire. */
-    fun pause(context: Context) {
+    /**
+     * Pauză pe ce cântă (sesiunea care cântă; fără acces, tasta PAUSE doar dacă se aude ceva). Anulează o pornire.
+     * [sessionId] = exact sesiunea aceea (PAUZĂ pe rândul cărții oprește cartea, nu muzica de alături).
+     */
+    fun pause(context: Context, sessionId: String? = null) {
         val app = context.applicationContext
         Music.ensureStarted(app)
         Music.onMain {
             abortPending()
             if (machine.active) machine.cancel()
             val playing = Music.sessions.value.let { list ->
-                list.firstOrNull { it.id == Music.nowPlaying.value?.id && it.state.activeish } ?: list.firstOrNull { it.state.activeish }
+                if (sessionId != null) list.firstOrNull { it.id == sessionId }
+                else list.firstOrNull { it.id == Music.nowPlaying.value?.id && it.state.activeish } ?: list.firstOrNull { it.state.activeish }
             }
             val c = Music.controller(playing?.id)
             if (c != null) {
@@ -353,7 +377,30 @@ object MusicStarter {
             if (machine.source == source || pending) {
                 abortPending()
                 machine.cancel()
+            } else if (_origin.value == source && stuck()) {
+                // „Nu a pornit.” fără încercare în așteptare: la întoarcere, ecranul pornește curat.
+                clearStuck()
             }
+        }
+    }
+
+    private fun stuck(): Boolean = _state.value.let { it is StartState.Failed || it is StartState.NeedsTap }
+
+    private fun clearStuck() {
+        machine.cancel()
+        _state.value = StartState.Idle
+    }
+
+    /**
+     * Pornirea a rămas la „Nu a pornit.” / „Deschide Spotify”, dar muzica a pornit altfel (din Spotify, notificare,
+     * căști): starea veche nu mai stă sub comenzi. Contează doar ce a pornit după (nu ce se oprea atunci).
+     */
+    private fun startedElsewhere(st: StartState): Boolean {
+        val resumeId = (st as? StartState.Failed)?.open?.sessionId
+        val sessions = Music.sessions.value
+        if (sessions.any { it.state == PState.PLAYING && (it.kind == MediaKind.MUSIC || it.id == resumeId) && it.id !in stuckSessions }) return true
+        return sessions.isEmpty() && Music.configs.value.any {
+            (it.content == ContentHint.MUSIC || it.content == ContentHint.NONE) && it.id !in stuckConfigs
         }
     }
 
@@ -370,6 +417,14 @@ object MusicStarter {
     /** Cine a pornit muzica care cântă acum (null = nimeni / ea). */
     fun owner(): MusicSource? = leases.owner()
 
+    /** Finalul unui inventar poate pune pauză? Nu cât ține un antrenament (muzica de sală nu tace pentru un inventar). */
+    fun inventoryMayPause(): Boolean = leases.inventoryMayPause()
+
+    /** „Începe sesiunea” (cu sau fără „Muzică”): de acum până la [endWorkout], un inventar nu oprește muzica. */
+    fun workoutBegan() {
+        Music.onMain { leases.workoutLive = true }
+    }
+
     // ───────────────────────────── Antrenament ─────────────────────────────
 
     /**
@@ -378,6 +433,7 @@ object MusicStarter {
      */
     fun startWorkout(context: Context, mix: Mix, targetMin: Int, tap: Boolean = false) {
         val app = context.applicationContext
+        workoutBegan()
         launchStart(app, MusicSource.WORKOUT, tap, Want.Workout(null)) {
             val list = try {
                 withContext(Dispatchers.IO) {
@@ -406,6 +462,9 @@ object MusicStarter {
                 machine.cancel()
             }
             stopQueue()
+            leases.workoutLive = false
+            // Discul sesiunii încheiate nu mai rămâne la „Nu a pornit.” / „Deschide Spotify”.
+            if (_origin.value == MusicSource.WORKOUT && stuck()) clearStuck()
             val lease = workoutLease
             workoutLease = null
             scope.launch {
@@ -489,6 +548,7 @@ object MusicStarter {
     /** Sesiunile sau playerele s-au schimbat (din [Music], pe firul principal). */
     internal fun onMediaChanged() {
         if (machine.active) machine.onChange()
+        if (stuck() && startedElsewhere(_state.value)) clearStuck()
         val ctx = appCtx ?: return
         val sessions = Music.sessions.value
         // Împrumutul cade dacă altă aplicație de muzică a preluat.

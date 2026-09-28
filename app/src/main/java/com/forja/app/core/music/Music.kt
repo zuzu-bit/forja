@@ -178,8 +178,8 @@ object Music {
     /**
      * Inventarul s-a terminat: pauză (dacă „Oprește la final”), apoi sunetul FORJA „misiune îndeplinită” (arpegiu scurt,
      * sintetizat) și vibrația. Cu telefonul pe silențios sau vibrații: doar vibrația.
-     * Excepție (4.4): muzica pornită de Antrenament nu se oprește — sala nu tace pentru un inventar; sunetul doar o
-     * estompează.
+     * Excepție (4.4): cât ține un antrenament, muzica nu se oprește (fie pornită de FORJA, fie de ea) — sala nu tace
+     * pentru un inventar; sunetul doar o estompează.
      */
     fun onInventoryDone(context: Context) {
         val app = context.applicationContext
@@ -187,7 +187,7 @@ object Music {
         scope.launch {
             val stop = stopFlag ?: try { withContext(Dispatchers.IO) { MusicStats.stopWhenDone(app) } } catch (_: Exception) { true }
             var paused = false
-            if (stop && MusicStarter.owner() != MusicSource.WORKOUT && isPlayingNow(app)) {
+            if (stop && MusicStarter.inventoryMayPause() && isPlayingNow(app)) {
                 MusicStarter.pause(app)
                 paused = true
                 delay(400)   // playerul coboară volumul; sunetul vine în liniște
@@ -447,6 +447,12 @@ object Music {
     // ───────────────────────────── Playerele audio (fără acces; felul conținutului cât cântă) ─────────────────────────────
 
     private var configsOn = false
+    /**
+     * Câte videouri FORJA sunt pe ecran (demonstrațiile din sesiunea live). Playerul lor e mut și fără tip de conținut;
+     * pe Android 14 și mai vechi, sistemul poate să-l arate totuși printre playerele active — atunci un player fără tip
+     * nu se ia drept muzică (fără acces, singurul semn e tipul de conținut).
+     */
+    private var ownVideos = 0
     private val configCallback = object : AudioManager.AudioPlaybackCallback() {
         override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) = onConfigs(configs.orEmpty())
     }
@@ -474,6 +480,7 @@ object Music {
                 AudioAttributes.CONTENT_TYPE_MOVIE -> ContentHint.MOVIE
                 else -> ContentHint.NONE
             }
+            if (hint == ContentHint.NONE && ownVideos > 0 && Build.VERSION.SDK_INT < 35) return@mapNotNull null
             ConfigView(c.hashCode(), hint)
         }
         val now = SystemClock.elapsedRealtime()
@@ -483,6 +490,16 @@ object Music {
         _configs.value = views
         _audible.value = views.isNotEmpty()
         if (tracked.isNotEmpty()) recompute() else MusicStarter.onMediaChanged()
+    }
+
+    /** Un video FORJA (demonstrația din sesiunea live) a apărut / a dispărut de pe ecran. */
+    internal fun ownVideo(context: Context, on: Boolean) {
+        val app = context.applicationContext
+        onMain {
+            ownVideos = (ownVideos + if (on) 1 else -1).coerceAtLeast(0)
+            if (!configsOn) return@onMain
+            try { app.getSystemService(AudioManager::class.java)?.let { onConfigs(it.activePlaybackConfigurations.orEmpty()) } } catch (_: Exception) { }
+        }
     }
 
     /**
@@ -531,7 +548,7 @@ object Music {
             val app = appCtx
             // Doar când a urmat altă piesă (nu când playerul s-a oprit sau a dispărut).
             if (prev != null && key != null && !countDone && heard in SKIP_MIN_MS until PLAY_COUNT_MS && prev.durS > 60 && app != null) {
-                val skip = prev.copy(at = System.currentTimeMillis(), event = PlayEvent.SKIP)
+                val skip = prev.copy(at = System.currentTimeMillis(), event = PlayEvent.SKIP, src = sourceOf(prev))
                 scope.launch { try { withContext(Dispatchers.IO) { MusicStats.record(app, skip) } } catch (_: Exception) { } }
             }
             countKey = key
@@ -540,8 +557,7 @@ object Music {
             countDone = false
             countRow = if (key != null && t != null && v != null) PlayRow(
                 at = 0L, title = t.title, artist = t.artist, pkg = v.pkg, kind = v.kind, mediaId = v.mediaId,
-                uri = uriOf(v.id), durS = (v.durationMs / 1000).toInt(),
-                src = if (MusicStarter.isForjaTrack(v.pkg, t.title, t.artist, v.mediaId)) PlaySource.FORJA else PlaySource.USER
+                uri = uriOf(v.id), durS = (v.durationMs / 1000).toInt()
             ) else null
         }
         if (t != null) countLastPos = t.positionMs
@@ -558,7 +574,10 @@ object Music {
                     if (countKey == key && countSince != 0L && !countDone && app != null && row != null) {
                         countDone = true
                         try {
-                            withContext(Dispatchers.IO) { MusicStats.record(app, row.copy(at = System.currentTimeMillis())) }
+                            // Sursa se decide acum, nu la prima apariție a piesei: prima piesă din lista FORJA apare
+                            // înainte ca pornirea să fie confirmată (și coada să existe) — tot a FORJA e.
+                            val done = row.copy(at = System.currentTimeMillis(), src = sourceOf(row))
+                            withContext(Dispatchers.IO) { MusicStats.record(app, done) }
                         } catch (_: Exception) { }
                         MusicCloud.maybeUpload(app)
                     }
@@ -570,6 +589,10 @@ object Music {
             countJob?.cancel()
         }
     }
+
+    /** Ascultarea e a listei FORJA (nu hrănește lista) sau a ei. */
+    private fun sourceOf(row: PlayRow): PlaySource =
+        if (row.pkg != null && MusicStarter.isForjaTrack(row.pkg, row.title, row.artist, row.mediaId)) PlaySource.FORJA else PlaySource.USER
 
     private fun uriOf(id: String): String? {
         val t = tracked.values.firstOrNull { it.id == id } ?: return null

@@ -104,9 +104,11 @@ internal object MusicRungs {
 
     /**
      * Piesa cerută, pe sesiunea playerului: după ID media (dacă playerul îl acceptă), altfel după URI, altfel căutare
-     * „titlu artist” cu titlul și artistul separat. Nota spune calea (se vede în jurnal).
+     * „titlu artist” cu titlul și artistul separat. Un ID luat din alt player nu se trimite niciodată (doar căutarea).
+     * Nota spune calea (se vede în jurnal).
      */
-    fun playTrack(c: MediaController, t: TrackRef): SendResult {
+    fun playTrack(c: MediaController, track: TrackRef): SendResult {
+        val t = track.forPlayer(try { c.packageName } catch (_: Exception) { null })
         val actions = try { c.playbackState?.actions ?: 0L } catch (_: Exception) { 0L }
         fun can(bit: Long) = actions == 0L || (actions and bit) != 0L
         val tc = c.transportControls

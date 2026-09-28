@@ -42,6 +42,13 @@ data class TrackRef(
     val uri: String? = null
 ) {
     val query: String get() = listOf(title, artist).filter { it.isNotBlank() }.joinToString(" ")
+
+    /**
+     * Piesa, cum i se cere playerului [pkg]: ID-ul și URI-ul media sunt ale aplicației care le-a dat (un ID YouTube Music
+     * nu înseamnă nimic pentru Spotify), deci pentru alt player rămân doar titlul și artistul (căutare).
+     */
+    fun forPlayer(pkg: String?): TrackRef =
+        if (this.pkg == null || pkg == null || this.pkg == pkg || mediaId == null && uri == null) this else copy(mediaId = null, uri = null)
 }
 
 /** Ce vrea omul (butonul apăsat). */
