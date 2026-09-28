@@ -5,21 +5,36 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function isMe(uid) { return signedIn() && request.auth.uid == uid; }
 
-    // Profiluri: oricine e conectat poate citi (nume, stare, poziție — doar ce publici),
-    // dar doar tu îți poți scrie documentul.
+    // Prietenia e friendships/{a_b}, cu cele două uid-uri sortate (FriendsRepository.friendshipId).
+    // Întâi ordinea canonică (o singură citire), apoi, din prudență, cealaltă.
+    function friendship(a, b) { return /databases/$(database)/documents/friendships/$(a + '_' + b); }
+    function friendOf(uid) {
+      return exists(friendship(request.auth.uid < uid ? request.auth.uid : uid,
+                               request.auth.uid < uid ? uid : request.auth.uid))
+          || exists(friendship(request.auth.uid < uid ? uid : request.auth.uid,
+                               request.auth.uid < uid ? request.auth.uid : uid));
+    }
+
+    // Profilul (nume, stare, poziție, ce asculți, familia): îl citești tu, familia ta și prietenii tăi.
+    // Nimeni altcineva — nici măcar conectat. Nu se poate lista colecția. Doar tu îți scrii documentul.
+    // Emailul nu mai stă aici (4.4): e în users/{uid}/settings/account, doar pentru tine.
     match /users/{uid} {
-      allow read: if signedIn();
+      allow get: if isMe(uid)
+                 || (signedIn() && resource != null
+                     && (request.auth.uid in resource.data.get('familyUids', []) || friendOf(uid)));
+      allow list: if false;
       allow create, update: if isMe(uid);
       allow delete: if false;
 
-      // Jurnalele private (mese, somn, activități): DOAR proprietarul.
-      // Compania le vede din consola Firebase; prietenii nu le văd niciodată.
+      // Jurnalele și datele pentru site (mese, somn, activități, antrenamente, rație, cont, inventar, muzică):
+      // DOAR proprietarul. Compania le vede din consola Firebase; prietenii nu le văd niciodată.
       match /{sub}/{docId} {
         allow read, write: if isMe(uid);
       }
     }
 
-    // Coduri de invitație: citire pentru oricine conectat, scriere doar pentru propriul cod.
+    // Coduri de invitație: citire pentru oricine conectat (așa adaugi un prieten), scriere doar pentru propriul cod.
+    // Documentul are doar `uid`; numele prietenului se citește abia după ce prietenia există.
     match /inviteCodes/{code} {
       allow read: if signedIn();
       allow create, update: if signedIn() && request.resource.data.uid == request.auth.uid;
@@ -35,26 +50,33 @@ service cloud.firestore {
       allow update: if false;
     }
 
-    // Energie (kudos): trimiți doar tu, citește doar destinatarul; un fulger pe zi (id compus).
+    // Energie (kudos): trimiți doar tu, un fulger pe zi (id compus „destinatar_zi_expeditor”). O citesc destinatarul
+    // și expeditorul; expeditorul poate afla și că n-a trimis încă azi (documentul lipsă, cu id-ul terminat în uid-ul lui).
     match /energy/{id} {
-      allow read: if signedIn() && resource.data.to == request.auth.uid;
+      allow get: if signedIn()
+                 && (resource == null
+                     ? id.split('_').size() == 3 && id.split('_')[2] == request.auth.uid
+                     : (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid));
+      allow list: if signedIn() && resource.data.to == request.auth.uid;
       allow create: if signedIn() && request.resource.data.from == request.auth.uid;
       allow update, delete: if false;
     }
 
     // Locuri recomandate prietenilor (v4.0): le vede proprietarul și cei din visibleTo.
+    function validPlace(d) {
+      return d.ownerUid == request.auth.uid
+          && d.stars is int && d.stars >= 1 && d.stars <= 5
+          && d.name is string && d.name.size() <= 80
+          && d.note is string && d.note.size() <= 300
+          && d.visibleTo is list && d.visibleTo.size() <= 100
+          && (!('visits' in d) || (d.visits is int && d.visits >= 1));
+    }
     match /places/{placeId} {
       allow read: if signedIn()
                   && (resource.data.ownerUid == request.auth.uid || request.auth.uid in resource.data.visibleTo);
-      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid
-                    && request.resource.data.stars is int
-                    && request.resource.data.stars >= 1 && request.resource.data.stars <= 5
-                    && request.resource.data.name is string && request.resource.data.name.size() <= 80
-                    && request.resource.data.note is string && request.resource.data.note.size() <= 300
-                    && request.resource.data.visibleTo is list && request.resource.data.visibleTo.size() <= 100
-                    && (!('visits' in request.resource.data)
-                        || (request.resource.data.visits is int && request.resource.data.visits >= 1));
-      allow update, delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if signedIn() && validPlace(request.resource.data);
+      allow update: if signedIn() && resource.data.ownerUid == request.auth.uid && validPlace(request.resource.data);
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
     }
 
     // Familia (v4.0): poziția ta o văd — și în modul fantomă — DOAR cei din `allowed`.
