@@ -77,12 +77,15 @@ private val PROFIL_STEPS = listOf(
 
 /**
  * „Date & confidențialitate”, la punctul „i”: trimite la contract, nu repetă contractul.
- * 4.4: propoziția veche („Fără contract semnat, nimic nu pleacă pe site”) nu era adevărată — jurnalele stau în cont
- * oricum și se văd pe site; restul (sincronizarea, galeria, explorarea, agenda, găsirea, Inventarul, muzica) cere contractul.
+ * 4.4: propoziția veche („Fără contract semnat, nimic nu pleacă pe site”) nu era adevărată. Fără contract pleacă totuși:
+ * jurnalele (mese, somn, mișcare), poziția live pentru prieteni și familie (Firestore: prezența și familyLoc) și lista
+ * prietenilor — iar site-ul le citește (Teren, Camarazi). Restul (sincronizarea, galeria, explorarea pe site, agenda,
+ * găsirea, Inventarul, muzica) cere contractul.
  */
 private const val PRIVACY_DETAILS =
     "Ce pleacă de pe telefon, unde stă și cât timp scrie în Contract. Fără contract semnat, pe site ajung doar jurnalele " +
-        "pe care aplicația le ține oricum: mese, somn, mișcare. Restul pornește doar cu semnătura.\n\n" +
+        "(mese, somn, mișcare), poziția pe care o văd prietenii și familia și lista prietenilor. " +
+        "Restul pornește doar cu semnătura.\n\n" +
         "Mesajele, parolele și conținutul ecranului nu se citesc niciodată.\n\n" +
         "Locația: prietenii te văd doar când nu ești fantomă. Familia te vede mereu."
 
