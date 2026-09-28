@@ -77,8 +77,28 @@ jobs:
           echo "== modelele Groq disponibile (doar id-uri) =="
           curl -s --max-time 30 -H "Authorization: Bearer $GROQ_API_KEY" "https://api.groq.com/openai/v1/models" | jq -r '(.data // [])[] | .id' | sort | head -60 || true
           curl -sL --max-time 60 -o /tmp/meal.jpg "$URL/media/meal_dinner.jpg" || true
+          echo "== sonde Gemini directe (text scurt; status · ms · gândire) =="
+          for M in gemini-3.8-flash gemini-3.5-flash gemini-flash-latest gemini-3.5-flash-lite; do
+            for CFG in '{}' '{"thinkingConfig":{"thinkingBudget":0}}' '{"thinkingConfig":{"thinkingLevel":"minimal"}}' '{"thinkingConfig":{"thinkingLevel":"low"}}'; do
+              T0=$(date +%s%3N)
+              R=$(curl -s --max-time 90 -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' \
+                -d "{\"contents\":[{\"parts\":[{\"text\":\"Raspunde doar cu OK.\"}]}],\"generationConfig\":$CFG}" \
+                -w '\n%{http_code}' "https://generativelanguage.googleapis.com/v1beta/models/$M:generateContent" || true)
+              CODE=$(echo "$R" | tail -1); BODY=$(echo "$R" | sed '$d')
+              echo "$M $CFG -> $CODE $(( $(date +%s%3N) - T0 )) ms $(echo "$BODY" | jq -c '{t:(.candidates[0].content.parts[0].text // null), g:(.usageMetadata.thoughtsTokenCount // 0), e:(.error.message // null)}' 2>/dev/null | head -c 260)"
+            done
+          done
           ls -la /tmp/meal.jpg || true
           B64=$(base64 -w0 /tmp/meal.jpg)
+          echo "== sondă Gemini cu poza (JSON, 3.8-flash) =="
+          for CFG in '{"responseMimeType":"application/json","thinkingConfig":{"thinkingLevel":"low"}}' '{"responseMimeType":"application/json","thinkingConfig":{"thinkingLevel":"minimal"}}' '{"responseMimeType":"application/json"}'; do
+            printf '{"contents":[{"parts":[{"text":"Descompune farfuria pe componente. JSON: {\\"componente\\":[{\\"nume\\":\\"\\",\\"grame\\":0,\\"kcal\\":0}]}"},{"inline_data":{"mime_type":"image/jpeg","data":"%s"}}]}],"generationConfig":%s}' "$B64" "$CFG" > /tmp/gprobe.json
+            T0=$(date +%s%3N)
+            R=$(curl -s --max-time 120 -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' --data-binary @/tmp/gprobe.json \
+              -w '\n%{http_code}' "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent" || true)
+            CODE=$(echo "$R" | tail -1); BODY=$(echo "$R" | sed '$d')
+            echo "img $CFG -> $CODE $(( $(date +%s%3N) - T0 )) ms $(echo "$BODY" | jq -c '{t:((.candidates[0].content.parts[0].text // "")[0:160]), g:(.usageMetadata.thoughtsTokenCount // 0), p:(.usageMetadata.promptTokenCount // 0), e:(.error.message // null)}' 2>/dev/null | head -c 400)"
+          done
           printf '{"image":"%s"}' "$B64" > /tmp/meal.json
           T0=$(date +%s)
           curl -s --max-time 300 -X POST -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' --data-binary @/tmp/meal.json "$URL/v1/meal" -w '\nHTTP %{http_code}\n' | head -c 4000
