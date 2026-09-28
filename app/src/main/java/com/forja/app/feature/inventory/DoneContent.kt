@@ -129,7 +129,6 @@ fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Mod
     val photos = state.kind == InvKind.Photos
 
     BoxWithConstraints(modifier.fillMaxSize().background(Surface0)) {
-        val hero = (maxHeight * 0.33f).coerceIn(168.dp, 280.dp)
         val title = if (maxHeight < 720.dp) 68 else 84
         Canvas(Modifier.fillMaxSize()) {
             // radial-gradient(90% 55% at 50% 34%, amber .16 → transparent 70 %): elipsă = cerc scalat pe verticală
@@ -151,6 +150,11 @@ fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Mod
             // mijlocul: centrat când e loc, derulat când nu (butoanele nu se mișcă)
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val viewport = maxHeight
+                // Eroul ia ce rămâne după restul mijlocului (estimat cu rezervă), ca pe S23 (≈ 483 dp de mijloc) totul să
+                // încapă fără derulare, cu cale și „NEMUTATE” cu tot; pe ecrane mari rămâne la 280 dp.
+                val rest = (title + 10).dp + 76.dp + 38.dp +
+                    (if (state.place?.target != null) 52.dp else 0.dp) + (if (state.failed > 0) 26.dp else 0.dp) + 12.dp
+                val hero = (viewport - rest).coerceIn(140.dp, 280.dp)
                 Column(
                     Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = viewport),
                     horizontalAlignment = Alignment.CenterHorizontally,
