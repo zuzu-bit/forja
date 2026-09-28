@@ -71,7 +71,7 @@ private val CLAUSES = listOf(
     Clause(
         "Cine vede", listOf(
             "Doar tu, pe site-ul tău, cu contul tău.",
-            "Prietenii văd ce văd și acum: poziția, când nu ești fantomă, și stările. Nimic altceva."
+            "Prietenii văd poziția, când nu ești fantomă, stările și, dacă lași „Pe hartă” pornit, ce asculți. Nimic altceva."
         )
     ),
     Clause(

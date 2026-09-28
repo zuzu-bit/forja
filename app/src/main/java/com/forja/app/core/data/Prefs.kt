@@ -80,9 +80,9 @@ class Prefs(private val context: Context) {
         /** Prezentarea de început: se arată o dată pentru fiecare versiune — și conturilor existente. */
         const val INTRO_VERSION = 2
         /** „Echipare” (permisiunile): la fel, o dată per versiune. */
-        const val GEAR_VERSION = 2
+        const val GEAR_VERSION = 3
         /** Versiunea textului contractului de securitate; o versiune nouă cere semnătură nouă. */
-        const val CONTRACT_VERSION = 1
+        const val CONTRACT_VERSION = 2
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }

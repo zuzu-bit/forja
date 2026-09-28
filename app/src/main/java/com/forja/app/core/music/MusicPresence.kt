@@ -20,7 +20,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * Reguli: cel mult o scriere la 30 s; se scrie doar la o melodie nouă sau o dată la 5 min (ca prietenii s-o vadă
  * proaspătă, < 10 min); după 5 min de pauză câmpul se șterge. Niciodată în modul fantomă (dacă fantoma pornește, câmpul
- * se șterge pe loc), doar cu cont și cu contractul de securitate semnat (Prefs.contractSigned).
+ * se șterge pe loc), doar cu cont, cu contractul de securitate semnat (Prefs.contractSigned) și cu „Pe hartă” pornit.
  */
 internal object MusicPresence {
     private const val MIN_GAP_MS = 30_000L
@@ -45,6 +45,7 @@ internal object MusicPresence {
     private suspend fun run(app: ForjaApp) {
         val wake = Channel<Unit>(Channel.CONFLATED)
         scope.launch { Music.session.collect { wake.trySend(Unit) } }
+        scope.launch { MusicStats.shareOnMapFlow(app).collect { wake.trySend(Unit) } }
 
         var lastKey: String? = null
         var lastWrite = 0L
@@ -58,7 +59,8 @@ internal object MusicPresence {
             val ghostUntil = try { app.prefs.ghostUntilLocal.first() } catch (e: CancellationException) { throw e } catch (_: Exception) { 0L }
             val ghost = ghostUntil == -1L || ghostUntil > now
             val signed = try { app.prefs.contractSigned.first() } catch (e: CancellationException) { throw e } catch (_: Exception) { false }
-            val allowed = uid != null && signed && !ghost
+            val share = try { MusicStats.shareOnMap(app) } catch (e: CancellationException) { throw e } catch (_: Exception) { false }
+            val allowed = uid != null && signed && !ghost && share
             val playing = s != null && s.music && s.track.playing
             var pending = false
 

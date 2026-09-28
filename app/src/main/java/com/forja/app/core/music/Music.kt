@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -181,6 +182,19 @@ object Music {
         val app = appCtx ?: return
         scope.launch {
             try { withContext(Dispatchers.IO) { MusicStats.setStopWhenDone(app, enabled) } } catch (_: Exception) { }
+        }
+    }
+
+    /** Starea comutatorului „Oprește la final”, pentru ecranul Muzică. */
+    fun stopWhenDoneFlow(context: Context): Flow<Boolean> = MusicStats.stopWhenDoneFlow(context.applicationContext)
+
+    /** „Pe hartă”: publică sau nu melodia pentru prieteni. Oprit → câmpul de pe hartă se șterge în câteva secunde. */
+    fun shareOnMapFlow(context: Context): Flow<Boolean> = MusicStats.shareOnMapFlow(context.applicationContext)
+
+    fun shareOnMap(context: Context, enabled: Boolean) {
+        val app = context.applicationContext
+        scope.launch {
+            try { withContext(Dispatchers.IO) { MusicStats.setShareOnMap(app, enabled) } } catch (_: Exception) { }
         }
     }
 

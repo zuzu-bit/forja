@@ -247,8 +247,11 @@ export function fallbackName(c, tema = "Diverse") {
  * Răspunsul modelului → exact un obiect pe grup, în ordinea cererii: {id, nume ≤ 24, tema, categorie, pastrare, motiv}.
  * Id-uri necunoscute sau repetate sunt ignorate; un grup sărit primește numele de rezervă și „poate”. Regula conservatoare:
  * „nu” rămâne doar dacă are motiv și dacă modelul a văzut o poză din grup (`seen`: id-urile descrise, la furnizorii fără viziune
- * directă — Workers; un grup fără miniaturi nu e văzut niciodată); altfel devine „poate”.
+ * directă — Workers; un grup fără miniaturi nu e văzut niciodată) și dacă grupul are cel mult CLUSTER_NU_MAX poze; altfel devine „poate”.
  */
+/** Cel mult atâtea poze într-un grup marcat „nu” (vezi DESIGN-4.3: coșul „De aruncat” nu înghite evenimente întregi). */
+export const CLUSTER_NU_MAX = 30;
+
 export function sanitizeClusters(parsed, clusters, { seen = null } = {}) {
   const byId = new Map(clusters.map((c) => [c.id, c]));
   const out = new Map();
@@ -267,6 +270,8 @@ export function sanitizeClusters(parsed, clusters, { seen = null } = {}) {
     let pastrare = CLUSTER_KEEP.includes(keep) ? keep : "poate";
     const blind = !c.thumbs.length || (seen instanceof Set && !seen.has(id));
     if (pastrare === "nu" && (blind || !motiv)) pastrare = "poate";
+    // Un grup mare nu ajunge întreg la „De aruncat”: peste CLUSTER_NU_MAX poze, „nu” devine „poate” (aplicația îl păstrează dosar).
+    if (pastrare === "nu" && c.count > CLUSTER_NU_MAX) pastrare = "poate";
     out.set(id, { id, nume, tema, categorie: normalizeCategory(it.categorie), pastrare, motiv });
   }
   return clusters.map((c) => out.get(c.id) || { id: c.id, nume: fallbackName(c), tema: "Diverse", categorie: "Diverse", pastrare: "poate", motiv: "" });

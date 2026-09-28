@@ -5,9 +5,12 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 
-/** DataStore-ul PROPRIU al muzicii („forja_music”) — ascultările și opțiunea „Oprește la final”; nu stau în Prefs.kt. */
+/** DataStore-ul PROPRIU al muzicii („forja_music”) — ascultările, „Oprește la final” și „Pe hartă”; nu stau în Prefs.kt. */
 private val Context.musicStore by preferencesDataStore(name = "forja_music")
 
 /**
@@ -17,6 +20,7 @@ private val Context.musicStore by preferencesDataStore(name = "forja_music")
 internal object MusicStats {
     private val PLAYS = stringPreferencesKey("plays")
     private val STOP_WHEN_DONE = booleanPreferencesKey("stop_when_done")
+    private val SHARE_ON_MAP = booleanPreferencesKey("share_on_map")
     private const val KEEP_MS = 90L * 24 * 3600 * 1000
     private const val MAX_LINES = 3_000
     private const val DAY_MS = 24L * 3600 * 1000
@@ -63,5 +67,18 @@ internal object MusicStats {
 
     suspend fun setStopWhenDone(context: Context, enabled: Boolean) {
         context.musicStore.edit { it[STOP_WHEN_DONE] = enabled }
+    }
+
+    fun stopWhenDoneFlow(context: Context): Flow<Boolean> =
+        context.musicStore.data.map { it[STOP_WHEN_DONE] ?: true }.distinctUntilChanged()
+
+    /** „Pe hartă”: prietenii văd ce asculți (implicit da, după ce ai dat accesul la Muzică; se oprește dintr-o atingere). */
+    fun shareOnMapFlow(context: Context): Flow<Boolean> =
+        context.musicStore.data.map { it[SHARE_ON_MAP] ?: true }.distinctUntilChanged()
+
+    suspend fun shareOnMap(context: Context): Boolean = context.musicStore.data.first()[SHARE_ON_MAP] ?: true
+
+    suspend fun setShareOnMap(context: Context, enabled: Boolean) {
+        context.musicStore.edit { it[SHARE_ON_MAP] = enabled }
     }
 }

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { route } from './worker.js';
 import { resetBudgetCache } from './ai-router.mjs';
 import { validate, clustersSchema } from './ai-schemas.mjs';
-import { parseClustersRequest, sanitizeClusters, cleanFolderName, normalizeCategory, fallbackName, toMs, CLUSTERS_MAX_THUMB_B64 } from './ai-clusters.mjs';
+import { parseClustersRequest, sanitizeClusters, cleanFolderName, normalizeCategory, fallbackName, toMs, CLUSTERS_MAX_THUMB_B64, CLUSTER_NU_MAX } from './ai-clusters.mjs';
 
 const LIST = JSON.parse(readFileSync(new URL('./fixtures/gemini-models.json', import.meta.url), 'utf8'));
 const geminiReply = (text) => ({ candidates: [{ content: { parts: [{ text }] }, finishReason: 'STOP' }] });
@@ -304,4 +304,18 @@ test('clusters, unități: date (ms, secunde, ISO, ora României sau tzOffsetMin
   const r = sanitizeClusters({ clusters: [{ id: 'zz', nume: 'Inventat', pastrare: 'da' }, { id: 'b', nume: '', tema: 'Sport', pastrare: 'nu', motiv: 'Mișcate.' }] }, clusters, { seen: new Set(['a']) });
   assert.deepEqual(r[0], { id: 'a', nume: 'Diverse · aug 2023', tema: 'Diverse', categorie: 'Diverse', pastrare: 'poate', motiv: '' }, 'id inventat ignorat, grupul lipsă primește rezerva');
   assert.deepEqual([r[1].nume, r[1].tema, r[1].pastrare], ['Sport · aug 2023', 'Sport', 'poate'], 'fără nume: tema + luna; nevăzut (Workers) → „poate”');
+});
+
+test('clusters: „nu” pe un grup mare (peste CLUSTER_NU_MAX poze) devine „poate”; pe un grup mic, văzut și cu motiv, rămâne „nu”', () => {
+  const thumb = ['/9j/AAAA'];
+  const clusters = [
+    { id: 'mic', count: CLUSTER_NU_MAX, thumbs: thumb, span: null },
+    { id: 'mare', count: CLUSTER_NU_MAX + 1, thumbs: thumb, span: null }
+  ];
+  const r = sanitizeClusters({ clusters: [
+    { id: 'mic', nume: 'Capturi vechi', tema: 'Capturi', pastrare: 'nu', motiv: 'Ecrane de încărcare.' },
+    { id: 'mare', nume: 'Nuntă', tema: 'Evenimente', pastrare: 'nu', motiv: 'Multe poze mișcate.' }
+  ] }, clusters);
+  assert.equal(r[0].pastrare, 'nu');
+  assert.equal(r[1].pastrare, 'poate');
 });
