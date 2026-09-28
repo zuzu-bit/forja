@@ -136,8 +136,10 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     await tick(20); await login(p);
     assert(!p.$('app').hidden); assert.equal(p.$('login-password').value, '');
     const saved = JSON.parse(p.w.localStorage.getItem('forja.auth.v1'));
+    assert.deepEqual(Object.keys(saved).sort(), ['refresh', 'v'], 'only the refresh token: no email, uid or ID token in the browser');
     assert.equal(saved.refresh, 'local-harness-refresh'); assert.equal(saved.v, 1);
-    assert(!('token' in saved) && !JSON.stringify(saved).includes('eyJ'), 'the ID token stays in memory');
+    assert(!JSON.stringify(saved).includes('eyJ') && !JSON.stringify(saved).includes('@'), 'the ID token and the email stay in memory');
+    assert.equal(p.$('rail-email').textContent, 'lana@example.test');
     await until(() => p.call('/insights/api/azi'), 'azi');
     const apiCalls = p.fixture.calls.filter(c => c.route.startsWith('/v2/') || c.route.startsWith('/insights/api/'));
     assert(apiCalls.length && apiCalls.every(c => /^Bearer [\w-]+\.[\w-]+\.[\w-]+$/.test(c.headers.Authorization)));
@@ -157,9 +159,11 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
   });
 
   await check('a saved session opens straight into the linked section; the detail after “/” is decoded (Uri.encode)', async () => {
-    const p = page({hash: 'inventar/inv-20260925-docs', storage: {'forja.auth.v1': JSON.stringify({v: 1, refresh: 'local-harness-refresh', uid: 'demo-owner', email: 'lana@example.test'})}});
+    const p = page({hash: 'inventar/inv-20260925-docs', storage: {'forja.auth.v1': JSON.stringify({v: 1, refresh: 'local-harness-refresh', uid: 'demo-owner', email: 'old@example.test'})}});
     await until(() => !p.$('app').hidden, 'app');
     assert(p.$('login').hidden);
+    assert.equal(p.$('rail-email').textContent, 'lana@example.test', 'the email comes from the renewed ID token, not from storage');
+    assert.deepEqual(JSON.parse(p.w.localStorage.getItem('forja.auth.v1')), {v: 1, refresh: 'local-harness-refresh'}, 'an old entry is rewritten without uid/email');
     assert(p.fixture.calls.some(c => c.url.includes('securetoken.googleapis.com')));
     assert(!p.fixture.calls.some(c => c.url.includes('signInWithPassword')));
     await until(() => /Download\/Organizate/.test(p.$('inventar-runs').textContent), 'run detail');
@@ -174,6 +178,17 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     assert.equal(p.w.localStorage.getItem('forja.auth.v1'), null);
     assert.match(p.$('login-message').textContent, /Sesiunea a expirat/);
     assert.equal(p.w.location.hash, '#somn');
+    clean(p);
+  });
+
+  await check('a busy securetoken (429) keeps the saved session: the site opens and retries, she is not signed out', async () => {
+    const p = page({hash: 'azi', storage: {'forja.auth.v1': JSON.stringify({v: 1, refresh: 'busy-refresh'})}});
+    await until(() => !p.$('app').hidden, 'app');
+    assert(p.$('login').hidden);
+    assert.deepEqual(JSON.parse(p.w.localStorage.getItem('forja.auth.v1')), {v: 1, refresh: 'busy-refresh'});
+    await until(() => p.$('body-azi').querySelector('.state-error'), 'retryable error');
+    assert.match(p.$('body-azi').textContent, /Conectarea nu răspunde acum/);
+    assert(p.ux.Auth.session, 'still signed in');
     clean(p);
   });
 

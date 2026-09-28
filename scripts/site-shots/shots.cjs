@@ -105,7 +105,7 @@ async function runView({browser, base, assets, opts, profile, vpName, view}) {
   });
   if (process.env.FORJA_SHOTS_DEBUG) await page.addInitScript(() => { let v; Object.defineProperty(window, 'ForjaMapRenderer', {configurable: true, get: () => v, set: x => { const c = x.create; x.create = (...a) => (window.__r = c(...a)); v = x; }}); });
   const storage = {...(view.storage || {})};
-  if (view.auth === 'stored') storage['forja.auth.v1'] = JSON.stringify({v: 1, refresh: 'local-harness-refresh', uid: fixture.azi.me.uid, email: fixture.azi.me.email});
+  if (view.auth === 'stored') storage['forja.auth.v1'] = JSON.stringify({v: 1, refresh: 'local-harness-refresh'});
   if (Object.keys(storage).length) await page.addInitScript(entries => { for (const [k, v] of Object.entries(entries)) localStorage.setItem(k, v); }, storage);
   const settle = async (max = 10000) => {
     const start = Date.now();

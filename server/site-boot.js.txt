@@ -46,7 +46,7 @@ async function boot() {
   const saved = Auth.stored();
   if (!saved) { showScreen('login'); return; }
   showScreen('boot');
-  Auth.start({token: '', refresh: saved.refresh, expires: 0, uid: saved.uid, email: saved.email});
+  Auth.start({token: '', refresh: saved.refresh, expires: 0});
   try { await Auth.renew(); enterApp(); }
   catch (e) {
     const offline = e instanceof ApiError && e.status !== 401;

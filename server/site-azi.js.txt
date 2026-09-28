@@ -7,7 +7,7 @@ const Azi = {
   },
   /** O dată la intrare, pentru punctele de stare din navigare. */
   prefetch() { if (!Azi.data) Azi.fetch().then(d => { if (d) Site.setLinks(d.links); }).catch(() => {}); },
-  async fetch() { const d = await api('/insights/api/azi'); Azi.data = d; if (d?.me) Site.me = d.me; return d; },
+  async fetch() { const d = await api('/insights/api/azi'); Azi.data = d; if (d?.me) Site.setMe(d.me); return d; },
   load(first) {
     return loadInto('azi', Azi.body, () => Azi.fetch(), d => { Site.setLinks(d.links); Azi.render(d); }, {replaceOnError: first});
   },

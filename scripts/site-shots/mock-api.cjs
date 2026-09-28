@@ -49,6 +49,7 @@ function createApi(fixture, assets, {fail = []} = {}) {
     }
     if (u.hostname === 'securetoken.googleapis.com') {
       if (data.refresh_token === 'revoked-refresh') return json({error: {code: 400, message: 'TOKEN_EXPIRED'}}, 400);
+      if (data.refresh_token === 'busy-refresh') return json({error: {code: 429, message: 'TOO_MANY_ATTEMPTS_TRY_LATER'}}, 429);
       return json({id_token: fakeJwt(f.now, uid), refresh_token: 'local-harness-refresh', expires_in: '3600', token_type: 'Bearer', user_id: uid});
     }
 

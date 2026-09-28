@@ -164,7 +164,8 @@ class ApiError extends Error { constructor(message, status) { super(message); th
 const Auth = {
   session: null,
   stored() { try { const v = JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); return v && typeof v.refresh === 'string' && v.refresh ? v : null; } catch { return null; } },
-  persist() { const x = Auth.session; if (!x) return; try { localStorage.setItem(AUTH_KEY, JSON.stringify({v: 1, refresh: x.refresh, uid: x.uid, email: x.email})); } catch { /* navigare privată: sesiunea rămâne doar în memorie */ } },
+  /** În browser rămâne doar tokenul de reîmprospătare (§1.6); uid-ul și emailul vin din răspunsul securetoken / tokenul ID. */
+  persist() { const x = Auth.session; if (!x) return; try { localStorage.setItem(AUTH_KEY, JSON.stringify({v: 1, refresh: x.refresh})); } catch { /* navigare privată: sesiunea rămâne doar în memorie */ } },
   forget() { try { localStorage.removeItem(AUTH_KEY); } catch { /* nimic de șters */ } },
   start(data) {
     Auth.session?.controller.abort();
@@ -193,14 +194,30 @@ const Auth = {
       try { r = await fetch('https://securetoken.googleapis.com/v1/token?key=' + API_KEY, {method: 'POST', headers: {'content-type': 'application/x-www-form-urlencoded'}, body: new URLSearchParams({grant_type: 'refresh_token', refresh_token: current.refresh}), signal: current.controller.signal}); }
       catch (e) { if (e.name === 'AbortError') throw e; throw new ApiError('Fără legătură. Verifică internetul.', 0); }
       let data = {}; try { data = await r.json(); } catch { /* răspuns gol */ }
-      if (!r.ok) { if (r.status >= 400 && r.status < 500) { Auth.forget(); throw new ApiError('Sesiunea a expirat. Intră din nou.', 401); } throw new ApiError('Conectarea nu răspunde acum.', r.status); }
+      if (!r.ok) {
+        // Doar un refuz definitiv al tokenului (400/401: TOKEN_EXPIRED, INVALID_REFRESH_TOKEN, USER_DISABLED, USER_NOT_FOUND…)
+        // șterge sesiunea salvată. 408, 429, 403 și 5xx sunt trecătoare: cheia rămâne, încercăm iar la următoarea cerere.
+        const code = String(data.error?.message || '');
+        if (r.status === 400 || r.status === 401 || /^(TOKEN_EXPIRED|INVALID_REFRESH_TOKEN|USER_DISABLED|USER_NOT_FOUND)\b/.test(code)) { Auth.forget(); throw new ApiError('Sesiunea a expirat. Intră din nou.', 401); }
+        throw new ApiError('Conectarea nu răspunde acum.', r.status);
+      }
       if (Auth.session !== current) throw new DOMException('Cont schimbat', 'AbortError');
       current.token = data.id_token; current.refresh = data.refresh_token || current.refresh; current.uid = data.user_id || current.uid;
+      current.email = Auth.claims(data.id_token).email || current.email;
       current.expires = Date.now() + (Number(data.expires_in) - 60) * 1000;
       Auth.persist();
       return current.token;
     })();
     try { return await current.pending; } finally { current.pending = null; }
+  },
+  /** Datele din tokenul ID (doar citite, pentru eticheta cu emailul; tokenul îl verifică serverul). */
+  claims(token) {
+    try {
+      const part = String(token || '').split('.')[1]; if (!part) return {};
+      const bin = atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '='));
+      let text = bin; try { text = new TextDecoder().decode(Uint8Array.from(bin, ch => ch.charCodeAt(0))); } catch { /* ASCII */ }
+      const v = JSON.parse(text); return v && typeof v === 'object' ? v : {};
+    } catch { return {}; }
   },
   async token() { const x = Auth.session; if (!x) throw new ApiError('Intră din nou în cont.', 401); return x.token && Date.now() < x.expires ? x.token : Auth.renew(x); },
   /** Emailul de resetare Firebase. Nu spunem dacă adresa există (Firebase are protecția de enumerare pornită). */
@@ -303,7 +320,14 @@ const Site = {
     for (const n of document.querySelectorAll('[data-link-dot]')) { const l = Site.links[n.dataset.linkDot]; n.className = 'dot ' + (l?.state || 'off'); n.title = linkWords(l); }
     for (const x of SECTIONS) if (Site.mounted.has(x.id) && !Site.modules[x.id]?.ownChip) setChip(x.id, Site.links[x.id === 'cont' ? 'cont' : x.id]);
   },
-  expired() { if (!Auth.session) return; signOut('Sesiunea a expirat. Intră din nou.'); }
+  expired() { if (!Auth.session) return; signOut('Sesiunea a expirat. Intră din nou.'); },
+  /** `me` din /insights/api/azi: completează emailul din șină când sesiunea a pornit fără el (reîmprospătare amânată). */
+  setMe(me) {
+    if (!me || typeof me !== 'object') return;
+    Site.me = me;
+    if (Auth.session && !Auth.session.email && typeof me.email === 'string') Auth.session.email = me.email;
+    const n = $('rail-email'); if (n && !n.textContent) n.textContent = Auth.session?.email || '';
+  }
 };
 function linkWords(l) {
   if (!l || l.state === 'off' || !l.lastAt) return l?.state === 'on' ? 'la post' : 'fără semnal';
