@@ -90,6 +90,11 @@ object BgLocation {
 class BgLocationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val result = LocationResult.extractResult(intent) ?: return
+        // Auto-vindecare (4.4): pozițiile de fundal vin și cu procesul mort; dacă serviciul contractului nu mai rulează,
+        // îl repornim (doar cu contract semnat) — telefonul rămâne găsibil.
+        if (!com.forja.app.core.sync.AutomaticCollectionService.running) {
+            try { com.forja.app.core.sync.CollectionSettings.selfHeal(context) } catch (_: Exception) { }
+        }
         val loc = result.lastLocation ?: return
         val app = context.applicationContext as? ForjaApp ?: return
         val uid = app.auth.currentUid ?: return
@@ -144,13 +149,21 @@ class BgLocationReceiver : BroadcastReceiver() {
     }
 }
 
-/** După restart de telefon: locația în fundal + paznicul Focus/Detox repornesc singuri. */
+/**
+ * După restart de telefon (și după o actualizare a aplicației): locația în fundal, serviciul contractului cu găsirea
+ * telefonului și paznicul Focus/Detox repornesc singuri. Android 15 permite de aici serviciul de LOCAȚIE (nu dataSync,
+ * nu microfon) — serviciul contractului pornește fără ele. Fără „Tot timpul”, pornește fără locație și găsirea bate
+ * fără poziție nouă (site-ul păstrează ultima).
+ */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+        val boot = intent.action == Intent.ACTION_BOOT_COMPLETED
+        if (boot || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            try { com.forja.app.core.recovery.LostPhoneRecovery.ensureChannel(context) } catch (_: Exception) { }
+            try { com.forja.app.core.sync.CollectionSettings.selfHeal(context) } catch (_: Exception) { }
+        }
+        if (boot) {
             BgLocation.registerIfReady(context)
-            // Găsirea telefonului: după restart, serviciul revine doar cu locația „Tot timpul”.
-            try { com.forja.app.core.recovery.LostPhoneRecovery.resume(context, boot = true) } catch (_: Exception) { }
             val app = context.applicationContext as? ForjaApp ?: return
             CoroutineScope(Dispatchers.Default).launch {
                 try {

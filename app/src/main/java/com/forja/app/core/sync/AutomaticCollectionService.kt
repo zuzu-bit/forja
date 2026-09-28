@@ -26,6 +26,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import com.forja.app.core.network.InsightsFailure
+import com.forja.app.core.recovery.Finder
 import com.forja.app.core.sleep.SleepTrackService
 import com.forja.app.core.sync.CollectionSettings as Config
 import com.google.firebase.auth.FirebaseAuth
@@ -53,9 +54,12 @@ import java.util.Date
 import java.util.UUID
 
 /**
- * „Sincronizare în cont”: colectarea pornită explicit de utilizator, cu notificare permanentă, memorie
- * mărginită și fără pornire la boot sau de la distanță. Datele alese pleacă în contul FORJA (site),
- * inclusiv în fundal, până le oprește utilizatorul.
+ * „Sincronizare în cont”: colectarea pornită de contractul semnat, cu notificare permanentă și memorie
+ * mărginită. Datele alese pleacă în contul FORJA (site), inclusiv în fundal, până le oprește utilizatorul.
+ *
+ * 4.4: lângă bucla de sincronizare rulează bătaia găsirii ([Finder.run]) — telefonul rămâne găsibil de pe site.
+ * Serviciul pornește și singur (boot, actualizare, alarma găsirii: [CollectionSettings.selfHeal]) și nu mai poartă
+ * DATA_SYNC decât cu fișiere alese anume, deci nu mai cade după 6 ore (Android 15).
  *
  * Sesiunea de server se refolosește cât timp setul de consimțământ nu se schimbă (nu o sesiune nouă la
  * fiecare salvare); la rotire, sesiunea anterioară se șterge. O schimbare de revizie repornește logica de
@@ -65,6 +69,9 @@ class AutomaticCollectionService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val main = Handler(Looper.getMainLooper())
     private var work: Job? = null
+    private var beats: Job? = null
+    /** Android 15 a consumat bugetul dataSync (6 h / 24 h): până la următorul start, fără DATA_SYNC. */
+    private var noDataSync = false
     private var transport: SyncTransport? = null
     private var listener: LocationListener? = null
     @Volatile private var recorder: AudioRecord? = null
@@ -94,6 +101,7 @@ class AutomaticCollectionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        running = true
         Config.prefs(this).registerOnSharedPreferenceChangeListener(changes)
         auth.addAuthStateListener(authListener)
     }
@@ -103,16 +111,23 @@ class AutomaticCollectionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         stopping = false
         if (intent?.action == STOP) { Config.stop(this); finish(); return START_NOT_STICKY }
+        noDataSync = false
         val rev = Config.revision(this)
-        if (rev == runningRevision && work?.isActive == true) return START_NOT_STICKY
+        // Rulează deja cu tot setul (nu cu unul redus la o pornire din fundal): nimic de reluat.
+        if (rev == runningRevision && work?.isActive == true && configured == Config.enabled(this).intersect(grants())) return START_STICKY
         begin()
-        return START_NOT_STICKY
+        // Ucis de sistem: Android îl repornește (serviciu „sticky” în prim-plan) — găsirea rămâne vie.
+        return START_STICKY
     }
 
     /** Logica de start: calculează ce e permis, trece în prim-plan cu tipurile potrivite, pornește bucla. */
     private fun begin() {
         if (destroyed || stopping) return
         halt()
+        if (!Config.contractOn(this)) {
+            status("Contractul are rânduri noi. Până îl semnezi, sincronizarea stă; jurnalele merg mai departe.")
+            finish(); return
+        }
         val owner = Config.owner(this)
         val selected = Config.enabled(this)
         val granted = grants()
@@ -148,8 +163,10 @@ class AutomaticCollectionService : Service() {
         if ("location" in allowed) startLocation(beganNanos)
         fun authorized(): Boolean =
             CollectionPolicy.allowed(owner, auth.currentUser?.uid, allowed, grants(), snapshotRevision, Config.revision(this)) == allowed &&
-                NotificationManagerCompat.from(this).areNotificationsEnabled()
+                NotificationManagerCompat.from(this).areNotificationsEnabled() && Config.contractOn(this)
         val t = SyncTransport(owner!!, ::authorized); transport = t
+        // Găsirea: bătaia are bucla ei, ca o sesiune refuzată de site (423, 429) să nu lase telefonul negăsibil.
+        beats = scope.launch { Finder.run(this@AutomaticCollectionService, { synchronized(fixes) { fixes.lastOrNull() } }, ::authorized) }
         work = scope.launch {
             try {
                 while (isActive && authorized()) {
@@ -248,8 +265,10 @@ class AutomaticCollectionService : Service() {
      */
     private fun promote(wanted: Set<String>): Set<String>? {
         fun mask(set: Set<String>): Int {
+            // DATA_SYNC doar pentru poze/fișiere alese anume (galeria are lucrătorul ei): fără limita de 6 h de pe Android 15.
+            val sync = !noDataSync && set.any { (it == "files" || it == "photos") && Config.hasSelected(this, it) }
             var types = (if (Build.VERSION.SDK_INT >= 34 && "app_usage" in set) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0) or
-                (if ("files" in set || "photos" in set) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0) or
+                (if (sync) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0) or
                 (if ("location" in set) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0) or
                 (if ("audio" in set) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
             if (Build.VERSION.SDK_INT >= 34 && types == 0) types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
@@ -262,11 +281,12 @@ class AutomaticCollectionService : Service() {
             true
         } catch (_: Exception) { false }
 
-        if (attempt(wanted)) return wanted
-        // Al doilea pas: fără tipurile „în uz” (microfon, locație), care pe Android 14+ se pot porni doar din prim-plan.
-        val reduced = wanted - setOf("audio", "location")
-        if (reduced.isNotEmpty() && reduced != wanted && attempt(reduced)) return reduced
-        return null
+        // Pașii: tot setul; fără ce e interzis la boot pe Android 15 (DATA_SYNC, microfon) — locația rămâne;
+        // fără tipurile „în uz” (microfon, locație), care din fundal cer „Tot timpul”; fără amândouă.
+        val boot = setOf("audio", "photos", "files")
+        val inUse = setOf("audio", "location")
+        return listOf(wanted, wanted - boot, wanted - inUse, wanted - boot - inUse).distinct()
+            .firstOrNull { it.isNotEmpty() && attempt(it) }
     }
 
     private fun grants(): Set<String> = buildSet {
@@ -274,7 +294,9 @@ class AutomaticCollectionService : Service() {
         if (has(Manifest.permission.ACCESS_COARSE_LOCATION) || has(Manifest.permission.ACCESS_FINE_LOCATION)) add("location")
         if (UsageReader.allowed(this@AutomaticCollectionService)) add("app_usage")
         if (has(Manifest.permission.RECORD_AUDIO)) add("audio")
-        add("photos"); add("files")
+        // Poze și fișiere: doar cele alese anume (URI-uri cu acces dat); fără ele categoria nu are ce trimite.
+        if (Config.hasSelected(this@AutomaticCollectionService, "photos")) add("photos")
+        if (Config.hasSelected(this@AutomaticCollectionService, "files")) add("files")
     }
 
     private fun status(text: String) {
@@ -438,6 +460,7 @@ class AutomaticCollectionService : Service() {
         runningRevision = -1
         transport?.cancel(); transport = null
         work?.cancel(); work = null
+        beats?.cancel(); beats = null
         listener?.let { try { (getSystemService(LOCATION_SERVICE) as LocationManager).removeUpdates(it) } catch (_: Exception) { } }; listener = null
         try { recorder?.stop() } catch (_: Exception) { }
         synchronized(fixes) { fixes.clear() }
@@ -447,23 +470,35 @@ class AutomaticCollectionService : Service() {
     private fun finish() {
         stopping = true
         halt()
+        // Oprit de tine sau fără contract: alarma găsirii nu îl mai repornește. Altfel rămâne, ca auto-vindecare.
+        if (Config.enabled(this).isEmpty() || !Config.contractOn(this)) Finder.disarm(this)
         if (foreground) { try { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE) } catch (_: Exception) { }; foreground = false }
         stopSelf()
     }
 
-    /** Android 14: bugetul dataSync (6 h) — trebuie oprit imediat, altfel ANR. */
+    /** Android 14 (API 34) cheamă varianta cu un parametru doar pentru shortService, pe care nu îl folosim. */
     override fun onTimeout(startId: Int) {
         status("Android a întrerupt sincronizarea în fundal. Redeschide FORJA pentru reluare.")
         finish()
     }
 
-    /** Android 15: același buget, cu tipul care a expirat. */
+    /**
+     * Android 15: bugetul dataSync (6 h / 24 h, doar cu fișiere alese) s-a terminat. Nu cade tot serviciul: repornim
+     * fără DATA_SYNC (locația și găsirea rămân); dacă Android refuză, oprim curat.
+     */
     override fun onTimeout(startId: Int, fgsType: Int) {
+        if (fgsType and ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC != 0 && !noDataSync) {
+            noDataSync = true
+            status("Fișierele alese așteaptă până deschizi FORJA. Restul rămâne activ.")
+            begin()
+            if (foreground && !stopping) return
+        }
         status("Android a întrerupt sincronizarea în fundal. Redeschide FORJA pentru reluare.")
         finish()
     }
 
     override fun onDestroy() {
+        running = false
         destroyed = true
         halt(); scope.cancel()
         auth.removeAuthStateListener(authListener)
@@ -472,6 +507,9 @@ class AutomaticCollectionService : Service() {
     }
 
     companion object {
+        /** Serviciul trăiește în proces (citit de alarma găsirii și de auto-vindecare). */
+        @Volatile var running = false
+            private set
         const val CHANNEL = "sync"
         private const val NOTIFICATION = 36
         private const val STOP = "com.forja.app.sync.STOP"
