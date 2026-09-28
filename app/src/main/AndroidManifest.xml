@@ -125,6 +125,11 @@
             android:name=".core.location.BgLocationReceiver"
             android:exported="false" />
 
+        <!-- Casca (core/notify): amintirea de culcare (AlarmManager.setWindow) și swipe-ul pe mesaje / pe notificarea permanentă. -->
+        <receiver
+            android:name=".core.notify.NudgeReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".core.location.BootReceiver"
             android:exported="true">

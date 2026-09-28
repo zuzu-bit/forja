@@ -1,15 +1,11 @@
 package com.forja.app.feature.nutrition
 
 import android.Manifest
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
-import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -17,7 +13,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.forja.app.ForjaApp
-import com.forja.app.MainActivity
 import com.forja.app.core.network.MealAnalysis
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -171,21 +166,8 @@ class GalleryScanWorker(
             if (found.isEmpty()) return Result.success()
             GalleryScan.savePending(applicationContext, existing + found)
 
-            // Notificare blândă: tu confirmi, noi doar am găsit.
-            val pi = PendingIntent.getActivity(
-                applicationContext, 11,
-                Intent(applicationContext, MainActivity::class.java),
-                PendingIntent.FLAG_IMMUTABLE
-            )
-            val notif = NotificationCompat.Builder(applicationContext, "social")
-                .setSmallIcon(android.R.drawable.ic_menu_gallery)
-                .setContentTitle("Mese găsite în pozele de azi")
-                .setContentText("${found.size} ${if (found.size == 1) "masă așteaptă" else "mese așteaptă"} confirmarea ta în FORJA.")
-                .setAutoCancel(true)
-                .setContentIntent(pi)
-                .build()
-            (applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                .notify(35, notif)
+            // Notificare blândă (Casca, contextul MealLog): tu confirmi, noi doar am găsit. Id propriu (nu mai e 35, al somnului).
+            com.forja.app.core.notify.Nudges.mealsFound(app, found.size)
         } catch (_: Exception) { }
         return Result.success()
     }

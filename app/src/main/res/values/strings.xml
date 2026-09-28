@@ -2,12 +2,14 @@
 <resources>
     <string name="app_name">FORJA</string>
     <string name="notif_channel_go">Înregistrare traseu</string>
-    <string name="notif_channel_sleep">Sesiune de somn</string>
+    <string name="notif_channel_sleep">Somn</string>
     <string name="notif_channel_focus">Focus</string>
-    <string name="notif_channel_social">Prieteni</string>
+    <string name="notif_channel_social">Camarazi</string>
     <string name="notif_channel_alarm">Alarmă deșteaptă</string>
-    <string name="notif_channel_explore">Explorare</string>
+    <string name="notif_channel_explore">Locurile tale</string>
     <string name="notif_channel_cleanup">Curățenie</string>
     <string name="notif_channel_sync">Sincronizare în cont</string>
+    <string name="notif_channel_coach">Mesaje motivaționale</string>
+    <string name="notif_channel_coach_desc">Casca, despre ziua ta: dimineața, la prânz și seara (cel mult trei pe zi), pragurile seriilor, Focus și culcarea.</string>
     <string name="detox_guard_desc">Paznicul Detox veghează, DOAR pe telefonul tău, ca să te ajute să reziști tentației pe care ai ales-o. Recunoaște site-urile, aplicațiile și cuvintele pe care le-ai setat tu și te întâmpină cu un moment de respirație. Nimic nu pleacă de pe telefon — nici cuvintele, nici ce vezi pe ecran.</string>
 </resources>

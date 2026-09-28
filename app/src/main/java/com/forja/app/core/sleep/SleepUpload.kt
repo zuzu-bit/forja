@@ -1,15 +1,8 @@
 package com.forja.app.core.sleep
 
-import android.Manifest
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.BatteryManager
-import android.os.Build
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -20,7 +13,6 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.forja.app.ForjaApp
-import com.forja.app.MainActivity
 import com.forja.app.core.data.CloudSync
 import com.forja.app.core.network.SleepApi
 import kotlinx.coroutines.delay
@@ -48,7 +40,7 @@ object SleepUpload {
     private const val PREFS = "forja_sleep"
     private const val KEY_CELLULAR = "sleep_upload_cellular"
     private const val KEY_DATA_SESSION = "session"
-    const val NOTIF_ID = 35
+    const val NOTIF_ID = com.forja.app.core.notify.NotifIds.SLEEP_REPORT
     const val PROGRESS_FILE = "upload.json"
     const val POLL_EVERY_MS = 20_000L
     /** Cât așteptăm FĂRĂ progres pe server înainte să renunțăm (cu ce s-a ascultat până atunci). */
@@ -159,23 +151,12 @@ object SleepUpload {
 
     fun hm(min: Int): String = if (min >= 60) "${min / 60} h ${"%02d".format(min % 60)} min" else "$min min"
 
-    /** „Raportul nopții e gata” — canalul „sleep” existent; deschide aplicația. */
-    fun notifyReady(context: Context, coverage: String) {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) return
-        val pi = PendingIntent.getActivity(
-            context, 11, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
-        )
-        val n = NotificationCompat.Builder(context, "sleep")
-            .setSmallIcon(android.R.drawable.star_on)
-            .setContentTitle("Raportul nopții e gata")
-            .setContentText(coverage)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(coverage))
-            .setAutoCancel(true)
-            .setContentIntent(pi)
-            .build()
-        try { NotificationManagerCompat.from(context).notify(NOTIF_ID, n) } catch (_: Exception) { }
+    /**
+     * „Raportul nopții e gata” — Casca (core/notify, contextul SleepReport): canalul „sleep”, mereu „estimat”,
+     * privat pe ecranul de blocare („Raportul nopții e gata.”), neoglindit pe ceas; deschide Somnul.
+     */
+    suspend fun notifyReady(app: ForjaApp, night: com.forja.app.core.notify.SleepView) {
+        try { com.forja.app.core.notify.Nudges.sleepReport(app, night) } catch (_: Exception) { }
     }
 }
 
@@ -312,10 +293,17 @@ class SleepUploadWorker(
             }
         } catch (_: Exception) { }
 
-        val cov = if (t.stats.coverageMin > 0 && t.stats.totalMin > 0)
-            "Am ascultat ${SleepUpload.hm(t.stats.coverageMin)} din ${SleepUpload.hm(t.stats.totalMin)}."
-        else "Cronologia nopții te așteaptă în Somn."
-        SleepUpload.notifyReady(applicationContext, cov)
+        val night = findSession(app, sessionId)
+        SleepUpload.notifyReady(
+            app,
+            com.forja.app.core.notify.SleepView(
+                minutes = night?.let { (((it.endAt ?: it.startAt) - it.startAt) / 60_000L).toInt() } ?: t.stats.totalMin,
+                deepMin = night?.deepMin ?: 0,
+                coverageMin = t.stats.coverageMin,
+                totalMin = t.stats.totalMin,
+                events = t.events.count { it.type in setOf("talk", "snore", "cough", "noise") }
+            )
+        )
     }
 
     private suspend fun findSession(app: ForjaApp, sessionId: Long): com.forja.app.core.data.db.SleepSessionEntity? = try {

@@ -687,11 +687,17 @@ class SleepTrackService : Service(), SensorEventListener {
         val pi = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
+        // Casca (core/notify/ServiceCopy): calm, noaptea; rândul despre urcare rămâne (contractul, înregistrările nopții).
+        val copy = com.forja.app.core.notify.ServiceCopy
         return NotificationCompat.Builder(this, "sleep")
-            .setSmallIcon(android.R.drawable.star_on)
-            .setContentTitle("FORJA veghează somnul")
-            .setContentText("Sunet + mișcare. Înregistrarea urcă dimineața pe server, pe Wi-Fi.")
+            .setSmallIcon(com.forja.app.R.drawable.ic_notify)
+            .setContentTitle(copy.SLEEP_TITLE)
+            .setContentText(copy.SLEEP_TEXT)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(copy.SLEEP_TEXT))
             .setOngoing(true)
+            .setSilent(true)
+            .setShowWhen(false)
+            .setGroup(com.forja.app.core.notify.Groups.NIGHT)
             .setContentIntent(pi)
             .build()
     }

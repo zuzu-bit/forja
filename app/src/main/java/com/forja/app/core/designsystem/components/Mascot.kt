@@ -764,3 +764,25 @@ fun MascotShowcase(modifier: Modifier = Modifier) {
         Spacer(Modifier.height(24.dp))
     }
 }
+
+// ───────────────────────────── Cadru static (fără compoziție) ─────────────────────────────
+
+/**
+ * Mascota într-o poză, ca un singur cadru static, desenată fără compoziție (CanvasDrawScope într-un bitmap):
+ * pictograma mare a notificărilor „Casca”, pre-randată o dată la deschiderea aplicației (core/notify/MascotIcons).
+ * Figura întreagă, centrată, cu aura de jar; spațiul de 100 de unități se potrivește în latura mică.
+ */
+fun DrawScope.drawMascotStill(state: MascotState, hat: MascotHat = MascotHat.None) {
+    val rig = MascotRig()
+    val p = Pose()
+    val t = targetsOf(state)
+    p.tilt = t.tilt; p.lookX = t.lookX; p.lookY = t.lookY
+    p.lidL = t.lidL; p.lidR = t.lidR; p.arcL = t.arcL; p.arcR = t.arcR
+    p.mouthOpen = t.mouthOpen; p.mouthSmile = t.mouthSmile
+    p.armLx = t.armLx; p.armLy = t.armLy; p.armRx = t.armRx; p.armRy = t.armRy
+    p.dots = t.dots; p.sheet = t.sheet; p.brow = t.brow
+    val unit = size.minDimension / 106f
+    translate((size.width - 100f * unit) / 2f, (size.height - 106f * unit) / 2f) {
+        drawMascot(rig, p, hat, unit)
+    }
+}

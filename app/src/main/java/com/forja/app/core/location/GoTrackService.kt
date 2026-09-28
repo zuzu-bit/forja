@@ -195,16 +195,16 @@ class GoTrackService : Service() {
         val pi = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
-        val label = when (sport) {
-            "walk" -> "Tură în curs · Mers"
-            "ride" -> "Tură în curs · Ciclism"
-            else -> "Tură în curs · Alergare"
-        }
+        // Casca (core/notify/ServiceCopy): titlul rămâne informație, textul spune ce se înregistrează și cum oprești.
+        val copy = com.forja.app.core.notify.ServiceCopy
         return NotificationCompat.Builder(this, "go")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle(label)
-            .setContentText("Traseul se înregistrează. Atinge pentru consolă. Oprești din hartă.")
+            .setContentTitle(copy.goTitle(sport))
+            .setContentText(copy.GO_TEXT)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(copy.GO_TEXT))
             .setOngoing(true)
+            .setSilent(true)
+            .setGroup(com.forja.app.core.notify.Groups.GO)
             .setContentIntent(pi)
             .build()
     }

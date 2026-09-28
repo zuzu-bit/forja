@@ -91,13 +91,6 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
             try { com.forja.app.feature.nutrition.GalleryScan.cancelDaily(this@ForjaApp) } catch (_: Exception) { }
         }
         appScope.launch {
-            // Reminder-e blânde, la ore aleatoare — pornite implicit.
-            try {
-                if (prefs.nudgesOn.first()) com.forja.app.core.notify.ForjaNudge.schedule(this@ForjaApp)
-                else com.forja.app.core.notify.ForjaNudge.cancel(this@ForjaApp)
-            } catch (_: Exception) { }
-        }
-        appScope.launch {
             // Paznicul Focus/Detox repornește dacă era activ (ucis de sistem, update etc.).
             try {
                 val focusOn = prefs.focusActive.first()
@@ -108,6 +101,8 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
             } catch (_: Exception) { }
         }
         createChannels()
+        // Casca: mesajele personale (lucrătorul orar unic, reminderul de culcare) — core/notify/Nudges.
+        try { com.forja.app.core.notify.Nudges.start(this) } catch (_: Exception) { }
         // Sincronizarea în cont nu pornește singură din fundal (Android 14+): starea spune că se reia la deschidere.
         try { com.forja.app.core.sync.CollectionSettings.onProcessStart(this) } catch (_: Exception) { }
     }
@@ -118,6 +113,17 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         nm.createNotificationChannel(NotificationChannel("sleep", getString(R.string.notif_channel_sleep), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("focus", getString(R.string.notif_channel_focus), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("social", getString(R.string.notif_channel_social), NotificationManager.IMPORTANCE_DEFAULT))
+        // „Mesaje motivaționale” (Casca): separat de „social”, ca motivaționalele să se poată opri fără „Camarad nou”.
+        // Mesajele stăteau pe „social”: dacă Lana i-a coborât importanța, noul canal o moștenește (importanța unui
+        // canal nu mai poate crește după creare, deci nu o ocolim).
+        if (nm.getNotificationChannel("coach") == null) {
+            val social = nm.getNotificationChannel("social")?.importance ?: NotificationManager.IMPORTANCE_DEFAULT
+            nm.createNotificationChannel(
+                NotificationChannel("coach", getString(R.string.notif_channel_coach), minOf(social, NotificationManager.IMPORTANCE_DEFAULT)).apply {
+                    description = getString(R.string.notif_channel_coach_desc)
+                }
+            )
+        }
         nm.createNotificationChannel(NotificationChannel("explore", getString(R.string.notif_channel_explore), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("cleanup", getString(R.string.notif_channel_cleanup), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("sync", getString(R.string.notif_channel_sync), NotificationManager.IMPORTANCE_LOW))
