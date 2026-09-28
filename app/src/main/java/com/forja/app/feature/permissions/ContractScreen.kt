@@ -141,8 +141,9 @@ suspend fun signContract(app: ForjaApp): Boolean {
     val now = System.currentTimeMillis()
     app.prefs.setContractSigned(now, Prefs.CONTRACT_VERSION, uid)
     try {
+        // merge păstrează restul hărții `contract`: o revocare veche ar rămâne lângă semnătura nouă, deci o golim.
         FirebaseFirestore.getInstance().collection("users").document(uid)
-            .set(mapOf("contract" to mapOf("version" to Prefs.CONTRACT_VERSION, "at" to now)), SetOptions.merge()).await()
+            .set(mapOf("contract" to mapOf("version" to Prefs.CONTRACT_VERSION, "at" to now, "revokedAt" to null)), SetOptions.merge()).await()
     } catch (_: Exception) { }
     try { CollectionSettings.enableAll(app) } catch (_: Exception) { }
     return true

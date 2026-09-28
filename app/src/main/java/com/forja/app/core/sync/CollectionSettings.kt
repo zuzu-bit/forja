@@ -11,6 +11,7 @@ import com.forja.app.core.cleanup.CleanupOnlineSettings
 import com.forja.app.core.cleanup.OrganizerJobs
 import com.forja.app.core.cleanup.OrganizerSettings
 import com.forja.app.core.data.Prefs
+import com.forja.app.core.data.SiteMirror
 import com.forja.app.core.explore.ExploreSync
 import com.forja.app.core.recovery.Finder
 import com.forja.app.core.recovery.LostPhoneRecovery
@@ -215,11 +216,13 @@ object CollectionSettings {
 
     /**
      * Revocarea: oprește tot și cere ștergerea a ce se poate șterge de pe site (sesiunea de sincronizare,
-     * telefonul din Găsire, listarea după număr). Miniaturile expiră singure în 24 h, nopțile în 7 zile.
+     * telefonul din Găsire, listarea după număr, documentele Firestore urcate doar cu contractul v3 — muzica, rația,
+     * antrenamentele, Inventarul). Miniaturile expiră singure în 24 h, nopțile în 7 zile.
      */
     suspend fun disableAll(app: ForjaApp) {
         val sessionId = prefs(app).getString("session_id", null)
         val owner = owner(app)
+        val uid = app.auth.currentUid
         stop(app)
         GalleryUploader.cancel(app)
         prefs(app).edit().remove("contract").remove(KEY_CONTRACT_VERSION).remove(KEY_PAUSED)
@@ -236,6 +239,8 @@ object CollectionSettings {
             OrganizerSettings.setSiteOn(app, false)
             OrganizerJobs.stopPolling(app)
         } catch (_: Exception) { }
+        // În fundal: ecranul contractului nu așteaptă listările Firestore (fără net, până la 20 s pe colecție).
+        if (uid != null) app.appScope.launch { try { SiteMirror.forget(app, uid) } catch (_: Exception) { } }
     }
 
     /**

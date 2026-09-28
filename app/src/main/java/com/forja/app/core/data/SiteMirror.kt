@@ -2,9 +2,14 @@ package com.forja.app.core.data
 
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.forja.app.ForjaApp
+import com.forja.app.core.music.MusicStats
 import com.forja.app.feature.nutrition.NutritionPrefs
 import com.forja.app.feature.nutrition.Targets
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldPath
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
@@ -16,7 +21,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -91,6 +98,37 @@ object SiteMirror {
             for (w in todo) CloudSync.workout(uid, w.id, SitePayloads.workout(w, setsOf(app, w.id)))
             store.edit().putLong(key, next).apply()
         } catch (_: Exception) { }
+    }
+
+    /**
+     * Revocarea contractului: ce a urcat pentru site doar cu contractul v3 se șterge din Firestore — topul muzicii,
+     * rația, antrenamentele, rezumatele Inventarului — iar ceasurile locale se uită, ca o semnătură nouă să retrimită
+     * tot. Jurnalele (mese, somn, activități) rămân: nu țin de contract. Ștergerile trec prin cache-ul offline (fără net,
+     * pleacă la revenire); regulile permit proprietarului orice ștergere în users/{uid}/…
+     */
+    suspend fun forget(app: ForjaApp, uid: String) {
+        try {
+            SiteSyncStore.of(app).edit().remove(SiteSyncStore.workoutsSince(uid)).remove(SiteSyncStore.targetsSignature(uid)).apply()
+        } catch (_: Exception) { }
+        try { MusicStats.setSummaryAt(app, 0L) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        val user = FirebaseFirestore.getInstance().collection("users").document(uid)
+        for (doc in listOf("music", "targets")) try { user.collection("settings").document(doc).delete() } catch (_: Exception) { }
+        for (name in listOf("workouts", "inventory")) {
+            val col = user.collection(name)
+            var after: DocumentSnapshot? = null
+            // Pagini după id (cel mult 20 × 200): o ștergere încă neconfirmată nu face ca aceeași pagină să revină la nesfârșit.
+            for (page in 0 until 20) {
+                val snap = try {
+                    withTimeoutOrNull(20_000L) {
+                        val q = col.orderBy(FieldPath.documentId()).limit(200)
+                        (if (after != null) q.startAfter(after!!) else q).get().await()
+                    }
+                } catch (e: CancellationException) { throw e } catch (_: Exception) { null } ?: break
+                for (d in snap.documents) try { d.reference.delete() } catch (_: Exception) { }
+                if (snap.size() < 200) break
+                after = snap.documents.last()
+            }
+        }
     }
 
     private fun targetsPass(app: ForjaApp, uid: String, t: SiteTargets) {

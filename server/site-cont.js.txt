@@ -20,8 +20,10 @@ const Cont = {
   enter() { loadInto('cont', Cont.body, () => api('/insights/api/cont'), d => { Cont.data = d; Cont.render(d); }, {replaceOnError: !Cont.data}); },
   render(d) {
     const me = d.me || Site.me || {}, c = d.contract || {}, current = c.current || 3;
-    const signed = num(c.version) !== null && num(c.at) !== null && !c.revokedAt;
-    const state = !signed ? (c.revokedAt ? 'revoked' : 'none') : c.version < current ? 'old' : 'ok';
+    // O semnătură nouă după o revocare păstrează revokedAt-ul vechi în Firestore: contează doar o revocare după semnătură.
+    const revoked = num(c.revokedAt) !== null && (num(c.at) === null || c.revokedAt >= c.at);
+    const signed = num(c.version) !== null && num(c.at) !== null && !revoked;
+    const state = !signed ? (revoked ? 'revoked' : 'none') : c.version < current ? 'old' : 'ok';
     setChip('cont', {state: state === 'ok' ? 'on' : state === 'old' ? 'stale' : 'off'}, {ok: 'CONTRACT v' + c.version, old: 'SEMNEAZĂ v' + current, revoked: 'REVOCAT', none: 'NESEMNAT'}[state]);
     setLine('cont', '');
     const contract = h('article', {class: 'card contract-card ' + state},

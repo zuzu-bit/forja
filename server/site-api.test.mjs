@@ -527,23 +527,32 @@ test('somn chunk: audio with Range (206), suffix ranges, 416 and 404 after 7 day
 });
 
 // ── Rație, Marș, Muzică ──
+const SIGNED = { version: 3, at: NOW - 3 * DAY };
 test('ratie: targets and days newest first with meals in order, source badges kept', async () => {
   const f = fixture();
   const epoch = Math.floor(Date.UTC(2026, 8, 28) / DAY), midnight = localMidnight(NOW);
+  f.fs.set('users/alice', { name: 'Lana', contract: SIGNED });
   f.fs.set('users/alice/settings/targets', { kcal: 2000, protein: 110, carbs: 240, fat: 65, updatedAt: NOW });
-  f.fs.set('users/alice/meals/m3', { name: 'Prânz', kcal: 650, protein: 35, carbs: 60, fat: 20, grams: 450, mealType: 'lunch', source: 'ESTIMAT', confidence: 0.7, epochDay: epoch, at: midnight + 13 * HOUR });
-  f.fs.set('users/alice/meals/m2', { name: 'Iaurt', kcal: 150, protein: 10, carbs: 12, fat: 5, grams: 150, mealType: 'breakfast', source: 'COD DE BARE', confidence: 1, epochDay: epoch, at: midnight + 8 * HOUR });
-  f.fs.set('users/alice/meals/m1', { name: 'Cină', kcal: 700, protein: 40, carbs: 70, fat: 25, grams: 500, mealType: 'dinner', source: 'MANUAL', confidence: 'mare', epochDay: epoch - 1, at: midnight - 3 * HOUR });
+  // mealType as the app writes it (Entities.kt: an Int, 0 mic dejun · 1 prânz · 2 cină · 3 gustare).
+  f.fs.set('users/alice/meals/m3', { name: 'Prânz', kcal: 650, protein: 35, carbs: 60, fat: 20, grams: 450, mealType: 1, source: 'ESTIMAT', confidence: 0.7, epochDay: epoch, at: midnight + 13 * HOUR });
+  f.fs.set('users/alice/meals/m2', { name: 'Iaurt', kcal: 150, protein: 10, carbs: 12, fat: 5, grams: 150, mealType: 0, source: 'COD DE BARE', confidence: 1, epochDay: epoch, at: midnight + 8 * HOUR });
+  f.fs.set('users/alice/meals/m1', { name: 'Cină', kcal: 700, protein: 40, carbs: 70, fat: 25, grams: 500, mealType: 2, source: 'MANUAL', confidence: 'mare', epochDay: epoch - 1, at: midnight - 3 * HOUR });
   f.fs.set('users/alice/meals/m0', { name: 'Veche', kcal: 100, epochDay: epoch - 40, at: NOW - 40 * DAY });
   const b = (await f.call('/insights/api/ratie?days=30')).body;
   assert.deepEqual(b.targets, { kcal: 2000, protein: 110, carbs: 240, fat: 65 });
   assert.deepEqual(b.days.map(d => [d.date, d.kcal, d.meals.map(m => m.id)]), [['2026-09-28', 800, ['m2', 'm3']], ['2026-09-27', 700, ['m1']]]);
-  assert.deepEqual(b.days[0].meals[0], { id: 'm2', at: midnight + 8 * HOUR, name: 'Iaurt', kcal: 150, protein: 10, carbs: 12, fat: 5, grams: 150, mealType: 'breakfast', source: 'COD DE BARE', confidence: 1 });
+  assert.deepEqual(b.days[0].meals[0], { id: 'm2', at: midnight + 8 * HOUR, name: 'Iaurt', kcal: 150, protein: 10, carbs: 12, fat: 5, grams: 150, mealType: 0, source: 'COD DE BARE', confidence: 1 });
+  assert.deepEqual(b.days.flatMap(d => d.meals.map(m => m.mealType)), [0, 1, 2], 'the integer index reaches the site (MIC DEJUN, PRÂNZ, CINĂ)');
   assert.equal(b.days[1].meals[0].confidence, 'mare');
   assert.deepEqual(Object.keys(b.days[0]), ['date', 'kcal', 'protein', 'carbs', 'fat', 'meals']);
   assert.deepEqual((await f.call('/insights/api/ratie?days=1')).body.days.map(d => d.date), ['2026-09-28']);
   const empty = (await f.call('/insights/api/ratie', { uid: 'nou' })).body;
   assert.deepEqual(empty, { targets: null, days: [] });
+  // Anything else is not a meal type: no label rather than a wrong one.
+  for (const bad of ['lunch', 4, -1, 1.5, null]) {
+    f.fs.set('users/alice/meals/m3', { ...f.fs.docs.get('users/alice/meals/m3'), mealType: bad });
+    assert.equal((await f.call('/insights/api/ratie?days=1')).body.days[0].meals[1].mealType, null, String(bad));
+  }
 });
 test('mars: activities with mini routes, workouts, and the 7-day totals', async () => {
   const f = fixture();
@@ -551,6 +560,7 @@ test('mars: activities with mini routes, workouts, and the 7-day totals', async 
   f.fs.set('users/alice/activities/a2', { type: 'run', startAt: NOW - DAY, endAt: NOW - DAY + 1800000, distanceM: 5000, durationS: 1800, kcal: 320.6, polyline: long });
   f.fs.set('users/alice/activities/a1', { type: 'ride', startAt: NOW - 10 * DAY, endAt: NOW - 10 * DAY + HOUR, distanceM: 20000, durationS: 3600, kcal: 500, polyline: '' });
   f.fs.set('users/alice/workouts/w1', { startAt: NOW - 2 * DAY, endAt: NOW - 2 * DAY + 2700000, durationS: 2700, title: 'Piept și spate', kind: 'gym', sets: 14, volumeKg: 4200.5, kcal: null, source: 'instructie' });
+  f.fs.set('users/alice', { name: 'Lana', contract: SIGNED });
   const b = (await f.call('/insights/api/mars?days=30')).body;
   assert.deepEqual(b.activities.map(a => a.id), ['a2', 'a1']);
   assert.deepEqual(Object.keys(b.activities[0]), ['id', 'type', 'startAt', 'endAt', 'distanceM', 'durationS', 'kcal', 'polyline']);
@@ -571,6 +581,7 @@ test('mars: runs beyond Teren\'s newest 30 get their mini maps over a few opens,
   const f = fixture();
   for (let i = 0; i < 45; i++) f.fs.set(`users/alice/activities/a${i}`, { type: 'run', startAt: NOW - (i + 1) * 12 * HOUR, endAt: NOW - (i + 1) * 12 * HOUR + 600000, distanceM: 1000, durationS: 600, polyline: `44.4,26.1;44.41,26.1${i % 10};44.42,26.1` });
   f.fs.set('users/alice/workouts/w1', { startAt: NOW - 5 * DAY, endAt: NOW - 5 * DAY + 1800000, durationS: 1800, title: 'Picioare', kind: 'gym', sets: 12 });
+  f.fs.set('users/alice', { name: 'Lana', contract: SIGNED });
   await f.call('/insights/api/cerc');
   const reads = () => f.fs.requests.filter(r => r.url.endsWith(':batchGet') && r.body.mask.fieldPaths.join() === 'polyline').map(r => r.body.documents.length);
   let b = (await f.call('/insights/api/mars?days=30')).body;
@@ -589,7 +600,7 @@ test('mars: runs beyond Teren\'s newest 30 get their mini maps over a few opens,
 });
 test('muzica: the live song only while fresh, the weekly top from settings/music', async () => {
   const f = fixture();
-  f.fs.set('users/alice', { name: 'Lana', nowPlaying: { title: 'Fetele care ard', artist: 'Trupa', app: 'Spotify', at: NOW - 4 * MIN } });
+  f.fs.set('users/alice', { name: 'Lana', contract: SIGNED, nowPlaying: { title: 'Fetele care ard', artist: 'Trupa', app: 'Spotify', at: NOW - 4 * MIN } });
   f.fs.set('users/alice/settings/music', { updatedAt: NOW - HOUR, windowDays: 7, totalMinutes: 412, top: Array.from({ length: 12 }, (_, i) => ({ title: 'Piesa ' + i, artist: 'Artist', plays: 12 - i, minutes: 40 - i, app: i % 2 ? null : 'Spotify' })) });
   let b = (await f.call('/insights/api/muzica')).body;
   assert.deepEqual(b.now, { title: 'Fetele care ard', artist: 'Trupa', app: 'Spotify', at: NOW - 4 * MIN });
@@ -673,6 +684,7 @@ test('inventar: the last 20 runs newest first, and the gallery vault in the acco
   const f = fixture();
   for (let i = 0; i < 22; i++) f.fs.set(`users/alice/inventory/run${i}`, { id: 'run' + i, kind: i % 2 ? 'docs' : 'photos', startedAt: NOW - (i + 1) * DAY, finishedAt: NOW - (i + 1) * DAY + 5 * MIN, appVersion: '4.4',
     scope: { mode: 'last', n: 500, label: 'Ultimele 500' }, dest: { label: 'Galerie · FORJA', path: 'PICTURES/FORJA' }, folders: [{ name: 'Munte', count: 40, bytes: 120000000 }], trash: { count: 3, bytes: 900000 }, moved: 40, failed: 0, freedBytes: null });
+  f.fs.set('users/alice', { name: 'Lana', contract: SIGNED });
   const storage = f.account('alice').ctx.storage;
   await f.doCall('alice', '/v2/files'); // binds the owner
   await storage.put('cloud-file:1', { id: '1', received_at: NOW - HOUR, expires_at: NOW + 23 * HOUR, bytes: 10 });
@@ -710,6 +722,50 @@ test('cont: contract, one "last time" per pipe, and the intake pause', async t =
   assert.deepEqual(P, { sesiune: null, galerie: null, explorare: NOW, agenda: null, somn: NOW - 4 * HOUR, gasire: null, mese: NOW - 2 * HOUR, miscare: NOW - 2.5 * HOUR, muzica: NOW - 5 * HOUR, inventar: NOW - 6 * HOUR });
   assert.deepEqual(b.intake, { paused: true });
   assert(f.fs.reads <= 7, 'Livret costs at most 7 reads: ' + f.fs.reads);
+});
+
+test('contract: a re-signature after a revoke is signed everywhere (Livret and Azi agree); a later revoke is revoked', async t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = fixture();
+  // signContract writes {version, at} with merge: the old revokedAt stays in the document.
+  f.fs.set('users/alice', { name: 'Lana', contract: { version: 3, at: NOW - DAY, revokedAt: NOW - 5 * DAY } });
+  assert.deepEqual((await f.call('/insights/api/cont')).body.contract, { version: 3, at: NOW - DAY, revokedAt: null, current: 3 });
+  assert.equal((await f.call('/insights/api/azi')).body.links.at(-1).state, 'on');
+  resetSiteCache();
+  f.fs.set('users/alice', { name: 'Lana', contract: { version: 3, at: NOW - 5 * DAY, revokedAt: NOW - DAY } });
+  assert.deepEqual((await f.call('/insights/api/cont')).body.contract, { version: 3, at: NOW - 5 * DAY, revokedAt: NOW - DAY, current: 3 });
+  assert.equal((await f.call('/insights/api/azi')).body.links.at(-1).state, 'off');
+});
+
+test('contract gate: targets, workouts, the music top and Inventar runs only while contract v3 is signed; journals always', async t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = fixture();
+  const midnight = localMidnight(NOW);
+  f.fs.set('users/alice/settings/targets', { kcal: 2000, protein: 110, carbs: 240, fat: 65, updatedAt: NOW });
+  f.fs.set('users/alice/meals/m1', { name: 'Iaurt', kcal: 150, mealType: 0, at: midnight + 8 * HOUR });
+  f.fs.set('users/alice/activities/a1', { type: 'run', startAt: NOW - DAY, endAt: NOW - DAY + 1800000, distanceM: 5000, durationS: 1800, polyline: '' });
+  f.fs.set('users/alice/workouts/w1', { startAt: NOW - 2 * DAY, endAt: NOW - 2 * DAY + 2700000, durationS: 2700, title: 'Forță', kind: 'forta', sets: 14 });
+  f.fs.set('users/alice/settings/music', { updatedAt: NOW - HOUR, windowDays: 7, totalMinutes: 60, top: [{ title: 'Piesa', artist: 'Artist', plays: 3, minutes: 10 }] });
+  f.fs.set('users/alice/inventory/r1', { id: 'r1', kind: 'photos', startedAt: NOW - DAY, finishedAt: NOW - DAY + MIN });
+  const read = async () => {
+    resetSiteCache();
+    const [ratie, mars, muzica, inventar, azi] = await Promise.all(['ratie', 'mars', 'muzica', 'inventar', 'azi'].map(s => f.call('/insights/api/' + s).then(r => r.body)));
+    const L = Object.fromEntries(azi.links.map(l => [l.key, l]));
+    return { targets: !!ratie.targets, meals: ratie.days.length, workouts: mars.workouts.length, activities: mars.activities.length, top: !!muzica.summary, runs: inventar.runs.length,
+      kcalTarget: azi.today.kcalTarget, aziWorkouts: L.mars.count, inventarLink: L.inventar.state, muzicaLink: L.muzica.state };
+  };
+  const shown = { targets: true, meals: 1, workouts: 1, activities: 1, top: true, runs: 1, kcalTarget: 2000, aziWorkouts: 2, inventarLink: 'on', muzicaLink: 'on' };
+  const hidden = { targets: false, meals: 1, workouts: 0, activities: 1, top: false, runs: 0, kcalTarget: null, aziWorkouts: 1, inventarLink: 'off', muzicaLink: 'off' };
+  f.fs.set('users/alice', { name: 'Lana', contract: { version: 3, at: NOW - 3 * DAY } });
+  assert.deepEqual(await read(), shown, 'signed v3');
+  f.fs.set('users/alice', { name: 'Lana', contract: { version: 3, at: NOW - 3 * DAY, revokedAt: NOW - HOUR } });
+  assert.deepEqual(await read(), hidden, 'revoked: the documents may still be in Firestore, the site does not show them');
+  f.fs.set('users/alice', { name: 'Lana', contract: { version: 2, at: NOW - 3 * DAY } });
+  assert.deepEqual(await read(), hidden, 'v2, not re-signed');
+  f.fs.set('users/alice', { name: 'Lana' });
+  assert.deepEqual(await read(), hidden, 'never signed');
+  f.fs.set('users/alice', { name: 'Lana', contract: { version: 3, at: NOW - HOUR, revokedAt: NOW - 3 * DAY } });
+  assert.deepEqual(await read(), shown, 'signed again after an old revoke');
 });
 
 test('errors: only GET, unknown sub-paths 404, Firestore down 503, always JSON with no-store', async () => {
