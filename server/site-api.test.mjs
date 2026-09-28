@@ -381,6 +381,16 @@ test('somn/<id>: timeline events on the clock, with the chunk offset to play eac
   await seedNight(old, 'alice', 's41', { age: 8 * DAY });
   assert.deepEqual((await old.call('/insights/api/somn/s41')).body.chunks, []);
 });
+test('somn/<id>: absolute chunk times (older clients) stay on the clock, offsets inside the chunk stay right', async () => {
+  const f = fixture();
+  const startAt = NOW - 9 * HOUR, T0 = startAt + 5000;
+  f.fs.set('users/alice/sleep/s50', { startAt, endAt: startAt + 8 * HOUR, summary: null });
+  await f.sleep.put('alice/s50/chunk_0.m4a', new Uint8Array(1200), { customMetadata: { from: String(T0), dur: String(1800000), at: String(NOW), ttl: String(7 * DAY) } });
+  await f.sleep.put('alice/s50/analysis.json', JSON.stringify({ status: 'complete', events: [{ type: 'talk', from: T0 + 60000, to: T0 + 62000, chunk: 0, transcript: 'Da.' }], state: { chunks: [{ index: 0, from: T0, dur: 1800000 }] } }), { customMetadata: { at: String(NOW), status: 'complete' } });
+  const b = (await f.call('/insights/api/somn/s50')).body;
+  assert.deepEqual(b.chunks, [{ i: 0, startAt: T0, durationMs: 1800000 }]);
+  assert.deepEqual(b.events[0], { t: T0 + 60000, kind: 'talk', label: 'Vorbit', text: 'Da.', chunk: 0, offsetMs: 60000, durationMs: 2000 });
+});
 test('somn chunk: audio with Range (206), suffix ranges, 416 and 404 after 7 days', async () => {
   const f = fixture();
   await seedNight(f);

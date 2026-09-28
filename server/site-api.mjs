@@ -331,7 +331,8 @@ async function somnNight({ env, fs, uid, now }, id) {
   if (!SLEEP_ID.test(id)) return failure('Noaptea nu există.', 404);
   const night = await fs.get(`users/${uid}/sleep/${id}`, ['startAt', 'endAt', 'summary']);
   if (!night || !time(night.startAt)) return failure(fs.unreachable ? 'Datele nu răspund acum. Reîncearcă puțin mai târziu.' : 'Noaptea nu există.', fs.unreachable ? 503 : 404);
-  const base = night.startAt;
+  // The app sends chunk and event times relative to the start of the recording; an absolute epoch (older clients, tests) is kept as is.
+  const base = night.startAt, clockOf = v => (v > 1e12 ? v : base + v);
   let analysis = null, objects = [];
   if (env.SLEEP) {
     try {
@@ -349,14 +350,15 @@ async function somnNight({ env, fs, uid, now }, id) {
     const from = Number.isFinite(Number(meta.from)) && meta.from !== undefined ? Number(meta.from) : num(known.get(i)?.from);
     const dur = Number.isFinite(Number(meta.dur)) && meta.dur !== undefined ? Number(meta.dur) : num(known.get(i)?.dur);
     if (from === null) continue;
-    chunks.push({ i, startAt: base + from, durationMs: dur });
+    chunks.push({ i, startAt: clockOf(from), durationMs: dur, from });
   }
   chunks.sort((a, b) => a.i - b.i);
-  const fromOf = new Map(chunks.map(c => [c.i, c.startAt - base]));
+  const fromOf = new Map(chunks.map(c => [c.i, c.from]));
+  for (const c of chunks) delete c.from;
   for (const [i, c] of known) if (!fromOf.has(i) && num(c.from) !== null) fromOf.set(i, c.from);
   const events = (Array.isArray(analysis?.events) ? analysis.events : []).slice(0, SITE_RULES.events_max).filter(e => e && num(e.from) !== null).map(e => {
     const chunk = Number.isInteger(e.chunk) ? e.chunk : null, start = chunk === null ? null : fromOf.get(chunk);
-    return { t: base + e.from, kind: String(e.type || 'noise'), label: eventLabel(e), text: str(e.transcript, 400), chunk,
+    return { t: clockOf(e.from), kind: String(e.type || 'noise'), label: eventLabel(e), text: str(e.transcript, 400), chunk,
       offsetMs: start === undefined || start === null ? null : Math.max(0, e.from - start), durationMs: num(e.to) !== null ? Math.max(0, e.to - e.from) : 0 };
   });
   return reply({ id, summary: str(night.summary, 2000), events, chunks });
