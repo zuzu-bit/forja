@@ -47,12 +47,17 @@ function cellsAlong(legs, now, {modes = true, width = 0} = {}) {
   });
   return [...seen.values()];
 }
-/** Polyline "lat,lng;lat,lng;…" along waypoints, densified, with a little GPS wobble. */
+/** Polyline "lat,lng;lat,lng;…" along waypoints, densified: it meanders like a walk on streets (≈100 m either side,
+ *  still inside the explored cells) and carries a little GPS wobble. */
 function polyline(points, step = 0.0006) {
   const out = [];
   for (let i = 0; i < points.length - 1; i++) {
-    const [a, b] = points[i], [c, d] = points[i + 1], n = Math.max(2, Math.ceil(Math.hypot(c - a, d - b) / step));
-    for (let k = 0; k < n; k++) { const t = k / n, w = Math.sin((i * 31 + k) * 1.7) * 0.00006; out.push([(a + (c - a) * t + w).toFixed(6), (b + (d - b) * t - w).toFixed(6)].join(',')); }
+    const [a, b] = points[i], [c, d] = points[i + 1], len = Math.hypot(c - a, d - b), n = Math.max(2, Math.ceil(len / step));
+    const [pa, pb] = len ? [-(d - b) / len, (c - a) / len] : [0, 0];
+    for (let k = 0; k < n; k++) {
+      const t = k / n, bend = Math.sin(t * Math.PI * (2 + i)) * 0.0008 + Math.sin(t * Math.PI * 9) * 0.00025, w = Math.sin((i * 31 + k) * 1.7) * 0.00006;
+      out.push([(a + (c - a) * t + pa * bend + w).toFixed(6), (b + (d - b) * t + pb * bend - w).toFixed(6)].join(','));
+    }
   }
   const last = points.at(-1); out.push(last[0].toFixed(6) + ',' + last[1].toFixed(6));
   return out.join(';');
@@ -79,7 +84,7 @@ function pipes(now, spec) {
 }
 function night(n, startAt, minutes, score, audio, extra = {}) {
   const deep = Math.round(minutes * (0.18 + (n % 3) * 0.02)), rem = Math.round(minutes * 0.22), light = minutes - deep - rem;
-  return {id: 's' + n, startAt, endAt: startAt + minutes * MIN, minutes, score, deepMin: deep, lightMin: light, remMin: rem, snoreMin: (n * 7) % 23, talkCount: n % 4, coverageMin: audio === 'none' ? 0 : minutes - 12, summary: null, audio, ...extra};
+  return {id: 's' + n, startAt, endAt: startAt + minutes * MIN, minutes, score, deepMin: deep, lightMin: light, remMin: rem, snoreMin: audio === 'ready' ? 2 : (n * 7) % 23, talkCount: audio === 'ready' ? 2 : n % 4, coverageMin: audio === 'none' ? 0 : minutes - 12, summary: null, audio, ...extra};
 }
 function nightDetail(nt) {
   const chunkMs = 30 * MIN, chunks = [];
@@ -114,7 +119,7 @@ function rich(now = NOW) {
     ['a38', 'run', [P.herastrau, P.herastrauE, P.floreasca], 50], ['a37', 'walk', [P.cismigiu, P.universitate, P.unirii], 74], ['a36', 'ride', [P.romana, P.obor], 98]];
   const routes = routeDefs.map(([rid, type, pts, agoH], i) => ({id: rid, type, startAt: now - agoH * HOUR, distanceM: [5100, 3300, 9800, 6400, 2700, 7200][i], durationS: [1920, 2700, 2280, 2400, 2100, 1500][i], polyline: polyline(pts)}));
   const nights = [
-    night(31, day0 - 40 * MIN, 444, 86, 'ready', {summary: 'Somn bun: ai adormit repede, două episoade scurte de sforăit după 3:00.'}),
+    night(31, day0 - 40 * MIN, 444, 86, 'ready', {summary: 'Somn bun. Ai sforăit scurt de trei ori și ai vorbit de două ori prin somn.'}),
     night(30, day0 - DAY + 23.6 * HOUR - DAY, 402, 78, 'ready'), night(29, day0 - 2 * DAY - 70 * MIN, 431, 81, 'ready'), night(28, day0 - 3 * DAY - 20 * MIN, 468, 90, 'ready'),
     night(27, day0 - 4 * DAY + 10 * MIN, 385, 72, 'pending'), night(26, day0 - 5 * DAY - 50 * MIN, 452, 84, 'none'), night(25, day0 - 6 * DAY - 30 * MIN, 420, 80, 'none'),
     night(24, day0 - 7 * DAY - 45 * MIN, 398, 76, 'none'), night(23, day0 - 8 * DAY - 15 * MIN, 476, 91, 'none'), night(22, day0 - 9 * DAY - 60 * MIN, 410, 79, 'none'),
@@ -204,7 +209,7 @@ function lana(now = NOW) {
     {id: 'p4', lat: 44.4288, lng: 26.1015, name: '', stars: 0, note: '', recommended: false, stay_ms: 5.1 * HOUR, first_at: now - 3 * DAY, last_at: now - 3 * DAY, visits: 1}].map(p => ({...p, lon: p.lng, updated_at: now - DAY}));
   const routes = [['a12', 'walk', [P.cismigiu, P.universitate, P.unirii], 26], ['a11', 'run', [P.herastrau, P.victoriei], 76], ['a10', 'walk', [P.victoriei, P.romana, P.cismigiu], 150]]
     .map(([rid, type, pts, agoH], i) => ({id: rid, type, startAt: now - agoH * HOUR, distanceM: [2700, 5100, 3300][i], durationS: [2100, 1980, 2700][i], polyline: polyline(pts)}));
-  const nights = [night(4, day0 - DAY - 35 * MIN, 412, 79, 'ready', {summary: 'Ai dormit bine. Un singur episod de vorbit, pe la 1:10.'}), night(3, day0 - 2 * DAY - 10 * MIN, 385, 74, 'ready'), night(2, day0 - 3 * DAY - 70 * MIN, 450, 83, 'none'), night(1, day0 - 5 * DAY - 20 * MIN, 398, 71, 'none')];
+  const nights = [night(4, day0 - DAY - 35 * MIN, 412, 79, 'ready', {summary: 'Ai dormit bine. Ai vorbit de două ori prin somn, scurt.'}), night(3, day0 - 2 * DAY - 10 * MIN, 385, 74, 'ready'), night(2, day0 - 3 * DAY - 70 * MIN, 450, 83, 'none'), night(1, day0 - 5 * DAY - 20 * MIN, 398, 71, 'none')];
   const somnDetail = Object.fromEntries(nights.filter(n => n.audio === 'ready').map(n => [n.id, nightDetail(n)]));
   nights.filter(n => n.audio === 'ready').forEach(n => somnDetail[n.id].chunks.forEach(c => { blobs['chunk:' + n.id + ':' + c.i] = {audio: true}; }));
   const today = [meal(day0 + 9 * HOUR, 0, 'Omletă cu legume', 380, 24, 10, 26, 250, 'ESTIMAT', 0.74), meal(day0 + 14 * HOUR, 1, 'Paste cu pui', 690, 42, 82, 19, 420, 'ESTIMAT', 0.66)];

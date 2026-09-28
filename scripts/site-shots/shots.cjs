@@ -116,7 +116,7 @@ async function runView({browser, base, assets, opts, profile, vpName, view}) {
     else {
       if (view.auth !== 'stored') {
         await page.waitForSelector('#login:not([hidden])', {timeout: 15000});
-        await page.fill('#login-email', 'lana@example.test'); await page.fill('#login-password', 'harness-only');
+        await page.fill('#login-email', fixture.azi.me.email || 'lana@example.test'); await page.fill('#login-password', 'harness-only');
         await page.click('#login-submit');
       }
       await page.waitForSelector('#app:not([hidden])', {timeout: 15000});
@@ -143,7 +143,7 @@ async function runView({browser, base, assets, opts, profile, vpName, view}) {
     }
     await settle();
     const shot = view.shot || 'full';
-    if (await page.locator('#map-canvas').count()) await page.waitForFunction(() => { const c = document.getElementById('map-canvas'); return !c || !c.isConnected || !c.classList.contains('maplibregl-map') || c.dataset.idle === '1' || document.getElementById('map-host')?.dataset.failed === '1'; }, null, {timeout: 30000, polling: 250}).catch(() => record.errors.push('harness: map never idle'));
+    if (await page.locator('#map-canvas').count()) await page.waitForFunction(() => { const c = document.getElementById('map-canvas'); return !c || !c.isConnected || !c.getClientRects().length || !c.classList.contains('maplibregl-map') || c.dataset.idle === '1' || document.getElementById('map-host')?.dataset.failed === '1'; }, null, {timeout: 30000, polling: 250}).catch(() => record.errors.push('harness: map never idle'));
     if (shot === 'full') {
       // Capturile întregi: bara de jos a telefonului stă la capătul paginii (live e fixată jos pe ecran).
       await page.addStyleTag({content: 'body{position:relative}.tabbar{position:absolute!important}'});
