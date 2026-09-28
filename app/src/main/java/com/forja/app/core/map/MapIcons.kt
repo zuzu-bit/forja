@@ -68,12 +68,16 @@ class MapIcons(private val context: Context) {
         return register("p|$s|$mine|$selected") { MapMarkers.placeBitmap(context, s, mine, selected) }
     }
 
-    fun friend(uid: String, name: String, state: String, ghost: Boolean, family: Boolean, selected: Boolean): String {
+    /** `music` = insigna „♪” (prietenul ascultă ceva acum); intră în cheie, ca insigna să apară și să dispară. */
+    fun friend(
+        uid: String, name: String, state: String, ghost: Boolean, family: Boolean, selected: Boolean,
+        music: Boolean = false
+    ): String {
         val photo = photos[uid]
         // Fără poză desenăm inițialele, deci numele intră în cheie — altfel o redenumire ar păstra vechile inițiale până la recreare.
         val nameKey = if (photo == null) name.hashCode() else 0
-        val key = "f|$uid|$nameKey|$state|$ghost|$family|$selected|${photo?.second ?: 0}"
-        return register(key) { MapMarkers.friendBitmap(context, name, photo?.first, ghost, false, state, family, selected) }
+        val key = "f|$uid|$nameKey|$state|$ghost|$family|$selected|${photo?.second ?: 0}" + if (music) "|m" else ""
+        return register(key) { MapMarkers.friendBitmap(context, name, photo?.first, ghost, false, state, family, selected, music) }
     }
 
     fun me(ghost: Boolean): String =

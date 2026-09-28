@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -38,12 +39,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.forja.app.ForjaApp
 import com.forja.app.core.data.FamilyLoc
 import com.forja.app.core.data.Friend
 import com.forja.app.core.data.RecommendedPlace
+import com.forja.app.core.data.listening
 import com.forja.app.core.data.db.PlaceEntity
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
@@ -295,9 +298,11 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
     LaunchedEffect(recommended, selectedRecId, styleReady) {
         controller.setRecommended(MapGeo.recommended(recommended, selectedRecId) { r -> controller.icons.place(r.stars, false, r.id == selectedRecId) })
     }
-    // Prietenii: avatar (foto sau inițiale), etichetă „Ana · 1,2 km”, selectatul deasupra, fantoma din familie la 0,55.
-    LaunchedEffect(shownFriends, selected?.uid, myFix, photoVersion, styleReady) {
+    // Prietenii: avatar (foto sau inițiale), etichetă „Ana · 1,2 km”, selectatul deasupra, fantoma din familie la 0,55,
+    // insigna „♪” cât ascultă ceva (proaspăt < 10 min; minuteTick o stinge la timp).
+    LaunchedEffect(shownFriends, selected?.uid, myFix, photoVersion, styleReady, minuteTick) {
         val me = myFix
+        val now = System.currentTimeMillis()
         val pins = shownFriends
             .filter { it.lat != null && it.lng != null && (!it.ghost || it.viaFamily) }
             .map { f ->
@@ -307,7 +312,10 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                 val isSel = f.uid == selected?.uid
                 FriendPin(
                     uid = f.uid, lat = f.lat!!, lng = f.lng!!,
-                    icon = controller.icons.friend(f.uid, f.name, f.state, ghost = f.viaFamily, family = f.viaFamily, selected = isSel),
+                    icon = controller.icons.friend(
+                        f.uid, f.name, f.state, ghost = f.viaFamily, family = f.viaFamily, selected = isSel,
+                        music = f.listening(now) != null
+                    ),
                     label = if (dist != null) "$first · ${ExploreStats.distanceLabel(dist)}" else first,
                     sort = if (isSel) 2f else if (moving) 1f else 0f,
                     alpha = if (f.viaFamily) 0.55f else 1f
@@ -1070,6 +1078,20 @@ private fun FriendCardOnMap(
                 // Familia/fantoma: cât de veche e poziția, spus simplu — „acum 12 min”.
                 parts.add(if (f.viaFamily || f.ghost) Fmt.freshness(f.locUpdatedAt) else "actualizat ${Fmt.freshness(f.locUpdatedAt)}")
                 Text(parts.joinToString(" · "), style = BodySmall.copy(color = TextSecondary))
+                // Ce ascultă acum: nota și „Titlu · Artist”, un singur rând.
+                val listening = f.listening()
+                if (listening != null) {
+                    Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.MusicNote, contentDescription = "Ascultă", tint = EmberHot, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            listening,
+                            style = BodySmall.copy(color = TextPrimary),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
                 val energyLine = buildString {
                     if (energyReceivedAt > 0) append("Ți-a trimis energie ${Fmt.freshness(energyReceivedAt)}.")
                     if (energySent) { if (isNotEmpty()) append(" "); append("I-ai trimis energie azi.") }

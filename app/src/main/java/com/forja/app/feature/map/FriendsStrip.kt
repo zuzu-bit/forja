@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -25,8 +28,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.forja.app.core.data.Friend
+import com.forja.app.core.data.listening
 import com.forja.app.core.designsystem.Accent2
 import com.forja.app.core.designsystem.Body
+import com.forja.app.core.designsystem.EmberHot
 import com.forja.app.core.designsystem.Positive
 import com.forja.app.core.designsystem.SleepRem
 import com.forja.app.core.designsystem.Surface0
@@ -63,7 +68,7 @@ fun FriendsStrip(
     }
 }
 
-/** Avatar rotund cu fotografie (dacă există) sau inițiale, inel după stare, punct de stare. */
+/** Avatar rotund cu fotografie (dacă există) sau inițiale, inel după stare, punct de stare, insigna „♪” cât ascultă ceva. */
 @Composable
 fun FriendAvatar(friend: Friend, size: Dp, selected: Boolean = false, dim: Boolean = false) {
     val now = System.currentTimeMillis()
@@ -126,6 +131,22 @@ fun FriendAvatar(friend: Friend, size: Dp, selected: Boolean = false, dim: Boole
                 contentAlignment = Alignment.Center
             ) {
                 Text("♥", style = Body.copy(color = Color(0xFF0A0A0B), fontSize = 8.sp, fontWeight = FontWeight.Bold))
+            }
+        }
+        // Insigna „♪” — ascultă ceva acum (aceeași ca pe hartă: disc jar, notă închisă, jos-dreapta).
+        if (friend.listening(now) != null) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(14.dp)
+                    .clip(CircleShape)
+                    .background(Surface0)
+                    .padding(1.5.dp)
+                    .clip(CircleShape)
+                    .background(EmberHot),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.MusicNote, contentDescription = "Ascultă muzică", tint = Surface0, modifier = Modifier.size(8.dp))
             }
         }
     }
