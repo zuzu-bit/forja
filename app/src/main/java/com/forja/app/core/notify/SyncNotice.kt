@@ -52,8 +52,12 @@ object SyncNotice {
         if (cached != null && cached.slotKey == key && NudgeStore.syncEventAt(app) <= cached.at &&
             (cached.personal || now - cached.at < RETRY_MS)
         ) return cached
-        val data = withContext(Dispatchers.IO) { NudgeSnapshot.read(app, now) }
+        val snapshot = withContext(Dispatchers.IO) { NudgeSnapshot.read(app, now) }
         val state = NudgeStore.read(app)
+        // Locul nou a venit deja ca notificare pe „Locurile tale”: aceeași veste nu se repetă în rândul permanent.
+        val data = if (NudgeRules.placeAnnounced(state, NudgeSnapshot.dayOf(now), NudgeSnapshot::dayOf)) {
+            snapshot.copy(newPlaceToday = null)
+        } else snapshot
         val r = Nudge.pick(NudgeContext.SyncOngoing, data, NudgeRules.recent(state, Channels.SYNC)) ?: return cached
         val personal = NudgeBank.sync.firstOrNull { it.id == r.id }?.reserve == false
         val line = NudgeStore.SyncLine(key, r.id, r.title, r.body, r.pose.name, now, personal)
@@ -100,10 +104,10 @@ object SyncNotice {
             .build()
         val b = NotificationCompat.Builder(c, Channels.SYNC)
             .setSmallIcon(R.drawable.ic_notify)
-            .setContentTitle(text.title)
+            .setContentTitle(Ro.glue(text.title))
             .setContentText(text.collapsed)
             .setSubText(text.subText)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text.big))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(Ro.glue(text.big)))
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

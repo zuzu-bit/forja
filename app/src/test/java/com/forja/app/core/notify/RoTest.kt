@@ -82,6 +82,25 @@ class RoTest {
     }
 
     @Test
+    fun numbersStayWithTheirUnitsOnScreen() {
+        // Ecoul pe 360 dp se rupea „… 45 / min de focus”: la afișare, numărul și unitatea sunt lipite (U+00A0).
+        val nb = Ro.NBSP
+        assertEquals(
+            "Azi: 3,4${nb}km, 2 mese, un antrenament, 45${nb}min de focus. Ziua s-a scris.",
+            Ro.glue("Azi: 3,4 km, 2 mese, un antrenament, 45 min de focus. Ziua s-a scris.")
+        )
+        assertEquals("Noapte plină: 7${nb}h${nb}32${nb}min.", Ro.glue("Noapte plină: 7 h 32 min."))
+        assertEquals("Ai stat acolo 1${nb}h${nb}35${nb}min.", Ro.glue("Ai stat acolo 1 h 35 min."))
+        assertEquals("Ți-au rămas 640${nb}kcal.", Ro.glue("Ți-au rămas 640 kcal."))
+        assertEquals("Ana e la 400${nb}m.", Ro.glue("Ana e la 400 m."))
+        assertEquals("−15${nb}% din consum", Ro.glue("−15 % din consum"))
+        assertEquals("1${nb}250 de poze", Ro.glue(Ro.count(1250, "poză", "poze")))
+        // Fără unitate, nimic nu se schimbă: „2 mese”, „6 zile”, ora.
+        assertEquals("6 zile la rând. 2 mese. Trezire la 07:30.", Ro.glue("6 zile la rând. 2 mese. Trezire la 07:30."))
+        assertEquals("Fără cifre aici.", Ro.glue("Fără cifre aici."))
+    }
+
+    @Test
     fun clipAndCapitalize() {
         assertEquals("Alexandrinaa", Ro.clip("Alexandrinaa", 12))
         assertEquals("Alexandrina…", Ro.clip("Alexandrinaaa", 12))

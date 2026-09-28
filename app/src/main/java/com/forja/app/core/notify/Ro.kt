@@ -81,4 +81,24 @@ object Ro {
 
     /** Prima literă mare (titlul și corpul încep propoziții): „al 25-lea loc” → „Al 25-lea loc”. */
     fun capitalize(s: String): String = if (s.isEmpty()) s else s.substring(0, 1).uppercase(Locale.ROOT) + s.substring(1)
+
+    /** Spațiu care nu se rupe la capăt de rând (U+00A0). */
+    const val NBSP = '\u00A0'
+
+    // Numărul și unitatea lui: „45 min”, „3,4 km”, „640 kcal”, „400 m”, „15 %” (dar nu „2 mese”: după unitate nu urmează literă).
+    private val UNIT = Regex("""(?<=\d) (?=(?:km|min|kcal|kg|cm|h|m|g|%)(?![\p{L}\p{N}]))""")
+    // Durata rămâne întreagă: „7 h 32 min” (după ce „7 h” s-a lipit).
+    private val HOUR_MIN = Regex("""(?<=\d\u00A0h) (?=\d)""")
+    // Miile: „1 250” (Ro.thousands le desparte cu spațiu obișnuit).
+    private val GROUP = Regex("""(?<=\d) (?=\d{3}(?!\d))""")
+
+    /**
+     * Doar pentru afișare (notificarea, ecoul de pe Panou): lipește numărul de unitatea lui, ca rândul să nu se rupă
+     * între „45” și „min”. Textul reținut și testat rămâne cu spații obișnuite.
+     */
+    fun glue(s: String): String {
+        if (s.isEmpty() || s.none { it.isDigit() }) return s
+        val nb = NBSP.toString()
+        return s.replace(GROUP, nb).replace(UNIT, nb).replace(HOUR_MIN, nb)
+    }
 }

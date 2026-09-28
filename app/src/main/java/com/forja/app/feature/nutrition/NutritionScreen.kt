@@ -41,6 +41,7 @@ import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.media.Media
 import com.forja.app.core.network.FoodProduct
 import com.forja.app.core.network.MealReport
+import com.forja.app.core.notify.Ro
 import com.forja.app.core.util.Fmt
 import java.time.LocalTime
 
@@ -389,7 +390,7 @@ internal fun chefLine(meals: List<MealEntity>, kcal: Int, target: Int, streak: I
         meals.isEmpty() && hour < 11 -> "Rația de azi e pe drum."
         meals.isEmpty() -> "Nimic notat încă. Prima masă contează."
         kcal > target -> "Peste linie azi. Notat, nu judecat."
-        streak >= 3 && hour >= 19 -> "$streak zile la rând. Se vede disciplina."
+        streak >= 3 && hour >= 19 -> "${Ro.count(streak, "zi", "zile")} la rând. Se vede disciplina."
         2 in types && hour >= 19 -> "Cina e notată. Restul e odihnă."
         1 in types && hour in 12..17 -> "Prânz solid. Apa nu se uită."
         0 in types && hour < 12 -> "Micul dejun e bifat. Ține ritmul."
@@ -433,7 +434,7 @@ private fun DayCard(
 
     ForjaCard(modifier.fillMaxWidth(), padding = 16.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            KcalRing(kcal = kcal, target = target, ringSize = 124.dp, key = target)
+            KcalRing(kcal = kcal, target = target, ringSize = 124.dp, key = target, targetLabel = Targets.fmt(target.coerceAtLeast(1)))
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 MacroBar("PROTEINE", protein, MacroProteinColor, target = pTarget, flagOver = false)
@@ -474,14 +475,19 @@ private fun DayCard(
             }
         }
         Spacer(Modifier.height(8.dp))
+        // Ținta se scrie o dată, în inel (și în „Ținta ta” cu profil): cipul rămâne doar butonul care o schimbă.
+        // Nimic notat → fără „mai ai 2 000 kcal” (ar repeta inelul); seria apare de la prima zi, „0 zile” suna a mustrare.
+        val logged = meals.isNotEmpty() || kcal > 0
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            if (logged) {
+                Text(
+                    if (kcal <= target) "mai ai ${Targets.fmt(target - kcal)}\u00A0kcal" else "peste cu ${Targets.fmt(kcal - target)}\u00A0kcal",
+                    style = BodySmall.copy(color = if (kcal <= target) TextSecondary else Error)
+                )
+                Spacer(Modifier.width(8.dp))
+            }
             Text(
-                if (kcal <= target) "mai ai ${target - kcal} kcal" else "peste cu ${kcal - target} kcal",
-                style = BodySmall.copy(color = if (kcal <= target) TextSecondary else Error)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                if (targets != null) "rația $target" else "obiectiv $target",
+                if (targets != null) "rația ›" else "obiectiv ›",
                 style = monoLabel(8, 0.12f).copy(color = Accent2),
                 modifier = Modifier
                     .coachTarget("nutritie.ratie")
@@ -491,14 +497,9 @@ private fun DayCard(
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             )
             Spacer(Modifier.weight(1f))
-            Text(
-                when (streak) {
-                    0 -> "0 zile la rând"
-                    1 -> "1 zi la rând"
-                    else -> "$streak zile la rând"
-                },
-                style = monoLabel(8, 0.12f).copy(color = if (streak > 0) Positive else TextDim)
-            )
+            if (streak > 0) {
+                Text("${Ro.count(streak, "zi", "zile")} la rând", style = monoLabel(8, 0.12f).copy(color = Positive))
+            }
         }
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {

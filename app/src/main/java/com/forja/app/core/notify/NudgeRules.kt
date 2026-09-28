@@ -257,6 +257,13 @@ object NudgeRules {
     fun recent(s: NudgeState, channel: String): List<Nudge.Sent> =
         s.sent.filter { it.channel == channel }.map { Nudge.Sent(it.id, it.at) }
 
+    /**
+     * „Locurile tale” a anunțat deja un loc nou azi: replica permanentă (S-d, S-d2) nu mai spune aceeași veste a doua
+     * oară. `dayOf` = ziua locală a unui moment (NudgeSnapshot.dayOf), dată din afară ca regula să rămână pură.
+     */
+    fun placeAnnounced(s: NudgeState, day: Long, dayOf: (Long) -> Long): Boolean =
+        s.sent.any { it.channel == Channels.EXPLORE && it.ctx == NudgeContext.NewPlace.name && dayOf(it.at) == day }
+
     /** Reține trimiterea (anti-repetare), iar pentru „coach”: plafonul, fereastra și mesajul în așteptare. */
     fun onPosted(s: NudgeState, r: Rendered, channel: String, now: Long, day: Long, windowKey: String? = null): NudgeState {
         val sent = (s.sent + SentRec(r.id, r.context.name, channel, now))

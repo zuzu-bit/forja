@@ -212,6 +212,28 @@ class NudgeRulesTest {
         assertFalse(NudgeRules.permissionDue(s, "bg_location", now + 30 * 24 * hour))
     }
 
+    // ───────────── Locul nou: o singură veste ─────────────
+
+    @Test
+    fun aPlaceAnnouncedOnItsOwnChannelIsNotRepeatedByTheSyncLine() {
+        val dayOf: (Long) -> Long = { it / (24 * hour) }
+        val now = day * 24 * hour + 15 * hour
+        val place = Rendered("11.2", NudgeContext.NewPlace, "Un loc nou pe hartă.", "B.", NudgePose.Happy, false, false)
+        assertFalse(NudgeRules.placeAnnounced(NudgeState(), day, dayOf))
+        // Alt canal sau altă zi nu contează.
+        var s = NudgeRules.onPosted(NudgeState(), rendered(NudgeContext.Morning), Channels.COACH, now, day)
+        s = NudgeRules.onPosted(s, place, Channels.EXPLORE, now - 24 * hour, day - 1)
+        assertFalse(NudgeRules.placeAnnounced(s, day, dayOf))
+        s = NudgeRules.onPosted(s, place, Channels.EXPLORE, now, day)
+        assertTrue(NudgeRules.placeAnnounced(s, day, dayOf))
+        // SyncNotice.refresh scoate atunci locul din date: replicile „Loc nou: …” (S-d, S-d2) nu mai pot fi alese.
+        for (h in 12..21) {
+            val d = NudgeFixtures.rich(h).copy(newPlaceToday = null)
+            val r = Nudge.pick(NudgeContext.SyncOngoing, d, emptyList())
+            assertFalse("ora $h: ${r?.id}", r?.id in setOf("S-d", "S-d2"))
+        }
+    }
+
     // ───────────── Prieteni: ≤ 1/prieten/zi, ≤ 2/zi ─────────────
 
     @Test
