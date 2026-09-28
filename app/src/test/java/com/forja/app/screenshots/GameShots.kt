@@ -8,6 +8,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.forja.app.core.designsystem.components.MascotState
+import com.forja.app.core.games.asalt.AsaltEngine
+import com.forja.app.core.games.asalt.AsaltLevels
 import com.forja.app.feature.games.GameOverlay
 import com.forja.app.feature.games.GameSamples
 import com.forja.app.feature.games.InventoryReadyRow
@@ -58,14 +60,37 @@ class GameShots {
     )
 
     @Composable
-    private fun AsaltPlay(overlay: GameOverlay, mascot: MascotState) = AsaltPlayContent(
+    private fun AsaltPlay(overlay: GameOverlay, mascot: MascotState, pill: PillState? = GameSamples.pill) = AsaltPlayContent(
         play = AsaltPlayState(GameSamples.asaltPlay()),
         overlay = overlay,
-        pill = GameSamples.pill,
+        pill = pill,
         mascot = mascot,
         levelLabel = "NIV. 3 · POARTA",
         actions = AsaltPlayActions()
     )
+
+    @Composable
+    private fun ZidReady() = ZidPlayContent(
+        play = ZidPlayState(GameSamples.zidReady()),
+        overlay = GameOverlay.Ready,
+        pill = GameSamples.pill,
+        mascot = MascotState.Idle,
+        levelLabel = "NIV. 1",
+        actions = ZidPlayActions()
+    )
+
+    @Composable
+    private fun AsaltReady() = AsaltPlayContent(
+        play = AsaltPlayState(AsaltEngine.create(AsaltLevels.byId(1), 3L)),
+        overlay = GameOverlay.Ready,
+        pill = null,
+        mascot = MascotState.Idle,
+        levelLabel = "NIV. 1 · PRIMUL ZID",
+        actions = AsaltPlayActions()
+    )
+
+    @Composable
+    private fun AsaltMap() = LevelMapContent(GameSamples.asaltMap, LevelMapActions())
 
     // ───────────────────────────── PHONE ─────────────────────────────
 
@@ -108,32 +133,37 @@ class GameShots {
         ZidPlay(GameOverlay.Pause(GameSamples.zidPauseReady), MascotState.Thinking, pill = GameSamples.pillReady)
     }
 
+    @Config(qualifiers = PHONE_S23)
+    @Test fun zidReadyS23() = shot("games_zid_ready_s23") { ZidReady() }
+
+    /** Cel mai înalt card: „Zidul a căzut.” cu mascota de 150 dp și rândul „Dosarele sunt gata”. */
+    @Config(qualifiers = PHONE_S23)
+    @Test fun zidLostS23() = shot("games_zid_lost_s23") {
+        ZidPlay(GameOverlay.Result(GameSamples.zidLost.copy(inventoryReady = true)), MascotState.Sorry, pill = GameSamples.pillReady)
+    }
+
+    @Config(qualifiers = PHONE_S23)
+    @Test fun zidEndlessS23() = shot("games_zid_endless_s23") { ZidPlay(GameOverlay.Result(GameSamples.zidEndless), MascotState.Happy) }
+
+    @Config(qualifiers = PHONE_S23)
+    @Test fun asaltMapS23() = shot("games_asalt_map_s23") { AsaltMap() }
+
+    @Config(qualifiers = PHONE_S23)
+    @Test fun asaltReadyS23() = shot("games_asalt_ready_s23") { AsaltReady() }
+
+    @Config(qualifiers = PHONE_S23)
+    @Test fun asaltLostS23() = shot("games_asalt_lost_s23") {
+        AsaltPlay(GameOverlay.Result(GameSamples.asaltLost.copy(inventoryReady = true)), MascotState.Sorry, pill = GameSamples.pillReady)
+    }
+
     // ───────────────────────────── restul stărilor (PHONE) ─────────────────────────────
 
-    @Test fun zidReady() = shot("games_zid_ready") {
-        ZidPlayContent(
-            play = ZidPlayState(GameSamples.zidReady()),
-            overlay = GameOverlay.Ready,
-            pill = GameSamples.pill,
-            mascot = MascotState.Idle,
-            levelLabel = "NIV. 1",
-            actions = ZidPlayActions()
-        )
-    }
+    @Test fun zidReady() = shot("games_zid_ready") { ZidReady() }
     @Test fun zidLost() = shot("games_zid_lost") { ZidPlay(GameOverlay.Result(GameSamples.zidLost), MascotState.Sorry) }
     @Test fun zidEndless() = shot("games_zid_endless") { ZidPlay(GameOverlay.Result(GameSamples.zidEndless), MascotState.Happy) }
     @Test fun zidCountdown() = shot("games_zid_countdown") { ZidPlay(GameOverlay.Countdown(2), MascotState.Idle) }
-    @Test fun asaltMap() = shot("games_asalt_map") { LevelMapContent(GameSamples.asaltMap, LevelMapActions()) }
-    @Test fun asaltReady() = shot("games_asalt_ready") {
-        AsaltPlayContent(
-            play = AsaltPlayState(com.forja.app.core.games.asalt.AsaltEngine.create(com.forja.app.core.games.asalt.AsaltLevels.byId(1), 3L)),
-            overlay = GameOverlay.Ready,
-            pill = null,
-            mascot = MascotState.Idle,
-            levelLabel = "NIV. 1 · PRIMUL ZID",
-            actions = AsaltPlayActions()
-        )
-    }
+    @Test fun asaltMap() = shot("games_asalt_map") { AsaltMap() }
+    @Test fun asaltReady() = shot("games_asalt_ready") { AsaltReady() }
     @Test fun asaltLost() = shot("games_asalt_lost") { AsaltPlay(GameOverlay.Result(GameSamples.asaltLost), MascotState.Sorry) }
 
     @Test fun inventoryRow() = shot("games_inventory_row", fullScreen = false) {
