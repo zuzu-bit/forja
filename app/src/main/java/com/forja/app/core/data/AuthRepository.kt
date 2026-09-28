@@ -12,7 +12,10 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
+import java.security.SecureRandom
 import kotlin.math.absoluteValue
+
+private const val CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
 data class ForjaUser(
     val uid: String,
@@ -49,7 +52,7 @@ class AuthRepository(
     suspend fun register(name: String, email: String, password: String): ForjaUser {
         val res = auth.createUserWithEmailAndPassword(email.trim(), password).await()
         val uid = res.user!!.uid
-        val code = inviteCodeFor(uid)
+        val code = randomInviteCode()
         pendingName = name.trim()
         val user = ForjaUser(uid, name.trim(), email.trim(), code)
         // Profilul în Firestore — cu limită de timp: dacă baza de date nu e încă
@@ -57,6 +60,8 @@ class AuthRepository(
         // automat la prima conexiune reușită. Emailul NU intră în profil (îl văd prietenii), ci în settings/account.
         try {
             withTimeout(8000) {
+                // Întâi codul: dacă e deja al altcuiva (refuzat), profilul nu primește un cod care duce la altul.
+                db.collection("inviteCodes").document(code).set(mapOf("uid" to uid)).await()
                 db.collection("users").document(uid).set(
                     mapOf(
                         "name" to user.name,
@@ -68,7 +73,6 @@ class AuthRepository(
                     ),
                     SetOptions.merge()
                 ).await()
-                db.collection("inviteCodes").document(code).set(mapOf("uid" to uid)).await()
                 writeAccountAsync(uid, user.email)
             }
         } catch (_: Exception) { /* se sincronizează mai târziu */ }
@@ -90,7 +94,8 @@ class AuthRepository(
                 uid,
                 auth.currentUser?.email?.substringBefore('@') ?: "Sportiv",
                 auth.currentUser?.email ?: "",
-                inviteCodeFor(uid)
+                // Codul se afișează doar după ce îl citim din profil (cel vechi, calculat din uid, s-ar putea să nu mai fie valabil).
+                synchronized(rotated) { rotated[uid] } ?: ""
             )
         }
     }
@@ -100,8 +105,9 @@ class AuthRepository(
         val snap = db.collection("users").document(uid).get().await()
         if (!snap.exists()) {
             // Profil lipsă (creat offline sau cont vechi) — îl creăm acum, fără email (acela stă în settings/account).
-            val code = inviteCodeFor(uid)
+            val code = randomInviteCode()
             val name = pendingName ?: auth.currentUser?.email?.substringBefore('@') ?: "Sportiv"
+            db.collection("inviteCodes").document(code).set(mapOf("uid" to uid)).await()
             db.collection("users").document(uid).set(
                 mapOf(
                     "name" to name,
@@ -109,7 +115,6 @@ class AuthRepository(
                     "ghostUntil" to 0L, "state" to "idle", "weekKm" to 0.0
                 ), SetOptions.merge()
             ).await()
-            db.collection("inviteCodes").document(code).set(mapOf("uid" to uid)).await()
             writeAccountAsync(uid, email)
             return ForjaUser(uid, name, email, code)
         }
@@ -120,12 +125,44 @@ class AuthRepository(
                 db.collection("users").document(uid).update("email", FieldValue.delete())
             } catch (_: Exception) { }
         }
+        val stored = snap.getString("inviteCode")
         return ForjaUser(
             uid,
             snap.getString("name") ?: "Sportiv",
             email,
-            snap.getString("inviteCode") ?: inviteCodeFor(uid)
+            if (stored.isNullOrBlank() || stored == inviteCodeFor(uid)) rotateInviteCode(uid, stored) else stored
         )
+    }
+
+    /** uid → codul nou dat în acest proces (o singură înlocuire, chiar dacă profilul se citește din mai multe ecrane). */
+    private val rotated = HashMap<String, String>()
+
+    /**
+     * Codurile de dinainte de 4.4 se calculau din uid, deci oricine afla uid-ul îți știa și codul — iar regulile din 4.4
+     * deschid profilul prietenilor făcuți cu codul din profil. Îl înlocuim o dată cu unul aleatoriu: documentul nou și
+     * profilul într-un singur lot (un cod ocupat de altcineva e refuzat de reguli și reîncercăm data viitoare), apoi
+     * ștergem codul vechi (regulile vechi refuză ștergerea; nu contează, prietenia se verifică după codul din profil).
+     * Fără așteptare: cu net pleacă imediat, fără net rămâne în coada Firestore.
+     */
+    private fun rotateInviteCode(uid: String, old: String?): String {
+        synchronized(rotated) {
+            rotated[uid]?.let { return it }
+            val code = randomInviteCode()
+            rotated[uid] = code
+            try {
+                db.batch()
+                    .set(db.collection("inviteCodes").document(code), mapOf("uid" to uid))
+                    .set(db.collection("users").document(uid), mapOf("inviteCode" to code), SetOptions.merge())
+                    .commit()
+                    .addOnSuccessListener {
+                        if (!old.isNullOrBlank() && old != code) db.collection("inviteCodes").document(old).delete()
+                    }
+                    .addOnFailureListener { synchronized(rotated) { if (rotated[uid] == code) rotated.remove(uid) } }
+            } catch (_: Exception) {
+                rotated.remove(uid)
+            }
+            return code
+        }
     }
 
     /**
@@ -175,9 +212,18 @@ class AuthRepository(
 
     fun logout() = auth.signOut()
 
-    /** Cod de invitație scurt, stabil, derivat din uid — FORJA-XXXXXX. */
+    /** Cod de invitație nou (din 4.4): 6 caractere aleatorii, FORJA-XXXXXX. Nu se poate calcula din uid. */
+    private fun randomInviteCode(): String {
+        val rnd = SecureRandom()
+        return String(CharArray(6) { CODE_ALPHABET[rnd.nextInt(CODE_ALPHABET.length)] })
+    }
+
+    /**
+     * Codul de dinainte de 4.4, derivat din uid. Rămâne doar ca să recunoaștem codurile vechi și să le înlocuim
+     * ([rotateInviteCode]); nu se mai dă nimănui.
+     */
     private fun inviteCodeFor(uid: String): String {
-        val alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+        val alphabet = CODE_ALPHABET
         var h = uid.hashCode().toLong().absoluteValue
         val sb = StringBuilder()
         repeat(6) {

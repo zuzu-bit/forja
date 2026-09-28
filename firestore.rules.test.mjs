@@ -9,6 +9,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField, collection, query, where, getDocs, arrayUnion,
+  serverTimestamp, Timestamp,
 } from 'firebase/firestore';
 
 const NEW = process.env.RULES || new URL('./firestore.rules', import.meta.url).pathname;
@@ -21,6 +22,7 @@ const BOGDAN = 'Zeta9Bogdan';   // prieten (prietenie creată de aplicație, id 
 const CRISTI = 'mCristi33';     // străin, apoi prieten prin cod
 const DANA = 'dDana44';         // în familia Anei (users/{ana}.familyUids), fără prietenie
 const DAY = '2026-09-28';
+const DAY_MS = 24 * 3600 * 1000;
 
 const sortedId = (a, b) => [a, b].sort().join('_');
 
@@ -85,6 +87,8 @@ async function suite(name, rules, { tightened }) {
   const ana = as(ANA), bogdan = as(BOGDAN), cristi = as(CRISTI), dana = as(DANA);
   const denyWhenTight = (p) => (tightened ? assertFails(p) : assertSucceeds(p));
   const allowWhenTight = (p) => (tightened ? assertSucceeds(p) : assertFails(p));
+  // Curăță după o verificare care, cu regulile vechi, reușește (altfel verificările următoare ar găsi documentul).
+  const wipe = (...path) => env.withSecurityRulesDisabled((ctx) => deleteDoc(doc(ctx.firestore(), ...path)));
 
   // ── profilul propriu (AuthRepository, MapScreen, ContractScreen, PresenceRepository) ──
   await check('eu îmi citesc profilul', () => assertSucceeds(getDoc(doc(ana, 'users', ANA))));
@@ -124,26 +128,74 @@ async function suite(name, rules, { tightened }) {
   await check('eu îmi scriu familyLoc', () => assertSucceeds(setDoc(doc(ana, 'familyLoc', ANA),
     { lat: 1, lng: 2, speedMps: 0, state: 'idle', locUpdatedAt: 4, allowed: [DANA] })));
 
-  // ── prieten nou prin cod (FriendsRepository.addFriendByCode): cod → prietenie → numele ──
-  await check('codul se citește de oricine conectat', () => assertSucceeds(getDoc(doc(cristi, 'inviteCodes', 'ANA123'))));
+  // ── prieten nou prin cod (FriendsRepository.addFriendByCode): cod → prietenie cu dovada `code` → numele ──
+  await check('codul se citește de oricine conectat care îl știe', () => assertSucceeds(getDoc(doc(cristi, 'inviteCodes', 'ANA123'))));
+  await check('străinul NU listează codurile (ar afla uid-ul fiecărui cont)', () => denyWhenTight(getDocs(collection(cristi, 'inviteCodes'))));
   await check('codul NU se citește fără cont', () => assertFails(getDoc(doc(anon, 'inviteCodes', 'ANA123'))));
   await check('eu îmi scriu codul', () => assertSucceeds(setDoc(doc(cristi, 'inviteCodes', 'CRI333'), { uid: CRISTI })));
   await check('nu scriu codul altcuiva', () => assertFails(setDoc(doc(cristi, 'inviteCodes', 'FALS00'), { uid: ANA })));
   await check('eu îmi rescriu codul (profil recreat)', () => assertSucceeds(setDoc(doc(ana, 'inviteCodes', 'ANA123'), { uid: ANA })));
   await check('nu preiau codul altcuiva (cu uid-ul meu)', () => denyWhenTight(setDoc(doc(cristi, 'inviteCodes', 'ANA123'), { uid: CRISTI })));
-  await check('prietenia prin cod se creează', () => assertSucceeds(setDoc(doc(cristi, 'friendships', sortedId(CRISTI, ANA)),
-    { members: [CRISTI, ANA].sort(), since: 5 })));
+  // AuthRepository: codul vechi (calculabil din uid) se înlocuiește cu unul aleatoriu, iar documentul vechi se șterge.
+  await check('eu îmi șterg codul vechi (după înlocuire)', () => allowWhenTight(deleteDoc(doc(cristi, 'inviteCodes', 'CRI333'))));
+  await check('nu șterg codul altcuiva', () => assertFails(deleteDoc(doc(cristi, 'inviteCodes', 'ANA123'))));
+
+  const cristiAna = { members: [CRISTI, ANA].sort(), since: 5 };
+  await check('prietenie fără dovadă (doar cu uid-ul lui) → refuzată', async () => {
+    await denyWhenTight(setDoc(doc(cristi, 'friendships', sortedId(CRISTI, ANA)), cristiAna));
+    await wipe('friendships', sortedId(CRISTI, ANA));
+  });
+  await check('prietenie cu un cod care nu e al lui acum (vechi sau ghicit) → refuzată', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'inviteCodes', 'OLD999'), { uid: ANA }));
+    await denyWhenTight(setDoc(doc(cristi, 'friendships', sortedId(CRISTI, ANA)), { ...cristiAna, code: 'OLD999' }));
+    await wipe('friendships', sortedId(CRISTI, ANA));
+  });
+  await check('prietenie cu id nesortat → refuzată', async () => {
+    const [x, y] = [CRISTI, ANA].sort();
+    await denyWhenTight(setDoc(doc(cristi, 'friendships', y + '_' + x), { ...cristiAna, code: 'ANA123' }));
+    await wipe('friendships', y + '_' + x);
+  });
+  await check('prietenia prin cod se creează (codul din profilul lui)', () => assertSucceeds(setDoc(doc(cristi, 'friendships', sortedId(CRISTI, ANA)),
+    { ...cristiAna, code: 'ANA123' })));
   await check('apoi numele prietenului nou se citește', () => assertSucceeds(getDoc(doc(cristi, 'users', ANA))));
   await check('a doua oară: „sunteți deja prieteni” (update refuzat)', () => assertFails(setDoc(doc(cristi, 'friendships', sortedId(CRISTI, ANA)),
-    { members: [CRISTI, ANA].sort(), since: 6 })));
+    { ...cristiAna, code: 'ANA123', since: 6 })));
   await check('prietenie cu altcineva decât mine: refuzată', () => assertFails(setDoc(doc(cristi, 'friendships', sortedId(ANA, DANA)),
-    { members: [ANA, DANA].sort(), since: 7 })));
+    { members: [ANA, DANA].sort(), since: 7, code: 'ANA123' })));
 
-  // ── prietenie din agendă (ContactsSync.addFriendDirect) cu id în ordinea inversă (date vechi/altă sortare) ──
-  await check('prietenie cu id invers dă și ea acces', async () => {
-    const [x, y] = [DANA, BOGDAN].sort();
-    await assertSucceeds(setDoc(doc(dana, 'friendships', y + '_' + x), { members: [x, y], since: 8 }));
-    await assertSucceeds(getDoc(doc(dana, 'users', BOGDAN)));
+  // ── prietenie din agendă (ContactsSync → FriendsRepository.addFriendDirect): cererea lui, apoi prietenia mea ──
+  const reqId = (from, to) => from + '_' + to;
+  const danaBogdan = { members: [DANA, BOGDAN].sort(), since: 8 };
+  await check('prietenie din agendă fără cererea lui → refuzată', async () => {
+    await denyWhenTight(setDoc(doc(dana, 'friendships', sortedId(DANA, BOGDAN)), danaBogdan));
+    await wipe('friendships', sortedId(DANA, BOGDAN));
+  });
+  await check('el își scrie cererea din agendă (ora serverului)', () => allowWhenTight(setDoc(doc(bogdan, 'friendRequests', reqId(BOGDAN, DANA)),
+    { from: BOGDAN, to: DANA, at: serverTimestamp() })));
+  await check('nu scriu cererea în numele altcuiva', () => assertFails(setDoc(doc(cristi, 'friendRequests', reqId(BOGDAN, CRISTI)),
+    { from: BOGDAN, to: CRISTI, at: serverTimestamp() })));
+  await check('nu scriu cererea cu altă oră (ar ține-o vie la nesfârșit)', () => assertFails(setDoc(doc(cristi, 'friendRequests', reqId(CRISTI, ANA)),
+    { from: CRISTI, to: ANA, at: Timestamp.fromMillis(Date.now() + 365 * DAY_MS) })));
+  await check('destinatarul își listează cererile primite (to == el)', () =>
+    allowWhenTight(getDocs(query(collection(dana, 'friendRequests'), where('to', '==', DANA)))));
+  await check('străinul NU listează cererile altora', () =>
+    assertFails(getDocs(query(collection(cristi, 'friendRequests'), where('to', '==', DANA)))));
+  await check('cu cererea lui, prietenia din agendă se creează', () => assertSucceeds(setDoc(doc(dana, 'friendships', sortedId(DANA, BOGDAN)), danaBogdan)));
+  await check('și profilul lui se deschide', () => assertSucceeds(getDoc(doc(dana, 'users', BOGDAN))));
+  await check('cererea se șterge (de destinatar)', () => allowWhenTight(deleteDoc(doc(dana, 'friendRequests', reqId(BOGDAN, DANA)))));
+  await check('o cerere mai veche de 30 de zile nu mai dovedește nimic', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'friendRequests', reqId(CRISTI, DANA)),
+      { from: CRISTI, to: DANA, at: Timestamp.fromMillis(Date.now() - 31 * DAY_MS) }));
+    await denyWhenTight(setDoc(doc(dana, 'friendships', sortedId(DANA, CRISTI)), { members: [DANA, CRISTI].sort(), since: 9 }));
+    await wipe('friendships', sortedId(DANA, CRISTI));
+  });
+
+  // ── prietenii vechi cu id în ordinea inversă (date de dinainte): profilul rămâne deschis ──
+  await check('prietenie veche cu id invers dă și ea acces', async () => {
+    const [x, y] = [CRISTI, BOGDAN].sort();
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'friendships', y + '_' + x), { members: [x, y], since: 8 }));
+    await assertSucceeds(getDoc(doc(cristi, 'users', BOGDAN)));
+    await wipe('friendships', y + '_' + x);
   });
 
   // ── după ștergerea prieteniei, profilul se închide ──
