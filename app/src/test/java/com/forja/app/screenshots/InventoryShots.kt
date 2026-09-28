@@ -8,7 +8,6 @@ import androidx.compose.ui.unit.dp
 import com.forja.app.feature.inventory.DoneActions
 import com.forja.app.feature.inventory.FolderActions
 import com.forja.app.feature.inventory.FoldersActions
-import com.forja.app.feature.inventory.IntervalContent
 import com.forja.app.feature.inventory.InvProgressPill
 import com.forja.app.feature.inventory.InventoryApplyContent
 import com.forja.app.feature.inventory.InventoryDoneContent
@@ -17,12 +16,9 @@ import com.forja.app.feature.inventory.InventoryFoldersContent
 import com.forja.app.feature.inventory.InventoryRunContent
 import com.forja.app.feature.inventory.InventorySamples
 import com.forja.app.feature.inventory.InventoryStartContent
-import com.forja.app.feature.inventory.Mood
 import com.forja.app.feature.inventory.MusicActions
 import com.forja.app.feature.inventory.MusicWaitContent
 import com.forja.app.feature.inventory.RunActions
-import com.forja.app.feature.inventory.SportMoodContent
-import com.forja.app.feature.inventory.SportSummaryContent
 import com.forja.app.feature.inventory.StartActions
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -47,16 +43,6 @@ class InventoryShots {
 
     @Test fun s2Run() = shot("inventory_s2_run") { InventoryRunContent(InventorySamples.run, RunActions()) }
     @Test fun s2Ready() = shot("inventory_s2_ready") { InventoryRunContent(InventorySamples.runReady, RunActions()) }
-
-    @Test fun s3bMood() = shot("inventory_s3b_mood") {
-        SportMoodContent(selected = Mood.Energized, pill = InventorySamples.pill, onPill = {}, onPick = {}, onStart = {})
-    }
-    @Test fun s3bInterval() = shot("inventory_s3b_interval") {
-        IntervalContent(InventorySamples.interval(), pill = InventorySamples.pill, onPill = {}, onStop = {}, onToggle = {}, onSkip = {})
-    }
-    @Test fun s3bSummary() = shot("inventory_s3b_summary") {
-        SportSummaryContent(minutes = 15, exercises = 15, pill = InventorySamples.pillReady, onPill = {}, onClose = {})
-    }
 
     @Test fun s3cMusic() = shot("inventory_s3c_music") { MusicWaitContent(InventorySamples.music, MusicActions()) }
     @Test fun s3cMusicNoAccess() = shot("inventory_s3c_music_noaccess") { MusicWaitContent(InventorySamples.musicNoAccess, MusicActions()) }

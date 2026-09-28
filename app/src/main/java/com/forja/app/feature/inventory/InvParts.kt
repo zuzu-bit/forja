@@ -287,6 +287,15 @@ internal fun MiniRing(fraction: Float, modifier: Modifier = Modifier, color: Col
     }
 }
 
+/** Antetul modurilor de așteptare: pastila (stânga) și ștampila sau altceva (dreapta). */
+@Composable
+internal fun WaitHeader(pill: PillState?, onPill: () -> Unit, trailing: @Composable () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        if (pill != null) InvProgressPill(pill, onPill) else Spacer(Modifier.size(1.dp))
+        trailing()
+    }
+}
+
 // ───────────────────────────── Egalizatoare ─────────────────────────────
 
 private val EqEase = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)

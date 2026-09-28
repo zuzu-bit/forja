@@ -398,8 +398,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     onBack = { nav.popBackStack() },
                     onOpenWait = { w ->
                         val target = when (w) {
-                            com.forja.app.feature.inventory.InvWait.Scroll -> Route.WAIT_SCROLL
-                            com.forja.app.feature.inventory.InvWait.Sport -> Route.WAIT_SPORT
+                            com.forja.app.feature.inventory.InvWait.Zid -> Route.WAIT_ZID
+                            com.forja.app.feature.inventory.InvWait.Asalt -> Route.WAIT_ASALT
                             com.forja.app.feature.inventory.InvWait.Music -> Route.WAIT_MUSIC
                         }
                         nav.navigate(target) { launchSingleTop = true }
@@ -407,23 +407,23 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 )
             }
             // „Cât aștepți”: moduri pe tot ecranul, deasupra inventarului; pastila lor duce înapoi la el.
+            // Jocurile (4.4): ZID și ASALT. Partida vie trăiește în GameSessions, deci pastila poate scoate ruta din stivă.
             composable(
-                Route.WAIT_SCROLL,
+                Route.WAIT_ZID,
                 enterTransition = modalEnter, exitTransition = fadeExit,
                 popEnterTransition = riseEnter, popExitTransition = modalExit
             ) {
-                com.forja.app.feature.inventory.InventoryScrollScreen(
+                com.forja.app.feature.games.zid.ZidGameScreen(
                     onOpenInventory = { openInventory(it) },
-                    onMusic = { nav.navigate(Route.WAIT_MUSIC) { launchSingleTop = true } },
                     onClose = { nav.popBackStack() }
                 )
             }
             composable(
-                Route.WAIT_SPORT,
+                Route.WAIT_ASALT,
                 enterTransition = modalEnter, exitTransition = fadeExit,
                 popEnterTransition = riseEnter, popExitTransition = modalExit
             ) {
-                com.forja.app.feature.inventory.InventorySportScreen(
+                com.forja.app.feature.games.asalt.AsaltGameScreen(
                     onOpenInventory = { openInventory(it) },
                     onClose = { nav.popBackStack() }
                 )
@@ -472,6 +472,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                                 app.prefs.resetFirstRun()
                                 // Alt om pe același telefon: ghidajele de la prima vizită pornesc din nou.
                                 try { com.forja.app.core.designsystem.components.Tutorial.reset(app) } catch (_: Exception) { }
+                                // Progresul din ZID și ASALT e al persoanei: următorul om începe de la nivelul 1.
+                                try { com.forja.app.core.games.GameStore.reset(app) } catch (_: Exception) { }
                                 try { app.prefs.clearContract() } catch (_: Exception) { }
                             }
                             try { nav.navigate(Route.ONBOARDING) { popUpTo(Route.DASHBOARD) { inclusive = true } } } catch (_: Exception) { }
@@ -496,11 +498,14 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
 
         // Pastila globală a inventarului: oriunde, cât timp rularea e activă (nu pe ecranele Inventarului, unde
         // progresul e deja pe ecran, și nu în modurile „Cât aștepți”, care o au în antet); la final: „Gata” + toast.
-        val inventoryRoutes = setOf(Route.CLEANUP, Route.WAIT_SCROLL, Route.WAIT_SPORT, Route.WAIT_MUSIC)
+        val inventoryRoutes = setOf(Route.CLEANUP, Route.WAIT_ZID, Route.WAIT_ASALT, Route.WAIT_MUSIC)
         val noPillRoutes = setOf(Route.ONBOARDING, Route.LOGIN, Route.REGISTER, Route.SCANNER, Route.MEAL_CAMERA)
+        // În jocuri toastul ar acoperi antetul și rândurile de sus ale tablei: acolo pastila din antet devine „Gata”,
+        // iar pauza și finalul arată „Dosarele sunt gata”. Vibrația de final rămâne pe orice rută.
+        val noToastRoutes = setOf(Route.CLEANUP, Route.WAIT_ZID, Route.WAIT_ASALT)
         com.forja.app.feature.inventory.InventoryPillHost(
             visibleOnRoute = route != null && route !in inventoryRoutes && route !in noPillRoutes,
-            toastOnRoute = route != null && route != Route.CLEANUP && route !in noPillRoutes,
+            toastOnRoute = route != null && route !in noToastRoutes && route !in noPillRoutes,
             onOpen = { openInventory(it) },
             modifier = Modifier.align(Alignment.TopCenter)
         )

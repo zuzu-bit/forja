@@ -18,8 +18,8 @@ object Route {
     const val ACTIVITY_DETAIL = "activity/{id}"
     const val MEAL_CAMERA = "meal_camera"
     const val CLEANUP = "cleanup"            // Inventarul 4.3 (S1–S6); ruta rămâne „cleanup” pentru notificări și legături
-    const val WAIT_SCROLL = "inventory_scroll"   // „Cât aștepți” · Scroll (S3a)
-    const val WAIT_SPORT = "inventory_sport"     // „Cât aștepți” · Sport (S3b)
+    const val WAIT_ZID = "inventory_zid"         // „Cât aștepți” · ZID (jocul cu piese, 4.4)
+    const val WAIT_ASALT = "inventory_asalt"     // „Cât aștepți” · ASALT (nicovala și scânteia, 4.4)
     const val WAIT_MUSIC = "inventory_music"     // „Cât aștepți” · Muzică (S3c)
     const val PERMISSIONS = "permissions"
     const val CONTRACT = "contract"
