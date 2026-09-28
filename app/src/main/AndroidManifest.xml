@@ -163,6 +163,12 @@
                 android:value="conversations|alerting|ongoing|silent" />
         </service>
 
+        <!-- Inventarul 4.3: lucrătorul WorkManager „inventory” rulează în prim-plan ca dataSync (obligatoriu de la Android 14). -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
         <service
             android:name=".core.focus.FocusMonitorService"
             android:exported="false"
