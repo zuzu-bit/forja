@@ -73,6 +73,8 @@ android {
             all {
                 // Randare „hardware” la PixelCopy: umbre, straturi și decupaje ca pe telefon.
                 it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
+                // ~500 de teste Robolectric + planșe mari (casca_notificari): 512 MB implicit nu ajung.
+                it.maxHeapSize = "4g"
             }
         }
     }
