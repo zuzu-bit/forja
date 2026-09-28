@@ -6,7 +6,9 @@ import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseAuthWeakPasswordException
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
@@ -15,6 +17,7 @@ import kotlin.math.absoluteValue
 data class ForjaUser(
     val uid: String,
     val name: String,
+    /** Din contul Firebase (sursa adevărului), nu din users/{uid}: documentul acela îl citesc și prietenii. */
     val email: String,
     val inviteCode: String
 )
@@ -51,13 +54,12 @@ class AuthRepository(
         val user = ForjaUser(uid, name.trim(), email.trim(), code)
         // Profilul în Firestore — cu limită de timp: dacă baza de date nu e încă
         // disponibilă, NU blocăm intrarea în aplicație; loadProfile() îl creează
-        // automat la prima conexiune reușită.
+        // automat la prima conexiune reușită. Emailul NU intră în profil (îl văd prietenii), ci în settings/account.
         try {
             withTimeout(8000) {
                 db.collection("users").document(uid).set(
                     mapOf(
                         "name" to user.name,
-                        "email" to user.email,
                         "inviteCode" to code,
                         "createdAt" to System.currentTimeMillis(),
                         "ghostUntil" to 0L,
@@ -67,6 +69,7 @@ class AuthRepository(
                     SetOptions.merge()
                 ).await()
                 db.collection("inviteCodes").document(code).set(mapOf("uid" to uid)).await()
+                writeAccountAsync(uid, user.email)
             }
         } catch (_: Exception) { /* se sincronizează mai târziu */ }
         return user
@@ -93,27 +96,71 @@ class AuthRepository(
     }
 
     private suspend fun loadOrCreateProfile(uid: String): ForjaUser {
+        val email = auth.currentUser?.email ?: ""
         val snap = db.collection("users").document(uid).get().await()
         if (!snap.exists()) {
-            // Profil lipsă (creat offline sau cont vechi) — îl creăm acum.
+            // Profil lipsă (creat offline sau cont vechi) — îl creăm acum, fără email (acela stă în settings/account).
             val code = inviteCodeFor(uid)
             val name = pendingName ?: auth.currentUser?.email?.substringBefore('@') ?: "Sportiv"
             db.collection("users").document(uid).set(
                 mapOf(
-                    "name" to name, "email" to (auth.currentUser?.email ?: ""),
+                    "name" to name,
                     "inviteCode" to code, "createdAt" to System.currentTimeMillis(),
                     "ghostUntil" to 0L, "state" to "idle", "weekKm" to 0.0
                 ), SetOptions.merge()
             ).await()
             db.collection("inviteCodes").document(code).set(mapOf("uid" to uid)).await()
-            return ForjaUser(uid, name, auth.currentUser?.email ?: "", code)
+            writeAccountAsync(uid, email)
+            return ForjaUser(uid, name, email, code)
+        }
+        // Cont de dinainte de 4.4: emailul mai stă în profil — îl mutăm acum (scrieri în cache, fără așteptare).
+        if (snap.contains("email")) {
+            try {
+                writeAccountAsync(uid, email.ifBlank { snap.getString("email") ?: "" })
+                db.collection("users").document(uid).update("email", FieldValue.delete())
+            } catch (_: Exception) { }
         }
         return ForjaUser(
             uid,
             snap.getString("name") ?: "Sportiv",
-            snap.getString("email") ?: "",
+            email,
             snap.getString("inviteCode") ?: inviteCodeFor(uid)
         )
+    }
+
+    /**
+     * Mută emailul din users/{uid} (citit de prieteni) în users/{uid}/settings/account (doar tu), o singură dată pe cont.
+     * Fără citire: scrie contul și șterge câmpul (ștergerea unui câmp lipsă nu face nimic). Întoarce true când serverul
+     * a confirmat — sau când profilul nu există încă (atunci se creează direct fără email).
+     */
+    suspend fun moveEmailToAccount(uid: String): Boolean {
+        val email = auth.currentUser?.takeIf { it.uid == uid }?.email.orEmpty()
+        return try {
+            withTimeout(15_000) {
+                writeAccount(uid, email)
+                try {
+                    db.collection("users").document(uid).update("email", FieldValue.delete()).await()
+                } catch (e: FirebaseFirestoreException) {
+                    if (e.code != FirebaseFirestoreException.Code.NOT_FOUND) throw e
+                }
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** users/{uid}/settings/account { email } — doar proprietarul îl poate citi (regula subcolecțiilor). */
+    private suspend fun writeAccount(uid: String, email: String) {
+        if (email.isBlank()) return
+        db.collection("users").document(uid).collection("settings").document("account")
+            .set(mapOf("email" to email.trim()), SetOptions.merge()).await()
+    }
+
+    private fun writeAccountAsync(uid: String, email: String) {
+        if (email.isBlank()) return
+        db.collection("users").document(uid).collection("settings").document("account")
+            .set(mapOf("email" to email.trim()), SetOptions.merge())
     }
 
     suspend fun updateName(name: String) {
