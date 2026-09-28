@@ -18,6 +18,7 @@ import com.forja.app.core.games.asalt.AsaltPhase
 import com.forja.app.core.games.asalt.AsaltSave
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -323,5 +324,28 @@ class AsaltEngineTest {
         assertTrue(e.launch())
         assertEquals(AsaltPhase.Playing, e.phase)
         assertTrue(e.ballDy[0] < 0)
+    }
+
+    /** Un zid doar ales (Ready, fără niciun pas de joc) nu e o partidă de reluat; după o viață pierdută, Ready este. */
+    @Test
+    fun resumableOnlyAfterTheFirstLaunch() {
+        val fresh = AsaltEngine.create(AsaltLevels.byId(1), 1L)
+        assertFalse(fresh.resumable)
+        run(fresh, 500) { it.events.clear() }                 // nicovala se mișcă, scânteia stă: tot neînceput
+        assertFalse(fresh.resumable)
+        assertTrue(fresh.launch())
+        run(fresh, 100) { it.events.clear() }
+        assertTrue(fresh.resumable)
+
+        val base = AsaltEngine.create(AsaltLevels.byId(1), 1L).save()
+        val one = AsaltEngine.restore(
+            base.copy(
+                bricks = farCrate.first, hp = farCrate.second, phase = AsaltPhase.Playing,
+                balls = listOf(20.0, 590.0, 0.25, 0.968), paddleX = 350.0, paddleTarget = 350.0
+            )
+        )
+        run(one, 1_100) { it.events.clear() }
+        assertEquals(AsaltPhase.Ready, one.phase)
+        assertTrue(one.resumable)
     }
 }

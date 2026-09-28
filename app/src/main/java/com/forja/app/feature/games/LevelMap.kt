@@ -124,6 +124,7 @@ class LevelMapActions(
     val onClose: () -> Unit = {},
     val onInfo: () -> Unit = {},
     val onSelect: (Int) -> Unit = {},
+    /** Și pe nodurile blocate (ștampila cu numele); gazda alege nodul doar dacă e deschis. */
     val onLongPress: (Int) -> Unit = {},
     val onPlay: (Int) -> Unit = {}
 )
@@ -379,7 +380,9 @@ private fun LevelNode(node: LevelNodeUi, selected: Boolean, onTap: () -> Unit, o
                         }
                     },
                     onLongPress = {
-                        try { view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) } catch (_: Exception) { }
+                        // blocat: doar numele (ștampila) și tremurul; nodul nu devine „ales”
+                        if (node.state == NodeState.Locked) rejectLocked()
+                        else try { view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) } catch (_: Exception) { }
                         longPress()
                     }
                 )

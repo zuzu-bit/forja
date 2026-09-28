@@ -319,4 +319,17 @@ class ZidEngineTest {
         val other = ZidBot.play(ZidLevels.byId(6), 12L, maxPieces = 120)
         assertNotEquals(one.kinds, other.kinds)
     }
+
+    /** Un nivel doar ales (Ready) nu se salvează ca partidă neterminată; după prima atingere, da. */
+    @Test
+    fun resumableOnlyAfterStart() {
+        val e = ZidEngine.create(ZidLevels.byId(3), 5L)
+        assertFalse(e.resumable)
+        e.advance(1_000)
+        assertFalse(e.resumable)
+        e.start()
+        assertTrue(e.resumable)
+        assertTrue(ZidEngine.restore(e.save()).resumable)
+        assertFalse(ZidEngine.restore(ZidEngine.create(ZidLevels.byId(3), 5L).save()).resumable)
+    }
 }

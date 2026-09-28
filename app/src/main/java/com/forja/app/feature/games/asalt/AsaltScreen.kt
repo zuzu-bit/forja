@@ -38,6 +38,7 @@ import com.forja.app.core.games.asalt.AsaltEngine
 import com.forja.app.core.games.asalt.AsaltEvent
 import com.forja.app.core.games.asalt.AsaltLevels
 import com.forja.app.core.games.asalt.AsaltPhase
+import com.forja.app.core.games.resumable
 import com.forja.app.feature.games.AutoHide
 import com.forja.app.feature.games.GameFeedback
 import com.forja.app.feature.games.GameOverlay
@@ -50,6 +51,7 @@ import com.forja.app.feature.games.PauseUi
 import com.forja.app.feature.games.ResultActions
 import com.forja.app.feature.games.ResultKind
 import com.forja.app.feature.games.ResultUi
+import com.forja.app.feature.games.defaultSelection
 import com.forja.app.feature.games.gameGuideKey
 import com.forja.app.feature.games.levelMapUi
 import com.forja.app.feature.games.levelMeta
@@ -166,6 +168,8 @@ fun AsaltGameScreen(onOpenInventory: (InvPage) -> Unit, onClose: () -> Unit) {
             delay(600)
         }
         countdown = 0
+        // focusul pierdut chiar pe ultima cifră: rămâne pauza (nu se reia niciodată singură)
+        if (!fg) return@LaunchedEffect
         paused = false
     }
 
@@ -285,7 +289,9 @@ fun AsaltGameScreen(onOpenInventory: (InvPage) -> Unit, onClose: () -> Unit) {
         }
         false
     }
-    KeepScreenOn(running)
+    // Bucla merge și în Ready (scânteia stă pe nicovală și o urmează), dar Ready așteaptă o atingere oricât:
+    // ecranul rămâne aprins doar cât scânteia chiar zboară (sau în cele 0,7 s după o viață pierdută).
+    KeepScreenOn(running && (cur?.hud?.phase == AsaltPhase.Playing || cur?.hud?.phase == AsaltPhase.LifeLost))
 
     LaunchedEffect(foreground) {
         if (!foreground) {
@@ -320,7 +326,7 @@ fun AsaltGameScreen(onOpenInventory: (InvPage) -> Unit, onClose: () -> Unit) {
         if (p != null && result == null && !paused && countdown == 0 && p.engine.launch()) handle(p, fb)
     }
 
-    val resumeLevel = play?.engine?.takeIf { it.phase.active && result == null }?.level?.id
+    val resumeLevel = play?.engine?.takeIf { it.resumable && result == null }?.level?.id
     AutoHide(stamp) { stamp = null }
 
     // Ca modurile de așteptare din 4.3: sub bara de stare și deasupra barei de navigare (ecranul e edge-to-edge).
@@ -335,17 +341,31 @@ fun AsaltGameScreen(onOpenInventory: (InvPage) -> Unit, onClose: () -> Unit) {
                         onPill = { openInventory(inv.ready) },
                         onClose = onClose,
                         onInfo = {
+                            // „i” = ghidul, peste joc. O partidă neterminată se deschide în pauză (ghidul ține atingerile,
+                            // deci nimic nu trebuie să curgă sub el); altfel pornește nivelul ales, în Ready (nimic nu se
+                            // mișcă până la prima atingere). Un nod blocat nu pornește niciodată de aici.
                             guideReplay = System.currentTimeMillis()
-                            val id = ui.selected
-                            if (id == resumeLevel) { page = AsaltPage.Play; resumeWithCountdown() } else startLevel(id)
+                            val sel = ui.selected
+                            when {
+                                resumeLevel != null -> {
+                                    paused = true
+                                    countdown = 0
+                                    page = AsaltPage.Play
+                                }
+                                progress.isUnlocked(GameId.Asalt, sel) -> startLevel(sel)
+                                else -> startLevel(defaultSelection(GameId.Asalt, progress, null))
+                            }
                         },
                         onSelect = { mapSel = it },
-                        onLongPress = { mapSel = it; stamp = levelStamp(GameId.Asalt, it) },
+                        onLongPress = {
+                            if (progress.isUnlocked(GameId.Asalt, it)) mapSel = it
+                            stamp = levelStamp(GameId.Asalt, it)
+                        },
                         onPlay = { id ->
                             if (id == resumeLevel) {
                                 page = AsaltPage.Play
                                 resumeWithCountdown()
-                            } else startLevel(id)
+                            } else if (progress.isUnlocked(GameId.Asalt, id)) startLevel(id)
                         }
                     )
                 )
