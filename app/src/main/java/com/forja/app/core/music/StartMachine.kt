@@ -29,6 +29,8 @@ interface StartPort {
  *
  *   IDLE → RESOLVE → TRY(treaptă) → VERIFY(termen)
  *     VERIFY: ținta CÂNTĂ 1,2 s (și a trecut de fereastra de refuz) → PLAYING
+ *             tasta doar a trezit playerul, iar intenția cere o piesă anume (TOP 1, lista FORJA) → contextul vechi
+ *             tace, planul se reface: S_TOP pe sesiunea acum prezentă
  *             ținta se încarcă (BUFFERING/CONNECTING) → termenul se prelungește, până la plafon
  *             a pornit ceva vorbit/video → îl oprește (UNDO) → următoarea treaptă
  *             a cântat și s-a oprit singură < 3 s → refuzat → următoarea
@@ -68,6 +70,8 @@ class StartMachine(private val port: StartPort) {
         val baselinePlaying: Set<String>,
         val baselineIds: Set<String>,
         val baselineConfigs: Set<Int>,
+        /** Titlul sesiunilor care cântau deja la trimitere (contextul vechi nu e rezultatul unei piese cerute). */
+        val baselineTitles: Map<String, String?>,
         val note: String?
     ) {
         var playingId: String? = null
@@ -78,6 +82,8 @@ class StartMachine(private val port: StartPort) {
         var otherAt: Long = 0L
         var configId: Int? = null
         var configAt: Long = 0L
+        /** Momentul în care sesiunea trezită de tastă a apărut (treaptă de trezire). */
+        var wokeAt: Long = 0L
     }
 
     private sealed interface Outcome {
@@ -86,6 +92,8 @@ class StartMachine(private val port: StartPort) {
         data object Refused : Outcome
         data object Timeout : Outcome
         data class WrongKind(val undo: UndoTarget, val kind: MediaKind?) : Outcome
+        /** Tasta a trezit playerul țintă (sesiunea lui e acum în listă): se continuă cu piesa cerută. */
+        data class Woke(val session: SessionView) : Outcome
     }
 
     // ───────────────────────────── Intrări ─────────────────────────────
@@ -130,6 +138,18 @@ class StartMachine(private val port: StartPort) {
                 a.verify = null
                 port.undo(o.undo)
                 log(a, v.step, DiagResult.WRONG_KIND, port.now() - v.sentAt, o.kind, v.note, snap)
+                advance(a, port.snapshot())
+            }
+            is Outcome.Woke -> {
+                a.verify = null
+                val w = o.session
+                // Ce a pornit tasta e contextul ei vechi (altă listă, alt podcast): tace cât pornește piesa cerută —
+                // afară de cazul în care chiar piesa cerută cântă deja.
+                val track = wantedTrack(a.want, snap)
+                if (w.state.activeish && (track == null || !TrackKey.matches(track.title, w.title))) port.undo(UndoTarget.Session(w.id))
+                port.learn(v.step.pkg ?: w.pkg, v.step.rung, LearnedTable.Outcome.OK)
+                log(a, v.step.copy(pkg = v.step.pkg ?: w.pkg), DiagResult.OK, port.now() - v.sentAt, w.kind, listOfNotNull(v.note, "woke").joinToString(" "), snap)
+                // Planul se reface cu sesiunea acum prezentă: TOP 1 / lista FORJA → S_TOP (apoi S_LIKED, S_PLAY…).
                 advance(a, port.snapshot())
             }
         }
@@ -265,6 +285,7 @@ class StartMachine(private val port: StartPort) {
                     baselinePlaying = snap.sessions.filter { it.state.activeish }.map { it.id }.toSet(),
                     baselineIds = snap.sessions.map { it.id }.toSet(),
                     baselineConfigs = snap.configs.map { it.id }.toSet(),
+                    baselineTitles = snap.sessions.filter { it.state.activeish }.associate { it.id to it.title },
                     note = result.note
                 )
                 a.verify = v
@@ -321,8 +342,25 @@ class StartMachine(private val port: StartPort) {
             v.appearedAt = now
             v.deadline = minOf(maxOf(v.deadline, now + KEY_PLAY_MS), v.cap)
         }
+        // 2b) Treaptă de trezire (TOP 1, lista FORJA): tasta nu duce piesa cerută, doar aduce sesiunea playerului. Cât ea
+        //     apare (sau începe să cânte), treapta s-a făcut; se așteaptă puțin să pornească, ca pauza să prindă contextul vechi.
+        if (wakeOnly(a.want, v.step, s)) {
+            val woke = targets.firstOrNull { !it.remote && (it.id !in v.baselineIds || it.state.activeish) }
+            if (woke != null) {
+                if (v.wokeAt == 0L) v.wokeAt = now
+                if (woke.state.activeish || now - v.wokeAt >= WAKE_SETTLE_MS || now >= v.deadline) return Outcome.Woke(woke)
+                return Outcome.Pending(minOf(v.wokeAt + WAKE_SETTLE_MS, v.deadline))
+            }
+        }
+        val track = v.step.track
         var next = v.deadline
         for (t in targets) {
+            // Contextul de dinainte (cânta deja când s-a cerut piesa) nu e rezultatul comenzii cât timp nu s-a schimbat
+            // piesa: nici reușită, nici refuz când se oprește (pauza de după trezire, trecerea la piesa cerută).
+            if (track != null && t.id in v.baselineTitles && t.title == v.baselineTitles[t.id] && !TrackKey.matches(track.title, t.title)) {
+                if (t.state.transitional) v.deadline = minOf(maxOf(v.deadline, now + BUFFER_GRACE_MS), v.cap)
+                continue
+            }
             when {
                 t.state == PState.PLAYING -> {
                     if (v.playingId != t.id) {
@@ -335,7 +373,6 @@ class StartMachine(private val port: StartPort) {
                         if (needsMusic && (t.kind == MediaKind.SPOKEN || t.kind == MediaKind.VIDEO)) {
                             return Outcome.WrongKind(UndoTarget.Session(t.id), t.kind)
                         }
-                        val track = v.step.track
                         val wrong = track != null && !TrackKey.matches(track.title, t.title)
                         return Outcome.Ok(t, wrong)
                     }
@@ -405,6 +442,21 @@ class StartMachine(private val port: StartPort) {
         return Outcome.Pending(v.deadline)
     }
 
+    /**
+     * Tasta media (K_TOKEN/K_PLAY), cu acces, când intenția cere o piesă anume: TOP 1 sau prima piesă din lista FORJA.
+     * Tasta pornește doar ultimul context al playerului, deci ea doar trezește sesiunea; piesa o cere S_TOP după
+     * (music-start.md §6.3 „K_TOKEN or K_PLAY, then S_TOP”; workout-music.md §3.8 treapta 2).
+     */
+    private fun wakeOnly(want: Want, step: Step, s: Snapshot): Boolean =
+        s.access && step.pkg != null && (step.rung == Rung.K_PLAY || step.rung == Rung.K_TOKEN) && wantedTrack(want, s) != null
+
+    /** Piesa cerută de intenție (TOP 1: piesa ta de top; Antrenament: prima din lista FORJA). */
+    private fun wantedTrack(want: Want, s: Snapshot): TrackRef? = when (want) {
+        Want.Top -> s.top
+        is Want.Workout -> want.first
+        else -> null
+    }
+
     private fun stoppedTarget(step: Step, s: Snapshot): Boolean {
         val t = s.session(step.sessionId) ?: s.firstOf(step.pkg) ?: return step.rung != Rung.K_PLAY
         return t.state == PState.STOPPED || t.state == PState.NONE
@@ -449,6 +501,8 @@ class StartMachine(private val port: StartPort) {
         const val PHASE_CAP_MS = 15_000L
         const val KEY_PLAY_MS = 6_000L
         const val BUFFER_GRACE_MS = 2_000L
+        /** Sesiunea trezită de tastă a apărut pe pauză: atât se așteaptă să înceapă să cânte, apoi se merge mai departe. */
+        const val WAKE_SETTLE_MS = 1_500L
 
         /** (termenul de bază, plafonul) per treaptă. */
         fun budget(r: Rung): Pair<Long, Long> = when (r) {

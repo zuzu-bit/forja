@@ -228,4 +228,86 @@ class StartMachineTest {
         assertEquals("9.0.62", p.events.first().ver)
         assertEquals("mymusic", p.events.first().want)
     }
+
+    // ── Tasta doar trezește playerul când se cere o piesă anume (TOP 1, lista FORJA) ──
+
+    @Test fun topWithoutASessionWakesSpotifyThenAsksForTheTopTrack() {
+        val p = machine(snap(sessions = emptyList(), keyTarget = SPOTIFY))
+        p.onSend = { step ->
+            when (step.rung) {
+                Rung.K_PLAY -> p.add(session("sp", SPOTIFY, state = PState.PLAYING, title = "Altă listă"))
+                Rung.S_TOP -> p.setState("sp", PState.PLAYING, title = TOP.title)
+                else -> Unit
+            }
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Top, MusicSource.INVENTORY, tap = true)
+        // Spotify s-a trezit cu ultimul lui context: acela tace, apoi se cere piesa de top pe sesiunea acum prezentă.
+        assertEquals(listOf(Rung.K_PLAY, Rung.S_TOP), p.sent.map { it.rung })
+        assertEquals(TOP, p.sent[1].track)
+        assertEquals(UndoTarget.Session("sp"), p.undone.single())
+        p.advance(3_000)
+        val st = p.last as StartState.Playing
+        assertEquals(Rung.S_TOP, st.route)
+        assertFalse(st.wrongTrack)
+        assertEquals(listOf("K_PLAY:ok", "S_TOP:ok"), p.results())
+    }
+
+    @Test fun workoutWithoutASessionWakesSpotifyThenStartsTheForjaList() {
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY, "spotify:track:1")
+        val p = machine(snap(sessions = emptyList(), keyTarget = SPOTIFY))
+        p.onSend = { step ->
+            when (step.rung) {
+                Rung.K_PLAY -> p.add(session("sp", SPOTIFY, state = PState.PLAYING, title = "Altă listă"))
+                Rung.S_TOP -> p.setState("sp", PState.PLAYING, title = "Piesa 1")
+                else -> Unit
+            }
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = false)
+        assertEquals(listOf(Rung.K_PLAY, Rung.S_TOP), p.sent.map { it.rung })
+        assertEquals(first, p.sent[1].track)
+        p.advance(3_000)
+        val st = p.last as StartState.Playing
+        assertEquals(Badge.FORJA, st.badge)
+        // Reușita e pe S_TOP: MusicStarter pornește coada FORJA doar atunci.
+        assertEquals(Rung.S_TOP, p.successes.single().rung)
+        assertEquals(listOf("K_PLAY:ok", "S_TOP:ok"), p.results())
+    }
+
+    @Test fun oldContextStillPlayingAfterTheWakeIsNeitherSuccessNorRefusal() {
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY, "spotify:track:1")
+        val p = machine(snap(sessions = emptyList(), keyTarget = SPOTIFY))
+        p.pauseOnUndo = false
+        p.onSend = { step ->
+            if (step.rung == Rung.K_PLAY) p.add(session("sp", SPOTIFY, state = PState.PLAYING, title = "Altă listă"))
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = false)
+        assertEquals(listOf(Rung.K_PLAY, Rung.S_TOP), p.sent.map { it.rung })
+        // Contextul vechi mai cântă 3 s (pauza e pe drum): nu e „wrong_track”.
+        p.advance(3_000)
+        assertTrue(p.last.toString(), p.last is StartState.Starting)
+        p.setState("sp", PState.PAUSED)
+        p.advance(300)
+        p.setState("sp", PState.BUFFERING, title = "Piesa 1")
+        p.advance(500)
+        p.setState("sp", PState.PLAYING)
+        p.advance(3_000)
+        assertEquals(Badge.FORJA, (p.last as StartState.Playing).badge)
+        assertEquals(listOf("K_PLAY:ok", "S_TOP:ok"), p.results())
+    }
+
+    @Test fun myMusicKeyThatWakesSpotifyMusicIsDoneWithoutMoreCommands() {
+        val p = machine(snap(sessions = emptyList(), keyTarget = SPOTIFY))
+        p.onSend = { step ->
+            if (step.rung == Rung.K_PLAY) p.add(session("sp", SPOTIFY, state = PState.PLAYING, title = "Muzica ei"))
+            SendResult.Sent()
+        }
+        p.machine.start(Want.MyMusic, MusicSource.INVENTORY, tap = true)
+        p.advance(3_000)
+        assertEquals(Rung.K_PLAY, (p.last as StartState.Playing).route)
+        assertEquals(listOf(Rung.K_PLAY), p.sent.map { it.rung })
+        assertTrue(p.undone.isEmpty())
+    }
 }

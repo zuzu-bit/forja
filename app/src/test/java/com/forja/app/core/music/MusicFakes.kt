@@ -58,6 +58,8 @@ class FakePort(var world: Snapshot) : StartPort {
     var endedCount = 0
     /** Ce face „playerul” când primește o treaptă (poate schimba [world]); întoarce rezultatul apelului. */
     var onSend: (Step) -> SendResult = { SendResult.Sent() }
+    /** Pauza cerută ([undo]) ajunge imediat; false = playerul o aplică mai târziu (testul o face de mână). */
+    var pauseOnUndo = true
 
     lateinit var machine: StartMachine
 
@@ -70,7 +72,7 @@ class FakePort(var world: Snapshot) : StartPort {
     }
     override fun undo(target: UndoTarget) {
         undone += target
-        if (target is UndoTarget.Session) setState(target.id, PState.PAUSED)
+        if (target is UndoTarget.Session && pauseOnUndo) setState(target.id, PState.PAUSED)
     }
     override fun schedule(atMs: Long) { scheduledAt = atMs }
     override fun emit(state: StartState) { states += state }
