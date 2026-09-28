@@ -2,7 +2,7 @@ name: Deploy FORJA Insights
 on:
   push:
     branches: ['main', 'claude/**']
-    paths: ['server/**', 'scripts/**', '.github/workflows/insights-deploy.yml']
+    paths: ['server/**', 'scripts/**', '!scripts/site-shots/**', '.github/workflows/insights-deploy.yml']
   workflow_dispatch:
 permissions:
   contents: read

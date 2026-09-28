@@ -37,6 +37,12 @@ import com.github.takahirom.roborazzi.roborazziSystemPropertyOutputDirectory
 const val PHONE = "w393dp-h851dp-xxhdpi"
 
 /**
+ * Galaxy S23 al Lanei: 360 × 780 dp (densitate 3,0), minus bara de stare (~36 dp) și bara cu 3 butoane a One UI (48 dp).
+ * Robolectric raportează inseturi zero, deci înălțimea utilă se dă direct: ecranele care nu încap aici se văd tăiate/suprapuse.
+ */
+const val PHONE_S23 = "w360dp-h696dp-xxhdpi"
+
+/**
  * Randează `content` în tema FORJA și salvează `<nume>.png`.
  * Mișcarea redusă e pornită: animațiile sar la starea finală, iar buclele infinite (respirația mascotei, scântei)
  * nu pornesc — cadrul e determinist și Robolectric nu rămâne blocat în cadre fără sfârșit.
