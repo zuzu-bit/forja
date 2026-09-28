@@ -84,11 +84,12 @@ jobs:
           curl -s --max-time 300 -X POST -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' --data-binary @/tmp/meal.json "$URL/v1/meal" -w '\nHTTP %{http_code}\n' | head -c 4000
           echo "durata: $(( $(date +%s) - T0 )) s"
           echo "== test cap-coadă /v1/organize/clusters (2 grupuri, miniaturi 384 px) =="
-          small() {  # $1 = cheia media → base64 JPEG 384 px (≤ 80 KB)
+          command -v convert >/dev/null 2>&1 || { sudo apt-get update -qq >/dev/null 2>&1; sudo apt-get install -y -qq --no-install-recommends imagemagick >/dev/null 2>&1 || true; }
+          small() {  # $1 = cheia media → base64 JPEG 384 px (≤ 80 KB); gol dacă nu se poate
+            rm -f /tmp/th.jpg
             curl -sL --max-time 60 -o /tmp/src.jpg "$URL/media/$1" || return 0
-            if command -v convert >/dev/null 2>&1; then convert /tmp/src.jpg -resize 384x384 -quality 70 /tmp/th.jpg
-            else ffmpeg -loglevel error -y -i /tmp/src.jpg -vf "scale=384:-2" -q:v 7 /tmp/th.jpg; fi
-            base64 -w0 /tmp/th.jpg
+            convert /tmp/src.jpg -resize 384x384 -quality 70 /tmp/th.jpg 2>/dev/null || return 0
+            base64 -w0 /tmp/th.jpg 2>/dev/null || true
           }
           T1=$(small meal_dinner.jpg); T2=$(small 471644726.jpg); T3=$(small 622385753.jpg)
           printf '{"clusters":[{"id":"c1","count":12,"from":1691834400000,"to":1691949600000,"hints":["mâncare"],"thumbs":["%s","%s"]},{"id":"c2","count":8,"from":1693000000000,"to":1693010000000,"thumbs":["%s"]}],"locale":"ro"}' "$T1" "$T2" "$T3" > /tmp/clusters.json
