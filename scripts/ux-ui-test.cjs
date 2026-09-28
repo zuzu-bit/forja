@@ -2,6 +2,9 @@
 // FORJA_JSDOM may override the package path for an isolated local test runtime.
 // Exercises the shipped 4.4 site (server/insights.html + the concatenated site-*.js.txt) in jsdom against the same synthetic
 // data and endpoint mock as the screenshot harness — never a live account. One section per ability (DESIGN-4.4 §3.1).
+// The fixture buckets days in Europe/Bucharest (like the phone and the server); the site uses the process timezone. Pin it
+// before any Date exists, or CI (UTC) sees yesterday's meals as today's between 21:00 and 24:00 UTC.
+process.env.TZ = 'Europe/Bucharest';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -312,7 +315,7 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     clean(p);
   });
 
-  await check('Camarazi: the app friends, family, ghost hides position and song, invite code, Din agendă toggle', async () => {
+  await check('Camarazi: the app friends, family, ghost hides position and song, invite code, Din agendă state (set on the phone)', async () => {
     const p = page();
     await tick(20); await login(p); await open(p, 'camarazi');
     await until(() => p.$('camarazi-list').querySelectorAll('.friend').length, 'friends');
@@ -335,14 +338,10 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     assert.equal(p.w.document.querySelector('.invite-code').textContent, 'K7Q2XM');
     [...p.$('camarazi-side').querySelectorAll('button')].find(b => /Copiază/.test(b.textContent)).click(); await tick(20);
     assert.equal(p.w.__copied, 'K7Q2XM');
-    await until(() => !p.$('camarazi-side').querySelector('.switch').disabled, 'discovery');
-    const toggle = p.$('camarazi-side').querySelector('.switch'); assert.equal(toggle.checked, true);
-    toggle.click(); await tick(40);
-    assert(p.call('/v2/social/contacts/discovery', 'DELETE'));
-    const refreshes = p.fixture.calls.filter(c => c.url.includes('securetoken')).length;
-    p.$('camarazi-side').querySelector('.switch').click(); await tick(60);
-    assert.deepEqual(JSON.parse(p.call('/v2/social/contacts/discovery', 'POST').body), {consent: true});
-    assert(p.fixture.calls.filter(c => c.url.includes('securetoken')).length > refreshes, 'a fresh token before binding the number');
+    await until(() => /Te găsesc după număr · până la/.test(p.$('camarazi-disc-sub').textContent), 'discovery');
+    assert.match(p.$('camarazi-disc-note').textContent, /^Se schimbă din FORJA, la Profil\.$/);
+    assert(!p.$('camarazi-side').querySelector('.switch'), 'no switch: the phone owns the choice and the contract that covers it');
+    assert(!p.call('/v2/social/contacts/discovery', 'POST') && !p.call('/v2/social/contacts/discovery', 'DELETE'), 'the site never changes the listing');
     clean(p);
   });
 

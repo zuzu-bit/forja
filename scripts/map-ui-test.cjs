@@ -2,6 +2,8 @@
 // The site map end to end in jsdom: the real client (site-*.js.txt) + the real renderer (map-renderer.js.txt) over a MapLibre
 // stand-in. Checks what Lana saw as "the map is not updated": one MapLibre map, ForjaStyle Night, fitted on her own data, data
 // updates through setData only, 3D as pitch on the same map, tolerant of tile errors, polling only while visible, Găsire mode.
+// Same timezone as the fixture (Europe/Bucharest), set before any Date exists: see ux-ui-test.cjs.
+process.env.TZ = 'Europe/Bucharest';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');

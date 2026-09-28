@@ -64,10 +64,12 @@ function routeSketch(pts, type) {
     s('circle', {cx: P.at(-1)[0], cy: P.at(-1)[1], r: 3.2, fill: '#F3B952', stroke: '#0A0A0B', 'stroke-width': 1.5}));
   return svg;
 }
+/** Felul antrenamentului vine ca slug ASCII de la telefon (SitePayloads.kt); pe site, cu diacritice. */
+const WORK_KIND = {forta: 'forță', acasa: 'acasă', intervale: 'intervale'};
 function workoutRow(w) {
   return h('div', {class: 'work'},
     h('span', {class: 'work-ic'}, icon('lift', 20)),
-    h('div', {class: 'work-body'}, h('span', {class: 'work-title', text: w.title || 'Antrenament'}), h('span', {class: 'work-meta', text: [fmt.day(w.startAt), w.kind, num(w.sets) ? plural(w.sets, 'serie', 'serii') : null].filter(Boolean).join(' · ')})),
+    h('div', {class: 'work-body'}, h('span', {class: 'work-title', text: w.title || 'Antrenament'}), h('span', {class: 'work-meta', text: [fmt.day(w.startAt), WORK_KIND[w.kind] || w.kind, num(w.sets) ? plural(w.sets, 'serie', 'serii') : null].filter(Boolean).join(' · ')})),
     h('div', {class: 'work-stats'},
       h('span', null, h('b', {text: fmt.dur((w.durationS || 0) / 60)})),
       num(w.volumeKg) ? h('span', null, h('b', {text: fmt.int(w.volumeKg)}), ' kg') : null,

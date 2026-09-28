@@ -2,8 +2,9 @@
 const Azi = {
   data: null, body: null, ownChip: true,
   mount(body) { Azi.body = body; },
+  /** La intrare, apoi cel mult o dată la 5 min cât Azi e vizibil (o reîmprospătare costă ~15–25 de citiri Firestore). */
   enter() {
-    Poll.every('azi:data', 60000, () => Azi.load(false), true);
+    Poll.every('azi:data', 300000, () => Azi.load(false), true);
   },
   /** O dată la intrare, pentru punctele de stare din navigare. */
   prefetch() { if (!Azi.data) Azi.fetch().then(d => { if (d) Site.setLinks(d.links); }).catch(() => {}); },
@@ -41,7 +42,7 @@ const Azi = {
         h('span', {class: 'tile-foot', text: 'Noaptea trecută'}));
     } else {
       somn = h('a', {href: '#somn', class: 'card tile-hero tile-night'}, h('div', {class: 'tile-top'}, monoLabel('STINGEREA'), icon('moon', 18, 'dimmed')),
-        h('div', {class: 'tile-big'}, hero('—')), h('span', {class: 'tile-foot', text: 'Nicio noapte înregistrată'}));
+        h('div', {class: 'tile-big'}, hero('—')), h('span', {class: 'tile-foot', text: 'Nimic azi-noapte'}));
     }
     const side = h('div', {class: 'azi-side'}, mascot({size: 150, state: share === 1 ? 'happy' : !onCount ? 'thinking' : 'idle', hat: 'helmet', bubble}), warmQuote('general', 3));
     const links = h('div', {class: 'links'}, (d.links || []).map(l => linkTile(l)));

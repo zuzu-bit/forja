@@ -1,5 +1,7 @@
 // CAMARAZI · Prieteni — aceiași camarazi ca în aplicație (Firestore, prin /insights/api/cerc): stare, distanță, vârsta
-// poziției, ♪ ce ascultă; familia; codul de invitație al aplicației; comutatorul „Din agendă” (/v2/social/contacts/discovery).
+// poziției, ♪ ce ascultă; familia; codul de invitație al aplicației; starea „Din agendă” (/v2/social/state). Comutatorul e pe
+// telefon: el ține numărul, alegerea și contractul care o acoperă (DESIGN-4.4 §3.6), iar sincronizarea zilnică a agendei ar
+// reface o listare oprită de aici. Site-ul doar arată ce e.
 const Camarazi = {
   body: null, grid: null, side: null, discovery: null, sub: null,
   mount(body) {
@@ -47,30 +49,16 @@ const Camarazi = {
       code ? h('p', {class: 'invite-code', text: String(code).toUpperCase()}) : h('p', {class: 'muted', text: 'Codul apare după prima deschidere a Camarazilor în FORJA.'}),
       code ? copy : null);
     const disc = Camarazi.discovery;
-    const toggle = sw(!!disc?.on, 'Din agendă', on => Camarazi.setDiscovery(on));
-    toggle.disabled = !disc;
     const discCard = h('div', {class: 'card disc-card'},
-      h('label', {class: 'toggle-row'}, h('span', {class: 'toggle-text'}, h('b', {text: 'Din agendă'}), h('span', {class: 'toggle-sub', id: 'camarazi-disc-sub', text: disc ? (disc.on ? 'Te găsesc după număr' + (disc.until ? ' · până la ' + fmt.day(disc.until) : '') : 'Oprit') : 'Se verifică…'})), toggle));
+      h('div', {class: 'toggle-row'}, h('span', {class: 'toggle-text'}, h('b', {text: 'Din agendă'}), h('span', {class: 'toggle-sub', id: 'camarazi-disc-sub', text: disc ? (disc.on ? 'Te găsesc după număr' + (disc.until ? ' · până la ' + fmt.day(disc.until) : '') : 'Oprit') : 'Se verifică…'})),
+        h('i', {class: 'dot ' + (disc?.on ? 'on' : 'off'), 'aria-hidden': 'true'})),
+      h('p', {class: 'muted', id: 'camarazi-disc-note', text: 'Se schimbă din FORJA, la Profil.'}));
     fill(Camarazi.side, codeCard, discCard);
   },
   async loadDiscovery() {
     try { const st = await api('/v2/social/state'); Camarazi.discovery = {on: !!st?.me?.discoverable, until: st?.me?.discovery_until || null}; }
     catch (e) { if (e?.name === 'AbortError') return; Camarazi.discovery = null; }
     if (Circle.data && Site.current === 'camarazi') Camarazi.renderSide(Circle.data);
-  },
-  async setDiscovery(on) {
-    if (on) {
-      // Serverul cere un token proaspăt (≤ 5 min) ca să lege numărul de cont.
-      await Auth.renew();
-      try { const r = await api('/v2/social/contacts/discovery', {method: 'POST', body: {consent: true}}); Camarazi.discovery = {on: true, until: r?.until || null}; }
-      catch (e) { if (e?.status === 403) throw new ApiError('Adaugă numărul tău în FORJA, la Profil.', 403); throw e; }
-      toast('Te găsesc după număr.', true);
-    } else {
-      await api('/v2/social/contacts/discovery', {method: 'DELETE'});
-      Camarazi.discovery = {on: false, until: null};
-      toast('Din agendă e oprit.');
-    }
-    const sub = $('camarazi-disc-sub'); if (sub) sub.textContent = Camarazi.discovery.on ? 'Te găsesc după număr' + (Camarazi.discovery.until ? ' · până la ' + fmt.day(Camarazi.discovery.until) : '') : 'Oprit';
   },
   reset() { Camarazi.discovery = null; }
 };

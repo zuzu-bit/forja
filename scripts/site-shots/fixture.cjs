@@ -165,9 +165,9 @@ function rich(now = NOW) {
     ratie: {targets: {kcal: 2100, protein: 120, carbs: 230, fat: 70}, days: ratieDays},
     mars: {activities: routes.map(r => ({id: r.id, type: r.type, startAt: r.startAt, endAt: r.startAt + r.durationS * 1000, distanceM: r.distanceM, durationS: r.durationS, kcal: Math.round(r.distanceM / 14), polyline: r.polyline}))
       .concat([{id: 'a35', type: 'walk', startAt: now - 8 * DAY, endAt: now - 8 * DAY + 1800000, distanceM: 2100, durationS: 1800, kcal: 120, polyline: ''}]),
-      workouts: [{id: 'w12', startAt: now - 5 * HOUR, endAt: now - 4.2 * HOUR, durationS: 2880, title: 'Forță · picioare', kind: 'forță', sets: 16, volumeKg: 5840, kcal: 310},
-        {id: 'w11', startAt: now - 2 * DAY, endAt: now - 2 * DAY + 2400000, durationS: 2400, title: 'Împins și tras', kind: 'forță', sets: 14, volumeKg: 4210, kcal: 260},
-        {id: 'w10', startAt: now - 4 * DAY, endAt: now - 4 * DAY + 900000, durationS: 900, title: 'Mobilitate', kind: 'mobilitate', sets: 6, volumeKg: null, kcal: 70}],
+      workouts: [{id: 'w12', startAt: now - 5 * HOUR, endAt: now - 4.2 * HOUR, durationS: 2880, title: 'Forță · picioare', kind: 'forta', sets: 16, volumeKg: 5840, kcal: 310},
+        {id: 'w11', startAt: now - 2 * DAY, endAt: now - 2 * DAY + 2400000, durationS: 2400, title: 'Împins și tras', kind: 'forta', sets: 14, volumeKg: 4210, kcal: 260},
+        {id: 'w10', startAt: now - 4 * DAY, endAt: now - 4 * DAY + 900000, durationS: 900, title: 'Mobilitate', kind: 'acasa', sets: 6, volumeKg: null, kcal: 70}],
       week: {km: 27.1, minutes: 312, sessions: 7}},
     muzica: {now: {title: 'Vama Veche', artist: 'Vama', app: 'Spotify', at: now - 2 * MIN},
       summary: {updatedAt: now - 3 * HOUR, windowDays: 7, totalMinutes: 612, top: [
@@ -211,7 +211,8 @@ function lana(now = NOW) {
     {id: 'p4', lat: 44.4288, lng: 26.1015, name: '', stars: 0, note: '', recommended: false, stay_ms: 5.1 * HOUR, first_at: now - 3 * DAY, last_at: now - 3 * DAY, visits: 1}].map(p => ({...p, lon: p.lng, updated_at: now - DAY}));
   const routes = [['a12', 'walk', [P.cismigiu, P.universitate, P.unirii], 26], ['a11', 'run', [P.herastrau, P.victoriei], 76], ['a10', 'walk', [P.victoriei, P.romana, P.cismigiu], 150]]
     .map(([rid, type, pts, agoH], i) => ({id: rid, type, startAt: now - agoH * HOUR, distanceM: [2700, 5100, 3300][i], durationS: [2100, 1980, 2700][i], polyline: polyline(pts)}));
-  const nights = [night(4, day0 - DAY - 35 * MIN, 412, 79, 'ready', {summary: 'Ai dormit bine. Ai vorbit de două ori prin somn, scurt.'}), night(3, day0 - 2 * DAY - 10 * MIN, 385, 74, 'ready'), night(2, day0 - 3 * DAY - 70 * MIN, 450, 83, 'none'), night(1, day0 - 5 * DAY - 20 * MIN, 398, 71, 'none')];
+  // Azi arată doar noaptea încheiată în ultimele 36 h (site-api.mjs), deci ultima noapte e cea de azi-noapte.
+  const nights = [night(4, day0 - 35 * MIN, 412, 79, 'ready', {summary: 'Ai dormit bine. Ai vorbit de două ori prin somn, scurt.'}), night(3, day0 - 2 * DAY - 10 * MIN, 385, 74, 'ready'), night(2, day0 - 3 * DAY - 70 * MIN, 450, 83, 'none'), night(1, day0 - 5 * DAY - 20 * MIN, 398, 71, 'none')];
   const somnDetail = Object.fromEntries(nights.filter(n => n.audio === 'ready').map(n => [n.id, nightDetail(n)]));
   nights.filter(n => n.audio === 'ready').forEach(n => somnDetail[n.id].chunks.forEach(c => { blobs['chunk:' + n.id + ':' + c.i] = {audio: true}; }));
   const today = [meal(day0 + 9 * HOUR, 0, 'Omletă cu legume', 380, 24, 10, 26, 250, 'ESTIMAT', 0.74), meal(day0 + 14 * HOUR, 1, 'Paste cu pui', 690, 42, 82, 19, 420, 'ESTIMAT', 0.66)];
@@ -222,7 +223,7 @@ function lana(now = NOW) {
     azi: {me: {uid: 'lana-uid', name: 'Lana', email: 'lana@example.test'},
       today: {date: dateKey(now), kcal: 1070, kcalTarget: 1900, protein: 66, carbs: 92, fat: 45, meals: 2, moveMin: 35, km: 2.7, workouts: 0},
       night: {id: nights[0].id, startAt: nights[0].startAt, endAt: nights[0].endAt, minutes: nights[0].minutes, score: nights[0].score, summary: nights[0].summary},
-      links: links(now, {teren: ['on', 70 * MIN, 89], camarazi: ['on', 4 * MIN, 3], gasire: ['on', 2 * MIN, 1], inventar: ['on', 26 * HOUR, 2], somn: ['stale', 30 * HOUR, 4], ratie: ['on', 5.5 * HOUR, 2], mars: ['stale', 26 * HOUR, 3], muzica: ['on', 5 * HOUR, 7], paza: ['on', 40 * MIN, 3], cont: ['on', DAY, null]}),
+      links: links(now, {teren: ['on', 70 * MIN, 89], camarazi: ['on', 4 * MIN, 3], gasire: ['on', 2 * MIN, 1], inventar: ['on', 26 * HOUR, 2], somn: ['on', 13 * HOUR, 4], ratie: ['on', 5.5 * HOUR, 2], mars: ['stale', 26 * HOUR, 3], muzica: ['on', 5 * HOUR, 7], paza: ['on', 40 * MIN, 3], cont: ['on', DAY, null]}),
       updated_at: now - 30000},
     cerc: {me: {lat: 44.43872, lng: 26.09358, at: now - 4 * MIN, ghost: false, ghostUntil: null, state: 'idle', nowPlaying: null, exploreCells: cells.length},
       friends: [
@@ -238,7 +239,7 @@ function lana(now = NOW) {
     ratie: {targets: {kcal: 1900, protein: 100, carbs: 200, fat: 65}, days: [dayTotals(dateKey(now), today), dayTotals(dateKey(now - DAY), [meal(day0 - DAY + 9 * HOUR, 0, 'Iaurt cu granola', 330, 15, 42, 11, 250, 'EXACT · COD DE BARE', 1), meal(day0 - DAY + 13 * HOUR, 1, 'Salată cu ton', 520, 34, 28, 29, 380, 'ESTIMAT', 0.7), meal(day0 - DAY + 20 * HOUR, 2, 'Supă cremă de linte', 460, 22, 58, 12, 450, 'MANUAL', 1)]),
       dayTotals(dateKey(now - 2 * DAY), [meal(day0 - 2 * DAY + 13 * HOUR, 1, 'Sarmale', 780, 32, 48, 44, 400, 'ESTIMAT', 0.6), meal(day0 - 2 * DAY + 19 * HOUR, 2, 'Omletă', 420, 26, 6, 30, 250, 'MANUAL', 1)])]},
     mars: {activities: routes.map(r => ({id: r.id, type: r.type, startAt: r.startAt, endAt: r.startAt + r.durationS * 1000, distanceM: r.distanceM, durationS: r.durationS, kcal: Math.round(r.distanceM / 15), polyline: r.polyline})),
-      workouts: [{id: 'w3', startAt: now - 2 * DAY, endAt: now - 2 * DAY + 2700000, durationS: 2700, title: 'Instrucție · tot corpul', kind: 'forță', sets: 15, volumeKg: 3120, kcal: 240}, {id: 'w2', startAt: now - 5 * DAY, endAt: now - 5 * DAY + 2400000, durationS: 2400, title: 'Împins', kind: 'forță', sets: 12, volumeKg: 2480, kcal: 200}],
+      workouts: [{id: 'w3', startAt: now - 2 * DAY, endAt: now - 2 * DAY + 2700000, durationS: 2700, title: 'Instrucție · tot corpul', kind: 'forta', sets: 15, volumeKg: 3120, kcal: 240}, {id: 'w2', startAt: now - 5 * DAY, endAt: now - 5 * DAY + 2400000, durationS: 2400, title: 'Împins', kind: 'forta', sets: 12, volumeKg: 2480, kcal: 200}],
       week: {km: 11.1, minutes: 158, sessions: 5}},
     muzica: {now: null, summary: {updatedAt: now - 5 * HOUR, windowDays: 7, totalMinutes: 204, top: [
       {title: 'Anotimpul', artist: 'Subcarpați', plays: 9, minutes: 33, app: 'Spotify'}, {title: 'Fetele care ard', artist: 'Carla’s Dreams', plays: 8, minutes: 29, app: 'Spotify'}, {title: 'Tot ce vreau', artist: 'Holograf', plays: 6, minutes: 24, app: 'Spotify'},
