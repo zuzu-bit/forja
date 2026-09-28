@@ -178,6 +178,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 voice = voice,
                 onTarget = { if (targets == null) targetOpen = true else profileOpen = true },
                 onProfile = { profileOpen = true },
+                onVoice = { voiceOpen = true },
                 modifier = Modifier.padding(horizontal = 20.dp)
             )
 
@@ -231,7 +232,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                 ImageTile("Fotografiază", IMG_BOWL, onClick = { photograph() }, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(10.dp))
-                ImageTile("Scanează cod", IMG_COOK, onClick = onScan, modifier = Modifier.weight(1f))
+                ImageTile("Scanează cod", Media.mediaUrl("nut_scan.jpg") ?: IMG_COOK, onClick = onScan, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(10.dp))
                 ImageTile(
                     "Adaug manual",
@@ -265,23 +266,6 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 InfoDot(
                     title = "Cum funcționează",
                     text = "Poza pleacă la analiză cu model — prin serverul FORJA sau, dacă serverul lipsește, direct la Google cu cheia ta Gemini. Modelul estimează, nu cântărește. Codul de bare dă valori exacte din OpenFoodFacts. Nimic nu se salvează până nu confirmi."
-                )
-            }
-
-            // Profilul (rația din corp) și personalitatea Bucătarului.
-            Spacer(Modifier.height(18.dp))
-            SectionLabel("Setări", Modifier.padding(horizontal = 20.dp))
-            Spacer(Modifier.height(8.dp))
-            Column(Modifier.padding(horizontal = 20.dp)) {
-                SettingsRow(
-                    title = "Profilul tău",
-                    value = profile?.takeIf { it.complete }?.let { Targets.explain(it).removePrefix("din ") } ?: "greutate, înălțime, vârstă, obiectiv",
-                    onClick = { profileOpen = true }
-                )
-                SettingsRow(
-                    title = "Cum îți vorbește Bucătarul",
-                    value = voice.label,
-                    onClick = { voiceOpen = true }
                 )
             }
 
@@ -420,6 +404,7 @@ private fun DayCard(
     voice: MascotVoice,
     onTarget: () -> Unit,
     onProfile: () -> Unit,
+    onVoice: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val protein = meals.sumOf { it.protein }
@@ -505,24 +490,19 @@ private fun DayCard(
             Mascot(state = if (kcal > target) MascotState.Sorry else MascotState.Idle, hat = MascotHat.Chef, size = 56.dp, onTap = { lineSalt++ })
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("BUCĂTARUL · ${voice.label.uppercase()}", style = monoLabel(8, 0.14f).copy(color = Accent2))
+                // Atingi eticheta → alegi cum îți vorbește (fost rând de „Setări”).
+                Text(
+                    "BUCĂTARUL · ${voice.label.uppercase()} ›",
+                    style = monoLabel(8, 0.14f).copy(color = Accent2),
+                    modifier = Modifier
+                        .clip(ChipShape)
+                        .background(TabPillActive)
+                        .pressable(onVoice)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
                 Spacer(Modifier.height(2.dp))
                 Text(line, style = Body.copy(color = TextPrimary))
             }
-        }
-    }
-}
-
-/** Un rând de setări: titlu + valoarea curentă + „›”. */
-@Composable
-private fun SettingsRow(title: String, value: String, onClick: () -> Unit) {
-    ForjaCard(Modifier.fillMaxWidth().padding(bottom = 8.dp).pressable(onClick), padding = 12.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = BodyStrong.copy(fontSize = 14.sp))
-                Text(value, style = BodySmall.copy(color = TextDim), maxLines = 1)
-            }
-            Text("›", style = TitleModule.copy(fontSize = 22.sp, color = TextDim))
         }
     }
 }
