@@ -166,6 +166,8 @@ fun DashboardScreen(
                 }
             }
 
+            // Casca: dacă ai venit dintr-un mesaj, te așteaptă aici în aceeași poză, cu aceeași replică (o singură dată).
+            com.forja.app.core.notify.NudgeEcho(Modifier.padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 12.dp))
             Spacer(Modifier.height(4.dp))
 
             // Motivația zilei — imagine + citat, cu ghidul care „dansează"
