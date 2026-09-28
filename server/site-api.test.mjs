@@ -21,7 +21,7 @@ function encode(v) {
   return { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, encode(x)])) } };
 }
 class FakeFirestore {
-  docs = new Map(); reads = 0; requests = []; deny = new Set(); down = false;
+  docs = new Map(); reads = 0; requests = []; deny = new Set(); down = false; failWhen = null;
   set(path, data) { this.docs.set(path, structuredClone(data)); }
   doc(path, mask) {
     const data = this.docs.get(path);
@@ -44,6 +44,7 @@ class FakeFirestore {
     this.requests.push({ url, body: init.body ? JSON.parse(init.body) : null, auth: init.headers?.Authorization });
     if (this.down) throw new TypeError('network down');
     const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
+    if (this.failWhen?.(url, init.body ? JSON.parse(init.body) : null)) return json({ error: { status: 'UNAVAILABLE' } }, 503);
     if (!url.startsWith(BASE)) throw Error('unexpected host ' + url);
     const rest = url.slice(BASE.length);
     if (init.method === 'GET' || !init.method) {
@@ -294,6 +295,90 @@ test('cerc: Firestore down → the last answer from the DO, or 503 when there is
   assert.deepEqual(r.body.friends.map(x => x.uid), ['bob', 'dan'], 'a friend the rules refuse is left out, the others stay');
 });
 
+test('cerc: one failed read (friends batchGet, familyLoc) keeps the last full answer instead of an empty map', async () => {
+  const f = fixture();
+  seedCircle(f.fs);
+  f.fs.set('users/bob', { ...f.fs.docs.get('users/bob'), ghostUntil: -1 });
+  f.fs.set('familyLoc/bob', { allowed: ['alice'], lat: 44.45, lng: 26.12, locUpdatedAt: NOW - MIN, state: 'walk' });
+  let r = await f.call('/insights/api/cerc');
+  assert.deepEqual([r.body.friends.length, r.body.family.length], [3, 1]);
+  const storage = f.account('alice').ctx.storage;
+  // Only the friends' batchGet answers 503 (the own doc and familyLoc work).
+  resetSiteCache();
+  f.fs.failWhen = url => url.endsWith(':batchGet');
+  r = await f.call('/insights/api/cerc', { now: NOW + 30000 });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.friends.map(x => x.uid), ['bob', 'carol', 'dan'], 'friends do not vanish');
+  assert.equal(r.body.updated_at, NOW, 'served with its own time');
+  assert.equal((await storage.get('site-cache:cerc-live')).at, NOW, 'the DO copy is not overwritten');
+  // Only familyLoc fails.
+  resetSiteCache();
+  f.fs.failWhen = (url, body) => body?.structuredQuery?.from?.[0]?.collectionId === 'familyLoc';
+  r = await f.call('/insights/api/cerc', { now: NOW + 60000 });
+  assert.deepEqual([r.body.family.map(x => x.uid), r.body.updated_at], [['bob'], NOW]);
+  // Recovered: a normal refresh.
+  resetSiteCache();
+  f.fs.failWhen = null;
+  r = await f.call('/insights/api/cerc', { now: NOW + 90000 });
+  assert.deepEqual([r.body.friends.length, r.body.family.length, r.body.updated_at], [3, 1, NOW + 90000]);
+  // A first visit with the batchGet failing: the partial answer is served once, kept neither in the DO nor in memory.
+  resetSiteCache();
+  const g = fixture();
+  seedCircle(g.fs);
+  g.fs.failWhen = url => url.endsWith(':batchGet');
+  r = await g.call('/insights/api/cerc');
+  assert.equal(r.status, 200); assert.deepEqual(r.body.friends, []);
+  assert.equal(await g.account('alice').ctx.storage.get('site-cache:cerc-live'), undefined);
+  g.fs.failWhen = null;
+  r = await g.call('/insights/api/cerc', { now: NOW + 1000 });
+  assert.equal(r.body.friends.length, 3, 'the next poll reads again');
+});
+
+test('cerc: the memory copy never outlives 20 s from the time of its data; the DO copy leaves after 10 min', async t => {
+  let clock = NOW;
+  t.mock.method(Date, 'now', () => clock);
+  const f = fixture();
+  seedCircle(f.fs);
+  await f.call('/insights/api/cerc');
+  resetSiteCache();
+  let r = await f.call('/insights/api/cerc', { now: NOW + 15000 });
+  assert.equal(r.body.updated_at, NOW, 'another isolate takes the 15 s old copy from the DO');
+  f.fs.set('users/bob', { ...f.fs.docs.get('users/bob'), ghostUntil: -1 });
+  r = await f.call('/insights/api/cerc', { now: NOW + 25000 });
+  assert.equal(r.body.updated_at, NOW + 25000, 'same isolate, 25 s after the data: read again');
+  assert.equal(r.body.friends.find(x => x.uid === 'bob').ghost, true, 'a friend who turned ghost loses his pin within 20 s');
+  const storage = f.account('alice').ctx.storage;
+  assert.equal(storage.alarm, NOW + 10 * MIN, 'friends positions have an alarm');
+  clock = NOW + 25000 + 10 * MIN;
+  await f.account('alice').alarm();
+  assert.equal(await storage.get('site-cache:cerc-live'), undefined, 'removed 10 min after the last read');
+  assert(await storage.get('site-cache:cerc-slow'), 'own routes and places stay');
+});
+
+test('cerc: a run that reaches Firestore late, with an older date, joins "Străzile tale" within a day', async () => {
+  const f = fixture();
+  seedCircle(f.fs, 1);
+  const line = i => `44.4,26.${10 + i};44.41,26.${11 + i};44.42,26.${10 + i}`;
+  for (let i = 0; i < 10; i++) f.fs.set(`users/alice/activities/a${i}`, { type: 'run', startAt: NOW - (i + 1) * DAY, distanceM: 1000, durationS: 600, polyline: line(i) });
+  let r = (await f.call('/insights/api/cerc')).body;
+  assert.equal(r.routes.length, 10);
+  // The phone's offline queue delivers a walk from 3.5 days ago after the newer runs were indexed.
+  f.fs.set('users/alice/activities/late', { type: 'walk', startAt: NOW - 3.5 * DAY, distanceM: 700, durationS: 900, polyline: line(20) });
+  resetSiteCache();
+  r = (await f.call('/insights/api/cerc', { now: NOW + 11 * MIN })).body;
+  assert(!r.routes.some(x => x.id === 'late'), 'the 10-minute refresh only asks for newer runs');
+  resetSiteCache();
+  const before = f.fs.reads;
+  r = (await f.call('/insights/api/cerc', { now: NOW + DAY + 12 * MIN })).body;
+  assert.deepEqual(r.routes.slice(0, 4).map(x => x.id), ['a0', 'a1', 'a2', 'late']);
+  assert.equal(r.routes.length, 11);
+  assert(f.fs.reads - before < 40, 'the daily check is cheap: ' + (f.fs.reads - before));
+  resetSiteCache();
+  const q = f.fs.requests.length;
+  await f.call('/insights/api/cerc', { now: NOW + DAY + 23 * MIN });
+  assert(!f.fs.requests.slice(q).some(x => x.url.endsWith(':batchGet') && x.body.mask.fieldPaths.includes('polyline')), 'checked once a day, not every refresh');
+});
+
 test('azi: today, last night, and one link per section with on / stale / off', async t => {
   t.mock.method(Date, 'now', () => NOW);
   const f = fixture();
@@ -482,6 +567,26 @@ test('mars: activities with mini routes, workouts, and the 7-day totals', async 
   assert.equal(again.activities[1].polyline, null);
   assert.equal(f.fs.requests.filter(r => r.url.endsWith(':batchGet') && r.body.mask.fieldPaths.includes('polyline')).length, polylineReads, 'with Teren routes in the DO, no polyline is read again');
 });
+test('mars: runs beyond Teren\'s newest 30 get their mini maps over a few opens, each polyline read once; week is always 7 days', async () => {
+  const f = fixture();
+  for (let i = 0; i < 45; i++) f.fs.set(`users/alice/activities/a${i}`, { type: 'run', startAt: NOW - (i + 1) * 12 * HOUR, endAt: NOW - (i + 1) * 12 * HOUR + 600000, distanceM: 1000, durationS: 600, polyline: `44.4,26.1;44.41,26.1${i % 10};44.42,26.1` });
+  f.fs.set('users/alice/workouts/w1', { startAt: NOW - 5 * DAY, endAt: NOW - 5 * DAY + 1800000, durationS: 1800, title: 'Picioare', kind: 'gym', sets: 12 });
+  await f.call('/insights/api/cerc');
+  const reads = () => f.fs.requests.filter(r => r.url.endsWith(':batchGet') && r.body.mask.fieldPaths.join() === 'polyline').map(r => r.body.documents.length);
+  let b = (await f.call('/insights/api/mars?days=30')).body;
+  assert.equal(b.activities.length, 45);
+  assert.equal(b.activities.filter(a => a.polyline).length, 30 + 8, 'Teren\'s 30 + the next 8');
+  b = (await f.call('/insights/api/mars?days=30')).body;
+  assert.equal(b.activities.filter(a => a.polyline).length, 45, 'the next open reads the rest');
+  b = (await f.call('/insights/api/mars?days=30')).body;
+  assert.equal(b.activities.filter(a => a.polyline).length, 45);
+  assert.deepEqual(reads(), [8, 7], 'every polyline is read once, then kept in the DO');
+  const short = (await f.call('/insights/api/mars?days=3')).body;
+  assert.deepEqual(short.activities.map(a => a.id), ['a0', 'a1', 'a2', 'a3', 'a4', 'a5']);
+  assert.deepEqual(short.workouts, []);
+  assert.deepEqual(short.week, b.week, '?days=3 still gets the 7-day totals');
+  assert.deepEqual(b.week, { km: 14, minutes: 14 * 10 + 30, sessions: 15 });
+});
 test('muzica: the live song only while fresh, the weekly top from settings/music', async () => {
   const f = fixture();
   f.fs.set('users/alice', { name: 'Lana', nowPlaying: { title: 'Fetele care ard', artist: 'Trupa', app: 'Spotify', at: NOW - 4 * MIN } });
@@ -503,25 +608,44 @@ test('usage rollup: cumulative snapshots become per-day minutes, split at local 
   // A session that started at 23:00 yesterday: 40 min of Instagram, the last use at 23:50 → all yesterday.
   const from = midnight - HOUR;
   await applyUsageRollup(s, 'sess', snap(from, midnight + 30 * MIN, [['com.instagram.android', 40 * MIN, 6, midnight - 10 * MIN], ['com.spotify.music', 20 * MIN, 2]]), NOW);
-  let d = await usageDays(s);
+  let d = await usageDays(s, 7, NOW);
   // Spotify was used until 00:30: its 20 min spread over 23:00–00:30 → 13 min yesterday, 7 min today (+ its 2 opens today).
   assert.deepEqual(d.days.map(x => [x.date, x.totalMin]), [['2026-09-28', 7], ['2026-09-27', 53]]);
   assert.deepEqual(d.days[1].apps.map(a => [a.pkg, a.minutes, a.opens]), [['com.instagram.android', 40, 6], ['com.spotify.music', 13, 0]]);
   // Next snapshot: only the difference counts, all of it after midnight.
   await applyUsageRollup(s, 'sess', snap(from, midnight + 90 * MIN, [['com.instagram.android', 55 * MIN, 8], ['com.spotify.music', 20 * MIN, 2]]), NOW);
-  d = await usageDays(s);
+  d = await usageDays(s, 7, NOW);
   assert.deepEqual(d.days[0].apps.map(a => [a.pkg, a.minutes, a.opens]), [['com.instagram.android', 15, 2], ['com.spotify.music', 7, 2]]);
   assert.equal(d.updated_at, NOW);
   // A retry of an older snapshot changes nothing; another phone (session) adds its own time.
   await applyUsageRollup(s, 'sess', snap(from, midnight + 60 * MIN, [['com.instagram.android', 99 * MIN, 50]]), NOW);
   await applyUsageRollup(s, 'phone2', snap(midnight + 2 * HOUR, midnight + 3 * HOUR, [['com.instagram.android', 10 * MIN, 1]]), NOW);
-  d = await usageDays(s);
+  d = await usageDays(s, 7, NOW);
   assert.equal(d.days[0].apps[0].minutes, 25);
   // 14 days kept.
   for (let i = 1; i <= 20; i++) await applyUsageRollup(s, 'old' + i, snap(NOW - i * DAY - HOUR, NOW - i * DAY, [['a.b', 10 * MIN, 1]]), NOW);
   const all = [...(await s.list({ prefix: 'usage-day:' })).keys()].sort();
   assert.equal(all.length, 14); assert.equal(all[0], 'usage-day:' + localDate(NOW - 13 * DAY));
-  assert.equal((await usageDays(s)).days.length, 7);
+  assert.equal((await usageDays(s, 7, NOW)).days.length, 7);
+});
+test('paza: days older than the window are neither shown nor kept, even when the phone stops uploading', async t => {
+  let clock = NOW;
+  t.mock.method(Date, 'now', () => clock);
+  const f = fixture(), account = f.account('alice'), storage = account.ctx.storage;
+  const put = (k, min) => { const date = localDate(NOW - k * DAY); return storage.put('usage-day:' + date, { date, updated_at: NOW - k * DAY, apps: { 'com.x': { label: 'X', ms: min * MIN, opens: 1 } } }); };
+  for (const k of [20, 15, 9, 8]) await put(k, 10);
+  await put(3, 30);
+  const r = await f.call('/insights/api/paza');
+  assert.deepEqual(r.body.days.map(x => x.date), [localDate(NOW - 3 * DAY)], 'weeks-old days are never served as "the last 7"');
+  assert.equal(r.body.updated_at, NOW - 3 * DAY);
+  await account.alarm();
+  assert.deepEqual([...(await storage.list({ prefix: 'usage-day:' })).keys()].sort(), [9, 8, 3].map(k => 'usage-day:' + localDate(NOW - k * DAY)), 'the alarm keeps 14 days');
+  assert.equal(storage.alarm, localMidnight(NOW + 5 * DAY), 'the next alarm is when the oldest kept day leaves the window');
+  clock = NOW + 20 * DAY;
+  await account.alarm();
+  assert.equal((await storage.list({ prefix: 'usage-day:' })).size, 0, 'no upload for 20 days: nothing left');
+  assert.equal(storage.alarm, null);
+  assert.deepEqual((await f.call('/insights/api/paza', { now: clock })).body, { updated_at: null, days: [] });
 });
 test('paza: the session upload feeds the rollup; the site reads the last 7 days', async t => {
   t.mock.method(Date, 'now', () => NOW);

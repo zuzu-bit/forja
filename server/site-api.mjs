@@ -12,18 +12,21 @@
 //   cerc      live (≤ 20 s, memorie + DO):  1 (eu) + N (batchGet) + max(1,F)                  ≈ 12 citiri cu 10 prieteni
 //             lista de prieteni (≤ 10 min, DO): max(1,N)                                         ≈ 10 / 10 min
 //             lent (≤ 10 min, DO): max(1,R) locuri + 1 (alergări mai noi decât ultima cunoscută)     ≈ 6 / 10 min
-//             traseele se construiesc o singură dată (pagini de 5, ≤ 600 KB de polilinii pe cerere) și rămân în DO
+//             traseele se construiesc o singură dată (pagini de 5, ≤ 600 KB de polilinii pe cerere) și rămân în DO;
+//             o dată pe zi, ~30–40 de citiri caută alergările ajunse târziu în Firestore (cu startAt mai vechi)
 //             → la un poll de 30 s (doar cât Teren/Camarazi e vizibil): ≈ 120×12 + 6×10 + 6×6 ≈ 1 540 de citiri pe oră de
 //               site deschis, adică ~32 de ore de privit continuu înainte de plafonul zilnic.
 //   azi       3 (eu, ținte, muzică) + mesele de azi + ≤ 60 activități și ≤ 60 antrenamente pe 7 zile + 2 nopți + 1 inventar
 //             (+ N dacă lista de prieteni nu e în DO)                                            ≈ 15–25, memorie 20 s
 //   somn      nopțile din `days` (≤ 100) + 1 listare R2 · somn/<id>: 1 + 1 citire și 1 listare R2 · chunk: 0 (doar R2)
 //   ratie     1 (ținte) + mesele din `days` (≤ 800)                                              ≈ 60–120 pe 30 de zile
-//   mars      activitățile (fără polilinii) + antrenamentele din `days` (≤ 200 + ≤ 200) + ≤ 8 polilinii lipsă din DO
+//   mars      activitățile (fără polilinii) + antrenamentele din max(`days`, 7) (≤ 200 + ≤ 200) + ≤ 8 polilinii care nu sunt
+//             nici în traseele Teren, nici în memoria Marș din DO (se păstrează acolo, deci nu se citesc a doua oară)
 //   muzica    2 · paza 0 · inventar ≤ 20 · cont 7
 // Secțiunile în afară de Teren/Camarazi se citesc la deschidere, nu în buclă.
 import { firestoreFields, accountStub, internalRequest } from './insights-ai.mjs';
 import { localDate, localMidnight, epochDayDate, DAY } from './site-time.mjs';
+import { CERC_LIVE_MAX_MS } from './site-store.mjs';
 
 const PROJECT = 'forja-65093';
 const DOCS = `projects/${PROJECT}/databases/(default)/documents`;
@@ -31,7 +34,8 @@ const BASE = `https://firestore.googleapis.com/v1/${DOCS}`;
 const MIN = 60000, HOUR = 3600000;
 export const SITE_RULES = Object.freeze({
   cerc_live_ms: 20000, cerc_slow_ms: 10 * MIN, friends_ms: 10 * MIN, azi_ms: 20000, now_playing_ms: 10 * MIN,
-  contract_current: 3, friends_max: 100, routes: 30, route_points: 300, mini_route_points: 120, route_page: 5, route_bytes: 600 * 1024, mars_polylines: 8, stale_max_ms: 10 * MIN,
+  contract_current: 3, friends_max: 100, routes: 30, route_points: 300, mini_route_points: 120, route_page: 5, route_bytes: 600 * 1024,
+  routes_check_ms: DAY, mars_polylines: 8, mars_cached: 250, stale_max_ms: CERC_LIVE_MAX_MS,
   somn_days: [1, 60, 14], ratie_days: [1, 90, 30], mars_days: [1, 90, 30], inventar_runs: 20, events_max: 1000,
 });
 const SECTIONS = ['azi', 'cerc', 'somn', 'ratie', 'mars', 'muzica', 'paza', 'inventar', 'cont'];
@@ -61,7 +65,7 @@ const docOf = d => ({ ...firestoreFields(d.fields), id: d.name.split('/').pop() 
 export const where = (field, op, value) => ({ fieldFilter: { field: { fieldPath: field }, op, value: encode(value) } });
 
 export class FirestoreReader {
-  constructor(uid, token, fetcher = fetch) { this.uid = uid; this.token = token; this.fetcher = fetcher; this.reads = 0; this.calls = 0; this.okCalls = 0; }
+  constructor(uid, token, fetcher = fetch) { this.uid = uid; this.token = token; this.fetcher = fetcher; this.reads = 0; this.calls = 0; this.okCalls = 0; this.failures = 0; }
   /** Rules may refuse a read (403): that data is simply not visible. Network errors and 5xx count as failures. */
   async send(url, body) {
     this.calls++;
@@ -69,15 +73,18 @@ export class FirestoreReader {
     try {
       res = await this.fetcher(url, { method: body ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + this.token, ...(body ? { 'content-type': 'application/json' } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(10000) });
-    } catch { return { failed: true }; }
+    } catch { this.failures++; return { failed: true }; }
     if (res.status === 404 || res.status === 403) { this.okCalls++; return { absent: true, status: res.status }; }
-    if (!res.ok) return { failed: true };
-    try { const data = await res.json(); this.okCalls++; return { data }; } catch { return { failed: true }; }
+    if (!res.ok) { this.failures++; return { failed: true }; }
+    try { const data = await res.json(); this.okCalls++; return { data }; } catch { this.failures++; return { failed: true }; }
   }
   get unreachable() { return this.calls > 0 && this.okCalls === 0; }
-  /** A checkpoint; `failedSince(mark)` is true when every call made after it failed (and there was at least one). */
-  mark() { return { calls: this.calls, ok: this.okCalls }; }
-  failedSince(m) { return this.calls > m.calls && this.okCalls === m.ok; }
+  /**
+   * A checkpoint; `failedSince(mark)` is true when ANY call made after it failed (network, timeout, 5xx). get() and batchGet()
+   * answer null for a failed document just like for a missing one, so this is how a caller tells "gone" from "not read".
+   */
+  mark() { return { failures: this.failures }; }
+  failedSince(m) { return this.failures > m.failures; }
   /** One document (1 read) with a field mask; null when missing, unreadable or unreachable. */
   async get(path, fields) {
     const qs = fields.map(f => 'mask.fieldPaths=' + encodeURIComponent(f)).join('&');
@@ -217,7 +224,6 @@ async function cachedFriends(env, fs, uid, now, cache) {
   return { uids: uids || (Array.isArray(hit?.uids) ? hit.uids : []), write: uids ? { at: now, uids } : null, failed: !uids };
 }
 async function cercLive(fs, uid, friends, now) {
-  const mark = fs.mark();
   const [meDoc, docs, familyRows] = await Promise.all([
     fs.get(`users/${uid}`, [...FRIEND_FIELDS, 'inviteCode']),
     fs.batchGet(friends.map(f => `users/${f}`), FRIEND_FIELDS),
@@ -244,7 +250,7 @@ async function cercLive(fs, uid, friends, now) {
     // Ghost for everyone else, visible to you as family (MapScreen.kt:138-147): the position comes only through familyLoc.
     if (ghost && fam) family.push({ uid: f, name, initials: initials(name), lat: fam.lat, lng: fam.lng, at: time(fam.locUpdatedAt) });
   }
-  return { me, friends: out.sort(byName), family: family.sort(byName), inviteCode: str(meDoc?.inviteCode, 40), failed: fs.failedSince(mark) };
+  return { me, friends: out.sort(byName), family: family.sort(byName), inviteCode: str(meDoc?.inviteCode, 40) };
 }
 const ROUTE_FIELDS = ['type', 'startAt', 'distanceM', 'durationS', 'polyline'];
 /**
@@ -252,9 +258,13 @@ const ROUTE_FIELDS = ['type', 'startAt', 'distanceM', 'durationS', 'polyline'];
  * never edited, so after the first build each refresh only asks for activities newer than the newest known one (1 read).
  * The first build goes back 5 activities at a time and stops at ~600 KB of polylines per request (the free Workers CPU budget);
  * the next polls continue it until 30 routes or the oldest activity.
+ * Once a day after that, one id-only query over the range of the kept routes finds runs that reached Firestore late with an
+ * older startAt (the phone's offline queue, a reinstall that re-uploads history) and reads their polylines, 5 per refresh.
  */
-async function updateRoutes(fs, uid, prev) {
-  const st = { routes: [...(prev?.routes || [])], none: [...(prev?.none || [])], newest: prev?.newest ?? null, oldest: prev?.oldest ?? null, done: prev?.done === true };
+async function updateRoutes(fs, uid, prev, now) {
+  const st = { routes: [...(prev?.routes || [])], none: [...(prev?.none || [])], newest: prev?.newest ?? null, oldest: prev?.oldest ?? null, done: prev?.done === true,
+    checkedAt: num(prev?.checkedAt) };
+  const built = st.done;
   let bytes = 0, failed = false;
   const take = rows => {
     for (const a of rows) {
@@ -282,9 +292,29 @@ async function updateRoutes(fs, uid, prev) {
     take(rows);
     if (rows.length < SITE_RULES.route_page) st.done = true;
   }
+  // Late arrivals: at most once a day, only on a finished build (a build in progress will page over them anyway).
+  if (!failed && built && bytes < SITE_RULES.route_bytes && (st.checkedAt === null || now - st.checkedAt > SITE_RULES.routes_check_ms)) {
+    const kept = [...st.routes].sort((a, b) => b.startAt - a.startAt);
+    const cutoff = kept.length >= SITE_RULES.routes ? kept[SITE_RULES.routes - 1].startAt : null;
+    const rows = await fs.query(`users/${uid}`, 'activities', { filters: cutoff === null ? [] : [where('startAt', 'GREATER_THAN_OR_EQUAL', cutoff)], orderBy: 'startAt', limit: 100, select: ['startAt'] });
+    if (!rows) failed = true;
+    else {
+      const known = new Set([...st.routes.map(r => r.id), ...st.none]);
+      const late = rows.filter(a => time(a.startAt) && !known.has(a.id)), batch = late.slice(0, SITE_RULES.route_page);
+      const mark = fs.mark();
+      const docs = await fs.batchGet(batch.map(a => `users/${uid}/activities/${a.id}`), ROUTE_FIELDS);
+      if (fs.failedSince(mark)) failed = true;
+      else {
+        take(batch.map(a => docs.get(`users/${uid}/activities/${a.id}`)).filter(Boolean));
+        if (late.length <= batch.length) st.checkedAt = now;
+      }
+    }
+  }
   st.routes.sort((a, b) => b.startAt - a.startAt);
   st.routes = st.routes.slice(0, SITE_RULES.routes);
   if (st.routes.length >= SITE_RULES.routes) st.done = true;
+  // A build that has just finished has seen every activity up to now.
+  if (!built && st.done) st.checkedAt = now;
   return { ...st, failed };
 }
 async function recommendedPlaces(fs, uid) {
@@ -301,21 +331,26 @@ async function cerc(ctx) {
   let live = cache?.['cerc-live'], slow = cache?.['cerc-slow'];
   const writes = {};
   if (!live || now - live.at > SITE_RULES.cerc_live_ms) {
+    const mark = fs.mark();
     const friends = await cachedFriends(env, fs, uid, now, cache);
     if (friends.write) writes.friends = friends.write;
     const fresh = await cercLive(fs, uid, friends.uids, now);
+    // Any failed read (friend list, own doc, friends' batchGet, familyLoc) makes the refresh incomplete: get/batchGet answer
+    // null for a document they could not read, so friends or family would silently vanish from the map.
+    const failed = fs.failedSince(mark);
     // A failed refresh never overwrites what we had: an answer up to 10 min old (with its own updated_at) beats an empty map.
     // Older than that it is not served, so a friend who has since turned ghost cannot reappear from the cache.
-    if (fresh.failed && live && now - live.at <= SITE_RULES.stale_max_ms) ctx.stale = true;
+    if (failed && live && now - live.at <= SITE_RULES.stale_max_ms) ctx.stale = true;
     else {
       live = { at: now, me: fresh.me, friends: fresh.friends, family: fresh.family, inviteCode: fresh.inviteCode };
-      if (!fresh.failed && !friends.failed) writes['cerc-live'] = live;
+      // Nothing to fall back on: the partial answer is served once, but neither the DO nor the memory keeps it.
+      if (failed) ctx.partial = true; else writes['cerc-live'] = live;
     }
   }
   const due = !slow || now - slow.at > SITE_RULES.cerc_slow_ms, building = slow && !slow.done;
   if (due || building) {
     const recommended = due ? await recommendedPlaces(fs, uid) : slow.recommended;
-    const routes = await updateRoutes(fs, uid, slow);
+    const routes = await updateRoutes(fs, uid, slow, now);
     if (recommended === null && routes.failed && slow && now - slow.at <= SITE_RULES.stale_max_ms) ctx.stale = true;
     else {
       const { failed, ...kept } = routes;
@@ -325,7 +360,8 @@ async function cerc(ctx) {
   }
   if (Object.keys(writes).length) await account(env, uid, '/internal/site/cache', 'POST', writes);
   const out = { me: live.me, friends: live.friends, family: live.family, recommended: slow.recommended, routes: slow.routes, inviteCode: live.inviteCode, updated_at: live.at };
-  if (!fs.unreachable && !ctx.stale) remember(key, out, now);
+  // Remembered from the data's own time: a copy taken from the DO at 19 s old leaves the memory 1 s later, not 20 s later.
+  if (!fs.unreachable && !ctx.stale && !ctx.partial) remember(key, out, live.at);
   return out;
 }
 
@@ -477,28 +513,39 @@ function weekOf(activities, workouts, now) {
   return { km: round1(sum(a, x => x.distanceM) / 1000), minutes: Math.round((sum(a, x => x.durationS) + sum(w, x => x.durationS)) / 60), sessions: a.length + w.length };
 }
 /**
- * Mini route maps: from the routes already simplified for Teren (DO), else read for at most 8 activities per request
- * (the polylines are the heavy part of an activity); the rest stays null until Teren has built its routes.
+ * Mini route maps, cheapest source first: the routes already simplified for Teren (DO `cerc-slow`, newest 30), then Marș's own
+ * cache (DO `mars-routes`: id → 120-point polyline or null, the last 250 read), and only then Firestore, at most 8 polylines per
+ * open (they are the heavy part of an activity). Each open reads the next 8 missing ones, so a long list fills in over a few opens
+ * and nothing is read twice.
  */
 async function mars({ env, fs, uid, now, url }) {
   const days = dayParam(url, SITE_RULES.mars_days), since = now - days * DAY;
+  // `week` is always the last 7 days, even when the list asks for fewer.
+  const from = Math.min(since, now - 7 * DAY);
   const [acts, works, cache] = await Promise.all([
-    fs.query(`users/${uid}`, 'activities', { filters: [where('startAt', 'GREATER_THAN_OR_EQUAL', since)], orderBy: 'startAt', limit: 200, select: ACTIVITY_FIELDS.filter(f => f !== 'polyline') }),
-    fs.query(`users/${uid}`, 'workouts', { filters: [where('startAt', 'GREATER_THAN_OR_EQUAL', since)], orderBy: 'startAt', limit: 200, select: WORKOUT_FIELDS }),
-    account(env, uid, '/internal/site/cache?names=cerc-slow'),
+    fs.query(`users/${uid}`, 'activities', { filters: [where('startAt', 'GREATER_THAN_OR_EQUAL', from)], orderBy: 'startAt', limit: 200, select: ACTIVITY_FIELDS.filter(f => f !== 'polyline') }),
+    fs.query(`users/${uid}`, 'workouts', { filters: [where('startAt', 'GREATER_THAN_OR_EQUAL', from)], orderBy: 'startAt', limit: 200, select: WORKOUT_FIELDS }),
+    account(env, uid, '/internal/site/cache?names=cerc-slow,mars-routes'),
   ]);
-  const known = new Map((cache?.['cerc-slow']?.routes || []).map(r => [r.id, r.polyline]));
-  for (const id of cache?.['cerc-slow']?.none || []) known.set(id, null);
-  const missing = (acts || []).filter(a => time(a.startAt) && !known.has(a.id)).slice(0, SITE_RULES.mars_polylines);
+  const teren = new Map((cache?.['cerc-slow']?.routes || []).map(r => [r.id, r.polyline]));
+  for (const id of cache?.['cerc-slow']?.none || []) teren.set(id, null);
+  const own = new Map(Array.isArray(cache?.['mars-routes']?.routes) ? cache['mars-routes'].routes.filter(r => Array.isArray(r) && typeof r[0] === 'string') : []);
+  const allActs = (acts || []).filter(a => time(a.startAt)), inDays = allActs.filter(a => a.startAt >= since);
+  const missing = inDays.filter(a => !teren.has(a.id) && !own.has(a.id)).slice(0, SITE_RULES.mars_polylines);
   if (missing.length) {
+    const mark = fs.mark();
     const docs = await fs.batchGet(missing.map(a => `users/${uid}/activities/${a.id}`), ['polyline']);
-    for (const a of missing) known.set(a.id, docs.get(`users/${uid}/activities/${a.id}`)?.polyline ?? null);
+    const read = missing.map(a => [a.id, simplifyPolyline(docs.get(`users/${uid}/activities/${a.id}`)?.polyline, SITE_RULES.mini_route_points)]);
+    for (const [id, polyline] of read) own.set(id, polyline);
+    // A failed read is not remembered as "no route": it is tried again on the next open.
+    if (!fs.failedSince(mark)) await account(env, uid, '/internal/site/cache', 'POST', { 'mars-routes': { at: now, routes: [...own].slice(-SITE_RULES.mars_cached) } });
   }
-  const activities = (acts || []).filter(a => time(a.startAt)).map(a => ({ id: a.id, type: str(a.type, 20), startAt: a.startAt, endAt: time(a.endAt), distanceM: num(a.distanceM) ?? 0,
-    durationS: num(a.durationS) ?? 0, kcal: int(a.kcal), polyline: known.has(a.id) ? simplifyPolyline(known.get(a.id), SITE_RULES.mini_route_points) : null }));
+  const polylineOf = id => (teren.has(id) ? simplifyPolyline(teren.get(id), SITE_RULES.mini_route_points) : own.get(id) ?? null);
+  const activities = allActs.map(a => ({ id: a.id, type: str(a.type, 20), startAt: a.startAt, endAt: time(a.endAt), distanceM: num(a.distanceM) ?? 0,
+    durationS: num(a.durationS) ?? 0, kcal: int(a.kcal), polyline: a.startAt >= since ? polylineOf(a.id) : null }));
   const workouts = (works || []).filter(w => time(w.startAt)).map(w => ({ id: w.id, startAt: w.startAt, endAt: time(w.endAt), durationS: num(w.durationS) ?? 0, title: str(w.title, 80),
     kind: str(w.kind, 30), sets: int(w.sets) ?? 0, volumeKg: num(w.volumeKg), kcal: int(w.kcal) }));
-  return { activities, workouts, week: weekOf(activities, workouts, now) };
+  return { activities: activities.filter(a => a.startAt >= since), workouts: workouts.filter(w => w.startAt >= since), week: weekOf(activities, workouts, now) };
 }
 function musicSummary(m) {
   if (!m || !Array.isArray(m.top)) return null;

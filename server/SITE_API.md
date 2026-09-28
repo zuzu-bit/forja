@@ -31,22 +31,30 @@ Cheile R2 se construiesc numai din uid-ul verificat.
 - `routes`: ultimele 30 de activități cu traseu, simplificate (Douglas–Peucker ~5 m, cel mult 300 de puncte).
   În `mars`, traseele mici au cel mult 120 de puncte.
 - Listele pe zile (`ratie`, `paza`) conțin doar zilele cu date, cea mai nouă prima; mesele unei zile sunt în ordinea orei.
+- `mars.week` înseamnă mereu ultimele 7 zile, și când `?days=` cere mai puține (lista rămâne pe `days`).
 
 ## Memorie și cota Firestore (Spark: 50 000 citiri/zi)
 
 `cerc` are trei trepte: live (eu + prieteni + familyLoc) 20 s, lista de prieteni 10 min, locuri recomandate 10 min; toate
-în DO-ul contului (`site-cache:*`), plus 20 s în memoria izolatului. Traseele se construiesc o singură dată (pagini de 5
-activități, cel mult ~600 KB de polilinii pe cerere, ca să încapă în CPU-ul gratuit al Workerului) și apoi se cer doar
-alergările mai noi decât ultima cunoscută; Marș le refolosește pentru hărțile mici. Cu 10 prieteni și un poll la 30 s, o oră
-de site deschis costă ~1 550 de citiri (testul o verifică). `azi` stă 20 s în memorie. Celelalte secțiuni se citesc la deschidere.
-Când Firestore nu răspunde deloc: 503 `{error}`; `cerc` servește atunci ultimul răspuns din DO, cu `updated_at`-ul lui.
+în DO-ul contului (`site-cache:*`), plus memoria izolatului, socotită de la momentul datelor (niciodată peste 20 s în total).
+Traseele se construiesc o singură dată (pagini de 5 activități, cel mult ~600 KB de polilinii pe cerere, ca să încapă în CPU-ul
+gratuit al Workerului) și apoi se cer doar alergările mai noi decât ultima cunoscută; o dată pe zi, o interogare doar pe id-uri
+găsește alergările ajunse târziu în Firestore cu o dată mai veche (coada offline a telefonului, o reinstalare) și le adaugă.
+Marș refolosește traseele Teren pentru hărțile mici; pe celelalte le citește câte 8 la o deschidere și le ține în DO
+(`site-cache:mars-routes`, ultimele 250), deci nu citește aceeași polilinie de două ori. Cu 10 prieteni și un poll la 30 s,
+o oră de site deschis costă ~1 550 de citiri (testul o verifică). `azi` stă 20 s în memorie. Celelalte secțiuni se citesc la deschidere.
+Când Firestore nu răspunde deloc: 503 `{error}`. Când o singură citire a Cercului eșuează (lista de prieteni, documentul tău,
+batchGet-ul prietenilor sau familyLoc), `cerc` servește ultimul răspuns complet din DO (cel mult 10 minute, cu `updated_at`-ul
+lui) în loc de o hartă fără prieteni; fără unul, răspunsul parțial se servește o dată și nu se păstrează nicăieri. Copia live
+din DO (pozițiile prietenilor) se șterge la alarma DO-ului după 10 minute.
 
 ## Timpul pe ecran (Pază)
 
 Sesiunea automată trimite la ~60 s totalurile cumulate ale ferestrei ei. La fiecare `POST /v2/sessions/{id}/data` cu
 `app_usage`, DO-ul adună doar diferența față de fotografia precedentă a aceleiași sesiuni (`usage-last:{id}`) și o împarte pe
-zilele locale ale intervalului (o aplicație folosită ultima dată înainte de miezul nopții rămâne în ziua ei). Se păstrează 14 zile;
-site-ul primește ultimele 7.
+zilele locale ale intervalului (o aplicație folosită ultima dată înainte de miezul nopții rămâne în ziua ei). Se păstrează 14 zile:
+zilele mai vechi se șterg la fiecare încărcare și la alarma DO-ului, și când telefonul nu mai trimite nimic. Site-ul primește
+zilele cu date din ultimele 7 zile calendaristice (azi inclusiv), niciodată zile mai vechi prezentate drept „ultimele 7”.
 
 ## Legături (Azi) și conducte (Livret)
 

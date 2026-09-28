@@ -8,7 +8,7 @@ import { checkRecording, RECORDING_MAX_BYTES } from './recording-schema.mjs';
 import { handlePhoneControl } from './phone-control.mjs';
 import { handleAppContent, defaultIntake } from './app-content.mjs';
 import { TTL, idPattern, categories, bad, keys, n, validatePhoneData } from './phone-schema.mjs';
-import { handleSiteStore, applyUsageRollup } from './site-store.mjs';
+import { handleSiteStore, applyUsageRollup, sweepSite } from './site-store.mjs';
 
 const MAX_SESSION = 32 * 1024 * 1024;
 export const reply = (data, status = 200) => Response.json(data, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
@@ -75,7 +75,7 @@ export class InsightsAccount {
       if (until <= Date.now()) await this.ctx.storage.delete(key);
     }
     const records = await this.ctx.storage.list({ prefix: 'session:' });
-    let next = Math.min(await sweepSleep(this.ctx.storage),await sweepRecovery(this.ctx.storage),await sweepFiles(this.ctx.storage,this.env.RECORDS),await sweepCleanup(this.ctx.storage),await sweepOrganizer(this.ctx.storage,Date.now()),await sweepOrganizerJobs(this.ctx.storage));
+    let next = Math.min(await sweepSleep(this.ctx.storage),await sweepRecovery(this.ctx.storage),await sweepFiles(this.ctx.storage,this.env.RECORDS),await sweepCleanup(this.ctx.storage),await sweepOrganizer(this.ctx.storage,Date.now()),await sweepOrganizerJobs(this.ctx.storage),await sweepSite(this.ctx.storage,Date.now()));
     for (const r of records.values()) {
       if (r.expires_at <= Date.now()) await this.remove(r); else next = Math.min(next, r.expires_at);
     }

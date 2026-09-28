@@ -3,16 +3,28 @@
 //  · /internal/site/cache   — memoria de 10 min / 20 s a secțiunii „Cerc” (Teren + Camarazi), ca poll-ul de 30 s al site-ului
 //    să nu recitească din Firestore prieteniile, locurile recomandate și traseele la fiecare tură;
 //  · rollup-ul zilnic al timpului pe ecran (`usage-day:YYYY-MM-DD`, 14 zile), scris când telefonul trimite datele sesiunii.
+// Alarma DO-ului (`sweepSite`) șterge zilele mai vechi de 14 și copia live a Cercului (pozițiile prietenilor) după 10 minute,
+// chiar dacă telefonul sau site-ul nu mai trimit nimic.
 // Rutele /internal/* nu sunt accesibile din afară: Workerul trimite spre DO doar căile permise explicit.
 import { recoverySummary } from './lost-phone.mjs';
 import { bad } from './phone-schema.mjs';
-import { localDate, splitByDay, DAY } from './site-time.mjs';
+import { localDate, localMidnight, splitByDay, DAY } from './site-time.mjs';
 
 export const USAGE_RULES = Object.freeze({ keep_days: 14, show_days: 7, apps_per_day: 100, apps_shown: 30 });
-const CACHE_NAMES = ['cerc-live', 'cerc-slow', 'friends'];
+/** How long the live tier of Cerc (friends' positions) may be served from the DO when Firestore fails, and kept at all. */
+export const CERC_LIVE_MAX_MS = 10 * 60000;
+const CACHE_NAMES = ['cerc-live', 'cerc-slow', 'friends', 'mars-routes'];
+const LIVE_KEY = 'site-cache:cerc-live';
 const CACHE_MAX_BYTES = 1536 * 1024;
 const DAY_PREFIX = 'usage-day:';
 const reply = (data, status = 200) => Response.json(data, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
+/** The local date `k` calendar days before the day of `now` (0 = today), right across daylight-saving changes. */
+const daysAgo = (now, k) => localDate(localMidnight(now) - k * DAY + 12 * 3600000);
+/** The moment a `usage-day:` row of `date` leaves the 14-day window: local midnight, 14 days after that day began. */
+function rowExpiry(date) {
+  const [y, m, d] = date.split('-').map(Number);
+  return localMidnight(Date.UTC(y, m - 1, d + USAGE_RULES.keep_days, 12));
+}
 
 /**
  * Timpul pe ecran pe zile: sesiunea automată trimite la ~60 s totalurile cumulate ale ferestrei ei (≤ 24 h).
@@ -57,16 +69,39 @@ export async function applyUsageRollup(storage, sessionId, data, now = Date.now(
   }
   // Scrieri una câte una: în DO se unesc oricum într-o singură tranzacție (write coalescing).
   for (const [k, v] of Object.entries(writes)) await storage.put(k, v);
-  // 14 zile de rollup, nu mai mult.
-  const oldest = localDate(now - (USAGE_RULES.keep_days - 1) * DAY);
-  const stale = [...(await storage.list({ prefix: DAY_PREFIX })).keys()].filter(k => k.slice(DAY_PREFIX.length) < oldest);
-  if (stale.length) await storage.delete(stale);
+  // 14 zile de rollup, nu mai mult (și alarma le șterge când telefonul nu mai trimite).
+  await pruneUsage(storage, now);
   return true;
 }
+async function pruneUsage(storage, now) {
+  const oldest = daysAgo(now, USAGE_RULES.keep_days - 1);
+  const dates = [...(await storage.list({ prefix: DAY_PREFIX })).keys()].map(k => k.slice(DAY_PREFIX.length));
+  const stale = dates.filter(d => d < oldest);
+  if (stale.length) await storage.delete(stale.map(d => DAY_PREFIX + d));
+  return dates.filter(d => d >= oldest).sort();
+}
 
-/** Ultimele `n` zile cu date, cea mai nouă prima: [{date, totalMin, apps:[{label, pkg, minutes, opens}]}]. */
-export async function usageDays(storage, n = USAGE_RULES.show_days) {
-  const rows = [...(await storage.list({ prefix: DAY_PREFIX })).values()].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, n);
+/**
+ * Called by the account DO's sweep (its alarm): drops the screen-time days older than 14 and the live copy of Cerc once it is
+ * older than the 10 minutes it may be served. Returns the next time something has to go (Infinity when nothing is left).
+ */
+export async function sweepSite(storage, now = Date.now()) {
+  let next = Infinity;
+  const kept = await pruneUsage(storage, now);
+  if (kept.length) next = rowExpiry(kept[0]);
+  const live = await storage.get(LIVE_KEY);
+  if (live) {
+    const end = (Number(live.at) || 0) + CERC_LIVE_MAX_MS;
+    if (end <= now) await storage.delete(LIVE_KEY); else next = Math.min(next, end);
+  }
+  return next;
+}
+
+/** Zilele cu date din ultimele `n` zile calendaristice (azi inclusiv), cea mai nouă prima: [{date, totalMin, apps:[{label, pkg, minutes, opens}]}]. */
+export async function usageDays(storage, n = USAGE_RULES.show_days, now = Date.now()) {
+  const oldest = daysAgo(now, n - 1);
+  const rows = [...(await storage.list({ prefix: DAY_PREFIX })).values()].filter(r => typeof r?.date === 'string' && r.date >= oldest)
+    .sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, n);
   return {
     updated_at: rows.reduce((m, r) => Math.max(m, r.updated_at || 0), 0) || null,
     days: rows.map(r => {
@@ -87,7 +122,7 @@ async function summary(storage, now) {
   const intake = await storage.get('intake');
   return {
     sessions: { count: sessions.length, updated_at: withData.reduce((m, r) => Math.max(m, r.updated_at || 0), 0) || null },
-    usage: await usageDays(storage),
+    usage: await usageDays(storage, USAGE_RULES.show_days, now),
     vault: { total: files.length, latestAt: files.reduce((m, f) => Math.max(m, f.received_at || 0), 0) || null },
     recovery: await recoverySummary(storage, now),
     intake: { paused: intake?.accepting === false },
@@ -110,6 +145,12 @@ export async function handleSiteStore(request, account, readJSON) {
       const { value } = await readJSON(request, CACHE_MAX_BYTES);
       if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !CACHE_NAMES.includes(k))) bad('Memorie invalidă.');
       for (const [k, v] of Object.entries(value)) { if (v === null) await storage.delete('site-cache:' + k); else await storage.put('site-cache:' + k, v); }
+      // Friends' positions do not outlive their 10 minutes: the alarm (sweep) removes them even if the site stops asking.
+      const at = Number(value['cerc-live']?.at);
+      if (Number.isFinite(at)) {
+        const due = at + CERC_LIVE_MAX_MS, current = await storage.getAlarm();
+        if (current === null || current === undefined || current > due) await storage.setAlarm(due);
+      }
       return reply({ ok: true });
     }
   }
