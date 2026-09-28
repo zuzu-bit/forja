@@ -105,6 +105,25 @@ class ForjaApi {
 
     fun sleepRecordingUrl(sessionId: Long): String = "$base/v1/sleep-recording?session=s$sessionId"
 
+    private val diagClient by lazy { OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build() }
+
+    /**
+     * Jurnalul pornirii muzicii → serverul FORJA (POST /v1/diag/music, DESIGN-4.4 §3.5): aplicația playerului, treapta,
+     * rezultatul, milisecundele — fără titluri, fără artiști. Întoarce codul HTTP (2xx = primit), 0 = fără rețea / cont.
+     */
+    suspend fun musicDiag(body: String): Int = withContext(Dispatchers.IO) {
+        if (!available) return@withContext 0
+        val token = idToken() ?: return@withContext 0
+        try {
+            val req = Request.Builder()
+                .url("$base/v1/diag/music")
+                .header("Authorization", "Bearer $token")
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+            diagClient.newCall(req).execute().use { it.code }
+        } catch (_: Exception) { 0 }
+    }
+
     suspend fun authHeader(): String? = idToken()?.let { "Bearer $it" }
 
     /** Rezumatul de dimineață — două propoziții din cifrele reale ale nopții. */

@@ -92,6 +92,7 @@ private const val PRIVACY_DETAILS =
 /** Profil: identitate + controale oneste, nimic îngropat. Rândurile arată starea, nu explică; explicațiile stau în ghidaj și la „i”. */
 @Composable
 fun ProfileScreen(
+    onOpenProbe: () -> Unit = {},
     onLogout: () -> Unit,
     onOpenMapGhost: () -> Unit,
     onOpenPermissions: () -> Unit = {},
@@ -492,7 +493,7 @@ fun ProfileScreen(
             Text(
                 "FORJA v${com.forja.app.BuildConfig.VERSION_NAME} · build ${com.forja.app.BuildConfig.VERSION_CODE} · REAL & VIU",
                 style = BodyTiny.copy(color = TextDim2),
-                modifier = Modifier.align(Alignment.CenterHorizontally)
+                modifier = Modifier.align(Alignment.CenterHorizontally).then(com.forja.app.feature.probe.ProbeEntry.taps(onOpenProbe))
             )
         }
     }

@@ -1,12 +1,17 @@
 package com.forja.app.feature.workout
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -27,14 +32,32 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.forja.app.core.data.db.ExerciseEntity
+import com.forja.app.core.data.db.PlanEntity
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
+import com.forja.app.core.music.Music
+import com.forja.app.core.music.MusicSource
+import com.forja.app.core.music.MusicStarter
+import kotlinx.coroutines.delay
+
+/** Ghidajul primei vizite: rândul „Muzică”, spus o singură dată. */
+private val ANTRENAMENT_STEPS = listOf(
+    CoachStep("antrenament.muzica", "Muzica ta pornește odată cu sesiunea.", MascotState.Happy)
+)
 
 /** Hub Antrenament: 3 planuri selectabile + lista de azi + „Începe sesiunea". */
 @Composable
@@ -44,13 +67,126 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
     val plans by vm.plans.collectAsState()
     val planIdx by vm.planIdx.collectAsState()
     val exercises by vm.planExercises.collectAsState()
-    var editing by remember { mutableStateOf<com.forja.app.core.data.db.ExerciseEntity?>(null) }
+    var editing by remember { mutableStateOf<ExerciseEntity?>(null) }
 
+    // Muzica: comutatorul, lista, discul (ce cântă acum). Accesul se reverifică la întoarcerea din Setări.
+    val context = LocalContext.current
+    val music by vm.music.collectAsState()
+    val track by Music.nowPlaying.collectAsState()
+    val start by MusicStarter.state.collectAsState()
+    val origin by MusicStarter.origin.collectAsState()
+    val queue by MusicStarter.queue.collectAsState()
+    var sheetOpen by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) vm.refreshMusic() }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+    val accessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { vm.refreshMusic() }
+    LaunchedEffect(Unit) { Music.ensureStarted(context) }
+    val art = track?.art
+    val artBitmap = remember(art) { art?.asImageBitmap() }
+    val audible by Music.audible.collectAsState()
+    val disc = discUi(start, origin == MusicSource.WORKOUT, track, artBitmap, track?.positionMs ?: 0L, queue != null, audible = !music.access && audible)
+    fun onMusicSwitch(on: Boolean) {
+        vm.setMusicOn(on)
+        // Fără acces, „pornit” cere accesul (altfel pornește doar Melodii apreciate).
+        if (on && !music.access) {
+            try { accessLauncher.launch(Music.accessIntent(context)) } catch (_: Exception) {
+                try { accessLauncher.launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) } catch (_: Exception) { }
+            }
+        }
+    }
+
+    // Ghidajul primei vizite arată rândul „Muzică”, care stă sub pliu (pe S23 mereu): cât ghidajul e nevăzut, hubul
+    // derulează o dată până la rând, ca ținta să apară în primele 3 s (altfel ghidajul nu pornește deloc).
+    val scroll = rememberScrollState()
+    val guideSeen by remember { Tutorial.seen(context, "antrenament") }.collectAsState(initial = true)
+    var musicRowCenter by remember { mutableFloatStateOf(-1f) }
+    var viewport by remember { mutableIntStateOf(0) }
+    LaunchedEffect(guideSeen, exercises.size, musicRowCenter > 0f && viewport > 0) {
+        if (guideSeen || musicRowCenter <= 0f || viewport <= 0) return@LaunchedEffect
+        delay(250)
+        val target = (musicRowCenter - viewport * 0.45f).toInt().coerceIn(0, scroll.maxValue)
+        if (target > scroll.value) scroll.animateScrollTo(target)
+    }
+
+    CoachMarks(screen = "antrenament", steps = ANTRENAMENT_STEPS) {
+        WorkoutHubContent(
+            plans = plans,
+            planIdx = planIdx,
+            exercises = exercises,
+            music = music,
+            disc = disc,
+            actions = HubActions(
+                onSelectPlan = { vm.selectPlan(it) },
+                onEdit = { editing = it },
+                onStartFrom = { pos -> vm.startSession(fromExercise = pos); onStartLive() },
+                onStart = { vm.startSession(0); onStartLive() },
+                onMusicSwitch = ::onMusicSwitch,
+                onOpenSheet = { sheetOpen = true }
+            ),
+            scroll = scroll,
+            onMusicRow = { musicRowCenter = it },
+            onViewport = { viewport = it }
+        )
+    }
+
+    if (sheetOpen) {
+        WorkoutMusicSheet(
+            state = music,
+            actions = MusicSheetActions(
+                onMix = { vm.setMix(it) },
+                onStopAtEnd = { vm.setMusicStopAtEnd(it) },
+                onDone = { sheetOpen = false }
+            ),
+            onDismiss = { sheetOpen = false }
+        )
+    }
+
+    editing?.let { ex ->
+        ExerciseEditSheet(
+            exercise = ex,
+            onSave = { sets, reps, load -> vm.updateExercise(ex.id, sets, reps, load); editing = null },
+            onClose = { editing = null }
+        )
+    }
+}
+
+/** Ce face hubul (planul, creionul, „Începe de aici”, „Începe sesiunea”, rândul „Muzică”). */
+data class HubActions(
+    val onSelectPlan: (Int) -> Unit = {},
+    val onEdit: (ExerciseEntity) -> Unit = {},
+    val onStartFrom: (Int) -> Unit = {},
+    val onStart: () -> Unit = {},
+    val onMusicSwitch: (Boolean) -> Unit = {},
+    val onOpenSheet: () -> Unit = {}
+)
+
+/**
+ * Hubul Antrenament, fără ViewModel (și pentru capturi): antetul, planurile, citatul, exercițiile de azi, rândul
+ * „Muzică” și „Începe sesiunea”. [onMusicRow] = mijlocul rândului „Muzică” în conținut (pentru ghidaj).
+ */
+@Composable
+fun WorkoutHubContent(
+    plans: List<PlanEntity>,
+    planIdx: Int,
+    exercises: List<ExerciseEntity>,
+    music: WorkoutMusicState,
+    disc: DiscUi,
+    actions: HubActions,
+    modifier: Modifier = Modifier,
+    scroll: ScrollState = rememberScrollState(),
+    onMusicRow: (Float) -> Unit = {},
+    onViewport: (Int) -> Unit = {}
+) {
     Column(
-        Modifier
+        modifier
             .fillMaxSize()
             .background(Surface0)
-            .verticalScroll(rememberScrollState())
+            .onSizeChanged { onViewport(it.height) }
+            .verticalScroll(scroll)
             .statusBarsPadding()
             .padding(bottom = 120.dp)
     ) {
@@ -81,7 +217,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
                         .size(width = 150.dp, height = 188.dp)
                         .clip(shape)
                         .border(1.5.dp, stroke, shape)
-                        .pressable({ vm.selectPlan(i) })
+                        .pressable({ actions.onSelectPlan(i) })
                 ) {
                     AsyncImage(
                         model = p.cover, contentDescription = p.name,
@@ -174,7 +310,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(Surface2)
                                 .border(1.dp, StrokeCardStrong, RoundedCornerShape(10.dp))
-                                .pressable({ editing = e })
+                                .pressable({ actions.onEdit(e) })
                                 .padding(7.dp)
                         )
                         Spacer(Modifier.width(8.dp))
@@ -185,7 +321,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
                                 .size(34.dp)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(AccentGradient)
-                                .pressable({ vm.startSession(fromExercise = pos); onStartLive() })
+                                .pressable({ actions.onStartFrom(pos) })
                                 .padding(6.dp)
                         )
                     }
@@ -194,20 +330,23 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
         }
 
         Spacer(Modifier.height(8.dp))
-        PrimaryButton(
-            text = "Începe sesiunea",
-            onClick = { vm.startSession(0); onStartLive() },
+        WorkoutMusicRow(
+            state = music,
+            disc = disc,
+            onToggle = actions.onMusicSwitch,
+            onOpenSheet = actions.onOpenSheet,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
+                .onGloballyPositioned { onMusicRow(it.positionInParent().y + it.size.height / 2f) }
         )
-    }
-
-    editing?.let { ex ->
-        ExerciseEditSheet(
-            exercise = ex,
-            onSave = { sets, reps, load -> vm.updateExercise(ex.id, sets, reps, load); editing = null },
-            onClose = { editing = null }
+        Spacer(Modifier.height(14.dp))
+        PrimaryButton(
+            text = "Începe sesiunea",
+            onClick = actions.onStart,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
         )
     }
 }

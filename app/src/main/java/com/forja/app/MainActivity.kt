@@ -453,8 +453,13 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             ) {
                 com.forja.app.feature.permissions.ContractScreen(onBack = { nav.popBackStack() })
             }
+            // Proba ascunsă a pornirii muzicii (Profil → 5 atingeri pe versiune).
+            composable(Route.MUSIC_PROBE) {
+                com.forja.app.feature.probe.ProbeScreen(onBack = { nav.popBackStack() })
+            }
             composable(Route.PROFILE) {
                 ProfileScreen(
+                    onOpenProbe = { nav.navigate(Route.MUSIC_PROBE) { launchSingleTop = true } },
                     onLogout = {
                         // Oprește sincronizarea și uită alegerile cât timp contul încă e cel legat (înainte de signOut).
                         try { com.forja.app.core.sync.CollectionSettings.logout(app) } catch (_: Exception) { }
