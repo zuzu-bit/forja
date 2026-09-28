@@ -44,6 +44,19 @@ object InventorySamples {
         Triple("CV și diplome", 18, "docx"), Triple("Acte identitate", 12, "jpg")
     )
 
+    /**
+     * Când s-au făcut pozele fiecărui dosar (în ordinea lui [photoFolderNames]): ziua de început, socotită de la 1 ian 2023,
+     * și pasul dintre poze, în minute. Numele cu dată sau anotimp se potrivesc cu ele: nunta într-o zi din august,
+     * concertul în iulie, Brașovul în decembrie; restul se întind pe lună sau pe ani.
+     */
+    private val photoFolderDates = listOf(
+        230 to 1, 250 to 10, 205 to 20,          // Nuntă 19 aug 2023 · Bucegi sep · Vama Veche iul
+        0 to 3 * 1440, 10 to 2160, 360 to 30,     // Mâncare 2023–2025 · Animale · Brașov 27 dec
+        40 to 2880, 0 to 2880, 194 to 2,          // Oraș noaptea · Sală · Concert 14 iul
+        100 to 2880, 0 to 4320, 20 to 7200,       // Apusuri · Capturi · Acte foto
+        30 to 8640, 0 to 1296                      // Rețete · Diverse
+    )
+
     /** Motivele din „De aruncat”, în proporțiile prototipului (84 / 41 / 57 / 18 / 12 = 212). */
     private val trashReasons: List<DeleteReason> = buildList {
         repeat(60) { add(DeleteReason.Duplicate) }
@@ -63,12 +76,13 @@ object InventorySamples {
         val folderBytes = (11.2 * GB).toLong() / 3002
         photoFolderNames.forEachIndexed { fi, (name, count) ->
             val ids = ArrayList<String>(count)
-            val start = T0 + fi * 40L * DAY
+            val (day, stepMin) = photoFolderDates[fi]
+            val start = T0 + day * DAY
             repeat(count) { k ->
                 n++
                 val id = "p$n"
                 items[id] = InvItem(
-                    id = id, uri = photoUri(n), kind = InvKind.Photos, takenAt = start + k * 3L * 3_600_000L,
+                    id = id, uri = photoUri(n), kind = InvKind.Photos, takenAt = start + k * stepMin * 60_000L,
                     bytes = folderBytes, width = 4032, height = 3024, mime = "image/jpeg", name = "IMG_${20230000 + n}.jpg"
                 )
                 ids += id
@@ -171,9 +185,10 @@ object InventorySamples {
     val trash: FolderUiState get() = photoPlan.folderUi("trash", ReasonFilter.All, emptySet(), editing = false)!!
     val trashSelected: FolderUiState get() = trash.let { t -> t.copy(selected = t.cells.take(3).map { it.id }.toSet()) }
     val trashBlurry: FolderUiState get() = photoPlan.folderUi("trash", ReasonFilter.Blur, emptySet(), editing = false)!!
-    val trashEditing: FolderUiState get() = photoPlan.folderUi("trash", ReasonFilter.All, emptySet(), editing = true)!!
-    /** S5 — un dosar mare (Nuntă, 512 poze), cu antete de lună. */
-    val folder: FolderUiState get() = photoPlan.folderUi("f1", ReasonFilter.All, emptySet(), editing = false)!!
+    /** S5 — redenumirea pe loc a unui dosar obișnuit („De aruncat” nu se redenumește). */
+    val folderEditing: FolderUiState get() = photoPlan.folderUi("f1", ReasonFilter.All, emptySet(), editing = true)!!
+    /** S5 — un dosar mare, întins pe ani (Mâncare, 268 de poze, câte una la 3 zile), cu antete de lună. */
+    val folder: FolderUiState get() = photoPlan.folderUi("f4", ReasonFilter.All, emptySet(), editing = false)!!
     val moveTargets: List<MoveTarget> get() = photoPlan.moveTargets(exclude = "trash").take(5)
 
     /** S6 — confirmarea (cu rândul destinației), foaia „Locație”, aplicarea la 34 % și finalul „Gata”. */
@@ -207,9 +222,9 @@ object InventorySamples {
         kind = InvKind.Documents, folders = 8, items = 486, freedBytes = 0L, failed = 0, musicStopped = false,
         place = landingDocs, runId = "sample-docs", showSite = true
     )
-    /** Finalul cu elemente nemutate (șterse între timp) și fără contract (fără „Pe site”). */
-    val doneFailed = done.copy(failed = 3, showSite = false)
-    val doneDocsFailed = doneDocs.copy(failed = 2)
+    /** Finalul cu elemente nemutate (șterse între timp) și fără contract (fără „Pe site”); mutate + nemutate = total. */
+    val doneFailed = done.copy(items = 3211, failed = 3, showSite = false)
+    val doneDocsFailed = doneDocs.copy(items = 484, failed = 2)
 
     /** Pastila: la 34 % și „Gata”. */
     val pill = PillState(34, ready = false)
