@@ -65,6 +65,10 @@ class Prefs(private val context: Context) {
         val cleanupDocsTree = stringPreferencesKey("cleanup_docs_tree")
         val cleanupAiOn = booleanPreferencesKey("cleanup_ai_on")
         val cleanupDocsUndo = stringPreferencesKey("cleanup_docs_undo")
+        // v4.4 — Inventar: „Ultimele N” și destinațiile alese
+        val inventoryLastN = intPreferencesKey("inventory_last_n")
+        val inventoryPhotoRoot = stringPreferencesKey("inventory_photo_root")
+        val inventoryDocsDest = stringPreferencesKey("inventory_docs_dest")
         // v4.1 — prieteni din agendă (ca la Telegram)
         val phoneDeclared = stringPreferencesKey("phone_declared")
         val contactsOn = booleanPreferencesKey("contacts_on")
@@ -142,6 +146,15 @@ class Prefs(private val context: Context) {
     suspend fun setCleanupAiOn(v: Boolean) = context.dataStore.edit { it[K.cleanupAiOn] = v }
     val cleanupDocsUndo: Flow<String> = context.dataStore.data.map { it[K.cleanupDocsUndo] ?: "" }
     suspend fun setCleanupDocsUndo(v: String) = context.dataStore.edit { it[K.cleanupDocsUndo] = v }
+    /** Inventar: câte poze din „Ultimele N” (ultima alegere; implicit 500). */
+    val inventoryLastN: Flow<Int> = context.dataStore.data.map { it[K.inventoryLastN] ?: 500 }
+    suspend fun setInventoryLastN(v: Int) = context.dataStore.edit { it[K.inventoryLastN] = v }
+    /** Inventar: rădăcina pozelor aleasă ultima dată („Pictures/FORJA/”, „DCIM/FORJA/”…; gol = implicita). */
+    val inventoryPhotoRoot: Flow<String> = context.dataStore.data.map { it[K.inventoryPhotoRoot] ?: "" }
+    suspend fun setInventoryPhotoRoot(v: String) = context.dataStore.edit { it[K.inventoryPhotoRoot] = v }
+    /** Inventar: folderul destinație al documentelor (URI SAF persistat; gol = „Organizate” în folderul ales). */
+    val inventoryDocsDest: Flow<String> = context.dataStore.data.map { it[K.inventoryDocsDest] ?: "" }
+    suspend fun setInventoryDocsDest(v: String) = context.dataStore.edit { it[K.inventoryDocsDest] = v }
 
     val kcalTarget: Flow<Int> = context.dataStore.data.map { it[K.kcalTarget] ?: 2250 }
     suspend fun setKcalTarget(v: Int) = context.dataStore.edit { it[K.kcalTarget] = v }

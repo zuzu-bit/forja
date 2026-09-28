@@ -33,6 +33,13 @@ import java.util.concurrent.atomic.AtomicInteger
 /** Dosarul-gunoi al documentelor, direct sub folderul ales. */
 internal const val DOC_TRASH_DIR = "De aruncat (FORJA)"
 
+/**
+ * Un fișier „liber” = unul pe care Inventarul l-ar pune în ordine acum: nu stă în „De aruncat (FORJA)” și nu e un
+ * fișier de lucru al mutărilor („.forja-….part”). Același filtru în scanare, în estimare și pe placa DOCUMENTE.
+ */
+internal fun DocItem.isLoose(): Boolean =
+    path != DOC_TRASH_DIR && !path.startsWith("$DOC_TRASH_DIR/") && !name.startsWith(".forja-")
+
 internal fun ItemRec.toDocItem(): DocItem = DocItem(
     uri = Uri.parse(uri), documentId = docId, parentUri = Uri.parse(parent), path = path,
     name = name, mime = mime, sizeBytes = bytes, lastModified = takenAt, flags = flags
@@ -58,7 +65,7 @@ internal object DocPipeline {
             if (scanned.isNotEmpty()) withContext(Dispatchers.IO) { InventoryStore.writeItems(ctx, ctl.runId, scanned) }
             scanned
         }
-        if (items.isEmpty()) throw InvFailure("Nu am găsit fișiere în folder.")
+        if (items.isEmpty()) throw InvFailure("Nimic nou în folder.")
 
         // Gruparea provizorie (după familie: PDF-uri, Tabele…) — doar „cutiile” de pe ecran; dosarele finale vin după AI.
         ctl.enter(InvStage.Grouping, "Grupez fișierele")
@@ -78,11 +85,13 @@ internal object DocPipeline {
 
     private suspend fun scan(ctl: RunCtl, organizer: DocumentOrganizer, tree: Uri): List<ItemRec> {
         ctl.report(InvStage.Scanning, 0.05, null, "Citesc folderul", force = true)
-        val (docs, warnings) = organizer.inventory(tree)
+        // Destinația aleasă în Inventar, când e un dosar din folderul analizat, nu se re-scanează (e deja în ordine).
+        val skips = DocDest.skips(tree, DocDest.savedTree(ctl.ctx, ctl.app.prefs))
+        val (docs, warnings) = organizer.inventory(tree, skipDirIds = skips)
         ctl.checkAlive()
         if (docs.isEmpty() && warnings.isNotEmpty()) throw InvFailure("Nu mai am acces la folder. Alege-l din nou.")
         // Gunoiul propriu și fișierele de lucru ale mutărilor („.forja-….part”) nu intră în inventar.
-        val kept = docs.filter { d -> d.path != DOC_TRASH_DIR && !d.path.startsWith("$DOC_TRASH_DIR/") && !d.name.startsWith(".forja-") }
+        val kept = docs.filter { it.isLoose() }
         val ai = AiGate.likely(ctl.app)
         ctl.setEstimates(
             InvRules.scanSec(kept.size), 2,

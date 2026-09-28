@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -57,18 +58,75 @@ data class InvItem(val id: String, val uri: android.net.Uri, val kind: InvKind, 
 data class InvFolder(val id: String, val name: String, val theme: String, val itemIds: List<String>, val cover: List<String>,
                      val special: Boolean = false)
 
+/**
+ * Unde ajung lucrurile la aplicare (ales de om în „Locație”, reținut pentru rularea următoare).
+ * Poze: [Media.root] = rădăcina RELATIVE_PATH („Pictures/FORJA/”, „Pictures/”, „DCIM/FORJA/”, „Pictures/Vacanțe/”).
+ * Documente: [Tree.tree] = folderul destinație (null = folderul ales la început) și [Tree.sub] = subdosarul din el
+ * („Organizate” implicit; "" când omul a ales alt folder, iar dosarele stau direct acolo).
+ */
+sealed interface InvDest {
+    data class Media(val root: String) : InvDest
+    data class Tree(val tree: android.net.Uri?, val sub: String) : InvDest
+
+    companion object {
+        fun default(kind: InvKind): InvDest =
+            if (kind == InvKind.Photos) Media(MediaRoots.DEFAULT) else Tree(null, DocumentOrganizer.ROOT_FOLDER)
+    }
+}
+
+/** `source` = folderul analizat (documente); `dest` = destinația curentă a planului. */
 data class InvPlan(val runId: String, val kind: InvKind, val createdAt: Long, val items: Map<String, InvItem>,
-                   val folders: List<InvFolder>, val trash: InvFolder, val provider: String?)
+                   val folders: List<InvFolder>, val trash: InvFolder, val provider: String?,
+                   val dest: InvDest = InvDest.default(kind), val source: android.net.Uri? = null)
 
 /**
- * Scopul: `tree` (documente); pentru poze `bucketId` (un album) are prioritate față de `lastN` („Ultimele 500”, după
- * ordinea adăugării în galerie), iar fără ele se ia toată galeria (`all`).
+ * Scopul: `tree` (documente); pentru poze `bucketId` (un album) are prioritate față de `lastN` („Ultimele N”, cele
+ * mai noi N după ordinea adăugării în galerie; orice N > 0, ales de om), iar fără ele se ia toată galeria (`all`).
  */
 data class InvScope(val all: Boolean = true, val lastN: Int? = null, val bucketId: Long? = null, val tree: android.net.Uri? = null)
 
 sealed interface InvEvent { data class Done(val runId: String, val folders: Int, val trashBytes: Long) : InvEvent; data class Failed(val message: String) : InvEvent }
 
-data class ApplyResult(val moved: Int, val trashed: Int, val failed: Int, val freedBytes: Long)
+/**
+ * Un loc de pe telefon: [folder] = dosarul ca document SAF (ExternalStorage „primary:Pictures/FORJA” la poze, URI de
+ * arbore la documente), [label] = calea lizibilă („Documents/Organizate”), [storagePath] = calea pe disc, când e locală.
+ */
+data class InvPlace(val folder: android.net.Uri?, val label: String, val storagePath: String? = null)
+
+/**
+ * Unde au ajuns lucrurile după aplicare: [root] = rădăcina destinației, [single] = dosarul, când s-a atins unul singur
+ * ([segments] = dosarele atinse), [first] = primul element mutat (poză înainte de video; MediaStore păstrează _ID-ul
+ * după mutare), [bucketId] = albumul lui după mutare (poze, un singur dosar). Rundele se unesc cu [merge].
+ */
+data class Landing(
+    val kind: InvKind,
+    val root: InvPlace,
+    val single: InvPlace? = null,
+    val segments: Set<String> = emptySet(),
+    val first: android.net.Uri? = null,
+    val firstMime: String? = null,
+    val bucketId: Long? = null
+) {
+    /** Ce se deschide: dosarul unic, altfel rădăcina (care arată toate dosarele noi). */
+    val target: InvPlace get() = if (segments.size == 1 && single != null) single else root
+
+    fun merge(next: Landing?): Landing {
+        if (next == null) return this
+        val all = segments + next.segments
+        val one = all.size == 1
+        return Landing(
+            kind = kind,
+            root = next.root,
+            single = if (one) single ?: next.single else null,
+            segments = all,
+            first = first ?: next.first,
+            firstMime = if (first != null) firstMime else next.firstMime,
+            bucketId = if (one) bucketId ?: next.bucketId else null
+        )
+    }
+}
+
+data class ApplyResult(val moved: Int, val trashed: Int, val failed: Int, val freedBytes: Long, val landing: Landing? = null)
 
 /** Eșec explicat utilizatorului (fără permisiune, galerie goală, folder inaccesibil). */
 internal class InvFailure(message: String) : Exception(message)
@@ -87,7 +145,9 @@ internal class InvFailure(message: String) : Exception(message)
  *    un dialog (bucata refuzată rămâne în plan și ar reveni). Fără dialog acceptat, [apply] nu mută nimic pe API 30+.
  *    Sub API 30 ambele întorc null și [apply] lucrează direct (API 29: se mută doar ce aparține FORJA; sub 29 mutarea
  *    nu e posibilă; „De aruncat” se șterge direct, fără coș).
- *    Documentele nu au dialoguri: [apply] mută prin SAF în „Organizate/<dosar>” și „De aruncat (FORJA)”;
+ *    Documentele nu au dialoguri: [apply] mută prin SAF în „<destinație>/<dosar>” (implicit „Organizate/<dosar>”)
+ *    și „De aruncat (FORJA)”. Destinația se schimbă înainte de aplicare cu [setDestination]; fiecare [apply]
+ *    întoarce în [ApplyResult.landing] locul unde au ajuns lucrurile;
  * 5. [clear] uită tot (plan, rulare, fișiere).
  */
 object Inventory {
@@ -201,7 +261,7 @@ object Inventory {
             val meta = run.meta
             when (meta.stage) {
                 InvStage.Ready, InvStage.Applying -> {
-                    val doc = run.plan
+                    val doc = run.plan?.let { d -> if (d.dest == null) d.copy(dest = defaultDest(ctx, meta.kind, meta.tree)) else d }
                     val items = withContext(Dispatchers.IO) { InventoryStore.readItems(ctx, runId) }
                     if (doc == null || items == null) {
                         _progress.value = InvProgress(runId, meta.kind, InvStage.Failed, 0, 1, null, emptyList(), emptyList(),
@@ -263,8 +323,8 @@ object Inventory {
                 InvKind.Documents -> {
                     val organizer = DocumentOrganizer(ctx, app.prefs)
                     val tree = scope.tree ?: organizer.persistedTree() ?: return 0
-                    val (docs, _) = organizer.inventory(tree)
-                    val recs = docs.filter { !it.path.startsWith("$DOC_TRASH_DIR/") }.map { d ->
+                    val (docs, _) = organizer.inventory(tree, skipDirIds = DocDest.skips(tree, DocDest.savedTree(ctx, app.prefs)))
+                    val recs = docs.filter { it.isLoose() }.map { d ->
                         ItemRec(id = d.key, uri = d.uri.toString(), kind = InvKind.Documents, takenAt = d.lastModified,
                             bytes = d.sizeBytes, mime = d.mime, name = d.name)
                     }
@@ -308,6 +368,35 @@ object Inventory {
     /** Elementele merg în „Diverse · <an>” (după anul fiecăruia). */
     suspend fun dissolve(folderId: String) {
         edit(Unit) { d, items -> PlanEdits.dissolve(d, items, folderId, ZoneId.systemDefault()) to Unit }
+    }
+
+    /**
+     * Schimbă destinația planului (foaia „Locație”). Poze: o rădăcină acceptată de MediaStore (altfel nu se schimbă
+     * nimic). Documente: alt folder (dosarele stau direct în el) sau `tree = null` („În folderul ales/Organizate”).
+     * Uită acordul de scriere deja primit: o bucată acordată ar fi mutată în vechiul loc. Elementele mutate într-o
+     * rundă anterioară au ieșit deja din plan — schimbarea privește doar ce a rămas.
+     */
+    suspend fun setDestination(dest: InvDest) {
+        lock.withLock {
+            val s = snapshot ?: return@withLock
+            val ctx = appContext ?: return@withLock
+            val rec = when (dest) {
+                is InvDest.Media -> {
+                    if (s.meta.kind != InvKind.Photos) return@withLock
+                    DestRec(mediaRoot = MediaRoots.normalize(dest.root) ?: return@withLock)
+                }
+                is InvDest.Tree -> {
+                    if (s.meta.kind != InvKind.Documents) return@withLock
+                    val source = s.meta.tree?.let { Uri.parse(it) }
+                    val tree = dest.tree
+                    if (tree == null || (source != null && TreePaths.same(tree, source))) DestRec()
+                    else DestRec(tree = tree.toString(), sub = dest.sub.trim('/'))
+                }
+            }
+            if (rec == s.doc.dest) return@withLock
+            moveGrant = null
+            commit(ctx, s, s.doc.copy(dest = rec))
+        }
     }
 
     private suspend fun <T> edit(fallback: T, block: (PlanDoc, Map<String, ItemRec>) -> Pair<PlanDoc, T>): T = lock.withLock {
@@ -356,9 +445,9 @@ object Inventory {
     }
 
     /**
-     * După dialoguri: mută (RELATIVE_PATH „Pictures/FORJA/<dosar>/”, video „Movies/FORJA/<dosar>/”), verifică coșul,
-     * raportează progresul (pe contextul apelantului), scoate din plan ce s-a aplicat și emite Done/Failed. Când planul
-     * rămâne gol, dispare (fișiere + pointer) și [progress] trece în Done.
+     * După dialoguri: mută (RELATIVE_PATH „<rădăcina aleasă>/<dosar>/”, implicit „Pictures/FORJA/<dosar>/”), verifică
+     * coșul, raportează progresul (pe contextul apelantului), scoate din plan ce s-a aplicat și emite Done/Failed. Când
+     * planul rămâne gol, dispare (fișiere + pointer) și [progress] trece în Done.
      */
     suspend fun apply(context: android.content.Context, onProgress: (Int, Int) -> Unit): ApplyResult {
         val ctx = bind(context)
@@ -460,10 +549,12 @@ object Inventory {
     }
 
     /** Analiza s-a terminat: planul se salvează, se publică, se anunță (eveniment + notificare). */
-    internal suspend fun ready(ctl: RunCtl, doc: PlanDoc, items: Map<String, ItemRec>) {
+    internal suspend fun ready(ctl: RunCtl, plan: PlanDoc, items: Map<String, ItemRec>) {
         val ctx = ctl.ctx
         var done: RunMeta? = null
         var event: InvEvent.Done? = null
+        // Destinația implicită (ultima aleasă de om) intră în plan de la început; se schimbă din „Locație” la aplicare.
+        val doc = if (plan.dest == null) plan.copy(dest = defaultDest(ctx, ctl.meta.kind, ctl.meta.tree)) else plan
         lock.withLock {
             if (!isCurrent(ctl.runId)) return@withLock
             val trashBytes = doc.trash.itemIds.sumOf { items[it]?.bytes ?: 0L }
@@ -537,10 +628,38 @@ object Inventory {
         }
         val folders = doc.folders.map { InvFolder(it.id, it.name, it.theme, it.itemIds, cover(it.itemIds)) }
         val trash = InvFolder(doc.trash.id, doc.trash.name, doc.trash.theme, doc.trash.itemIds, cover(doc.trash.itemIds), special = true)
-        return Snapshot(meta, doc, items, base, InvPlan(meta.runId, meta.kind, meta.createdAt, map, folders, trash, doc.provider))
+        val source = meta.tree?.let { Uri.parse(it) }
+        return Snapshot(meta, doc, items, base, InvPlan(meta.runId, meta.kind, meta.createdAt, map, folders, trash, doc.provider, destOf(meta.kind, doc.dest), source))
     }
 
     private fun cover(ids: List<String>): List<String> = Clustering.spread(ids.size, 4).map { ids[it] }
+
+    private fun destOf(kind: InvKind, rec: DestRec?): InvDest = when (kind) {
+        InvKind.Photos -> InvDest.Media(rec.mediaRoot())
+        InvKind.Documents -> InvDest.Tree(rec?.tree?.let { Uri.parse(it) }, rec.docsSub())
+    }
+
+    /**
+     * Destinația implicită a unui plan nou: ultima aleasă (Prefs `inventory_photo_root` / `inventory_docs_dest`),
+     * altfel „Pictures/FORJA/” și „Organizate” în folderul ales. O destinație de documente fără permisiune se uită.
+     */
+    private suspend fun defaultDest(ctx: Context, kind: InvKind, source: String?): DestRec {
+        val prefs = ForjaApp.from(ctx).prefs
+        return try {
+            when (kind) {
+                InvKind.Photos -> DestRec(mediaRoot = MediaRoots.normalize(prefs.inventoryPhotoRoot.first()) ?: MediaRoots.DEFAULT)
+                InvKind.Documents -> {
+                    val src = source?.let { Uri.parse(it) }
+                    val saved = DocDest.savedTree(ctx, prefs)?.takeUnless { src != null && TreePaths.same(it, src) }
+                    if (saved != null) DestRec(tree = saved.toString(), sub = "") else DestRec()
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            if (kind == InvKind.Photos) DestRec(mediaRoot = MediaRoots.DEFAULT) else DestRec()
+        }
+    }
 
     private fun readyProgress(s: Snapshot): InvProgress {
         val bins = s.doc.folders.sortedWith(compareByDescending<FolderRec> { it.itemIds.size }.thenBy { it.id })
