@@ -147,7 +147,8 @@ internal class InvFailure(message: String) : Exception(message)
  *    nu e posibilă; „De aruncat” se șterge direct, fără coș).
  *    Documentele nu au dialoguri: [apply] mută prin SAF în „<destinație>/<dosar>” (implicit „Organizate/<dosar>”)
  *    și „De aruncat (FORJA)”. Destinația se schimbă înainte de aplicare cu [setDestination]; fiecare [apply]
- *    întoarce în [ApplyResult.landing] locul unde au ajuns lucrurile;
+ *    întoarce în [ApplyResult.landing] locul unde au ajuns lucrurile, iar rezumatul rulării urcă pe site
+ *    (users/{uid}/inventory/{runId}, doar cu contractul semnat, ultimele 20);
  * 5. [clear] uită tot (plan, rulare, fișiere).
  */
 object Inventory {
@@ -447,12 +448,14 @@ object Inventory {
     /**
      * După dialoguri: mută (RELATIVE_PATH „<rădăcina aleasă>/<dosar>/”, implicit „Pictures/FORJA/<dosar>/”), verifică
      * coșul, raportează progresul (pe contextul apelantului), scoate din plan ce s-a aplicat și emite Done/Failed. Când
-     * planul rămâne gol, dispare (fișiere + pointer) și [progress] trece în Done.
+     * planul rămâne gol, dispare (fișiere + pointer) și [progress] trece în Done. După fiecare rundă, rezumatul
+     * rulării (totalurile adunate peste runde) urcă pe site, dacă e semnat contractul.
      */
     suspend fun apply(context: android.content.Context, onProgress: (Int, Int) -> Unit): ApplyResult {
         val ctx = bind(context)
         if (snapshot == null) load(ctx)
         var event: InvEvent? = null
+        var summary: InvSummaryDoc? = null
         val result = lock.withLock {
             val s = snapshot ?: return@withLock ApplyResult(0, 0, 0, 0L)
             val runId = s.meta.runId
@@ -484,6 +487,8 @@ object Inventory {
                 throw e
             }
             val r = out.result
+            val applied = tally(s, out)
+            if (applied.moved + applied.trashed + applied.failed > 0) summary = summaryOf(s, applied)
             val doc = PlanEdits.without(s.doc, s.items, out.removed)
             if (PlanEdits.count(doc) == 0) {
                 withContext(Dispatchers.IO) { InventoryStore.deleteRun(ctx, runId) }
@@ -493,14 +498,76 @@ object Inventory {
                 val n = r.moved + r.trashed
                 _progress.value = InvProgress(runId, s.meta.kind, InvStage.Done, n, n.coerceAtLeast(1), 0, recent.toList(), emptyList())
             } else {
-                _progress.value = readyProgress(commit(ctx, s, doc))
+                _progress.value = readyProgress(commit(ctx, Snapshot(s.meta.copy(applied = applied), s.doc, s.items, s.base, s.plan), doc))
             }
             event = if (r.moved + r.trashed > 0 || r.failed == 0) InvEvent.Done(runId, out.folders, r.freedBytes)
             else InvEvent.Failed("Nu am putut aplica nimic. Verifică permisiunile și încearcă din nou.")
             r
         }
         event?.let { _events.tryEmit(it) }
+        summary?.let { doc -> io.launch { InventorySummary.publish(ctx, doc) } }
         return result
+    }
+
+    /** Totalurile rulării după încă o rundă (dosare după nume, eșecurile fără dublări). */
+    private fun tally(s: Snapshot, out: InventoryApply.Outcome): AppliedRec {
+        val prev = s.meta.applied ?: AppliedRec()
+        val r = out.result
+        val folders = LinkedHashMap(prev.folders)
+        if (out.moved.isNotEmpty()) for (f in s.doc.folders) {
+            var count = 0
+            var bytes = 0L
+            for (id in f.itemIds) if (id in out.moved) { count++; bytes += s.items[id]?.bytes ?: 0L }
+            if (count > 0) {
+                val t = folders[f.name] ?: FolderTally()
+                folders[f.name] = FolderTally(t.count + count, t.bytes + bytes)
+            }
+        }
+        // Ieșite din plan fără să ajungă la loc (șterse între timp, copie rămasă în „De aruncat”) = pierdute definitiv;
+        // restul eșecurilor rămân în plan și se pot reîncerca.
+        val lost = (out.removed.size - out.moved.size - r.trashed).coerceIn(0, r.failed)
+        return AppliedRec(
+            moved = prev.moved + r.moved, trashed = prev.trashed + r.trashed, lost = prev.lost + lost,
+            pending = (r.failed - lost).coerceAtLeast(0), trashBytes = prev.trashBytes + r.freedBytes,
+            folders = folders, lastAt = System.currentTimeMillis()
+        )
+    }
+
+    /** Rezumatul pentru site (§3.3 din DESIGN-4.4): scopul, destinația, dosarele, gunoiul, totalurile. */
+    private fun summaryOf(s: Snapshot, a: AppliedRec): InvSummaryDoc {
+        val meta = s.meta
+        val photos = meta.kind == InvKind.Photos
+        val dest = s.plan.dest
+        val source = meta.tree?.let { Uri.parse(it) }
+        val mode: String
+        val label: String
+        when {
+            !photos -> { mode = "folder"; label = source?.let { TreePaths.label(it) } ?: "Folder" }
+            meta.bucketId != null -> {
+                mode = "album"
+                label = s.items.values.firstOrNull { it.bucket.isNotBlank() }?.bucket ?: "Album"
+            }
+            meta.lastN != null -> { mode = "last"; label = "Ultimele ${InvSummaryDoc.count(meta.lastN)}" }
+            else -> { mode = "all"; label = "Toată galeria" }
+        }
+        return InvSummaryDoc(
+            id = meta.runId,
+            kind = if (photos) "photos" else "docs",
+            startedAt = meta.createdAt,
+            finishedAt = a.lastAt,
+            appVersion = try { com.forja.app.BuildConfig.VERSION_NAME } catch (_: Throwable) { "" },
+            scopeMode = mode,
+            scopeN = if (mode == "last") meta.lastN else null,
+            scopeLabel = label,
+            destLabel = if (photos) DestNames.option(dest) else DestNames.short(dest),
+            destPath = DestNames.path(dest, source).uppercase(),
+            folders = a.folders.map { (name, t) -> InvSummaryDoc.Folder(name, t.count, t.bytes) },
+            trashCount = a.trashed,
+            trashBytes = a.trashBytes,
+            moved = a.moved,
+            failed = a.failed,
+            freedBytes = if (photos) a.trashBytes else null
+        )
     }
 
     /** Uită tot: oprește analiza, șterge planul, fișierele și pointerul. */

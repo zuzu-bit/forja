@@ -125,6 +125,28 @@ internal data class PlanDoc(
     val dest: DestRec? = null
 )
 
+/** Ce s-a mutat într-un dosar, adunat peste toate rundele de aplicare (pentru rezumatul de pe site). */
+@Serializable
+internal data class FolderTally(val count: Int = 0, val bytes: Long = 0L)
+
+/**
+ * Totalul aplicărilor unei rulări (o rulare mare se aplică în mai multe runde de ≤ 500). Eșecurile: [lost] = elemente
+ * ieșite din plan fără să ajungă la locul lor (șterse între timp), [pending] = cele rămase în plan după ultima rundă
+ * (se pot reîncerca; nu se adună de la o rundă la alta, ca o reîncercare reușită să nu fie numărată de două ori).
+ */
+@Serializable
+internal data class AppliedRec(
+    val moved: Int = 0,
+    val trashed: Int = 0,
+    val lost: Int = 0,
+    val pending: Int = 0,
+    val trashBytes: Long = 0L,
+    val folders: Map<String, FolderTally> = emptyMap(),
+    val lastAt: Long = 0L
+) {
+    val failed: Int get() = lost + pending
+}
+
 @Serializable
 internal data class RunMeta(
     val runId: String,
@@ -148,7 +170,8 @@ internal data class RunMeta(
     val itemCount: Int = 0,
     val trashCount: Int = 0,
     val trashBytes: Long = 0L,
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val applied: AppliedRec? = null
 )
 
 @Serializable
