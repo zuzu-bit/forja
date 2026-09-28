@@ -529,7 +529,8 @@ object Music {
             val prev = countRow
             val heard = countAccumMs + if (countSince != 0L) clock - countSince else 0L
             val app = appCtx
-            if (prev != null && !countDone && heard in SKIP_MIN_MS until PLAY_COUNT_MS && prev.durS > 60 && app != null) {
+            // Doar când a urmat altă piesă (nu când playerul s-a oprit sau a dispărut).
+            if (prev != null && key != null && !countDone && heard in SKIP_MIN_MS until PLAY_COUNT_MS && prev.durS > 60 && app != null) {
                 val skip = prev.copy(at = System.currentTimeMillis(), event = PlayEvent.SKIP)
                 scope.launch { try { withContext(Dispatchers.IO) { MusicStats.record(app, skip) } } catch (_: Exception) { } }
             }

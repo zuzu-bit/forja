@@ -101,6 +101,43 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
         }
     }
 
+    WorkoutLiveContent(
+        live = live,
+        elapsedSec = elapsed,
+        disc = disc,
+        showMusic = showMusic,
+        actions = LiveActions(
+            onEnd = { vm.endEarly(); onExit() },
+            onToggleAngle = { vm.toggleAngle() },
+            onFinishSet = { vm.finishSet() },
+            onAddRest = { vm.addRest() },
+            onSkipRest = { vm.skipRest() },
+            onDisc = onDisc,
+            onOpenPlayer = { MusicStarter.openPlayer(context) },
+            onNext = { MusicStarter.next(context) },
+            onPrevious = { MusicStarter.previous(context) },
+            onOpen = { MusicStarter.tap(context) }
+        )
+    )
+}
+
+/** Acțiunile sesiunii live (seria, pauza, muzica). */
+data class LiveActions(
+    val onEnd: () -> Unit = {},
+    val onToggleAngle: () -> Unit = {},
+    val onFinishSet: () -> Unit = {},
+    val onAddRest: () -> Unit = {},
+    val onSkipRest: () -> Unit = {},
+    val onDisc: () -> Unit = {},
+    val onOpenPlayer: () -> Unit = {},
+    val onNext: () -> Unit = {},
+    val onPrevious: () -> Unit = {},
+    val onOpen: () -> Unit = {}
+)
+
+/** Sesiunea live, fără ViewModel (și pentru capturi): video, serii / pauză, discul și banda muzicii, „Urmează”. */
+@Composable
+fun WorkoutLiveContent(live: LiveState, elapsedSec: Long, disc: DiscUi, showMusic: Boolean, actions: LiveActions) {
     val ex = live.current
     if (ex == null) {
         Box(Modifier.fillMaxSize().background(Surface0), contentAlignment = Alignment.Center) {
@@ -134,10 +171,10 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "SESIUNE LIVE · ${Fmt.durationMs(elapsed)}",
+                    "SESIUNE LIVE · ${Fmt.durationMs(elapsedSec)}",
                     style = monoLabel(9, 0.14f).copy(color = Accent2)
                 )
-                OverVideoButton("Încheie", onClick = { vm.endEarly(); onExit() })
+                OverVideoButton("Încheie", onClick = actions.onEnd)
             }
 
             Column(
@@ -154,16 +191,16 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 MonoButton(
                     text = if (live.angleFront) "UNGHI: FRONTAL · atinge" else "UNGHI: LATERAL · atinge",
-                    onClick = { vm.toggleAngle() }
+                    onClick = actions.onToggleAngle
                 )
             }
 
             if (showMusic) {
                 VideoMusicDisc(
                     ui = disc,
-                    onTap = onDisc,
-                    onLongPress = { MusicStarter.openPlayer(context) },
-                    onNext = { MusicStarter.next(context) },
+                    onTap = actions.onDisc,
+                    onLongPress = actions.onOpenPlayer,
+                    onNext = actions.onNext,
                     modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 14.dp)
                 )
             }
@@ -236,9 +273,9 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
                     }
                     Spacer(Modifier.height(14.dp))
                     Row {
-                        SecondaryButton("+15 s", onClick = { vm.addRest() })
+                        SecondaryButton("+15 s", onClick = actions.onAddRest)
                         Spacer(Modifier.width(10.dp))
-                        SecondaryButton("Sari pauza", onClick = { vm.skipRest() })
+                        SecondaryButton("Sari pauza", onClick = actions.onSkipRest)
                     }
                 }
             }
@@ -246,10 +283,10 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
                 Spacer(Modifier.height(16.dp))
                 RestMusicStrip(
                     ui = disc,
-                    onPrevious = { MusicStarter.previous(context) },
-                    onToggle = onDisc,
-                    onNext = { MusicStarter.next(context) },
-                    onOpen = { MusicStarter.tap(context) },
+                    onPrevious = actions.onPrevious,
+                    onToggle = actions.onDisc,
+                    onNext = actions.onNext,
+                    onOpen = actions.onOpen,
                     modifier = Modifier.padding(horizontal = 20.dp)
                 )
             }
@@ -259,7 +296,7 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
         AnimatedVisibility(visible = !live.resting, enter = fadeIn(), exit = fadeOut()) {
             PrimaryButton(
                 text = "Termină seria",
-                onClick = { vm.finishSet() },
+                onClick = actions.onFinishSet,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp)

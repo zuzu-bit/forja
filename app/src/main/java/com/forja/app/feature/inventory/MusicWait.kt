@@ -276,7 +276,7 @@ fun InventoryMusicScreen(onOpenInventory: (InvPage) -> Unit) {
 
 /**
  * S3c (Muzica.dc.html): fundal radial cald, pastila + egalizatorul mic, eroul, piesa, comenzile, comutatoarele.
- * Pe ecrane joase (S23: 696 dp utili) eroul se strânge la 212 dp, ca totul să încapă fără derulare.
+ * Pe ecrane joase (S23: 696 dp utili) eroul se strânge la 200 dp, ca totul să încapă fără derulare.
  */
 @Composable
 fun MusicWaitContent(state: MusicUiState, actions: MusicActions, modifier: Modifier = Modifier) {
@@ -304,7 +304,7 @@ fun MusicWaitContent(state: MusicUiState, actions: MusicActions, modifier: Modif
             top = {
                 WaitHeader(state.pill, actions.onPill) { EqualizerMini(state.playing || starting) }
                 Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
-                    CoverRing(state, if (compact) 212.dp else 300.dp)
+                    CoverRing(state, if (compact) 200.dp else 300.dp)
                 }
                 if (known) {
                     Column(
