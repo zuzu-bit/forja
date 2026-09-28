@@ -238,6 +238,18 @@ jobs:
           guide|a warm friendly approachable young female fitness coach smiling gently and welcoming, casual athletic hoodie, wholesome professional half-body portrait, cinematic warm lighting, graphite and amber tones, dark studio background, natural and tasteful, no text
           paznic|a cute friendly cartoon police officer guardian mascot smiling warmly, holding a small rounded baton, chubby wholesome character design, navy uniform with a soft badge, big kind eyes, graphite and amber tones, soft studio lighting, approachable and reassuring, no text
           mascot_chef|friendly cartoon mascot of a small clay ember-spirit wearing a white chef hat, holding a wooden spoon, warm olive and amber palette, soft studio light, transparent-looking neutral background, square, high quality, no text
+          ex_jumping_jacks|a woman mid jumping jack with arms raised overhead and feet wide apart in a dark gym, single warm spotlight, full body in frame, athletic effort, no text
+          ex_burpees|a man dropping into the plank phase of a burpee, chest close to the floor, dark gym, warm amber spotlight, full body side view, gritty athletic photography, no text
+          ex_plank|a woman holding a forearm plank with a straight line from head to heels on a dark gym floor, warm rim light, full body side view, athletic, no text
+          ex_mountain_climbers|a man doing mountain climbers in a high plank, driving one knee toward his chest, dark gym, warm spotlight, full body side view, athletic effort, no text
+          ex_shadow_boxing|a woman shadow boxing, throwing a straight punch with wrapped hands, dark boxing gym, single warm spotlight, focused, athletic, no text
+          ex_lunges|a man in a deep forward lunge with the back knee just above the floor, dark gym, warm amber spotlight, full body side view, athletic, no text
+          ex_squat_bw|a woman in a deep bodyweight squat with arms extended forward, dark gym, single warm spotlight, full body side view, athletic, no text
+          ex_cat_cow|a woman on hands and knees on a mat arching her back in a cat-cow stretch, dark calm room, soft warm side light, full body side view, no text
+          ex_shoulder_circles|a man standing tall making slow shoulder circles with arms stretched out to the sides, dark gym, warm spotlight, calm warm-up, full body front view, no text
+          ex_march|a man marching in place, lifting one knee to hip height with the opposite arm swinging, dark gym, warm amber spotlight, full body, athletic, no text
+          ex_high_knees|a woman running in place with high knees, one knee driven up to hip height, dark gym, warm spotlight, energetic motion, full body, athletic, no text
+          ex_breathing|a man sitting cross-legged on a mat with eyes closed and one hand on his belly, slow deep breathing, dark calm room, soft warm light, peaceful, no text
           MEDIAEOF
           echo "Poze: generate=$GEN_OK existente=$GEN_SKIP erori=$GEN_ERR"
           echo "- Poze AI (FLUX): generate=$GEN_OK · existente=$GEN_SKIP · erori=$GEN_ERR" >> "$GITHUB_STEP_SUMMARY"
