@@ -40,7 +40,7 @@ private val ThresholdOptions = listOf(30 to "30 min", 60 to "1 h", 120 to "2 h",
 private val LOCURI_STEPS = listOf(
     CoachStep("locuri.teritorii", "Teritorii: celule de 150 m, cucerite pe jos, alergând sau pe bicicletă. Din mașină, nu."),
     CoachStep("locuri.prag", "Un loc = ai STAT aici cel puțin atât. Mersul pe stradă nu e vizită."),
-    CoachStep("locuri.site", "Și pe site: zonele și locurile tale apar și pe site, cu contractul semnat.", MascotState.Thinking),
+    CoachStep("locuri.site", "Și pe site: zonele și locurile tale apar și online. Pornește cu contractul.", MascotState.Thinking),
     CoachStep("locuri.loc", "Dă-i un nume și stele. Cu o stea, îl poți recomanda prietenilor.", MascotState.Happy)
 )
 

@@ -80,7 +80,7 @@ object SiteMirror {
     }
 
     /** Trimite antrenamentele terminate după ultimul trimis (prima dată: ultimele 60 de zile). */
-    suspend fun workoutsPass(app: ForjaApp, uid: String) = workoutsLock.withLock {
+    private suspend fun workoutsPass(app: ForjaApp, uid: String) = workoutsLock.withLock {
         try {
             val store = SiteSyncStore.of(app)
             val key = SiteSyncStore.workoutsSince(uid)
@@ -93,7 +93,7 @@ object SiteMirror {
         } catch (_: Exception) { }
     }
 
-    private suspend fun targetsPass(app: ForjaApp, uid: String, t: SiteTargets) {
+    private fun targetsPass(app: ForjaApp, uid: String, t: SiteTargets) {
         try {
             val store = SiteSyncStore.of(app)
             val key = SiteSyncStore.targetsSignature(uid)
