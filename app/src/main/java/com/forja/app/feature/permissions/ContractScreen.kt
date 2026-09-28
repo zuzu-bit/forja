@@ -83,7 +83,7 @@ private val CLAUSES = listOf(
     ),
     Clause(
         "Cum revoci", listOf(
-            "Profil → Contractul de securitate → Revocă. Oprește tot pe loc și cere ștergerea a ce se poate șterge de pe site: sesiunea de sincronizare și listarea după număr.",
+            "Profil → Contract → Revocă. Oprește tot pe loc și cere ștergerea a ce se poate șterge de pe site: sesiunea de sincronizare și listarea după număr.",
             "Copiile și miniaturile expiră singure în 24 de ore, nopțile în 7 zile. Jurnalele rămân în contul tău până îl închizi."
         )
     )

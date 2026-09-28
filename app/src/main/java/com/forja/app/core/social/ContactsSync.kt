@@ -228,7 +228,7 @@ object ContactsSync {
         val uid = app.auth.currentUid ?: return Outcome.SKIPPED
         val headers = Discovery.headers(app)
         if (headers.isEmpty() && Discovery.verifiedPhone() == null) {
-            app.prefs.setContactsStatus("Fără număr. Scrie-l în Echipare.")
+            app.prefs.setContactsStatus("Fără număr. Scrie-l în Profil.")
             return Outcome.SKIPPED
         }
         if (!ContactsReader.granted(app)) {

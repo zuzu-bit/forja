@@ -42,7 +42,7 @@ fun InfoDot(
             .border(1.dp, tint.copy(alpha = 0.30f), CircleShape)
             .pressable({ open = true }),
         contentAlignment = Alignment.Center
-    ) { Text("!", style = BodyStrong.copy(color = tint, fontSize = (size * 0.6f).sp)) }
+    ) { Text("i", style = BodyStrong.copy(color = tint, fontSize = (size * 0.6f).sp)) }
 
     if (open) {
         Dialog(onDismissRequest = { open = false }) {
