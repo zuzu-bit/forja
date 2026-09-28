@@ -520,12 +520,14 @@ private fun CoachOverlay(
             onSkip = onSkip,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .offset { IntOffset(0, cardY.value.roundToInt()) }
+                // Prima așezare (și sub mișcare redusă) citește direct ținta calculată: cardul apare în același cadru în care
+                // i se cunoaște înălțimea, fără să aștepte efectul de mai sus (altfel Robolectric și primul cadru îl arătau gol).
+                .offset { IntOffset(0, (if (!placed || reduced) cardTargetY ?: 0f else cardY.value).roundToInt()) }
                 .padding(horizontal = CardMargin)
                 .widthIn(max = 480.dp)
                 .fillMaxWidth()
                 .onSizeChanged { cardHeight = it.height }
-                .graphicsLayer { this.alpha = if (placed) 1f else 0f }
+                .graphicsLayer { this.alpha = if (cardTargetY != null) 1f else 0f }
         )
     }
 }
