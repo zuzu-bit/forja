@@ -71,6 +71,8 @@ export async function handleMusicDiag(request, env, uid, now = Date.now()) {
 }
 
 const clock = new Intl.DateTimeFormat('ro-RO', { timeZone: 'Europe/Bucharest', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+/** Romanian counting: 1 încercare, 2 încercări, 20 de încercări. */
+const count = (n, one, many) => (n === 1 ? `1 ${one}` : n !== 0 && (n % 100 === 0 || n % 100 >= 20) ? `${n} de ${many}` : `${n} ${many}`);
 const deviceText = d => (!d ? '' : typeof d === 'string' ? d : Object.values(d).join(' '));
 /** Admin `music [n]`: the last n attempts of every account, newest last, in Romanian time. */
 export async function musicReport(env, n = 30) {
@@ -90,7 +92,7 @@ export async function musicReport(env, n = 30) {
   const last = rows.slice(-Math.min(Math.max(n, 1), MUSIC_DIAG.keep));
   const ok = last.filter(e => e.result === 'ok').length;
   return [
-    `Muzică: ${last.length} încercări (ora României) · ${ok} reușite`,
+    `Muzică: ${count(last.length, 'încercare', 'încercări')} (ora României) · ${count(ok, 'reușită', 'reușite')}`,
     ...last.map(e => '  ' + [clock.format(new Date(e.at)).replace(',', ''), 'u' + e.u, e.want.padEnd(7), e.rung.padEnd(14), String(e.pkg || '—').padEnd(24), String(e.kind || '—').padEnd(7),
       e.result.padEnd(11), (e.ms + 'ms').padEnd(8), e.ver || '', deviceText(e.device), e.err ? '· ' + e.err : ''].join(' ').trimEnd()),
   ].join('\n');

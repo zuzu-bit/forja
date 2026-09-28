@@ -72,7 +72,9 @@ test('diag/music keeps the last 500 events per account, accounts apart; admin "m
   assert.match(await admin('help'), /music \[n\]/);
   const out = await admin('music 3');
   const lines = out.split('\n');
-  assert.match(lines[0], /^Muzică: 3 încercări \(ora României\)/);
+  assert.equal(lines[0], 'Muzică: 3 încercări (ora României) · 2 reușite');
+  assert.match((await admin('music 1')).split('\n')[0], /^Muzică: 1 încercare \(ora României\) · 0 reușite$/);
+  assert.match((await admin('music 25')).split('\n')[0], /^Muzică: 25 de încercări /);
   assert.equal(lines.length, 4);
   assert.match(lines.at(-1), /probe\s+K_PLAY .*refused .*Pixel 8 · no session$/);
   assert(!out.includes('lana') && !out.includes('ana '), 'no uid in the admin output');
