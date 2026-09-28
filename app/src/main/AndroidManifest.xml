@@ -79,10 +79,29 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <!-- Găsirea (4.4): executorul unei comenzi de pe site — Urmărește (location) sau Sună (shortService fără locație).
+             Pornește doar la o comandă și se oprește la termenul ei; ascultarea stă în serviciul contractului. -->
         <service
             android:name=".core.recovery.LostPhoneService"
             android:exported="false"
-            android:foregroundServiceType="location" />
+            android:foregroundServiceType="location|shortService" />
+
+        <!-- Alarma găsirii (setAndAllowWhileIdle): trezește bătaia în Doze sau repornește serviciul contractului. -->
+        <receiver
+            android:name=".core.recovery.FinderWakeReceiver"
+            android:exported="false" />
+
+        <!-- „GĂSIRE · Aici sunt.”: peste ecranul blocat, fără deblocare, cât sună telefonul. -->
+        <activity
+            android:name=".core.recovery.FoundActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity="${applicationId}.found"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Forja" />
 
         <service
             android:name=".core.sleep.SleepTrackService"
@@ -111,6 +130,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
