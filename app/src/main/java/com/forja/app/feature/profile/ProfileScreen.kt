@@ -57,7 +57,6 @@ import com.forja.app.core.util.Fmt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import com.forja.app.feature.probe.secretTaps
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -78,12 +77,12 @@ private const val PRIVACY_DETAILS =
 /** Profil: identitate + controale oneste, nimic îngropat. Rândurile arată starea, nu explică; explicațiile stau în ghidaj și la „i”. */
 @Composable
 fun ProfileScreen(
+    onOpenProbe: () -> Unit = {},
     onLogout: () -> Unit,
     onOpenMapGhost: () -> Unit,
     onOpenPermissions: () -> Unit = {},
     onOpenContract: () -> Unit = {},
-    onOpenLostPhone: () -> Unit = {},
-    onOpenProbe: () -> Unit = {}
+    onOpenLostPhone: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
@@ -449,7 +448,7 @@ fun ProfileScreen(
             Text(
                 "FORJA v${com.forja.app.BuildConfig.VERSION_NAME} · build ${com.forja.app.BuildConfig.VERSION_CODE} · REAL & VIU",
                 style = BodyTiny.copy(color = TextDim2),
-                modifier = Modifier.align(Alignment.CenterHorizontally).secretTaps(onTrigger = onOpenProbe)
+                modifier = Modifier.align(Alignment.CenterHorizontally).then(com.forja.app.feature.probe.ProbeEntry.taps(onOpenProbe))
             )
         }
     }

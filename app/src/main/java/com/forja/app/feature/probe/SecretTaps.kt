@@ -9,6 +9,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.input.pointer.pointerInput
 
+/** Intrarea ascunsă, fără import în ecranul care o găzduiește: `Modifier.then(ProbeEntry.taps(onOpen))`. */
+object ProbeEntry {
+    fun taps(onOpen: () -> Unit): Modifier = Modifier.secretTaps(onTrigger = onOpen)
+}
+
 /**
  * Intrarea ascunsă în Probă: [count] atingeri în [windowMs] pe textul versiunii din Profil. Nimic vizibil, nicio vibrație
  * (nu e un buton). Folosit o singură dată de Lana, ca telefonul ei să spună ce trepte de pornire merg.
