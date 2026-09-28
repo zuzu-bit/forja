@@ -209,7 +209,7 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     Lifecycle.Event.ON_START -> {
                         app.presence.start(uid) { app.presence.isGhostNow() }
                         com.forja.app.core.location.BgLocation.registerIfReady(app)
-                        com.forja.app.core.recovery.LostPhoneRecovery.resume(app)
+                        com.forja.app.core.recovery.LostPhoneRecovery.onAppStart(app)
                         // Sincronizarea în cont se reia doar dintr-o activitate vizibilă și doar dacă a fost pornită de utilizator.
                         try { com.forja.app.core.sync.CollectionSettings.resume(app) } catch (_: Exception) { }
                         // Prieteni din agendă: lucrătorul zilnic există doar cât timp comutatorul e pornit și numărul e scris.
@@ -464,6 +464,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                                 // Prieteni din agendă: numărul, comutatorul și potrivirile sunt ale ACESTUI cont — nu trec la următorul.
                                 // DELETE-ul pe site are nevoie de token, deci înainte de signOut (cel mult 1,5 s; altfel expiră singur în 30 de zile).
                                 try { com.forja.app.core.social.ContactsSync.logout(app) } catch (_: Exception) { }
+                                // Găsirea: telefonul iese de pe site-ul contului vechi acum, nu după 30 de zile.
+                                try { com.forja.app.core.recovery.LostPhoneRecovery.logout(app) } catch (_: Exception) { }
                                 app.auth.logout()
                                 // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni. Contractul e al contului: se semnează din nou.
                                 app.prefs.resetFirstRun()
@@ -476,13 +478,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     },
                     onOpenMapGhost = { nav.navigate(Route.MAP) },
                     onOpenPermissions = { nav.navigate(Route.PERMISSIONS) },
-                    onOpenContract = { nav.navigate(Route.CONTRACT) { launchSingleTop = true } },
-                    onOpenLostPhone = { nav.navigate("lost_phone") }
+                    onOpenContract = { nav.navigate(Route.CONTRACT) { launchSingleTop = true } }
                 )
-            }
-            // „Telefonul meu” — găsirea telefonului pierdut (ruta e locală: Nav.kt nu se schimbă în pasul 2).
-            composable("lost_phone") {
-                com.forja.app.feature.recovery.LostPhoneScreen(onBack = { nav.popBackStack() })
             }
         }
 
@@ -493,6 +490,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
         ) {
             ForjaTabBar(current = currentTab, onSelect = ::goTab)
         }
+        // Contractul v3: cine a semnat v2 vede o singură dată, pe „Azi”, rândurile noi și „Semnează”.
+        com.forja.app.feature.permissions.ContractResignHost(active = route == Route.DASHBOARD) { nav.navigate(Route.CONTRACT) { launchSingleTop = true } }
 
         // Pastila globală a inventarului: oriunde, cât timp rularea e activă (nu pe ecranele Inventarului, unde
         // progresul e deja pe ecran, și nu în modurile „Cât aștepți”, care o au în antet); la final: „Gata” + toast.

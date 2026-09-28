@@ -48,12 +48,19 @@ import com.forja.app.ForjaApp
 import com.forja.app.core.data.Friend
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
+import com.forja.app.core.network.SiteLinks
+import com.forja.app.core.recovery.Finder
+import com.forja.app.core.recovery.FinderState
+import com.forja.app.core.recovery.FinderUi
 import com.forja.app.core.social.ContactsReader
 import com.forja.app.core.social.ContactsSync
 import com.forja.app.core.social.Discovery
 import com.forja.app.core.social.PhoneNumbers
 import com.forja.app.core.social.PhoneVerify
 import com.forja.app.core.util.Fmt
+import com.forja.app.feature.recovery.GasireActions
+import com.forja.app.feature.recovery.GasireSheet
+import com.forja.app.feature.recovery.tone
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -68,9 +75,14 @@ private val PROFIL_STEPS = listOf(
     CoachStep("profil.info", "Aici afli ce face fiecare rând. Ghidajul îl reiei jos, din „Reia ghidajul”.", MascotState.Wink)
 )
 
-/** „Date & confidențialitate”, la punctul „i”: trimite la contract, nu repetă contractul. */
+/**
+ * „Date & confidențialitate”, la punctul „i”: trimite la contract, nu repetă contractul.
+ * 4.4: propoziția veche („Fără contract semnat, nimic nu pleacă pe site”) nu era adevărată — jurnalele stau în cont
+ * oricum și se văd pe site; restul (sincronizarea, galeria, explorarea, agenda, găsirea, Inventarul, muzica) cere contractul.
+ */
 private const val PRIVACY_DETAILS =
-    "Ce pleacă de pe telefon, unde stă și cât timp scrie în Contract. Fără contract semnat, nimic nu pleacă pe site.\n\n" +
+    "Ce pleacă de pe telefon, unde stă și cât timp scrie în Contract. Fără contract semnat, pe site ajung doar jurnalele " +
+        "pe care aplicația le ține oricum: mese, somn, mișcare. Restul pornește doar cu semnătura.\n\n" +
         "Mesajele, parolele și conținutul ecranului nu se citesc niciodată.\n\n" +
         "Locația: prietenii te văd doar când nu ești fantomă. Familia te vede mereu."
 
@@ -80,8 +92,7 @@ fun ProfileScreen(
     onLogout: () -> Unit,
     onOpenMapGhost: () -> Unit,
     onOpenPermissions: () -> Unit = {},
-    onOpenContract: () -> Unit = {},
-    onOpenLostPhone: () -> Unit = {}
+    onOpenContract: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
@@ -134,12 +145,22 @@ fun ProfileScreen(
     val ghostUntil by app.prefs.ghostUntilLocal.collectAsState(initial = null)
     val ghostOn = ghostUntil?.let { it == -1L || it > System.currentTimeMillis() }
     val contractSigned by app.prefs.contractSigned.collectAsState(initial = null)
+    val contractNeedsResign by app.prefs.contractNeedsResign.collectAsState(initial = false)
     val bgShareOn by app.prefs.bgShareOn.collectAsState(initial = false)
     val geminiKey by app.prefs.geminiKey.collectAsState(initial = null)
     var aiKeyOpen by remember { mutableStateOf(false) }
     val serverOn = app.forjaApi.available
-    val lostPhoneOn = remember { com.forja.app.core.recovery.LostPhoneRecovery.enabled(context) }
     val hasBackground = com.forja.app.core.location.BgLocation.hasBackground(context)
+    // Telefonul meu (4.4): starea găsirii, recitită la 5 s cât e deschis Profilul (bătaia rulează în serviciu).
+    var finder by remember { mutableStateOf<FinderUi?>(null) }
+    LaunchedEffect(contractSigned) {
+        while (true) {
+            finder = try { Finder.ui(context) } catch (_: Exception) { null }
+            delay(5_000L)
+        }
+    }
+    var finderSheet by remember { mutableStateOf(false) }
+    var probing by remember { mutableStateOf(false) }
 
     // Ce spuneau înainte subtitlurile — la „i”, pentru cine vrea să citească.
     val details = remember(familyUids.size) {
@@ -151,7 +172,7 @@ fun ProfileScreen(
             (if (familyUids.isNotEmpty()) "familia (${familyUids.size}) te vede și atunci. " else "familia te vede și atunci. ") +
             "Locația în fundal: prietenii te văd și cu aplicația închisă.\n\n" +
             "Panoul online: harta, locurile și rapoartele tale, pe laptop, cu același cont. " +
-            "Telefonul meu: dacă îl pierzi, îl cauți de acolo."
+            "Telefonul meu: cât e semnat contractul, îl găsești de pe site. Îl suni sau îl urmărești 10 minute."
     }
 
     CoachMarks(screen = "profil", steps = PROFIL_STEPS) {
@@ -329,14 +350,7 @@ fun ProfileScreen(
                     icon = Icons.Outlined.Language,
                     title = "Panoul online",
                     onClick = {
-                        try {
-                            context.startActivity(
-                                android.content.Intent(
-                                    android.content.Intent.ACTION_VIEW,
-                                    android.net.Uri.parse(com.forja.app.BuildConfig.INSIGHTS_URL.trimEnd('/') + "/insights")
-                                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                            )
-                        } catch (_: Exception) { toast.show("Nu am găsit un browser. Deschide manual: ${com.forja.app.BuildConfig.INSIGHTS_URL}") }
+                        if (!SiteLinks.open(context)) toast.show("Nu am găsit un browser. Deschide manual: ${SiteLinks.url()}")
                     },
                     trailing = { TrailingIcon(Icons.AutoMirrored.Outlined.OpenInNew) }
                 )
@@ -347,19 +361,20 @@ fun ProfileScreen(
                 SettingRow(
                     icon = Icons.Outlined.VerifiedUser,
                     title = "Contract",
-                    state = contractSigned?.let { if (it) "semnat" else "nesemnat" },
+                    state = contractSigned?.let { if (it) "semnat" else if (contractNeedsResign) "versiune nouă" else "nesemnat" },
                     stateColor = if (contractSigned == true) Positive else EmberHot,
                     onClick = onOpenContract
                 )
                 RowDivider()
-                // v4.0 — Telefonul meu: găsirea telefonului pierdut din panoul online (opt-in, implicit oprit).
-                SettingRow(
-                    icon = Icons.Outlined.PhoneAndroid,
-                    title = "Telefonul meu",
-                    state = if (lostPhoneOn) "pornit" else "oprit",
-                    stateColor = if (lostPhoneOn) Positive else TextDim,
-                    onClick = onOpenLostPhone
-                )
+                // 4.4 — Telefonul meu: găsibil singur cât e semnat contractul; aici doar starea și foaia Găsire.
+                FinderRow(finder) { ui ->
+                    when {
+                        ui.state == FinderState.NoContract -> onOpenContract()
+                        ui.state == FinderState.Incomplete && ui.onlyChannel -> openFinderChannel(context)
+                        ui.state == FinderState.Incomplete -> onOpenPermissions()
+                        else -> finderSheet = true
+                    }
+                }
                 RowDivider()
                 // Analiza pozelor cu mâncare: prin server, cu cheia ta Gemini sau încă neactivată.
                 SettingRow(
@@ -414,6 +429,33 @@ fun ProfileScreen(
                         }
                     },
                     trailing = { TrailingIcon(Icons.Outlined.Replay) }
+                )
+            }
+
+            val shownFinder = finder
+            if (finderSheet && shownFinder != null) {
+                GasireSheet(
+                    ui = shownFinder,
+                    probing = probing,
+                    actions = GasireActions(
+                        onOpenSite = {
+                            if (!SiteLinks.open(context, SiteLinks.Section.Gasire)) {
+                                toast.show("Nu am găsit un browser. Deschide manual: ${SiteLinks.url(SiteLinks.Section.Gasire)}")
+                            }
+                        },
+                        onProbe = {
+                            if (!probing) {
+                                probing = true
+                                scope.launch {
+                                    val r = try { Finder.probe(context) } catch (_: Exception) { null }
+                                    probing = false
+                                    finder = try { Finder.ui(context) } catch (_: Exception) { finder }
+                                    toast.show(r?.message ?: "Nu a mers. Încearcă din nou.")
+                                }
+                            }
+                        }
+                    ),
+                    onDismiss = { finderSheet = false }
                 )
             }
 
@@ -709,6 +751,38 @@ private fun StatBlock(value: String, label: String) {
         Text(value, style = heroNumeral(34))
         Spacer(Modifier.height(4.dp))
         Text(label, style = monoLabel(8, 0.14f))
+    }
+}
+
+/**
+ * Rândul „Telefonul meu”: titlul și starea găsirii într-un cuvânt (în gardă / fără contract / incomplet / fără legătură).
+ * `ui == null` = starea încă necitită: rândul apare fără cuvânt, fără „clipit”.
+ */
+@Composable
+fun FinderRow(ui: FinderUi?, onClick: (FinderUi) -> Unit) {
+    SettingRow(
+        icon = Icons.Outlined.PhoneAndroid,
+        title = "Telefonul meu",
+        state = ui?.state?.word,
+        stateColor = ui?.state?.tone() ?: TextDim,
+        onClick = { ui?.let(onClick) }
+    )
+}
+
+/** Canalul „Găsirea telefonului” e mut: setările lui, direct (altfel ale aplicației). */
+private fun openFinderChannel(context: android.content.Context) {
+    val channel = android.content.Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+        .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, com.forja.app.core.recovery.LostPhoneRecovery.CHANNEL)
+        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    try { context.startActivity(channel) } catch (_: Exception) {
+        try {
+            context.startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (_: Exception) { }
     }
 }
 
