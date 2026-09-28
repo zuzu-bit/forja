@@ -49,15 +49,14 @@ import com.forja.app.core.designsystem.components.LocalToast
 import com.forja.app.core.inventory.BinTick
 import com.forja.app.core.inventory.InvKind
 import com.forja.app.core.inventory.InvStage
-import com.forja.app.core.media.Shorts
 import com.forja.app.core.music.Music
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
-/** Modurile „Cât aștepți” (S3a/b/c), rute separate în MainActivity. */
-enum class InvWait { Scroll, Sport, Music }
+/** Modurile „Cât aștepți” (jocurile ZID și ASALT, muzica), rute separate în MainActivity. */
+enum class InvWait { Zid, Asalt, Music }
 
 private fun initialStack(link: InvPage?, phase: EnginePhase): List<InvPage> {
     val target = link ?: when (phase) {
@@ -214,9 +213,7 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
         run = runSummary,
         error = if (phase == EnginePhase.Failed) progress?.error ?: "" else null
     )
-    val poster by produceState<String?>(null) {
-        value = withContext(Dispatchers.IO) { try { Shorts.peek(context).firstOrNull()?.poster } catch (_: Exception) { null } }
-    }
+    val gameLevels = com.forja.app.feature.games.rememberWaitLevels()
     val art = track?.art
     val artBitmap = remember(art) { art?.asImageBitmap() }
     // Binele cunoscute ale planului (pentru banda de la aplicare, și după ce planul dispare).
@@ -342,15 +339,16 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
                         folders = plan?.folders?.size ?: 0,
                         musicArt = artBitmap,
                         musicPlaying = track?.playing == true,
-                        scrollPoster = poster
+                        zidLevel = gameLevels.zid,
+                        asaltLevel = gameLevels.asalt
                     )
-                    CoachMarks(screen = "inventar_rulare", steps = remember(runState.kind) { runCoachSteps(runState.kind) }) {
+                    CoachMarks(screen = "inventar_rulare_44", steps = remember(runState.kind) { runCoachSteps(runState.kind) }) {
                         InventoryRunContent(
                             runState,
                             RunActions(
                                 onClose = { if (!pop()) onBack() },
-                                onScroll = { onOpenWait(InvWait.Scroll) },
-                                onSport = { onOpenWait(InvWait.Sport) },
+                                onZid = { onOpenWait(InvWait.Zid) },
+                                onAsalt = { onOpenWait(InvWait.Asalt) },
                                 onMusic = { onOpenWait(InvWait.Music) },
                                 onOpenFolders = { setStack(InvPage.Start, InvPage.Folders) }
                             )

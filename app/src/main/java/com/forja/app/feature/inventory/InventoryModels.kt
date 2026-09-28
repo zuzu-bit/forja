@@ -76,8 +76,9 @@ data class RunUiState(
     val folders: Int = 0,
     val musicArt: ImageBitmap? = null,
     val musicPlaying: Boolean = false,
-    /** Posterul primului short (URL) pentru cardul SCROLL; null = imaginea de rezervă. */
-    val scrollPoster: String? = null
+    /** Nivelul curent din ZID și ASALT (cipul „NIV. 4” de pe carduri); null = încă necitit. */
+    val zidLevel: Int? = null,
+    val asaltLevel: Int? = null
 ) {
     val percent: Int get() = if (stage == InvStage.Ready) 100 else percentOf(done, total)
     val ready: Boolean get() = stage == InvStage.Ready

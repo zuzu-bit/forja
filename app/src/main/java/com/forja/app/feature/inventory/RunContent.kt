@@ -63,12 +63,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 import com.forja.app.core.designsystem.Accent
 import com.forja.app.core.designsystem.Accent2
 import com.forja.app.core.designsystem.LocalReducedMotion
 import com.forja.app.core.designsystem.OnAccent
-import com.forja.app.core.designsystem.OverVideoFill
 import com.forja.app.core.designsystem.Surface0
 import com.forja.app.core.designsystem.Surface1
 import com.forja.app.core.designsystem.Surface2
@@ -86,18 +84,16 @@ import com.forja.app.core.designsystem.components.pressable
 import com.forja.app.core.inventory.BinTick
 import com.forja.app.core.inventory.InvKind
 import com.forja.app.core.inventory.InvStage
+import com.forja.app.feature.games.AsaltCardArt
+import com.forja.app.feature.games.ZidCardArt
 import kotlin.math.PI
 import kotlin.math.sin
-
-/** Posterul de rezervă al cardului SCROLL (fotografia de sală din Antrenament) până vine manifestul shorts. */
-internal const val SCROLL_FALLBACK_POSTER =
-    "https://t4.ftcdn.net/jpg/06/22/38/57/500_F_622385753_VgquhCDAoHqLCGy3w8Q9zUEpxDLGfX54.jpg"
 
 /** Ce poate face omul din S2. */
 data class RunActions(
     val onClose: () -> Unit = {},
-    val onScroll: () -> Unit = {},
-    val onSport: () -> Unit = {},
+    val onZid: () -> Unit = {},
+    val onAsalt: () -> Unit = {},
     val onMusic: () -> Unit = {},
     val onOpenFolders: () -> Unit = {}
 )
@@ -107,19 +103,22 @@ data class RunActions(
 /** Pașii ghidajului din S2 (≤ 60 de caractere): banda și cardurile de așteptare. */
 internal fun runCoachSteps(kind: InvKind): List<CoachStep> = listOf(
     CoachStep("inv_belt", if (kind == InvKind.Photos) "Fiecare poză își găsește dosarul." else "Fiecare fișier își găsește dosarul."),
-    CoachStep("inv_wait", "Cât aștepți: scroll, sport sau muzică.")
+    CoachStep("inv_wait", "Cât aștepți: un joc sau muzica ta.")
 )
 
 /**
- * S2 (Rulare.dc.html): banda de sortare, procentul, pașii, „Cât aștepți”. Fereastră spre analiza din fundal.
- * Țintele ghidajului (coachTarget) sunt aici; învelișul CoachMarks îl pune ecranul cu stare.
+ * S2 (Rulare.dc.html): banda de sortare, procentul, pașii, „Cât aștepți” (ZID · ASALT · MUZICĂ). Fereastră spre analiza
+ * din fundal. Țintele ghidajului (coachTarget) sunt aici; învelișul CoachMarks îl pune ecranul cu stare.
+ * Pe ecranele scunde (S23 cu bara cu 3 butoane, ≈ 695 dp) spațiile și cardurile se strâng: totul încape fără derulare.
  */
 @Composable
 fun InventoryRunContent(state: RunUiState, actions: RunActions, modifier: Modifier = Modifier) {
-    run {
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val compact = maxHeight < 760.dp
         TopBottomColumn(
-            modifier = modifier.fillMaxSize().background(Surface0),
-            padding = PaddingValues(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 24.dp),
+            modifier = Modifier.fillMaxSize().background(Surface0),
+            padding = PaddingValues(start = 20.dp, top = if (compact) 12.dp else 20.dp, end = 20.dp, bottom = if (compact) 16.dp else 24.dp),
+            gap = if (compact) 12.dp else 14.dp,
             top = {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     StampLabel("INVENTAR", rotationDeg = -4f, appear = false)
@@ -143,9 +142,9 @@ fun InventoryRunContent(state: RunUiState, actions: RunActions, modifier: Modifi
                 )
                 Stepper(stageIndex(state.stage), done = state.ready)
                 AnimatedVisibility(visible = !state.ready, enter = fadeIn(), exit = fadeOut()) {
-                    Column(Modifier.coachTarget("inv_wait"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Column(Modifier.coachTarget("inv_wait"), verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 14.dp)) {
                         Text("CÂT AȘTEPȚI", style = mono(10, 0.16f, color = TextDim, bold = true), modifier = Modifier.padding(top = 4.dp))
-                        WaitCards(state, actions)
+                        WaitCards(state, actions, cardHeight = if (compact) 140.dp else 170.dp)
                     }
                 }
             },
@@ -247,26 +246,17 @@ internal fun Stepper(active: Int, done: Boolean, modifier: Modifier = Modifier) 
 
 // ───────────────────────────── Cardurile „Cât aștepți” ─────────────────────────────
 
+/** ZID · ASALT · MUZICĂ: trei carduri egale (miniatura desenată + eticheta), cipul „NIV. 4” pe jocuri. */
 @Composable
-private fun WaitCards(state: RunUiState, actions: RunActions) {
+private fun WaitCards(state: RunUiState, actions: RunActions, cardHeight: Dp) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        WaitCard("SCROLL", actions.onScroll, Modifier.weight(1f)) {
-            AsyncImage(
-                model = state.scrollPoster ?: SCROLL_FALLBACK_POSTER,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().background(MediaBg)
-            )
-            Box(Modifier.align(Alignment.Center).size(40.dp).clip(CircleShape).background(OverVideoFill), contentAlignment = Alignment.Center) {
-                Icon(InvIcons.Play, null, tint = TextPrimary, modifier = Modifier.size(16.dp))
-            }
+        WaitCard("ZID", levelDescription("Zid", state.zidLevel), actions.onZid, Modifier.weight(1f), cardHeight) {
+            ZidCardArt(state.zidLevel)
         }
-        WaitCard("SPORT", actions.onSport, Modifier.weight(1f)) {
-            Box(Modifier.fillMaxSize().background(MediaBg), contentAlignment = Alignment.Center) {
-                Mascot(state = MascotState.Happy, size = 96.dp)
-            }
+        WaitCard("ASALT", levelDescription("Asalt", state.asaltLevel), actions.onAsalt, Modifier.weight(1f), cardHeight) {
+            AsaltCardArt(state.asaltLevel)
         }
-        WaitCard("MUZICĂ", actions.onMusic, Modifier.weight(1f)) {
+        WaitCard("MUZICĂ", "Muzică", actions.onMusic, Modifier.weight(1f), cardHeight) {
             Box(Modifier.fillMaxSize().background(MediaBg), contentAlignment = Alignment.Center) {
                 val art = state.musicArt
                 if (art != null) {
@@ -279,18 +269,27 @@ private fun WaitCards(state: RunUiState, actions: RunActions) {
     }
 }
 
+private fun levelDescription(name: String, level: Int?): String = if (level == null) "$name, joc" else "$name, joc, nivelul $level"
+
 @Composable
-private fun WaitCard(label: String, onClick: () -> Unit, modifier: Modifier, media: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+private fun WaitCard(
+    label: String,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier,
+    height: Dp,
+    media: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit
+) {
     Column(
         modifier
             .pressable(onClick)
-            .height(170.dp)
+            .height(height)
             .clip(R8)
             .background(Surface1)
             .border(1.dp, W09, R8)
-            .semantics(mergeDescendants = true) { contentDescription = label.lowercase().replaceFirstChar { it.uppercase() }; role = Role.Button }
+            .semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }
     ) {
-        Box(Modifier.fillMaxWidth().height(128.dp), content = media)
+        Box(Modifier.fillMaxWidth().height(height - 42.dp), content = media)
         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
             Text(label, style = cond(18, tracking = 0.04f), maxLines = 1)
         }

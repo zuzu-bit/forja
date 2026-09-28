@@ -183,12 +183,4 @@ object InventorySamples {
         playing = true, positionMs = 72_000, durationMs = 220_000, top = true, stopAtEnd = true, onMap = true
     )
     val musicNoAccess = MusicUiState(pill = pill, ring = 0.34f, access = false)
-
-    /** S3b — starea implicită din prototip și un interval (Genuflexiuni, 3 / 15, 0:31). */
-    val mood = Mood.Energized
-    fun interval(): IntervalRun = IntervalRun(Mood.Energized).apply {
-        index = 2
-        remainingMs = 31_000L
-        animMs = 450L
-    }
 }

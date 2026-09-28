@@ -36,9 +36,6 @@ internal val Paper = Color(0xFFE9E4DA)            // foaia unui document
 internal val PaperInk = Color(0xFF9A958C)         // rândurile de pe foaie
 internal val PaperFold = Color(0xFFC9C3B8)        // colțul îndoit
 internal val DocBlue = Color(0xFF7FA3C7)          // insigna DOCX
-internal val MoodBlue = Color(0xFF7FA3C7)         // Obosit
-internal val MoodViolet = Color(0xFF9D8FC9)       // Neliniștit
-internal val MoodRed = Color(0xFFFF6B57)          // Nervos
 internal val MusicGlow = Color(0xFF1A1712)        // centrul fundalului radial la Muzică
 
 internal val W06 = Color(0x0FFFFFFF)
