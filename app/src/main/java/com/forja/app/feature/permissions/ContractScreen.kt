@@ -122,7 +122,18 @@ private const val PERMISSIONS_NOTE =
         "fără o permisiune, categoria ei rămâne pe telefon. Ce nu e limitat la Wi-Fi poate consuma internet mobil."
 
 /** Ce s-a corectat în v3, într-un rând (foaia de re-semnare). */
-private const val FIXED_SUMMARY = "Corectat: mișcarea, mesele, galeria, agenda, unde stau datele și cine le vede."
+internal const val FIXED_SUMMARY = "Corectat: mișcarea, mesele, galeria, agenda, unde stau datele și cine le vede."
+
+/**
+ * Rândurile noi, pe scurt, pentru foaia de re-semnare (textul întreg e la „Tot contractul”): titlu + o propoziție,
+ * ca foaia să încapă pe S23 cu „Semnează” la vedere.
+ */
+internal val RESIGN_POINTS: List<Pair<String, String>> = listOf(
+    "Găsirea telefonului" to "Ultima poziție și bateria, doar pentru tine. Când îl cauți, telefonul arată o notificare.",
+    "Inventarul pe site" to "Dosarele, câte fișiere și locul ales. Ultimele 20 de rulări.",
+    "Muzica" to "Topul săptămânii pe site. Pornirile, fără titluri, la serverul FORJA.",
+    "Antrenamente și țintă" to "Antrenamentele terminate și ținta de calorii, pe site."
+)
 
 /** Semnătura: versiunea + momentul, pe telefon (Prefs) și în users/{uid}.contract; apoi pornește tot. */
 suspend fun signContract(app: ForjaApp): Boolean {
@@ -481,10 +492,9 @@ private fun ContractResignSheet(busy: Boolean, onSign: () -> Unit, onReadAll: ()
     }
 }
 
-/** Conținutul foii de re-semnare: rândurile NOI, un rând cu ce s-a corectat, „Semnează”. Capturat în ContractShots. */
+/** Conținutul foii de re-semnare: ce e nou, pe scurt, un rând cu ce s-a corectat, „Semnează”. Capturat în GasireShots. */
 @Composable
 fun ContractResignContent(busy: Boolean, onSign: () -> Unit, onReadAll: () -> Unit, onLater: () -> Unit) {
-    val fresh = remember { CONTRACT_CLAUSES.first().lines.filter { it.mark == ClauseMark.New } }
     Column(
         Modifier
             .fillMaxWidth()
@@ -498,9 +508,21 @@ fun ContractResignContent(busy: Boolean, onSign: () -> Unit, onReadAll: () -> Un
         Text("Până semnezi, sincronizarea stă. Jurnalele merg mai departe.", style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp))
         Spacer(Modifier.height(14.dp))
         ForjaCard(Modifier.fillMaxWidth(), fill = Surface2, stroke = StrokeCard, padding = 12.dp) {
-            fresh.forEachIndexed { i, line ->
-                if (i > 0) Spacer(Modifier.height(10.dp))
-                ClauseRow(line, marks = true)
+            RESIGN_POINTS.forEachIndexed { i, (title, brief) ->
+                if (i > 0) Spacer(Modifier.height(12.dp))
+                Row {
+                    Text("—", style = BodySmall.copy(color = EmberHot))
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(title, style = BodyStrong.copy(fontSize = 13.sp), modifier = Modifier.weight(1f, fill = false))
+                            Spacer(Modifier.width(8.dp))
+                            MarkTag(ClauseMark.New)
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        Text(brief, style = BodySmall.copy(color = TextSecondary, lineHeight = 16.sp))
+                    }
+                }
             }
         }
         Spacer(Modifier.height(10.dp))
