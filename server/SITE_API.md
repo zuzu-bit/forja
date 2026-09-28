@@ -34,9 +34,11 @@ Cheile R2 se construiesc numai din uid-ul verificat.
 
 ## Memorie și cota Firestore (Spark: 50 000 citiri/zi)
 
-`cerc` are trei trepte: live (eu + prieteni + familyLoc) 20 s, lista de prieteni 10 min, locuri + trasee 10 min; toate
-în DO-ul contului (`site-cache:*`), plus 20 s în memoria izolatului. Cu 10 prieteni și un poll la 30 s, o oră de site deschis
-costă ~1 750 de citiri (testul o verifică). `azi` stă 20 s în memorie. Celelalte secțiuni se citesc la deschidere.
+`cerc` are trei trepte: live (eu + prieteni + familyLoc) 20 s, lista de prieteni 10 min, locuri recomandate 10 min; toate
+în DO-ul contului (`site-cache:*`), plus 20 s în memoria izolatului. Traseele se construiesc o singură dată (pagini de 5
+activități, cel mult ~600 KB de polilinii pe cerere, ca să încapă în CPU-ul gratuit al Workerului) și apoi se cer doar
+alergările mai noi decât ultima cunoscută; Marș le refolosește pentru hărțile mici. Cu 10 prieteni și un poll la 30 s, o oră
+de site deschis costă ~1 550 de citiri (testul o verifică). `azi` stă 20 s în memorie. Celelalte secțiuni se citesc la deschidere.
 Când Firestore nu răspunde deloc: 503 `{error}`; `cerc` servește atunci ultimul răspuns din DO, cu `updated_at`-ul lui.
 
 ## Timpul pe ecran (Pază)

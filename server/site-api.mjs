@@ -11,14 +11,15 @@
 // rezultate costă tot 1. N = prieteni, F = documente familyLoc vizibile, R = locuri recomandate ție.
 //   cerc      live (≤ 20 s, memorie + DO):  1 (eu) + N (batchGet) + max(1,F)                  ≈ 12 citiri cu 10 prieteni
 //             lista de prieteni (≤ 10 min, DO): max(1,N)                                         ≈ 10 / 10 min
-//             lent (≤ 10 min, DO): max(1,R) locuri + ≤ 40 activități (trasee)                    ≈ 41 / 10 min
-//             → la un poll de 30 s (doar cât Teren/Camarazi e vizibil): ≈ 120×12 + 6×10 + 6×41 ≈ 1 750 citiri pe oră de
-//               site deschis, adică ~28 de ore de privit continuu înainte de plafonul zilnic.
+//             lent (≤ 10 min, DO): max(1,R) locuri + 1 (alergări mai noi decât ultima cunoscută)     ≈ 6 / 10 min
+//             traseele se construiesc o singură dată (pagini de 5, ≤ 600 KB de polilinii pe cerere) și rămân în DO
+//             → la un poll de 30 s (doar cât Teren/Camarazi e vizibil): ≈ 120×12 + 6×10 + 6×6 ≈ 1 540 de citiri pe oră de
+//               site deschis, adică ~32 de ore de privit continuu înainte de plafonul zilnic.
 //   azi       3 (eu, ținte, muzică) + mesele de azi + ≤ 60 activități și ≤ 60 antrenamente pe 7 zile + 2 nopți + 1 inventar
 //             (+ N dacă lista de prieteni nu e în DO)                                            ≈ 15–25, memorie 20 s
 //   somn      nopțile din `days` (≤ 100) + 1 listare R2 · somn/<id>: 1 + 1 citire și 1 listare R2 · chunk: 0 (doar R2)
 //   ratie     1 (ținte) + mesele din `days` (≤ 800)                                              ≈ 60–120 pe 30 de zile
-//   mars      activitățile + antrenamentele din `days` (≤ 200 + ≤ 200)
+//   mars      activitățile (fără polilinii) + antrenamentele din `days` (≤ 200 + ≤ 200) + ≤ 8 polilinii lipsă din DO
 //   muzica    2 · paza 0 · inventar ≤ 20 · cont 7
 // Secțiunile în afară de Teren/Camarazi se citesc la deschidere, nu în buclă.
 import { firestoreFields, accountStub, internalRequest } from './insights-ai.mjs';
@@ -30,7 +31,7 @@ const BASE = `https://firestore.googleapis.com/v1/${DOCS}`;
 const MIN = 60000, HOUR = 3600000;
 export const SITE_RULES = Object.freeze({
   cerc_live_ms: 20000, cerc_slow_ms: 10 * MIN, friends_ms: 10 * MIN, azi_ms: 20000, now_playing_ms: 10 * MIN,
-  contract_current: 3, friends_max: 100, routes: 30, route_points: 300, mini_route_points: 120,
+  contract_current: 3, friends_max: 100, routes: 30, route_points: 300, mini_route_points: 120, route_page: 5, route_bytes: 600 * 1024, mars_polylines: 8,
   somn_days: [1, 60, 14], ratie_days: [1, 90, 30], mars_days: [1, 90, 30], inventar_runs: 20, events_max: 1000,
 });
 const SECTIONS = ['azi', 'cerc', 'somn', 'ratie', 'mars', 'muzica', 'paza', 'inventar', 'cont'];
@@ -158,31 +159,46 @@ export function initials(name) {
 const position = u => (num(u?.lat) !== null && num(u?.lng) !== null ? { lat: u.lat, lng: u.lng } : null);
 const byName = (a, b) => a.name.localeCompare(b.name, 'ro');
 
-/** "lat,lng;lat,lng…" (the app's polyline) → at most `max` points, Douglas–Peucker at ~5 m then even thinning. */
+/**
+ * "lat,lng;lat,lng…" (the app's polyline, often one point a second) → at most `max` points: an even pre-thinning to 4×max,
+ * then Douglas–Peucker at ~5 m, then even thinning. Cheap enough for the Workers CPU budget (a 1 h run ≈ 1 ms).
+ */
 export function simplifyPolyline(polyline, max) {
-  if (typeof polyline !== 'string' || !polyline.trim()) return null;
-  const pts = [];
-  for (const pair of polyline.split(';')) {
-    const [a, b] = pair.split(',').map(Number);
-    if (Number.isFinite(a) && Number.isFinite(b) && Math.abs(a) <= 90 && Math.abs(b) <= 180) pts.push([a, b]);
+  if (typeof polyline !== 'string' || polyline.length < 7) return null;
+  const total = (polyline.match(/;/g)?.length || 0) + 1, stride = Math.max(1, Math.floor(total / (4 * max)));
+  const lat = [], lng = [];
+  let at = 0, n = 0;
+  while (at < polyline.length) {
+    let semi = polyline.indexOf(';', at);
+    if (semi < 0) semi = polyline.length;
+    if (n % stride === 0 || semi === polyline.length) {
+      const comma = polyline.indexOf(',', at);
+      if (comma > at && comma < semi) {
+        const a = +polyline.slice(at, comma), b = +polyline.slice(comma + 1, semi);
+        if (Number.isFinite(a) && Number.isFinite(b) && Math.abs(a) <= 90 && Math.abs(b) <= 180) { lat.push(a); lng.push(b); }
+      }
+    }
+    n++; at = semi + 1;
   }
-  if (pts.length < 2) return null;
-  const k = Math.cos(pts[0][0] * Math.PI / 180) * 111320, m = 110540;
-  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
-  const stack = [[0, pts.length - 1]];
+  const count = lat.length;
+  if (count < 2) return null;
+  const k = Math.cos(lat[0] * Math.PI / 180) * 111320, m = 110540;
+  const keep = new Uint8Array(count); keep[0] = keep[count - 1] = 1;
+  const stack = [0, count - 1];
   while (stack.length) {
-    const [i, j] = stack.pop();
-    const ax = pts[i][1] * k, ay = pts[i][0] * m, bx = pts[j][1] * k, by = pts[j][0] * m, dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
-    let far = -1, best = 5;
+    const j = stack.pop(), i = stack.pop();
+    const ax = lng[i] * k, ay = lat[i] * m, dx = lng[j] * k - ax, dy = lat[j] * m - ay, len = Math.hypot(dx, dy) || 1;
+    let far = -1, best = 5 * len;
     for (let t = i + 1; t < j; t++) {
-      const d = Math.abs(dy * (pts[t][1] * k - ax) - dx * (pts[t][0] * m - ay)) / len;
+      const d = Math.abs(dy * (lng[t] * k - ax) - dx * (lat[t] * m - ay));
       if (d > best) { best = d; far = t; }
     }
-    if (far > 0) { keep[far] = 1; stack.push([i, far], [far, j]); }
+    if (far > 0) { keep[far] = 1; stack.push(i, far, far, j); }
   }
-  let out = pts.filter((_, i) => keep[i]);
+  let out = [];
+  for (let i = 0; i < count; i++) if (keep[i]) out.push(i);
   if (out.length > max) { const step = (out.length - 1) / (max - 1); out = Array.from({ length: max }, (_, i) => out[Math.round(i * step)]); }
-  return out.map(([a, b]) => a.toFixed(5) + ',' + b.toFixed(5)).join(';');
+  return out.map(i => lat[i].toFixed(5) + ',' + lng[i].toFixed(5)).join(';');
 }
 
 // ─────────────────────────────── cerc: Teren + Camarazi ───────────────────────────────
@@ -230,21 +246,52 @@ async function cercLive(fs, uid, friends, now) {
   }
   return { me, friends: out.sort(byName), family: family.sort(byName), inviteCode: str(meDoc?.inviteCode, 40), failed: fs.failedSince(mark) };
 }
-async function cercSlow(fs, uid) {
-  const mark = fs.mark();
-  const [places, activities] = await Promise.all([
-    fs.query('', 'places', { filters: [where('visibleTo', 'ARRAY_CONTAINS', uid)], select: ['ownerUid', 'ownerName', 'name', 'stars', 'note', 'lat', 'lng', 'visits', 'at'], limit: 100 }),
-    fs.query(`users/${uid}`, 'activities', { orderBy: 'startAt', limit: 40, select: ['type', 'startAt', 'distanceM', 'durationS', 'polyline'] }),
-  ]);
-  const recommended = (places || []).filter(p => p.ownerUid !== uid && typeof p.ownerUid === 'string' && position(p)).sort((a, b) => (num(b.at) || 0) - (num(a.at) || 0))
-    .map(p => ({ id: p.id, ownerUid: p.ownerUid, ownerName: str(p.ownerName, 60) || 'Un prieten', name: str(p.name, 80) || '', stars: int(p.stars) || 0, note: str(p.note, 300) || '', lat: p.lat, lng: p.lng, visits: int(p.visits) > 0 ? int(p.visits) : null }));
-  const routes = [];
-  for (const a of activities || []) {
-    if (routes.length >= SITE_RULES.routes) break;
-    const polyline = simplifyPolyline(a.polyline, SITE_RULES.route_points);
-    if (polyline) routes.push({ id: a.id, type: str(a.type, 20), startAt: time(a.startAt), distanceM: num(a.distanceM), durationS: num(a.durationS), polyline });
+const ROUTE_FIELDS = ['type', 'startAt', 'distanceM', 'durationS', 'polyline'];
+/**
+ * "Străzile tale": the newest 30 activities that have a route, simplified once and kept in the DO. A run is written once and
+ * never edited, so after the first build each refresh only asks for activities newer than the newest known one (1 read).
+ * The first build goes back 5 activities at a time and stops at ~600 KB of polylines per request (the free Workers CPU budget);
+ * the next polls continue it until 30 routes or the oldest activity.
+ */
+async function updateRoutes(fs, uid, prev) {
+  const st = { routes: [...(prev?.routes || [])], none: [...(prev?.none || [])], newest: prev?.newest ?? null, oldest: prev?.oldest ?? null, done: prev?.done === true };
+  let bytes = 0, failed = false;
+  const take = rows => {
+    for (const a of rows) {
+      bytes += typeof a.polyline === 'string' ? a.polyline.length : 0;
+      if (!time(a.startAt)) continue;
+      st.newest = st.newest === null ? a.startAt : Math.max(st.newest, a.startAt);
+      st.oldest = st.oldest === null ? a.startAt : Math.min(st.oldest, a.startAt);
+      const polyline = simplifyPolyline(a.polyline, SITE_RULES.route_points);
+      if (polyline && !st.routes.some(r => r.id === a.id)) st.routes.push({ id: a.id, type: str(a.type, 20), startAt: a.startAt, distanceM: num(a.distanceM), durationS: num(a.durationS), polyline });
+      // Activities without a route are remembered too, so Marș never downloads them again.
+      if (!polyline && !st.none.includes(a.id)) st.none = [...st.none, a.id].slice(-100);
+    }
+  };
+  // Newer than what we have, oldest first, so a burst of new runs never leaves a gap.
+  for (let page = 0; st.newest !== null && page < 4 && bytes < SITE_RULES.route_bytes; page++) {
+    const rows = await fs.query(`users/${uid}`, 'activities', { filters: [where('startAt', 'GREATER_THAN', st.newest)], orderBy: 'startAt', direction: 'ASCENDING', limit: SITE_RULES.route_page, select: ROUTE_FIELDS });
+    if (!rows) { failed = true; break; }
+    take(rows);
+    if (rows.length < SITE_RULES.route_page) break;
   }
-  return { recommended, routes, failed: fs.failedSince(mark) };
+  // Older ones, newest first, until 30 routes, the oldest activity, or the byte budget of this request.
+  while (!failed && !st.done && st.routes.length < SITE_RULES.routes && bytes < SITE_RULES.route_bytes) {
+    const rows = await fs.query(`users/${uid}`, 'activities', { filters: st.oldest === null ? [] : [where('startAt', 'LESS_THAN', st.oldest)], orderBy: 'startAt', limit: SITE_RULES.route_page, select: ROUTE_FIELDS });
+    if (!rows) { failed = true; break; }
+    take(rows);
+    if (rows.length < SITE_RULES.route_page) st.done = true;
+  }
+  st.routes.sort((a, b) => b.startAt - a.startAt);
+  st.routes = st.routes.slice(0, SITE_RULES.routes);
+  if (st.routes.length >= SITE_RULES.routes) st.done = true;
+  return { ...st, failed };
+}
+async function recommendedPlaces(fs, uid) {
+  const places = await fs.query('', 'places', { filters: [where('visibleTo', 'ARRAY_CONTAINS', uid)], select: ['ownerUid', 'ownerName', 'name', 'stars', 'note', 'lat', 'lng', 'visits', 'at'], limit: 100 });
+  if (!places) return null;
+  return places.filter(p => p.ownerUid !== uid && typeof p.ownerUid === 'string' && position(p)).sort((a, b) => (num(b.at) || 0) - (num(a.at) || 0))
+    .map(p => ({ id: p.id, ownerUid: p.ownerUid, ownerName: str(p.ownerName, 60) || 'Un prieten', name: str(p.name, 80) || '', stars: int(p.stars) || 0, note: str(p.note, 300) || '', lat: p.lat, lng: p.lng, visits: int(p.visits) > 0 ? int(p.visits) : null }));
 }
 async function cerc(ctx) {
   const { env, fs, uid, now } = ctx;
@@ -264,12 +311,15 @@ async function cerc(ctx) {
       if (!fresh.failed && !friends.failed) writes['cerc-live'] = live;
     }
   }
-  if (!slow || now - slow.at > SITE_RULES.cerc_slow_ms) {
-    const fresh = await cercSlow(fs, uid);
-    if (fresh.failed && slow) ctx.stale = true;
+  const due = !slow || now - slow.at > SITE_RULES.cerc_slow_ms, building = slow && !slow.done;
+  if (due || building) {
+    const recommended = due ? await recommendedPlaces(fs, uid) : slow.recommended;
+    const routes = await updateRoutes(fs, uid, slow);
+    if (recommended === null && routes.failed && slow) ctx.stale = true;
     else {
-      slow = { at: now, recommended: fresh.recommended, routes: fresh.routes };
-      if (!fresh.failed) writes['cerc-slow'] = slow;
+      const { failed, ...kept } = routes;
+      slow = { at: due ? now : slow.at, recommended: recommended ?? slow?.recommended ?? [], ...kept };
+      if (!failed && recommended !== null) writes['cerc-slow'] = slow;
     }
   }
   if (Object.keys(writes).length) await account(env, uid, '/internal/site/cache', 'POST', writes);
@@ -425,14 +475,26 @@ function weekOf(activities, workouts, now) {
   const since = now - 7 * DAY, a = activities.filter(x => x.startAt >= since), w = workouts.filter(x => x.startAt >= since);
   return { km: round1(sum(a, x => x.distanceM) / 1000), minutes: Math.round((sum(a, x => x.durationS) + sum(w, x => x.durationS)) / 60), sessions: a.length + w.length };
 }
-async function mars({ fs, uid, now, url }) {
+/**
+ * Mini route maps: from the routes already simplified for Teren (DO), else read for at most 8 activities per request
+ * (the polylines are the heavy part of an activity); the rest stays null until Teren has built its routes.
+ */
+async function mars({ env, fs, uid, now, url }) {
   const days = dayParam(url, SITE_RULES.mars_days), since = now - days * DAY;
-  const [acts, works] = await Promise.all([
-    fs.query(`users/${uid}`, 'activities', { filters: [where('startAt', 'GREATER_THAN_OR_EQUAL', since)], orderBy: 'startAt', limit: 200, select: ACTIVITY_FIELDS }),
+  const [acts, works, cache] = await Promise.all([
+    fs.query(`users/${uid}`, 'activities', { filters: [where('startAt', 'GREATER_THAN_OR_EQUAL', since)], orderBy: 'startAt', limit: 200, select: ACTIVITY_FIELDS.filter(f => f !== 'polyline') }),
     fs.query(`users/${uid}`, 'workouts', { filters: [where('startAt', 'GREATER_THAN_OR_EQUAL', since)], orderBy: 'startAt', limit: 200, select: WORKOUT_FIELDS }),
+    account(env, uid, '/internal/site/cache?names=cerc-slow'),
   ]);
+  const known = new Map((cache?.['cerc-slow']?.routes || []).map(r => [r.id, r.polyline]));
+  for (const id of cache?.['cerc-slow']?.none || []) known.set(id, null);
+  const missing = (acts || []).filter(a => time(a.startAt) && !known.has(a.id)).slice(0, SITE_RULES.mars_polylines);
+  if (missing.length) {
+    const docs = await fs.batchGet(missing.map(a => `users/${uid}/activities/${a.id}`), ['polyline']);
+    for (const a of missing) known.set(a.id, docs.get(`users/${uid}/activities/${a.id}`)?.polyline ?? null);
+  }
   const activities = (acts || []).filter(a => time(a.startAt)).map(a => ({ id: a.id, type: str(a.type, 20), startAt: a.startAt, endAt: time(a.endAt), distanceM: num(a.distanceM) ?? 0,
-    durationS: num(a.durationS) ?? 0, kcal: int(a.kcal), polyline: simplifyPolyline(a.polyline, SITE_RULES.mini_route_points) }));
+    durationS: num(a.durationS) ?? 0, kcal: int(a.kcal), polyline: known.has(a.id) ? simplifyPolyline(known.get(a.id), SITE_RULES.mini_route_points) : null }));
   const workouts = (works || []).filter(w => time(w.startAt)).map(w => ({ id: w.id, startAt: w.startAt, endAt: time(w.endAt), durationS: num(w.durationS) ?? 0, title: str(w.title, 80),
     kind: str(w.kind, 30), sets: int(w.sets) ?? 0, volumeKg: num(w.volumeKg), kcal: int(w.kcal) }));
   return { activities, workouts, week: weekOf(activities, workouts, now) };

@@ -36,6 +36,7 @@ class FakeFirestore {
     if (v === undefined) return false;
     if (op === 'EQUAL') return v === want;
     if (op === 'GREATER_THAN_OR_EQUAL') return v >= want;
+    if (op === 'GREATER_THAN') return v > want;
     if (op === 'LESS_THAN') return v < want;
     throw Error('unsupported op ' + op);
   }
@@ -218,6 +219,30 @@ test('cerc: own ghost hides own position and music; recommended places and route
   const pts = b.routes[0].polyline.split(';');
   assert(pts.length <= SITE_RULES.route_points && pts.length > 20, 'long routes are simplified, not dropped: ' + pts.length);
   assert.equal(pts[0], '44.40000,26.10000');
+});
+
+test('cerc routes are built once, 600 KB of polylines per request, then only newer runs are read', async () => {
+  const f = fixture();
+  seedCircle(f.fs, 1);
+  const heavy = i => Array.from({ length: 5400 }, (_, k) => `${(44.4 + k * 0.00001 + i * 0.001).toFixed(9)},${(26.1 + Math.sin(k / 50) * 0.001).toFixed(9)}`).join(';');
+  for (let i = 0; i < 12; i++) f.fs.set(`users/alice/activities/a${i}`, { type: 'run', startAt: NOW - (i + 1) * DAY, distanceM: 8000, durationS: 5400, polyline: heavy(i) });
+  const bytesOf = () => f.fs.requests.filter(r => r.body?.structuredQuery?.from?.[0]?.collectionId === 'activities').length;
+  let r = (await f.call('/insights/api/cerc')).body;
+  assert(r.routes.length >= 3 && r.routes.length < 12, 'the first request stops at the byte budget: ' + r.routes.length);
+  assert.deepEqual(r.routes.map(x => x.id), r.routes.map((_, i) => 'a' + i), 'newest first, no gaps');
+  let t = NOW, polls = 1;
+  while (r.routes.length < 12 && polls < 10) { t += 30000; polls++; resetSiteCache(); r = (await f.call('/insights/api/cerc', { now: t })).body; }
+  assert.equal(r.routes.length, 12, 'the next polls finish the build');
+  assert(polls <= 5, 'built within a few polls: ' + polls);
+  const before = f.fs.reads, queries = bytesOf();
+  t += 30000; resetSiteCache(); await f.call('/insights/api/cerc', { now: t });
+  assert.equal(bytesOf(), queries, 'a finished build does not read activities before the 10-minute refresh');
+  f.fs.set('users/alice/activities/a99', { type: 'walk', startAt: NOW + 5 * MIN, distanceM: 900, durationS: 600, polyline: '44.5,26.2;44.51,26.21' });
+  t += 11 * MIN; resetSiteCache(); r = (await f.call('/insights/api/cerc', { now: t })).body;
+  assert.equal(r.routes[0].id, 'a99'); assert.equal(r.routes.length, 13);
+  const q = f.fs.requests.filter(x => x.body?.structuredQuery?.from?.[0]?.collectionId === 'activities').slice(queries);
+  assert.equal(q.length, 1, 'one query for newer runs'); assert.equal(q[0].body.structuredQuery.where.fieldFilter.op, 'GREATER_THAN');
+  assert(f.fs.reads - before < 20, 'refresh reads: ' + (f.fs.reads - before));
 });
 
 test('cerc: one read budget — 20 s memory, DO tiers, and a 30 s poll for an hour with 10 friends stays far below 50k/day', async () => {
@@ -446,6 +471,14 @@ test('mars: activities with mini routes, workouts, and the 7-day totals', async 
   assert(b.activities[0].polyline.split(';').length <= SITE_RULES.mini_route_points);
   assert.deepEqual(b.workouts, [{ id: 'w1', startAt: NOW - 2 * DAY, endAt: NOW - 2 * DAY + 2700000, durationS: 2700, title: 'Piept și spate', kind: 'gym', sets: 14, volumeKg: 4200.5, kcal: null }]);
   assert.deepEqual(b.week, { km: 5, minutes: 75, sessions: 2 });
+  const polylineReads = f.fs.requests.filter(r => r.url.endsWith(':batchGet') && r.body.mask.fieldPaths.includes('polyline')).length;
+  assert.equal(polylineReads, 1, 'without Teren routes, the few missing polylines come in one batchGet');
+  assert(f.fs.requests.filter(r => r.body?.structuredQuery?.from?.[0]?.collectionId === 'activities').every(r => !r.body.structuredQuery.select.fields.some(x => x.fieldPath === 'polyline')), 'the list itself never downloads polylines');
+  await f.call('/insights/api/cerc');
+  const again = (await f.call('/insights/api/mars?days=30')).body;
+  assert(again.activities[0].polyline && again.activities[0].polyline.split(';').length <= SITE_RULES.mini_route_points);
+  assert.equal(again.activities[1].polyline, null);
+  assert.equal(f.fs.requests.filter(r => r.url.endsWith(':batchGet') && r.body.mask.fieldPaths.includes('polyline')).length, polylineReads, 'with Teren routes in the DO, no polyline is read again');
 });
 test('muzica: the live song only while fresh, the weekly top from settings/music', async () => {
   const f = fixture();
