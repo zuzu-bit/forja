@@ -102,7 +102,7 @@ test('404 pe un model = retras 24 h: routerul trece la următorul, cache-ul reț
   const bucket = new Bucket();
   const env = { GEMINI_API_KEY: 'g', RECORDS: bucket };
   const calls = mockFetch((url) => url.includes('/v1beta/models?') ? ok(LIST) : /gemini-3\.8-flash:|gemini-3\.7-flash:/.test(url) ? ok({ error: { code: 404, message: 'not found' } }, 404) : ok(geminiReply(JSON.stringify(MEAL))));
-  const r = await visionJson(env, { task: 'meal', prompt: 'x JSON', images: IMG, schema: MEAL_SCHEMA });
+  const r = await visionJson(env, { task: 'retragere', prompt: 'x JSON', images: IMG, schema: MEAL_SCHEMA });
   assert.equal(r.model, 'gemini-3.6-flash');
   assert.deepEqual(genModels(calls), ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash']);
   assert.match(r.attempts[0], /gemini\/gemini-3\.8-flash: gemini a răspuns cu 404 \(model retras 24 h\)/);
@@ -110,7 +110,7 @@ test('404 pe un model = retras 24 h: routerul trece la următorul, cache-ul reț
   assert.ok(saved.retired['gemini-3.8-flash'] > Date.now() + 23 * 3600_000, 'retragerea e persistată, ~24 h');
   assert.ok(saved.retired['gemini-3.7-flash'] > Date.now());
   calls.length = 0;
-  const r2 = await visionJson(env, { task: 'meal', prompt: 'x JSON', images: IMG, schema: MEAL_SCHEMA });
+  const r2 = await visionJson(env, { task: 'retragere', prompt: 'x JSON', images: IMG, schema: MEAL_SCHEMA });
   assert.equal(r2.model, 'gemini-3.6-flash');
   assert.deepEqual(genModels(calls), ['gemini-3.6-flash'], 'modelele retrase nu se mai încearcă');
   // Alt izolat: citește din R2 și retragerea rămâne.

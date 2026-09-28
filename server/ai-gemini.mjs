@@ -204,7 +204,8 @@ function family(name) {
 }
 const isModernFlash = (f) => f.flash && f.stable && !f.alias && f.v !== null && f.v >= 3;
 const isModernLite = (f) => f.lite && f.stable && !f.alias && f.v !== null && f.v >= 3;
-/** Mese, rezumate: cel mai bun flash (3.8 → 3.7 → 3.6 → 3.5), gemini-flash-latest, apoi flash-lite, apoi restul în ordinea descoperită. */
+/** Mese, rezumate: cel mai bun flash (3.8 → 3.7 → 3.6 → 3.5), gemini-flash-latest, apoi flash-lite, apoi restul în ordinea descoperită
+ *  (preferForTask mută apoi cel mai bun flash-lite pe locul 2, imediat după cel mai bun flash). */
 function qualityTier(name) {
   const f = family(name);
   if (isModernFlash(f)) return 0;
@@ -233,7 +234,14 @@ export function preferForTask(list, { task = "", audio = false } = {}) {
   const lead = audio ? items.filter((m) => m === GEMINI_TRANSCRIBE_MODEL || GEMINI_AUDIO_PREFERRED.includes(m)) : [];
   const rest = items.filter((m) => !lead.includes(m)).map((m, i) => [m, tier(m), i]);
   rest.sort((a, b) => a[1] - b[1] || a[2] - b[2]);
-  return [...lead, ...rest.map((x) => x[0])];
+  const ordered = rest.map((x) => x[0]);
+  // Mese/rezumate: după cel mai bun flash vine cel mai bun flash-lite (secunde, altă capacitate), nu încă patru flash-uri lente.
+  // Când Google răspunde „ocupat” (503) la 3.8-flash, masa primește tot un răspuns Gemini în câteva secunde, nu rezerva Workers.
+  if (!audio && QUALITY_TASKS.has(task) && ordered.length > 2 && isModernFlash(family(ordered[0]))) {
+    const liteAt = ordered.findIndex((m) => isModernLite(family(m)));
+    if (liteAt > 1) ordered.splice(1, 0, ordered.splice(liteAt, 1)[0]);
+  }
+  return [...lead, ...ordered];
 }
 
 // ── Catalogul: memorie (per izolat) → KV/R2 (24 h) → GET /models → lista statică ──

@@ -94,7 +94,7 @@ test('400 „invalid argument” (3.5-flash-lite cu thinkingBudget 0 în sondă)
   resetBudgetCache();
   calls = mockFetch((url) => url.includes('gemini-3.8-flash:') ? googleError(400, 'Unable to process input image. Please retry or report in https://developers.generativeai.google/guide/troubleshooting', 'INVALID_ARGUMENT') : ok(geminiReply(JSON.stringify(MEAL))));
   r = await visionJson(env, { task: 'meal', prompt: 'x JSON', images: IMG, schema: MEAL_SCHEMA });
-  assert.deepEqual(genModels(calls), ['gemini-3.8-flash', 'gemini-3.7-flash'], 'nicio reîncercare inutilă (cota e 5/min)');
+  assert.deepEqual(genModels(calls), ['gemini-3.8-flash', 'gemini-3.5-flash-lite'], 'nicio reîncercare inutilă (cota e 5/min); următorul = flash-lite rapid');
   assert.match(r.attempts[0], /gemini a răspuns cu 400 \(cerere respinsă\)$/);
   assert.ok(!r.attempts.join(' ').includes('Unable to process'), 'textul Google nu ajunge în încercări');
   resetBudgetCache();
@@ -121,13 +121,13 @@ test('503 „high demand” → o reîncercare pe același model după 1,5 s; a 
   slept.length = 0;
   calls = mockFetch((url) => (url.includes('gemini-3.8-flash:') ? highDemand() : ok(geminiReply(JSON.stringify(MEAL)))));
   r = await visionJson(env, { task: 'meal', prompt: 'x JSON', images: IMG, schema: MEAL_SCHEMA });
-  assert.equal(r.model, 'gemini-3.7-flash');
-  assert.deepEqual(genModels(calls), ['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.7-flash']);
+  assert.equal(r.model, 'gemini-3.5-flash-lite', 'la mese, după 3.8-flash ocupat vine flash-lite (secunde), nu alt flash lent');
+  assert.deepEqual(genModels(calls), ['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite']);
   assert.deepEqual(slept, [1500]);
   assert.match(r.attempts[0], /gemini\/gemini-3\.8-flash: gemini a răspuns cu 503 \(ocupat; și reîncercarea după 1,5 s\)/);
   assert.equal(await geminiCooldown(env, 'gemini-3.8-flash'), null, '503 nu pune în răcire');
   assert.ok(!JSON.parse(bucket.files.get(GEMINI_CACHE_KEY).text).retired['gemini-3.8-flash'], '503 nu retrage');
-  assert.equal(triesSummary({ ...r, ms: 21_400 }), 'gemini/gemini-3.7-flash · 2 încercări · 21 s · înainte: gemini-3.8-flash 503');
+  assert.equal(triesSummary({ ...r, ms: 21_400 }), 'gemini/gemini-3.5-flash-lite · 2 încercări · 21 s · înainte: gemini-3.8-flash 503');
 
   // Buget de 3 s pe furnizor: nu mai încape pauza de 1,5 s + un apel → fiecare model o singură dată.
   slept.length = 0;
@@ -171,8 +171,8 @@ test('429 cu mesajul din sondă → gemini-3.8-flash în răcire 65 s (memorie +
     const t0 = clock;
     const r = await visionJson(env, { task: 'meal', prompt: 'x JSON', images: IMG, schema: MEAL_SCHEMA });
     assert.equal(r.provider, 'gemini');
-    assert.equal(r.model, 'gemini-3.7-flash', '429 → modelul următor, nu alt furnizor');
-    assert.deepEqual(genModels(calls), ['gemini-3.8-flash', 'gemini-3.7-flash']);
+    assert.equal(r.model, 'gemini-3.5-flash-lite', '429 → modelul următor (la mese: flash-lite), nu alt furnizor');
+    assert.deepEqual(genModels(calls), ['gemini-3.8-flash', 'gemini-3.5-flash-lite']);
     assert.match(r.attempts[0], /gemini a răspuns cu 429 \(cotă 5 pe gemini-3\.8-flash; în răcire 65 s\)/);
     assert.equal(GEMINI_COOLDOWN_MS, 65_000);
     const saved = bucket.files.get('ai-cooldown/gemini-3.8-flash.json');
@@ -186,7 +186,7 @@ test('429 cu mesajul din sondă → gemini-3.8-flash în răcire 65 s (memorie +
     clock += 10_000;
     calls = mockFetch(handler);
     const r2 = await visionJson(env, { task: 'meal', prompt: 'x JSON', images: IMG, schema: MEAL_SCHEMA });
-    assert.deepEqual(genModels(calls), ['gemini-3.7-flash'], 'în răcire: niciun apel la 3.8-flash');
+    assert.deepEqual(genModels(calls), ['gemini-3.5-flash-lite'], 'în răcire: niciun apel la 3.8-flash');
     assert.ok(r2.attempts.some((a) => /gemini\/gemini-3\.8-flash: în răcire după 429 \(limită 5\), încă 55 s \(sărit\)/.test(a)), r2.attempts.join(' | '));
     assert.equal((await gemini.catalogInfo(env)).racire['gemini-3.8-flash'].secunde, 55);
 
@@ -194,7 +194,7 @@ test('429 cu mesajul din sondă → gemini-3.8-flash în răcire 65 s (memorie +
     clock += 20_000;
     calls = mockFetch(handler);
     await visionJson(env, { task: 'meal', prompt: 'x JSON', images: IMG, schema: MEAL_SCHEMA });
-    assert.deepEqual(genModels(calls), ['gemini-3.7-flash'], 'alt izolat: răcirea vine din R2');
+    assert.deepEqual(genModels(calls), ['gemini-3.5-flash-lite'], 'alt izolat: răcirea vine din R2');
 
     clock = t0 + 65_000 + 1000;
     calls = mockFetch(() => ok(geminiReply(JSON.stringify(MEAL))));
@@ -212,7 +212,7 @@ test('429 pe un alias care numește alt model (flash-latest → gemini-3.8-flash
   resetBudgetCache();
   const calls = mockFetch((url) => (url.includes('gemini-3.8-flash:') ? ok({ error: 'rate' }, 429) : ok(geminiReply('{"summary":"ok"}'))));
   const r = await textJson(env, { task: 'sleep-summary', prompt: 'p JSON', schema: SUMMARY_SCHEMA });
-  assert.equal(r.model, 'gemini-3.7-flash');
+  assert.equal(r.model, 'gemini-3.5-flash-lite');
   assert.equal(await geminiCooldown(env, 'gemini-3.8-flash'), null, 'fără mesajul Google nu inventăm o răcire');
   assert.equal(genModels(calls).length, 2);
   resetBudgetCache();
@@ -241,11 +241,11 @@ test('preferința pe sarcină, ca sortare peste lista DESCOPERITĂ a cheii Lanei
   const env = { GEMINI_API_KEY: 'g' };
   mockFetch(() => ok({}));
   const discovered = rankGeminiModels(LIST.models).text;
-  const meal = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest',
+  const meal = ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest',
     'gemini-2.5-flash', 'gemini-omni-1.1-flash', 'gemini-2.5-flash-lite', 'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-3-flash-preview', 'gemini-omni-flash-preview', 'gemini-pro-latest'];
   const bulk = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest',
     'gemini-2.5-flash', 'gemini-omni-1.1-flash', 'gemini-2.5-flash-lite', 'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-3-flash-preview', 'gemini-omni-flash-preview', 'gemini-pro-latest'];
-  assert.deepEqual(await gemini.models(env, { task: 'meal' }), meal, 'mese: 3.8 → 3.7 → 3.6 → 3.5 → flash-latest, apoi flash-lite');
+  assert.deepEqual(await gemini.models(env, { task: 'meal' }), meal, 'mese: 3.8, apoi flash-lite-ul rapid, apoi 3.7 → 3.6 → 3.5 → flash-latest, apoi restul');
   assert.deepEqual(await gemini.models(env, { task: 'sleep-summary' }), meal);
   assert.deepEqual(await gemini.models(env, { task: 'organize' }), bulk, 'curățenie: 3.5-lite → 3.1-lite → flash-lite-latest, apoi flash-urile');
   assert.deepEqual(await gemini.models(env, { task: 'organize-clusters' }), bulk);
