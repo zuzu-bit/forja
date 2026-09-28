@@ -1,0 +1,124 @@
+name: UI shots
+
+# Verificarea vizuală (DESIGN-4.3 §6): capturile ecranelor, randate pe JVM (Roborazzi + Robolectric, fără emulator),
+# ca să le vezi înainte de livrare. Testele sunt în app/src/test/java/com/forja/app/screenshots.
+# Rulare: Actions → „UI shots” → Run workflow (opțional: ramura / tag-ul / commit-ul de fotografiat).
+# Rezultat: release-ul „ui-shots-latest” cu ui-shots.zip (înlocuit la fiecare rulare) + lista PNG-urilor în sumar:
+#   gh release download ui-shots-latest -p ui-shots.zip --clobber
+# Nu atinge build-apk.yml: assembleDebug nu rulează testele.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Ramura, tag-ul sau commit-ul de fotografiat (gol = ramura aleasă mai sus)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ui-shots
+  cancel-in-progress: true
+
+jobs:
+  shots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Robolectric își descarcă singur Android-ul pentru JVM (android-all-instrumented, ~200 MB) în ~/.m2.
+      - name: Cache Robolectric
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+
+      - name: Record screenshots
+        id: record
+        run: |
+          set -o pipefail
+          ./gradlew :app:recordRoborazziDebug --stacktrace --no-daemon 2>&1 | tee shots.log
+
+      - name: Pack ui-shots.zip
+        id: pack
+        if: always()
+        env:
+          RECORD: ${{ steps.record.outcome }}
+          REF: ${{ inputs.ref || github.ref_name }}
+        run: |
+          shopt -s nullglob
+          rm -rf ui-shots ui-shots.zip
+          mkdir -p ui-shots
+          PNGS=(app/build/outputs/roborazzi/*.png)
+          for f in "${PNGS[@]}"; do cp "$f" ui-shots/; done
+          if [ "$RECORD" != "success" ]; then
+            # La eșec: raportul testelor (HTML) și finalul jurnalului Gradle, în același zip.
+            if [ -d app/build/reports/tests/testDebugUnitTest ]; then cp -r app/build/reports/tests/testDebugUnitTest ui-shots/test-report; fi
+            if [ -f shots.log ]; then tail -c 300000 shots.log > ui-shots/gradle-log.txt; fi
+          fi
+          COUNT=${#PNGS[@]}
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ -n "$(ls -A ui-shots)" ]; then (cd ui-shots && zip -qr ../ui-shots.zip .); fi
+          {
+            echo "## Capturi UI · $COUNT PNG"
+            echo ""
+            echo "Ref \`$REF\` · commit \`$(git rev-parse --short HEAD)\` · testele: **$RECORD**"
+            echo ""
+            for f in "${PNGS[@]}"; do echo "- \`$(basename "$f")\`"; done
+            if [ "$COUNT" = "0" ]; then echo "- (nicio captură — vezi jurnalul pasului „Record screenshots”)"; fi
+            if [ "$RECORD" != "success" ]; then echo ""; echo "Raportul testelor e în zip, la \`test-report/index.html\`."; fi
+            echo ""
+            echo "Descarcă: \`gh release download ui-shots-latest -p ui-shots.zip --clobber -R ${{ github.repository }}\`"
+            echo "(sau ${{ github.server_url }}/${{ github.repository }}/releases/download/ui-shots-latest/ui-shots.zip)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish to release ui-shots-latest
+        if: always() && steps.pack.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECORD: ${{ steps.record.outcome }}
+          COUNT: ${{ steps.pack.outputs.count }}
+          REF: ${{ inputs.ref || github.ref_name }}
+        run: |
+          if [ ! -f ui-shots.zip ]; then echo "Nimic de publicat."; exit 0; fi
+          TAG=ui-shots-latest
+          SHA=$(git rev-parse HEAD)
+          TITLE="FORJA — capturi UI (rularea #${{ github.run_number }})"
+          NOTES=$(printf 'Capturile de ecran FORJA (Roborazzi + Robolectric), rularea #%s.\n\n- Ref: %s\n- Commit: %s\n- PNG: %s\n- Testele: %s\n\nAsset-ul ui-shots.zip se înlocuiește la fiecare rulare a workflow-ului „UI shots”.' \
+            "${{ github.run_number }}" "$REF" "$SHA" "$COUNT" "$RECORD")
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete-asset "$TAG" ui-shots.zip --yes 2>/dev/null || true
+            gh release upload "$TAG" ui-shots.zip --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES" --prerelease
+          else
+            # Pre-release: nu ia locul lui „apk-latest” ca „Latest release”.
+            gh release create "$TAG" ui-shots.zip --title "$TITLE" --notes "$NOTES" --prerelease --target "$SHA"
+          fi
+          echo "Publicat: ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG"
+
+      - name: Upload artifact (backup)
+        if: always() && steps.pack.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-shots-run${{ github.run_number }}
+          path: ui-shots/
+          if-no-files-found: ignore
+          retention-days: 14
