@@ -40,12 +40,27 @@ async function internalJSON(stub, uid, path, method = 'GET', value) {
   const data = await response.json(); if (!response.ok) bad(data.error || 'Data unavailable', response.status);
   return data;
 }
-function firestoreValue(value) {
+/**
+ * One Firestore REST `Value` → plain JSON. Maps and arrays decode recursively (nowPlaying, contract, familyUids,
+ * visibleTo, folders…); timestamps become ms epoch numbers like every other time the app writes.
+ */
+export function firestoreValue(value) {
+  if (!value || typeof value !== 'object') return null;
   if ('integerValue' in value) return Number(value.integerValue);
-  if ('doubleValue' in value) return value.doubleValue;
+  if ('doubleValue' in value) { const n = Number(value.doubleValue); return Number.isFinite(n) ? n : null; }
   if ('stringValue' in value) return value.stringValue;
-  if ('booleanValue' in value) return value.booleanValue;
+  if ('booleanValue' in value) return value.booleanValue === true;
+  if ('nullValue' in value) return null;
+  if ('timestampValue' in value) { const t = Date.parse(value.timestampValue); return Number.isFinite(t) ? t : null; }
+  if ('mapValue' in value) return firestoreFields(value.mapValue?.fields);
+  if ('arrayValue' in value) return (value.arrayValue?.values || []).map(firestoreValue);
+  if ('referenceValue' in value) return value.referenceValue;
+  if ('geoPointValue' in value) return { lat: value.geoPointValue?.latitude ?? null, lng: value.geoPointValue?.longitude ?? null };
   return null;
+}
+/** A Firestore `fields` object → plain object (missing → {}). */
+export function firestoreFields(fields) {
+  return Object.fromEntries(Object.entries(fields || {}).map(([k, v]) => [k, firestoreValue(v)]));
 }
 export async function loadJournals(uid, token, fetcher = fetch, now = Date.now()) {
   const results = await Promise.all(['sleep', 'activities', 'meals'].map(async category => {
@@ -59,7 +74,7 @@ export async function loadJournals(uid, token, fetcher = fetch, now = Date.now()
     });
     if (!response.ok) return [category, { records: [], error: 'Firestore HTTP ' + response.status }];
     const data = await response.json();
-    return [category, { records: data.filter(r => r.document).map(r => ({ id: r.document.name.split('/').pop(), ...Object.fromEntries(Object.entries(r.document.fields || {}).map(([k,v]) => [k, firestoreValue(v)])) })), error: null }];
+    return [category, { records: data.filter(r => r.document).map(r => ({ id: r.document.name.split('/').pop(), ...firestoreFields(r.document.fields) })), error: null }];
     } catch { return [category, { records:[], error:'Conexiunea la jurnal nu a reușit.' }]; }
   }));
   return { from: now-7*DAY, to: now, ...Object.fromEntries(results) };
