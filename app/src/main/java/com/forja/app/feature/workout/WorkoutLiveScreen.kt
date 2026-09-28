@@ -21,14 +21,19 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
+import com.forja.app.core.music.Music
+import com.forja.app.core.music.MusicSource
+import com.forja.app.core.music.MusicStarter
 import com.forja.app.core.util.Fmt
 import kotlinx.coroutines.delay
 
@@ -56,6 +61,43 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
         while (true) {
             elapsed = if (live.startedAt > 0) (System.currentTimeMillis() - live.startedAt) / 1000 else 0
             delay(1000)
+        }
+    }
+
+    // Ecranul rămâne aprins cât ține sesiunea: între serii te uiți la demonstrație, iar coada muzicii merge sigur.
+    val view = LocalView.current
+    DisposableEffect(view) {
+        val before = view.keepScreenOn
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = before }
+    }
+
+    // Muzica: discul de pe video (cât faci seria) și banda de sub inelul pauzei.
+    val context = LocalContext.current
+    val music by vm.music.collectAsState()
+    val track by Music.nowPlaying.collectAsState()
+    val start by MusicStarter.state.collectAsState()
+    val origin by MusicStarter.origin.collectAsState()
+    val queue by MusicStarter.queue.collectAsState()
+    var anchor by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
+    LaunchedEffect(track) { anchor = android.os.SystemClock.elapsedRealtime() }
+    val clock by produceState(android.os.SystemClock.elapsedRealtime(), track?.playing) {
+        while (track?.playing == true) {
+            value = android.os.SystemClock.elapsedRealtime()
+            delay(1_000)
+        }
+    }
+    val art = track?.art
+    val artBitmap = remember(art) { art?.asImageBitmap() }
+    val position = track?.let { it.positionMs + if (it.playing) (clock - anchor).coerceAtLeast(0L) else 0L } ?: 0L
+    val disc = discUi(start, origin == MusicSource.WORKOUT, track, artBitmap, position, queue != null)
+    val showMusic = music.on || track != null || disc.phase != DiscPhase.IDLE
+    val onDisc: () -> Unit = {
+        when (disc.phase) {
+            DiscPhase.NEEDS_TAP, DiscPhase.FAILED -> MusicStarter.tap(context)
+            DiscPhase.IDLE -> vm.startMusicNow()
+            DiscPhase.STARTING -> Unit
+            DiscPhase.PLAYING, DiscPhase.PAUSED -> MusicStarter.toggle(context, MusicSource.WORKOUT) { vm.startMusicNow() }
         }
     }
 
@@ -98,7 +140,11 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
                 OverVideoButton("Încheie", onClick = { vm.endEarly(); onExit() })
             }
 
-            Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
+            Column(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = if (showMusic) 84.dp else 16.dp)
+            ) {
                 Text(
                     "EXERCIȚIUL ${live.exPos + 1} / ${live.exercises.size}",
                     style = monoLabel(9, 0.14f).copy(color = TextSecondary)
@@ -109,6 +155,16 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
                 MonoButton(
                     text = if (live.angleFront) "UNGHI: FRONTAL · atinge" else "UNGHI: LATERAL · atinge",
                     onClick = { vm.toggleAngle() }
+                )
+            }
+
+            if (showMusic) {
+                VideoMusicDisc(
+                    ui = disc,
+                    onTap = onDisc,
+                    onLongPress = { MusicStarter.openPlayer(context) },
+                    onNext = { MusicStarter.next(context) },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 14.dp)
                 )
             }
         }
@@ -185,6 +241,17 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
                         SecondaryButton("Sari pauza", onClick = { vm.skipRest() })
                     }
                 }
+            }
+            if (showMusic) {
+                Spacer(Modifier.height(16.dp))
+                RestMusicStrip(
+                    ui = disc,
+                    onPrevious = { MusicStarter.previous(context) },
+                    onToggle = onDisc,
+                    onNext = { MusicStarter.next(context) },
+                    onOpen = { MusicStarter.tap(context) },
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
             }
             Spacer(Modifier.height(22.dp))
         }

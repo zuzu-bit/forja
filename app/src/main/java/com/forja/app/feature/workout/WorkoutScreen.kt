@@ -1,6 +1,10 @@
 package com.forja.app.feature.workout
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,10 +35,22 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
+import com.forja.app.core.music.Music
+import com.forja.app.core.music.MusicSource
+import com.forja.app.core.music.MusicStarter
+
+/** Ghidajul primei vizite: rândul „Muzică”, spus o singură dată. */
+private val ANTRENAMENT_STEPS = listOf(
+    CoachStep("antrenament.muzica", "Muzica ta pornește odată cu sesiunea.", MascotState.Happy)
+)
 
 /** Hub Antrenament: 3 planuri selectabile + lista de azi + „Începe sesiunea". */
 @Composable
@@ -46,6 +62,35 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
     val exercises by vm.planExercises.collectAsState()
     var editing by remember { mutableStateOf<com.forja.app.core.data.db.ExerciseEntity?>(null) }
 
+    // Muzica: comutatorul, lista, discul (ce cântă acum). Accesul se reverifică la întoarcerea din Setări.
+    val context = LocalContext.current
+    val music by vm.music.collectAsState()
+    val track by Music.nowPlaying.collectAsState()
+    val start by MusicStarter.state.collectAsState()
+    val origin by MusicStarter.origin.collectAsState()
+    val queue by MusicStarter.queue.collectAsState()
+    var sheetOpen by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) vm.refreshMusic() }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+    val accessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { vm.refreshMusic() }
+    val art = track?.art
+    val artBitmap = remember(art) { art?.asImageBitmap() }
+    val disc = discUi(start, origin == MusicSource.WORKOUT, track, artBitmap, track?.positionMs ?: 0L, queue != null)
+    fun onMusicSwitch(on: Boolean) {
+        vm.setMusicOn(on)
+        // Fără acces, „pornit” cere accesul (altfel pornește doar Melodii apreciate).
+        if (on && !music.access) {
+            try { accessLauncher.launch(Music.accessIntent(context)) } catch (_: Exception) {
+                try { accessLauncher.launch(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) } catch (_: Exception) { }
+            }
+        }
+    }
+
+    CoachMarks(screen = "antrenament", steps = ANTRENAMENT_STEPS) {
     Column(
         Modifier
             .fillMaxSize()
@@ -194,12 +239,35 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
         }
 
         Spacer(Modifier.height(8.dp))
+        WorkoutMusicRow(
+            state = music,
+            disc = disc,
+            onToggle = ::onMusicSwitch,
+            onOpenSheet = { sheetOpen = true },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+        )
+        Spacer(Modifier.height(14.dp))
         PrimaryButton(
             text = "Începe sesiunea",
             onClick = { vm.startSession(0); onStartLive() },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
+        )
+    }
+    }
+
+    if (sheetOpen) {
+        WorkoutMusicSheet(
+            state = music,
+            actions = MusicSheetActions(
+                onMix = { vm.setMix(it) },
+                onStopAtEnd = { vm.setMusicStopAtEnd(it) },
+                onDone = { sheetOpen = false }
+            ),
+            onDismiss = { sheetOpen = false }
         )
     }
 
