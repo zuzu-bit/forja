@@ -23,8 +23,16 @@ class InvSummaryDocTest {
         )
         assertEquals(mapOf("mode" to "last", "n" to 500, "label" to "Ultimele 500"), m["scope"])
         assertEquals(mapOf("label" to "Galerie · FORJA", "path" to "PICTURES/FORJA"), m["dest"])
-        assertEquals(mapOf("count" to 3, "bytes" to 1_000L), m["trash"])
-        assertEquals(listOf(mapOf("name" to "Munte", "count" to 4, "bytes" to 400L)), m["folders"])
+        // Câmp cu câmp: literalii dintr-un mapOf(Int, Long) își pot schimba tipul la inferență, iar Map.equals compară și tipul.
+        val trash = m["trash"] as Map<*, *>
+        assertEquals(3, trash["count"])
+        assertEquals(1_000L, trash["bytes"])
+        val folders = m["folders"] as List<*>
+        assertEquals(1, folders.size)
+        val f = folders.single() as Map<*, *>
+        assertEquals("Munte", f["name"])
+        assertEquals(4, f["count"])
+        assertEquals(400L, f["bytes"])
         assertEquals(12, m["moved"])
         assertEquals(1, m["failed"])
     }
