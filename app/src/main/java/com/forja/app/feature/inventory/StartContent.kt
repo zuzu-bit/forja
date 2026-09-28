@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,11 +40,14 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.forja.app.core.designsystem.Accent
@@ -101,7 +106,7 @@ fun InventoryStartContent(state: StartUiState, actions: StartActions, modifier: 
         run != null -> "Lucrez în fundal."
         state.error != null -> "Nu a mers. Încearcă din nou."
         state.docsSettled && (state.docOrganized ?: 0) > 0 -> "Aici e ordine."
-        state.docsSettled -> "Folderul e gol."
+        state.docsSettled -> "Dosarul e gol."
         else -> "Ce punem în ordine?"
     }
     val pose = when {
@@ -149,8 +154,8 @@ fun InventoryStartContent(state: StartUiState, actions: StartActions, modifier: 
             bottom = {
                 if (state.laptopPending > 0) LaptopCard(state.laptopPending, actions.onAllowLaptop)
                 when {
-                    // Folderul ales e deja în ordine (sau gol): nu pornim o analiză sortită eșecului, propunem alt folder.
-                    run == null && state.docsSettled -> InvPrimaryButton("Alt folder", actions.onPickFolder, Modifier.coachTarget("inv_start"))
+                    // Dosarul ales e deja în ordine (sau gol): nu pornim o analiză sortită eșecului, propunem alt dosar.
+                    run == null && state.docsSettled -> InvPrimaryButton("Alt dosar", actions.onPickFolder, Modifier.coachTarget("inv_start"))
                     run == null -> InvPrimaryButton(
                         "Începe", actions.onStart, Modifier.coachTarget("inv_start"),
                         meta = fmtMinutes(state.estimateSec)
@@ -165,7 +170,7 @@ fun InventoryStartContent(state: StartUiState, actions: StartActions, modifier: 
     }
 }
 
-/** Documente: folderul ales nu are nimic liber (e în ordine sau gol) — butonul principal propune alt folder. */
+/** Documente: dosarul ales nu are nimic liber (e în ordine sau gol) — butonul principal propune alt dosar. */
 internal val StartUiState.docsSettled: Boolean
     get() = kind == InvKind.Documents && docFolder != null && docCount == 0
 
@@ -194,60 +199,82 @@ private fun Bubble(text: String) {
 
 @Composable
 private fun KindTiles(state: StartUiState, actions: StartActions, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        val photosOn = state.kind == InvKind.Photos
-        KindTile(
-            icon = InvIcons.Photos,
-            value = when {
-                !state.photoAccess -> null
-                state.photoCount == null -> "—"
-                else -> fmtCount(state.photoCount)
-            },
-            word = if (!state.photoAccess) "Dă acces" else null,
-            meta = if (state.photoAccess && state.photoBytes != null) "POZE · ${fmtSize(state.photoBytes)}" else "POZE",
-            selected = photosOn,
-            description = "Poze",
-            onClick = { if (photosOn && !state.photoAccess) actions.onAskPhotos() else actions.onPickKind(InvKind.Photos) },
-            modifier = Modifier.weight(1f)
-        )
-        val docsOn = state.kind == InvKind.Documents
-        // Placa numără fișierele „libere” (ce ar pune în ordine acum). Zero libere nu înseamnă „folder gol”:
-        // după o aplicare, fișierele stau în dosare → „În ordine · 4 ÎN DOSARE”.
-        val organized = state.docOrganized ?: 0
-        KindTile(
-            icon = InvIcons.Folder,
-            value = when {
-                state.docFolder == null -> null
-                state.docCount == null -> "—"
-                state.docCount > 0 -> fmtCount(state.docCount)
-                else -> null
-            },
-            word = when {
-                state.docFolder == null -> "Alege folder"
-                state.docCount == 0 && organized > 0 -> "În ordine"
-                state.docCount == 0 -> "Gol"
-                else -> null
-            },
-            meta = when {
-                state.docCount == 0 && organized > 0 -> "${fmtCount(organized)} ÎN DOSARE"
-                state.docCount != null && state.docCount > 0 && state.docBytes != null -> "DOCUMENTE · ${fmtSize(state.docBytes)}"
-                else -> "DOCUMENTE"
-            },
-            selected = docsOn,
-            description = "Documente",
-            onClick = { if (docsOn && state.docFolder == null) actions.onPickFolder() else actions.onPickKind(InvKind.Documents) },
-            modifier = Modifier.weight(1f)
-        )
+    val photosOn = state.kind == InvKind.Photos
+    val photoSize = if (state.photoAccess && state.photoBytes != null) fmtSize(state.photoBytes) else null
+    val docsOn = state.kind == InvKind.Documents
+    // Placa numără fișierele „libere” (ce ar pune în ordine acum). Zero libere nu înseamnă „dosar gol”:
+    // după o aplicare, fișierele stau în dosare → „În ordine · 4 ÎN DOSARE”.
+    val organized = state.docOrganized ?: 0
+    val docMeta = if (state.docCount == 0 && organized > 0) "${fmtCount(organized)} ÎN DOSARE" else "DOCUMENTE"
+    val docSize = if (state.docCount != null && state.docCount > 0 && state.docBytes != null) fmtSize(state.docBytes) else null
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        // Lățimea utilă a unei plăci: (rândul − 12 dp dintre ele) / 2 − 2 × 14 dp de padding (≈ 126 dp pe S23).
+        val innerPx = with(LocalDensity.current) { ((maxWidth - 12.dp) / 2 - 28.dp).roundToPx() }
+        // Mărimea nu se taie niciodată („DOCUMENTE · 2,1 …” pe S23): dacă pe una din plăci rândul întreg nu încape,
+        // AMBELE trec pe două rânduri (eticheta, apoi mărimea), ca cifrele mari să stea la aceeași înălțime.
+        val stacked = remember(measurer, innerPx, photoSize, docMeta, docSize) {
+            listOf("POZE" to photoSize, docMeta to docSize).any { (label, size) ->
+                size != null && measurer.measure("$label · $size", TileMetaStyle, softWrap = false, maxLines = 1).size.width > innerPx
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            KindTile(
+                icon = InvIcons.Photos,
+                value = when {
+                    !state.photoAccess -> null
+                    state.photoCount == null -> "—"
+                    else -> fmtCount(state.photoCount)
+                },
+                word = if (!state.photoAccess) "Dă acces" else null,
+                meta = "POZE",
+                metaSize = photoSize,
+                stacked = stacked,
+                selected = photosOn,
+                description = "Poze",
+                onClick = { if (photosOn && !state.photoAccess) actions.onAskPhotos() else actions.onPickKind(InvKind.Photos) },
+                modifier = Modifier.weight(1f)
+            )
+            KindTile(
+                icon = InvIcons.Folder,
+                value = when {
+                    state.docFolder == null -> null
+                    state.docCount == null -> "—"
+                    state.docCount > 0 -> fmtCount(state.docCount)
+                    else -> null
+                },
+                word = when {
+                    state.docFolder == null -> "Alege dosar"
+                    state.docCount == 0 && organized > 0 -> "În ordine"
+                    state.docCount == 0 -> "Gol"
+                    else -> null
+                },
+                meta = docMeta,
+                metaSize = docSize,
+                stacked = stacked,
+                selected = docsOn,
+                description = "Documente",
+                onClick = { if (docsOn && state.docFolder == null) actions.onPickFolder() else actions.onPickKind(InvKind.Documents) },
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 
-/** O placă (148 dp): iconiță olive sus, cifra mare + meta mono jos; aleasă = contur olive 2 dp + strălucire. */
+private val TileMetaStyle = mono(10, 0.14f)
+
+/**
+ * O placă (148 dp): iconiță olive sus, cifra mare + meta mono jos; aleasă = contur olive 2 dp + strălucire.
+ * Meta-ul: „POZE · 12,4 GB” pe un rând sau, cu [stacked], „POZE” și dedesubt „12,4 GB” întreg.
+ */
 @Composable
 private fun KindTile(
     icon: ImageVector,
     value: String?,
     word: String?,
     meta: String,
+    metaSize: String?,
+    stacked: Boolean,
     selected: Boolean,
     description: String,
     onClick: () -> Unit,
@@ -290,7 +317,16 @@ private fun KindTile(
             } else if (word != null) {
                 Text(word, style = cond(26, 30), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(meta, style = mono(10, 0.14f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!stacked) {
+                Text(if (metaSize != null) "$meta · $metaSize" else meta, style = TileMetaStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            } else {
+                Text(meta, style = TileMetaStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // Fără mărime (ex. „4 ÎN DOSARE”): un rând gol, ca eticheta și cifra să stea în dreptul celor din placa vecină.
+                Text(
+                    metaSize ?: "\u00A0", style = TileMetaStyle, maxLines = 1, softWrap = false,
+                    modifier = if (metaSize == null) Modifier.clearAndSetSemantics { } else Modifier
+                )
+            }
         }
     }
 }
@@ -326,7 +362,7 @@ private fun ScopeRow(state: StartUiState, actions: StartActions, modifier: Modif
                 )
             } else {
                 ScopeChip(
-                    state.docFolder ?: "Alege folder",
+                    state.docFolder ?: "Alege dosar",
                     selected = state.docFolder != null,
                     onClick = actions.onPickFolder,
                     modifier = Modifier.weight(1f),
