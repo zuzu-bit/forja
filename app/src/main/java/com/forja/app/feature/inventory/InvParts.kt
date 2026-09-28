@@ -350,15 +350,27 @@ internal fun EqualizerMini(playing: Boolean, modifier: Modifier = Modifier) {
     }
 }
 
-/** Egalizatorul turtit (Gata.dc.html): muzica s-a oprit. */
+/**
+ * Egalizatorul turtit (Gata.dc.html): muzica s-a oprit. Nota stinsă în față îl face să se citească „muzică”;
+ * singure, cele 4 puncte gri păreau un indicator de pagină rătăcit.
+ */
 @Composable
 internal fun EqualizerFlat(modifier: Modifier = Modifier) {
-    Canvas(modifier.size(width = 29.dp, height = 18.dp).semantics { contentDescription = "Muzica s-a oprit" }) {
-        val bw = 4.dp.toPx()
-        val gap = 3.dp.toPx()
-        val bh = 3.dp.toPx()
-        for (i in 0 until 4) {
-            drawRoundRect(TextDim2, topLeft = Offset(4.dp.toPx() + i * (bw + gap), size.height - bh), size = Size(bw, bh), cornerRadius = CornerRadius(2.dp.toPx()))
+    Row(
+        modifier.height(18.dp).semantics(mergeDescendants = true) { contentDescription = "Muzica s-a oprit" },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(InvIcons.Note, null, tint = TextDim, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Canvas(Modifier.size(width = 18.dp, height = 18.dp)) {
+            val bw = 4.dp.toPx()
+            val gap = 3.dp.toPx()
+            val bh = 3.dp.toPx()
+            // pe linia de bază a notei (capul ei stă jos), nu sub ea
+            val y = size.height - 3.dp.toPx() - bh
+            for (i in 0 until 3) {
+                drawRoundRect(TextDim2, topLeft = Offset(i * (bw + gap), y), size = Size(bw, bh), cornerRadius = CornerRadius(2.dp.toPx()))
+            }
         }
     }
 }

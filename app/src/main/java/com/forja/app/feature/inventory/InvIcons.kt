@@ -53,6 +53,8 @@ internal object InvIcons {
     val Pencil = stroke("M4 20h4L19 9l-4-4L4 16v4z", "M13.5 6.5l4 4")
     val Plus = stroke("M12 5v14M5 12h14", width = 2.4f)
     val Restore = stroke("M3 12a9 9 0 1 0 3-6.7", "M3 4v5h5")
+    /** Nota muzicală (două capete legate), pentru „muzica s-a oprit” pe Gata. */
+    val Note = stroke("M9 18V5l12-2v13", "M3 18a3 3 0 1 0 6 0a3 3 0 1 0-6 0", "M15 16a3 3 0 1 0 6 0a3 3 0 1 0-6 0", width = 1.8f)
     val StopAtEnd = stroke("M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 9h6v6H9z")
     val MapPin = stroke("M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21zM12 7.2a2.3 2.3 0 1 0 0 4.6 2.3 2.3 0 0 0 0-4.6z")
     val Laptop = stroke("M5 5h14a1 1 0 0 1 1 1v10H4V6a1 1 0 0 1 1-1z", "M2 19h20")
