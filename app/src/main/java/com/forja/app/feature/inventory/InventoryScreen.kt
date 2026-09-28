@@ -3,7 +3,6 @@ package com.forja.app.feature.inventory
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.provider.DocumentsContract
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -41,7 +40,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.forja.app.BuildConfig
 import com.forja.app.core.designsystem.LocalReducedMotion
 import com.forja.app.core.designsystem.Surface0
 import com.forja.app.core.designsystem.components.CoachMarks
@@ -131,6 +129,8 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
     var preview by remember { mutableStateOf<String?>(null) }
     var sealed by remember { mutableStateOf(false) }
     var guideReplay by rememberSaveable { mutableLongStateOf(0L) }
+    var lastNSheet by remember { mutableStateOf(false) }
+    var showLocation by rememberSaveable { mutableStateOf(false) }
     var foldersIntroFor by rememberSaveable { mutableStateOf<String?>(null) }
 
     // ── lansatoare ──
@@ -156,6 +156,34 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
         startAfterTree = andStart
         try { treeLauncher.launch(null) } catch (_: Exception) { startAfterTree = false; toast.show("Nu pot deschide folderele.") }
     }
+    // „Locație” → „Alt dosar…” (poze): selectorul pornește în Pictures; alegerea se traduce în RELATIVE_PATH.
+    val photoDestLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            if (vm.pickPhotoFolder(uri)) showLocation = false else toast.show("Alege un dosar din Pictures sau DCIM.")
+        }
+    }
+    // „Locație” → „Alt folder…” (documente): selectorul pornește în destinația curentă (sau în folderul ales).
+    val docsDestLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) { vm.setDocsDest(uri); showLocation = false }
+    }
+    fun pickOtherDest(kind: InvKind) {
+        try {
+            if (kind == InvKind.Photos) photoDestLauncher.launch(DocumentsContract.buildDocumentUri(EXTERNAL_DOCS, "primary:Pictures"))
+            else docsDestLauncher.launch(vm.docsPickerStart())
+        } catch (_: Exception) {
+            toast.show("Nu pot deschide folderele.")
+        }
+    }
+    // Ecranul final: selectorul sistemului în modul „răsfoiește”, pornit în noua locație (pasul 2 din OpenPlace).
+    val browseLauncher = rememberLauncherForActivityResult(BrowseAt()) { uri ->
+        if (uri != null) openExternal(context, uri, try { context.contentResolver.getType(uri) } catch (_: Exception) { null } ?: "*/*") { toast.show(it) }
+    }
+    val browse = OpenPlace.Browse { folder -> try { browseLauncher.launch(folder); true } catch (_: Exception) { false } }
+    fun openPlace(d: DoneUiState) {
+        val place = d.place?.target
+        val ok = if (place != null) OpenPlace.folder(context, place, browse) else OpenPlace.files(context)
+        if (!ok) toast.show("Nu am găsit aplicația.")
+    }
     val senderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
         vm.onDialogResult(res.resultCode == Activity.RESULT_OK)
     }
@@ -175,7 +203,7 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) vm.refreshPhotoStats() }
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) vm.onResume() }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
@@ -298,6 +326,7 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
                             onInfo = { guideReplay = System.currentTimeMillis() },
                             onPickKind = { vm.pickKind(it) },
                             onPickScope = { vm.pickScope(it) },
+                            onPickLastN = { lastNSheet = true },
                             onPickAlbum = { vm.loadAlbums(); albumSheet = true },
                             onPickFolder = { pickFolder(andStart = false) },
                             onAskPhotos = { permLauncher.launch(InvPermissions.forGallery(context)) },
@@ -427,8 +456,13 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
                         InventoryDoneContent(
                             d,
                             DoneActions(
-                                onGallery = { openResult(context, d.kind) { toast.show(it) } },
-                                onClose = onBack
+                                onGallery = {
+                                    if (d.kind == InvKind.Photos) { if (!OpenPlace.gallery(context, d.place)) toast.show("Nu am găsit aplicația.") }
+                                    else openPlace(d)
+                                },
+                                onClose = onBack,
+                                onPlace = { openPlace(d) },
+                                onSite = { openSite(context, d.runId) { toast.show(it) } }
                             )
                         )
                     }
@@ -454,6 +488,14 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
     }
 
     // ── foile ──
+    if (lastNSheet) {
+        LastNSheet(
+            current = selection.lastN,
+            total = base.photoCount,
+            onPick = { vm.pickLastN(it); lastNSheet = false },
+            onDismiss = { lastNSheet = false }
+        )
+    }
     if (albumSheet) {
         AlbumSheet(
             albums = albums,
@@ -494,12 +536,18 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
     if (confirmApply && pl != null) {
         ApplyConfirmSheet(
             ui = remember(pl) { pl.confirmUi() },
+            location = remember(pl) { pl.locationUi() },
+            showLocation = showLocation,
+            onShowLocation = { showLocation = it },
+            onPickDest = { dest -> vm.setDestination(dest); showLocation = false },
+            onOther = { pickOtherDest(pl.kind) },
             onApply = {
                 confirmApply = false
+                showLocation = false
                 vm.apply()
                 push(InvPage.Apply)
             },
-            onDismiss = { confirmApply = false }
+            onDismiss = { confirmApply = false; showLocation = false }
         )
     }
     if (confirmStop) {
@@ -521,13 +569,12 @@ private fun pageTransition(from: InvPage, to: InvPage, reduced: Boolean): Conten
     }
 }
 
-/** „Pe site”: panoul online (organizarea din laptop), cu același cont. */
-private fun openSite(context: android.content.Context, onFail: (String) -> Unit) {
-    try {
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.INSIGHTS_URL.trimEnd('/') + "/insights")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
-    } catch (_: Exception) {
+/** Furnizorul memoriei (ExternalStorageProvider): de aici pornește selectorul „Alt dosar…” (Pictures). */
+private const val EXTERNAL_DOCS = "com.android.externalstorage.documents"
+
+/** „Pe site”: secțiunea Inventar a site-ului (cu rularea, dacă o știm: /insights#inventar/<runId>). */
+private fun openSite(context: android.content.Context, runId: String? = null, onFail: (String) -> Unit) {
+    if (!com.forja.app.core.network.SiteLinks.open(context, com.forja.app.core.network.SiteLinks.Section.Inventar, runId)) {
         onFail("Nu am găsit un browser.")
     }
 }
@@ -542,23 +589,4 @@ private fun openExternal(context: android.content.Context, uri: Uri, mime: Strin
     } catch (_: Exception) {
         onFail("Nicio aplicație nu îl poate deschide.")
     }
-}
-
-/** „Galerie” (poze) / „Fișiere” (documente) după aplicare. */
-private fun openResult(context: android.content.Context, kind: InvKind, onFail: (String) -> Unit) {
-    val intents = if (kind == InvKind.Photos) listOf(
-        Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_GALLERY),
-        Intent(Intent.ACTION_VIEW).setType("image/*")
-    ) else buildList {
-        if (Build.VERSION.SDK_INT >= 29) add(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_FILES))
-        add(Intent(Intent.ACTION_VIEW).setType(DocumentsContract.Document.MIME_TYPE_DIR))
-    }
-    for (i in intents) {
-        try {
-            context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            return
-        } catch (_: Exception) {
-        }
-    }
-    onFail("Nu am găsit aplicația.")
 }

@@ -69,6 +69,8 @@ data class StartActions(
     val onInfo: () -> Unit = {},
     val onPickKind: (InvKind) -> Unit = {},
     val onPickScope: (ScopeChoice) -> Unit = {},
+    /** Chip-ul „Ultimele N ▾”: foaia cu numărul. */
+    val onPickLastN: () -> Unit = {},
     val onPickAlbum: () -> Unit = {},
     val onPickFolder: () -> Unit = {},
     /** Atingerea plăcii POZE fără acces la galerie. */
@@ -98,12 +100,15 @@ fun InventoryStartContent(state: StartUiState, actions: StartActions, modifier: 
         run?.ready == true -> "Dosarele sunt gata."
         run != null -> "Lucrez în fundal."
         state.error != null -> "Nu a mers. Încearcă din nou."
+        state.docsSettled && (state.docOrganized ?: 0) > 0 -> "Aici e ordine."
+        state.docsSettled -> "Folderul e gol."
         else -> "Ce punem în ordine?"
     }
     val pose = when {
         run?.ready == true -> MascotState.Happy
         run != null -> MascotState.Thinking
         state.error != null -> MascotState.Sorry
+        state.docsSettled && (state.docOrganized ?: 0) > 0 -> MascotState.Happy
         state.kind == InvKind.Documents -> MascotState.Thinking
         else -> MascotState.Idle
     }
@@ -144,6 +149,8 @@ fun InventoryStartContent(state: StartUiState, actions: StartActions, modifier: 
             bottom = {
                 if (state.laptopPending > 0) LaptopCard(state.laptopPending, actions.onAllowLaptop)
                 when {
+                    // Folderul ales e deja în ordine (sau gol): nu pornim o analiză sortită eșecului, propunem alt folder.
+                    run == null && state.docsSettled -> InvPrimaryButton("Alt folder", actions.onPickFolder, Modifier.coachTarget("inv_start"))
                     run == null -> InvPrimaryButton(
                         "Începe", actions.onStart, Modifier.coachTarget("inv_start"),
                         meta = fmtMinutes(state.estimateSec)
@@ -157,6 +164,10 @@ fun InventoryStartContent(state: StartUiState, actions: StartActions, modifier: 
         )
     }
 }
+
+/** Documente: folderul ales nu are nimic liber (e în ordine sau gol) — butonul principal propune alt folder. */
+internal val StartUiState.docsSettled: Boolean
+    get() = kind == InvKind.Documents && docFolder != null && docCount == 0
 
 /** Bula mascotei (fără codiță, ca în prototip): Barlow 24 pe #121214. */
 @Composable
@@ -200,15 +211,28 @@ private fun KindTiles(state: StartUiState, actions: StartActions, modifier: Modi
             modifier = Modifier.weight(1f)
         )
         val docsOn = state.kind == InvKind.Documents
+        // Placa numără fișierele „libere” (ce ar pune în ordine acum). Zero libere nu înseamnă „folder gol”:
+        // după o aplicare, fișierele stau în dosare → „În ordine · 4 ÎN DOSARE”.
+        val organized = state.docOrganized ?: 0
         KindTile(
             icon = InvIcons.Folder,
             value = when {
                 state.docFolder == null -> null
                 state.docCount == null -> "—"
-                else -> fmtCount(state.docCount)
+                state.docCount > 0 -> fmtCount(state.docCount)
+                else -> null
             },
-            word = if (state.docFolder == null) "Alege folder" else null,
-            meta = if (state.docBytes != null) "DOCUMENTE · ${fmtSize(state.docBytes)}" else "DOCUMENTE",
+            word = when {
+                state.docFolder == null -> "Alege folder"
+                state.docCount == 0 && organized > 0 -> "În ordine"
+                state.docCount == 0 -> "Gol"
+                else -> null
+            },
+            meta = when {
+                state.docCount == 0 && organized > 0 -> "${fmtCount(organized)} ÎN DOSARE"
+                state.docCount != null && state.docCount > 0 && state.docBytes != null -> "DOCUMENTE · ${fmtSize(state.docBytes)}"
+                else -> "DOCUMENTE"
+            },
             selected = docsOn,
             description = "Documente",
             onClick = { if (docsOn && state.docFolder == null) actions.onPickFolder() else actions.onPickKind(InvKind.Documents) },
@@ -284,13 +308,20 @@ private fun ScopeRow(state: StartUiState, actions: StartActions, modifier: Modif
     ) { kind ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (kind == InvKind.Photos) {
-                ScopeChip("Tot", state.scope == ScopeChoice.All, { actions.onPickScope(ScopeChoice.All) }, Modifier.weight(1f))
-                ScopeChip("Ultimele 500", state.scope == ScopeChoice.Last500, { actions.onPickScope(ScopeChoice.Last500) }, Modifier.weight(1f))
+                // Lățimi: „Ultimele 25 000 ▾” trebuie să încapă întreg și pe 360 dp (S23).
+                ScopeChip("Tot", state.scope == ScopeChoice.All, { actions.onPickScope(ScopeChoice.All) }, Modifier.weight(0.55f))
+                ScopeChip(
+                    "Ultimele ${fmtCount(state.lastN)}",
+                    state.scope == ScopeChoice.LastN,
+                    actions.onPickLastN,
+                    Modifier.weight(1.47f),
+                    trailing = InvIcons.ChevronDown
+                )
                 ScopeChip(
                     state.albumName ?: "Album",
                     state.scope == ScopeChoice.Album,
                     actions.onPickAlbum,
-                    Modifier.weight(1f),
+                    Modifier.weight(0.98f),
                     trailing = InvIcons.ChevronDown
                 )
             } else {

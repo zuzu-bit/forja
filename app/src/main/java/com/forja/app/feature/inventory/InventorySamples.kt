@@ -3,11 +3,14 @@ package com.forja.app.feature.inventory
 import android.net.Uri
 import com.forja.app.core.inventory.BinTick
 import com.forja.app.core.inventory.DeleteReason
+import com.forja.app.core.inventory.InvDest
 import com.forja.app.core.inventory.InvFolder
 import com.forja.app.core.inventory.InvItem
 import com.forja.app.core.inventory.InvKind
+import com.forja.app.core.inventory.InvPlace
 import com.forja.app.core.inventory.InvPlan
 import com.forja.app.core.inventory.InvStage
+import com.forja.app.core.inventory.Landing
 
 /**
  * Date false pentru capturile de ecran (Roborazzi) și revizuire: exemplul din prototip —
@@ -23,6 +26,7 @@ object InventorySamples {
 
     private fun photoUri(i: Int): Uri = Uri.parse("content://media/external/images/media/${200_000 + i}")
     private fun docUri(i: Int): Uri = Uri.parse("content://com.android.externalstorage.documents/tree/primary%3ADocumente/document/primary%3ADocumente%2Fdoc$i")
+    private val docTree: Uri = Uri.parse("content://com.android.externalstorage.documents/tree/primary%3ADocumente")
 
     /** Dosarele de poze din prototip: nume + câte poze. */
     val photoFolderNames = listOf(
@@ -126,7 +130,8 @@ object InventorySamples {
         }
         InvPlan(
             runId = "sample-docs", kind = InvKind.Documents, createdAt = T0 + 700 * DAY, items = items, folders = folders,
-            trash = InvFolder("trash", "De aruncat", "Gunoi", trashIds, trashIds.take(4), special = true), provider = "gemini"
+            trash = InvFolder("trash", "De aruncat", "Gunoi", trashIds, trashIds.take(4), special = true), provider = "gemini",
+            source = docTree
         )
     }
 
@@ -142,6 +147,10 @@ object InventorySamples {
     val startRunning = start.copy(run = RunSummary(InvKind.Photos, 34, ready = false, folders = 0, etaSec = 18 * 60))
     val startReady = start.copy(run = RunSummary(InvKind.Photos, 100, ready = true, folders = 14, etaSec = null))
     val startFailed = start.copy(error = "Nu a mers. Încearcă din nou.")
+    /** S1 — „Ultimele 5 000 ▾” ales (chip-ul cel mai lat, încape și pe S23). */
+    val startLastN = start.copy(scope = ScopeChoice.LastN, lastN = 5_000, estimateSec = 7 * 60)
+    /** S1 — documente după o aplicare: nimic liber, 4 fișiere în dosare → „În ordine · 4 ÎN DOSARE”, „Alt folder”. */
+    val startDocsOrdered = startDocs.copy(docCount = 0, docBytes = 0L, docOrganized = 4, estimateSec = null)
 
     val recent: List<Uri> = (1..8).map { photoUri(it * 37) }
     val bins = listOf(BinTick("Munte · Bucegi", 128), BinTick("Mâncare", 214), BinTick("Capturi", 96), BinTick(null, 37))
@@ -167,11 +176,40 @@ object InventorySamples {
     val folder: FolderUiState get() = photoPlan.folderUi("f1", ReasonFilter.All, emptySet(), editing = false)!!
     val moveTargets: List<MoveTarget> get() = photoPlan.moveTargets(exclude = "trash").take(5)
 
-    /** S6 — confirmarea, aplicarea la 34 % și finalul „Gata”. */
+    /** S6 — confirmarea (cu rândul destinației), foaia „Locație”, aplicarea la 34 % și finalul „Gata”. */
     val confirm: ApplyConfirmUi get() = photoPlan.confirmUi()
+    val confirmDocs: ApplyConfirmUi get() = docPlan.confirmUi()
+    val location: LocationUi get() = photoPlan.locationUi()
+    val locationDocs: LocationUi get() = docPlan.locationUi()
+    /** Poze într-un dosar ales cu „Alt dosar…” (Pictures/Vacanțe): rândul lui apare ales, sub cele trei. */
+    val locationCustom: LocationUi get() = photoPlan.copy(dest = InvDest.Media("Pictures/Vacanțe/")).locationUi()
+
+    private fun doc(id: String): Uri = Uri.parse("content://com.android.externalstorage.documents/document/" + Uri.encode(id))
+    /** Unde au ajuns pozele: 14 dosare în Pictures/FORJA; prima poză mutată. */
+    val landing = Landing(
+        kind = InvKind.Photos,
+        root = InvPlace(doc("primary:Pictures/FORJA"), "Pictures/FORJA", "/storage/emulated/0/Pictures/FORJA"),
+        segments = photoFolderNames.map { it.first }.toSet(),
+        first = photoUri(1), firstMime = "image/jpeg"
+    )
+    /** Unde au ajuns documentele: 8 dosare în Documente/Organizate. */
+    val landingDocs = Landing(
+        kind = InvKind.Documents,
+        root = InvPlace(doc("primary:Documente/Organizate"), "Documente/Organizate", "/storage/emulated/0/Documente/Organizate"),
+        segments = docFolderNames.map { it.first }.toSet()
+    )
     val apply = ApplyUiState(kind = InvKind.Photos, done = 1092, total = 3214, recent = recent, bins = photoFolderNames.take(4).map { BinTick(it.first, it.second) })
-    val done = DoneUiState(kind = InvKind.Photos, folders = 14, items = 3214, freedBytes = (1.2 * GB).toLong(), failed = 0, musicStopped = true)
-    val doneDocs = DoneUiState(kind = InvKind.Documents, folders = 8, items = 486, freedBytes = 0L, failed = 0, musicStopped = false)
+    val done = DoneUiState(
+        kind = InvKind.Photos, folders = 14, items = 3214, freedBytes = (1.2 * GB).toLong(), failed = 0, musicStopped = true,
+        place = landing, runId = "sample", showSite = true
+    )
+    val doneDocs = DoneUiState(
+        kind = InvKind.Documents, folders = 8, items = 486, freedBytes = 0L, failed = 0, musicStopped = false,
+        place = landingDocs, runId = "sample-docs", showSite = true
+    )
+    /** Finalul cu elemente nemutate (șterse între timp) și fără contract (fără „Pe site”). */
+    val doneFailed = done.copy(failed = 3, showSite = false)
+    val doneDocsFailed = doneDocs.copy(failed = 2)
 
     /** Pastila: la 34 % și „Gata”. */
     val pill = PillState(34, ready = false)

@@ -49,9 +49,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -68,7 +70,9 @@ import com.forja.app.core.designsystem.TextSecondary
 import com.forja.app.core.designsystem.components.Mascot
 import com.forja.app.core.designsystem.components.MascotState
 import com.forja.app.core.designsystem.components.pressable
+import com.forja.app.core.inventory.InvDest
 import com.forja.app.core.inventory.InvKind
+import com.forja.app.core.inventory.InvText
 
 /** Foaia de jos a Inventarului (DeAruncat.dc.html): #121214, rază 12 sus, mâner 40×4, fundal întunecat 60 %. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,11 +94,31 @@ internal fun InvSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.()
             }
         }
     ) {
-        Column(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            content = content
-        )
+        SheetContent(content)
+    }
+}
+
+@Composable
+private fun SheetContent(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        content = content
+    )
+}
+
+/**
+ * Aceeași foaie desenată pe loc, fără fereastra ModalBottomSheet (pe care capturile JVM nu o văd): fundalul întunecat
+ * 60 %, #121214, rază 12 sus, linia de 10 %, mânerul. Doar pentru capturi și revizuire.
+ */
+@Composable
+internal fun InvSheetFrame(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Box(modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)), contentAlignment = Alignment.BottomCenter) {
+        Column(Modifier.fillMaxWidth().clip(SheetTop).background(Surface1)) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(W10))
+            SheetHandle()
+            SheetContent(content)
+        }
     }
 }
 
@@ -260,16 +284,44 @@ internal fun AlbumSheet(albums: List<Album>?, selectedId: Long?, onPick: (Album)
     }
 }
 
-/** S6 — confirmarea: două rânduri-iconiță, onestitatea (30 de zile), „Aplică”. */
+/**
+ * S6 — confirmarea: rândul destinației (atingibil → „Locație”), gunoiul cu onestitatea (30 de zile), „Aplică”.
+ * Aceeași foaie comută între confirmare și „Locație” ([showLocation]), fără să se închidă și să se redeschidă.
+ */
 @Composable
-internal fun ApplyConfirmSheet(ui: ApplyConfirmUi, onApply: () -> Unit, onDismiss: () -> Unit) {
+internal fun ApplyConfirmSheet(
+    ui: ApplyConfirmUi,
+    location: LocationUi,
+    showLocation: Boolean,
+    onShowLocation: (Boolean) -> Unit,
+    onPickDest: (InvDest) -> Unit,
+    onOther: () -> Unit,
+    onApply: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val reduced = LocalReducedMotion.current
     InvSheet(onDismiss) {
+        AnimatedContent(
+            targetState = showLocation,
+            transitionSpec = { fadeIn(tween(if (reduced) 0 else 180)) togetherWith fadeOut(tween(if (reduced) 0 else 120)) },
+            label = "applySheet"
+        ) { loc ->
+            if (loc) LocationBody(location, onBack = { onShowLocation(false) }, onPick = onPickDest, onOther = onOther)
+            else ApplyConfirmBody(ui, onApply = onApply, onDest = { onShowLocation(true) })
+        }
+    }
+}
+
+/** Conținutul confirmării (și în capturi, prin [InvSheetFrame]). */
+@Composable
+internal fun ApplyConfirmBody(ui: ApplyConfirmUi, onApply: () -> Unit, onDest: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         val photos = ui.kind == InvKind.Photos
         if (ui.moves > 0) {
-            ConfirmRow(
-                icon = InvIcons.Folder, tint = Accent2, bg = Accent2.copy(alpha = 0.14f),
-                title = "${fmtCount(ui.folders)} ${if (ui.folders == 1) "dosar" else "dosare"} în ${if (photos) "Galerie" else "Organizate"}",
-                sub = null
+            DestRow(
+                title = "${InvText.count(ui.folders, "dosar", "dosare")} în ${ui.destLabel.ifBlank { if (photos) "Galerie" else "Organizate" }}",
+                path = ui.destPath,
+                onClick = onDest
             )
         }
         if (ui.trashCount > 0) {
@@ -281,6 +333,188 @@ internal fun ApplyConfirmSheet(ui: ApplyConfirmUi, onApply: () -> Unit, onDismis
         }
         Spacer(Modifier.height(10.dp))
         InvPrimaryButton("Aplică", onApply)
+    }
+}
+
+/** Rândul destinației: dosarul olive, „14 dosare în FORJA”, calea mono dedesubt, chevron — o atingere deschide „Locație”. */
+@Composable
+private fun DestRow(title: String, path: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .pressable(onClick)
+            .fillMaxWidth()
+            .heightIn(min = 60.dp)
+            .clip(R8)
+            .semantics(mergeDescendants = true) { role = Role.Button; contentDescription = "$title. Locație: $path. Schimbă" },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(44.dp).clip(R8).background(Accent2.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
+            Icon(InvIcons.Folder, null, tint = Accent2, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, style = cond(20, 22), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (path.isNotBlank()) Text(path, style = mono(10, 0.12f, color = TextDim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.width(8.dp))
+        Box(
+            Modifier.size(32.dp).clip(R6).background(Raised).border(1.dp, W06, R6),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(InvIcons.ChevronDown, null, tint = TextSecondary, modifier = Modifier.size(14.dp))
+        }
+    }
+}
+
+/**
+ * „Locație”: unde ajung dosarele. Poze: Galerie · FORJA / Direct în Galerie / Lângă Cameră / Alt dosar…;
+ * documente: În folderul ales / Alt folder…. Rândul ales poartă bifa; calea stă mono sub nume.
+ */
+@Composable
+internal fun LocationBody(ui: LocationUi, onBack: () -> Unit, onPick: (InvDest) -> Unit, onOther: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth().height(44.dp).padding(bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(40.dp).clip(R8).pressable(onBack).semantics { contentDescription = "Înapoi"; role = Role.Button },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(InvIcons.Back, null, tint = TextSecondary, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(4.dp))
+            Text("Locație", style = cond(24, 28))
+        }
+        for (o in ui.options) {
+            DestOptionRow(o.label, o.path, o.selected, { DestIconBox(o.icon, o.selected) }) { onPick(o.dest) }
+        }
+        DestOptionRow(ui.otherLabel, null, false, { DashedPlus() }, color = Accent2, onClick = onOther)
+    }
+}
+
+@Composable
+private fun DestIconBox(icon: DestIcon, selected: Boolean) {
+    val vector = when (icon) {
+        DestIcon.Gallery -> InvIcons.Photos
+        DestIcon.Pictures -> InvIcons.Image
+        DestIcon.Camera -> InvIcons.Camera
+        DestIcon.Folder -> InvIcons.Folder
+    }
+    Box(
+        Modifier.size(44.dp).clip(R4).background(if (selected) Accent2.copy(alpha = 0.14f) else Raised).border(1.dp, if (selected) Accent2.copy(alpha = 0.5f) else W06, R4),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(vector, null, tint = Accent2, modifier = Modifier.size(20.dp))
+    }
+}
+
+/** Rând de 64 dp: iconiță 44 + nume Barlow 20 + cale mono; bifa olive la cel ales. */
+@Composable
+private fun DestOptionRow(
+    label: String,
+    path: String?,
+    selected: Boolean,
+    leading: @Composable () -> Unit,
+    color: Color = TextPrimary,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .clip(R8)
+            .background(if (selected) Accent2.copy(alpha = 0.06f) else Color.Transparent)
+            .pressable(onClick)
+            .semantics(mergeDescendants = true) {
+                role = Role.RadioButton
+                stateDescription = if (selected) "ales" else "neales"
+            }
+            .padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) { leading() }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(label, style = cond(20, color = if (selected) Accent2 else color), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (path != null) Text(path, style = mono(10, 0.12f, color = TextDim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (selected) {
+            Spacer(Modifier.width(8.dp))
+            Icon(InvIcons.CheckBold, null, tint = Accent2, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+/** Presetările din „Ultimele N” (cele ≥ numărul pozelor din galerie nu se arată: ar fi „Tot”). */
+internal val LastNPresets = listOf(100, 500, 1_000, 5_000)
+
+/** „Ultimele N”: presetări cu o atingere + un număr scris; sub câmp, câte are galeria („DIN 12 480”). */
+@Composable
+internal fun LastNSheet(current: Int, total: Int?, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+    InvSheet(onDismiss) { LastNBody(current, total, onPick) }
+}
+
+/** Conținutul foii „Ultimele N” (și în capturi, prin [InvSheetFrame]). */
+@Composable
+internal fun LastNBody(current: Int, total: Int?, onPick: (Int) -> Unit) {
+    val presets = LastNPresets.filter { total == null || it < total }
+    val custom = current !in presets
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Ultimele", style = cond(24, 28), modifier = Modifier.padding(start = 2.dp))
+        if (presets.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (n in presets) ScopeChip(fmtCount(n), n == current, { onPick(n) }, Modifier.weight(1f))
+            }
+        }
+        NumberField(
+            placeholder = if (custom) fmtCount(current) else "Alt număr",
+            highlight = custom,
+            onDone = { text ->
+                val n = text.toIntOrNull()
+                when {
+                    n != null && n > 0 -> onPick(if (total != null && total > 0) n.coerceAtMost(total) else n)
+                    custom -> onPick(current)
+                }
+            }
+        )
+        if (total != null && total > 0) {
+            Text("DIN ${fmtCount(total)}", style = mono(10, 0.14f, color = TextDim), modifier = Modifier.padding(start = 2.dp))
+        }
+    }
+}
+
+/** Câmpul numeric (aspectul lui NameField): doar cifre, ≤ 6; gol = arată valoarea curentă sau „Alt număr”. */
+@Composable
+private fun NumberField(placeholder: String, highlight: Boolean, onDone: (String) -> Unit) {
+    var value by remember { mutableStateOf("") }
+    Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+        BasicTextField(
+            value = value,
+            onValueChange = { v -> value = v.filter { it.isDigit() }.take(6) },
+            singleLine = true,
+            textStyle = cond(22, 26),
+            cursorBrush = SolidColor(Accent2),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { onDone(value) }),
+            modifier = Modifier.weight(1f).height(48.dp).semantics { contentDescription = "Câte poze" },
+            decorationBox = { inner ->
+                Box(
+                    Modifier.fillMaxSize().clip(R8).background(Surface0)
+                        .border(1.5.dp, if (highlight || value.isNotEmpty()) Accent2 else W12, R8)
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (value.isEmpty()) Text(placeholder, style = cond(22, 26, color = if (highlight) Accent2 else TextDim), maxLines = 1)
+                    inner()
+                }
+            }
+        )
+        Spacer(Modifier.width(10.dp))
+        Box(
+            Modifier.size(48.dp).clip(R8).background(Accent2).pressable({ onDone(value) })
+                .semantics { contentDescription = "Gata"; role = Role.Button },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(InvIcons.CheckBold, null, tint = Surface0, modifier = Modifier.size(20.dp))
+        }
     }
 }
 

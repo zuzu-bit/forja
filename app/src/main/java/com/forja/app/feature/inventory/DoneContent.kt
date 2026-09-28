@@ -17,6 +17,7 @@ import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -31,7 +33,9 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -57,13 +61,16 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.forja.app.core.designsystem.Accent2
 import com.forja.app.core.designsystem.EmberWarm
 import com.forja.app.core.designsystem.Error
 import com.forja.app.core.designsystem.LocalReducedMotion
 import com.forja.app.core.designsystem.OnAccent
 import com.forja.app.core.designsystem.Surface0
+import com.forja.app.core.designsystem.Surface1
 import com.forja.app.core.designsystem.TextDim
 import com.forja.app.core.designsystem.TextPrimary
 import com.forja.app.core.designsystem.TextSecondary
@@ -72,10 +79,20 @@ import com.forja.app.core.designsystem.components.MascotHat
 import com.forja.app.core.designsystem.components.MascotState
 import com.forja.app.core.designsystem.components.pressable
 import com.forja.app.core.inventory.InvKind
+import com.forja.app.core.inventory.TreePaths
 
 // ═════════════════════════════ S6 · Gata ═════════════════════════════
 
-data class DoneActions(val onGallery: () -> Unit = {}, val onClose: () -> Unit = {})
+/**
+ * `onGallery` = butonul principal („Galerie” / „Fișiere”), `onPlace` = eticheta cu calea (dosarul nou, în Fișiere),
+ * `onSite` = „Pe site” (rularea pe /insights#inventar), `onClose` = „Închide”.
+ */
+data class DoneActions(
+    val onGallery: () -> Unit = {},
+    val onClose: () -> Unit = {},
+    val onPlace: () -> Unit = {},
+    val onSite: () -> Unit = {}
+)
 
 /** O scânteie care urcă (Gata.dc.html): poziția (dp în eroul de 280), mărimea, culoarea, faza. */
 private class Rise(val x: Float, val y: Float, val d: Float, val color: Color, val delay: Float)
@@ -92,8 +109,13 @@ private val InEase = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
 private val EaseOut = CubicBezierEasing(0f, 0f, 0.58f, 1f)
 
 /**
- * Finalul (Gata.dc.html): mascota fericită cu cască 210 dp, pulsul inelului și scânteile care urcă, „Gata” 84,
- * „14 DOSARE | 1,2 GB ELIBERAȚI”, „Recuperezi 30 de zile”, egalizatorul turtit (muzica s-a oprit), [Galerie] [Închide].
+ * Finalul (Gata.dc.html): mascota fericită cu cască, pulsul inelului și scânteile care urcă, „Gata”,
+ * „14 DOSARE | 1,2 GB ELIBERAȚI”, „Recuperezi 30 de zile” / „Nimic nu s-a șters”, calea noii locații (atingibilă),
+ * egalizatorul turtit sus (muzica s-a oprit), [Galerie / Fișiere] și [Pe site] [Închide] jos.
+ *
+ * Așezarea (4.4, după testul pe S23 — 360 × 780 dp, cu barele ≈ 696 dp utili): sus și jos sunt fixe, doar mijlocul
+ * derulează când nu încape (text mărit); eroul se scalează cu înălțimea (280 dp pe 851, ~230 pe 696), iar între mijloc
+ * și butoane rămân mereu cel puțin 16 dp. Fără X sus-dreapta: dubla lui „Închide”, și stătea lipit de bara de stare.
  */
 @Composable
 fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Modifier = Modifier) {
@@ -106,7 +128,9 @@ fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Mod
     fun inAt(delayMs: Int): () -> Float = { InEase.transform(((enter.value * 720f - delayMs) / 500f).coerceIn(0f, 1f)) }
     val photos = state.kind == InvKind.Photos
 
-    Box(modifier.fillMaxSize().background(Surface0)) {
+    BoxWithConstraints(modifier.fillMaxSize().background(Surface0)) {
+        val hero = (maxHeight * 0.33f).coerceIn(168.dp, 280.dp)
+        val title = if (maxHeight < 720.dp) 68 else 84
         Canvas(Modifier.fillMaxSize()) {
             // radial-gradient(90% 55% at 50% 34%, amber .16 → transparent 70 %): elipsă = cerc scalat pe verticală
             val c = Offset(size.width / 2f, size.height * 0.34f)
@@ -119,16 +143,20 @@ fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Mod
                 )
             }
         }
-        TopBottomColumn(
-            padding = androidx.compose.foundation.layout.PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 28.dp),
-            gap = 0.dp,
-            top = {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    if (state.musicStopped) EqualizerFlat() else Spacer(Modifier.size(1.dp))
-                    InvIconButton(InvIcons.Close, "Închide", actions.onClose, iconSize = 18.dp)
-                }
-                Box(Modifier.fillMaxWidth().padding(top = 30.dp), contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(280.dp), contentAlignment = Alignment.Center) {
+        Column(Modifier.fillMaxSize().padding(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 20.dp)) {
+            // sus, fix: doar egalizatorul turtit (muzica s-a oprit)
+            Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.CenterStart) {
+                if (state.musicStopped) EqualizerFlat()
+            }
+            // mijlocul: centrat când e loc, derulat când nu (butoanele nu se mișcă)
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val viewport = maxHeight
+                Column(
+                    Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = viewport),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Box(Modifier.size(hero), contentAlignment = Alignment.Center) {
                         if (t != null) {
                             Canvas(Modifier.fillMaxSize()) {
                                 val u = size.width / 280f
@@ -150,40 +178,94 @@ fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Mod
                                 }
                             }
                         }
-                        Mascot(state = MascotState.Happy, hat = MascotHat.Helmet, size = 210.dp)
+                        Mascot(state = MascotState.Happy, hat = MascotHat.Helmet, size = hero * 0.75f)
+                    }
+                    Text(
+                        "Gata",
+                        style = cond(title, title - 4, tracking = 0.01f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp).riseIn(inAt(0))
+                    )
+                    StatsRow(state, inAt(120), Modifier.fillMaxWidth().padding(top = 14.dp).height(62.dp).riseIn(inAt(120)))
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 14.dp).riseIn(inAt(220)),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(if (photos) InvIcons.Restore else InvIcons.Check, null, tint = TextSecondary, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (photos) "Recuperezi 30 de zile" else "Nimic nu s-a șters", style = body(14))
+                    }
+                    val place = state.place?.target
+                    if (place != null) {
+                        PlaceChip(place.label, actions.onPlace, Modifier.padding(top = 12.dp).riseIn(inAt(300)))
+                    }
+                    if (state.failed > 0) {
+                        Text(
+                            "${fmtCount(state.failed)} NEMUTATE",
+                            style = mono(10, 0.16f, color = Error),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+                        )
                     }
                 }
-                Text(
-                    "Gata",
-                    style = cond(84, 80, tracking = 0.01f),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp).riseIn(inAt(0))
-                )
-                StatsRow(state, inAt(120), Modifier.fillMaxWidth().padding(top = 18.dp).height(62.dp).riseIn(inAt(120)))
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 16.dp).riseIn(inAt(220)),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(if (photos) InvIcons.Restore else InvIcons.Check, null, tint = TextSecondary, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (photos) "Recuperezi 30 de zile" else "Nimic nu s-a șters", style = body(14))
+            }
+            // jos, fix, la cel puțin 16 dp de mijloc
+            Spacer(Modifier.height(16.dp))
+            InvPrimaryButton(if (photos) "Galerie" else "Fișiere", actions.onGallery)
+            Spacer(Modifier.height(10.dp))
+            if (state.showSite) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SiteButton(actions.onSite, Modifier.weight(1f))
+                    InvOutlineButton("Închide", actions.onClose, Modifier.weight(1f))
                 }
-                if (state.failed > 0) {
-                    Text(
-                        "${fmtCount(state.failed)} NEMUTATE",
-                        style = mono(10, 0.16f, color = Error),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                    )
-                }
-            },
-            bottom = {
-                InvPrimaryButton(if (photos) "Galerie" else "Fișiere", actions.onGallery)
-                Spacer(Modifier.height(10.dp))
+            } else {
                 InvOutlineButton("Închide", actions.onClose)
             }
-        )
+        }
+    }
+}
+
+/** Calea noii locații („DOCUMENTS/ORGANIZATE”), ca etichetă mono atingibilă: deschide dosarul în Fișiere. */
+@Composable
+private fun PlaceChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val path = TreePaths.tail(label).uppercase()
+    Row(
+        modifier
+            .pressable(onClick)
+            .height(34.dp)
+            .clip(R6)
+            .background(Surface1)
+            .border(1.dp, W09, R6)
+            .semantics(mergeDescendants = true) { role = Role.Button; contentDescription = "Deschide locația $label" }
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(InvIcons.Folder, null, tint = Accent2, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(path, style = mono(11, 0.08f, color = TextPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        Spacer(Modifier.width(6.dp))
+        Icon(InvIcons.ChevronRight, null, tint = TextDim, modifier = Modifier.size(14.dp))
+    }
+}
+
+/** „Pe site”: butonul conturat cu globul olive, lângă „Închide”. */
+@Composable
+private fun SiteButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .pressable(onClick)
+            .fillMaxWidth()
+            .height(52.dp)
+            .clip(R8)
+            .border(1.dp, W12, R8)
+            .semantics(mergeDescendants = true) { role = Role.Button },
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(InvIcons.Globe, null, tint = Accent2, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Pe site", style = cond(19, color = TextSecondary), maxLines = 1)
     }
 }
 

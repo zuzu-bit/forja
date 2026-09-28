@@ -58,6 +58,11 @@ internal object InvIcons {
     val Laptop = stroke("M5 5h14a1 1 0 0 1 1 1v10H4V6a1 1 0 0 1 1-1z", "M2 19h20")
     val Merge = stroke("M6 3v5l6 6 6-6V3", "M12 14v7")
     val Split = stroke("M12 3v7l-6 5v6", "M12 10l6 5v6")
+    val Camera = stroke(
+        "M4 8.5a2 2 0 0 1 2-2h2.2l1.6-2.5h4.4l1.6 2.5H18a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z",
+        "M8.6 13a3.4 3.4 0 1 0 6.8 0a3.4 3.4 0 1 0-6.8 0",
+        width = 1.8f
+    )
     val Image = stroke("M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z", "M4 16l5-5 4 4 3-3 4 4", "M15 8.5h.01", width = 1.8f)
 
     // Motivele din „De aruncat” (DeAruncat.dc.html)

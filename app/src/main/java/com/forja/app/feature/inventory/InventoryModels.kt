@@ -4,13 +4,19 @@ import android.net.Uri
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.forja.app.core.cleanup.DocumentOrganizer
 import com.forja.app.core.inventory.BinTick
 import com.forja.app.core.inventory.DeleteReason
+import com.forja.app.core.inventory.DestNames
+import com.forja.app.core.inventory.InvDest
 import com.forja.app.core.inventory.InvItem
 import com.forja.app.core.inventory.InvKind
 import com.forja.app.core.inventory.InvPlan
 import com.forja.app.core.inventory.InvProgress
 import com.forja.app.core.inventory.InvStage
+import com.forja.app.core.inventory.Landing
+import com.forja.app.core.inventory.MediaRoots
+import com.forja.app.core.inventory.TreePaths
 
 /*
  * Stările ecranelor Inventarului, fără Android în ele (în afară de Uri): fiecare ecran e un `…Content(state, …)`
@@ -20,8 +26,8 @@ import com.forja.app.core.inventory.InvStage
 /** Paginile fluxului de pe ruta CLEANUP: S1 · S2 · S4 · S5 · aplicarea · finalul S6. */
 enum class InvPage { Start, Run, Folders, Folder, Apply, Done }
 
-/** Scopul pozelor: „Tot”, „Ultimele 500”, „Album”. */
-enum class ScopeChoice { All, Last500, Album }
+/** Scopul pozelor: „Tot”, „Ultimele N” (N ales de om, reținut), „Album”. */
+enum class ScopeChoice { All, LastN, Album }
 
 /** Faza motorului, văzută de UI. */
 enum class EnginePhase { Idle, Running, Ready, Applying, Done, Failed }
@@ -46,10 +52,15 @@ data class StartUiState(
     val photoCount: Int? = null,
     val photoBytes: Long? = null,
     val scope: ScopeChoice = ScopeChoice.All,
+    /** N-ul din „Ultimele N” (arătat pe chip și când scopul e altul). */
+    val lastN: Int = 500,
     val albumName: String? = null,
     val docFolder: String? = null,
+    /** Fișierele „libere” din folder (cele pe care le-ar pune în ordine acum). */
     val docCount: Int? = null,
     val docBytes: Long? = null,
+    /** Fișierele deja în dosare (sub „Organizate” sau în destinația aleasă): „În ordine · 4 ÎN DOSARE”. */
+    val docOrganized: Int? = null,
     val estimateSec: Int? = null,
     /** Rularea existentă (în curs sau gata); null = nimic pornit. */
     val run: RunSummary? = null,
@@ -206,9 +217,35 @@ data class MoveTarget(val id: String, val name: String, val count: Int, val cove
 
 // ───────────────────────────── S6 ─────────────────────────────
 
+/** Confirmarea: `destLabel` = „FORJA” / „Organizate” (rândul atingibil), `destPath` = „PICTURES/FORJA” (meta mono). */
 @Immutable
-data class ApplyConfirmUi(val kind: InvKind, val folders: Int, val moves: Int, val trashCount: Int, val trashBytes: Long)
+data class ApplyConfirmUi(
+    val kind: InvKind,
+    val folders: Int,
+    val moves: Int,
+    val trashCount: Int,
+    val trashBytes: Long,
+    val destLabel: String = "",
+    val destPath: String = ""
+)
 
+/** Iconița unui rând din „Locație”. */
+enum class DestIcon { Gallery, Pictures, Camera, Folder }
+
+/** Un rând din foaia „Locație”: destinația, numele (≈ 3 cuvinte), calea mono, dacă e cea aleasă. */
+@Immutable
+data class DestOption(val dest: InvDest, val label: String, val path: String, val selected: Boolean, val icon: DestIcon)
+
+/** Foaia „Locație”: rândurile + ultimul rând „Alt dosar…” (poze) / „Alt folder…” (documente). */
+@Immutable
+data class LocationUi(val kind: InvKind, val options: List<DestOption>) {
+    val otherLabel: String get() = if (kind == InvKind.Photos) "Alt dosar…" else "Alt folder…"
+}
+
+/**
+ * Finalul: `place` = unde au ajuns lucrurile (se deschide din buton și din eticheta cu calea), `runId` = rularea
+ * (pentru „Pe site” → /insights#inventar/<runId>), `showSite` = contract semnat (rezumatul urcă doar atunci).
+ */
 @Immutable
 data class DoneUiState(
     val kind: InvKind = InvKind.Photos,
@@ -216,7 +253,10 @@ data class DoneUiState(
     val items: Int = 0,
     val freedBytes: Long = 0L,
     val failed: Int = 0,
-    val musicStopped: Boolean = true
+    val musicStopped: Boolean = true,
+    val place: Landing? = null,
+    val runId: String? = null,
+    val showSite: Boolean = false
 )
 
 // ───────────────────────────── Mapări din plan ─────────────────────────────
@@ -263,7 +303,38 @@ internal fun dominantExt(items: List<InvItem>): String? =
 
 internal fun InvPlan.confirmUi(): ApplyConfirmUi {
     val trashItems = trash.itemIds.mapNotNull { items[it] }
-    return ApplyConfirmUi(kind, folders.count { it.itemIds.isNotEmpty() }, folders.sumOf { it.itemIds.size }, trashItems.size, trashItems.sumOf { it.bytes })
+    return ApplyConfirmUi(
+        kind, folders.count { it.itemIds.isNotEmpty() }, folders.sumOf { it.itemIds.size }, trashItems.size, trashItems.sumOf { it.bytes },
+        destLabel = DestNames.short(dest),
+        destPath = TreePaths.tail(DestNames.path(dest, source)).uppercase()
+    )
+}
+
+/** Rândurile din „Locație”: cele trei rădăcini de poze (sau folderul ales) + destinația proprie, dacă e aleasă. */
+internal fun InvPlan.locationUi(): LocationUi {
+    val current = dest
+    val options = if (kind == InvKind.Photos) {
+        val chosen = (current as? InvDest.Media)?.root?.let { MediaRoots.normalize(it) } ?: MediaRoots.DEFAULT
+        val presets = MediaRoots.PRESETS.map { root ->
+            val icon = when (root) {
+                MediaRoots.DEFAULT -> DestIcon.Gallery
+                MediaRoots.GALLERY -> DestIcon.Pictures
+                else -> DestIcon.Camera
+            }
+            DestOption(InvDest.Media(root), MediaRoots.optionLabel(root), MediaRoots.path(root), root == chosen, icon)
+        }
+        if (chosen in MediaRoots.PRESETS) presets
+        else presets + DestOption(InvDest.Media(chosen), MediaRoots.optionLabel(chosen), TreePaths.tail(MediaRoots.path(chosen)), true, DestIcon.Folder)
+    } else {
+        val tree = current as? InvDest.Tree
+        val default = InvDest.Tree(null, DocumentOrganizer.ROOT_FOLDER)
+        val base = DestOption(
+            default, DestNames.option(default), TreePaths.tail(DestNames.path(default, source)).uppercase(), tree?.tree == null, DestIcon.Folder
+        )
+        if (tree?.tree == null) listOf(base)
+        else listOf(base, DestOption(tree, DestNames.option(tree), TreePaths.tail(DestNames.path(tree, source)).uppercase(), true, DestIcon.Folder))
+    }
+    return LocationUi(kind, options)
 }
 
 internal fun InvPlan.moveTargets(exclude: String?): List<MoveTarget> =
