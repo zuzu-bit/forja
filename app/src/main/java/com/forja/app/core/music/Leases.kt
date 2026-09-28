@@ -1,0 +1,41 @@
+package com.forja.app.core.music
+
+/** Împrumutul: „muzica asta a pornit-o FORJA, pentru …”. Doar cine ține împrumutul are voie să o oprească. */
+class Lease internal constructor(val id: Long, val source: MusicSource)
+
+/**
+ * Cine a pornit muzica acum (workout-music.md §4.3). Un singur împrumut odată: Antrenamentul îl ia peste Inventar.
+ * Kotlin pur.
+ *
+ * - Sfârșitul unui inventar în timpul antrenamentului nu oprește muzica de sală ([owner] == WORKOUT).
+ * - La finalul antrenamentului se oprește doar muzica pornită de FORJA ([release] întoarce true doar dacă împrumutul
+ *   mai e al lui — dacă ea a pornit altceva între timp, împrumutul a căzut).
+ */
+class LeaseBook {
+    private var seq = 0L
+    private var current: Lease? = null
+
+    fun acquire(source: MusicSource): Lease {
+        val l = Lease(++seq, source)
+        current = l
+        return l
+    }
+
+    fun owner(): MusicSource? = current?.source
+
+    fun holds(lease: Lease?): Boolean = lease != null && current?.id == lease.id
+
+    /** Eliberează împrumutul; true = era încă al lui (muzica e a FORJA, se poate opri). */
+    fun release(lease: Lease?): Boolean {
+        if (!holds(lease)) return false
+        current = null
+        return true
+    }
+
+    /** A preluat ea (altă listă, alt player): nimeni nu mai are voie să oprească muzica. */
+    fun drop() {
+        current = null
+    }
+
+    fun current(): Lease? = current
+}
