@@ -75,6 +75,9 @@ android {
                 it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
                 // ~500 de teste Robolectric + planșe mari (casca_notificari): 512 MB implicit nu ajung.
                 it.maxHeapSize = "4g"
+                // În jurnalul CI se vede fiecare test pornit: un test blocat (animație fără sfârșit) se găsește după ultimul STARTED.
+                it.testLogging { events("started", "failed"); exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
+                it.timeout.set(java.time.Duration.ofMinutes(38))
             }
         }
     }
