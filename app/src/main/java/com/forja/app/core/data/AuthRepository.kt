@@ -121,6 +121,11 @@ class AuthRepository(
         db.collection("users").document(uid).set(mapOf("name" to name), SetOptions.merge()).await()
     }
 
+    /** „Am uitat parola”: Firebase trimite emailul de resetare la adresa dată. */
+    suspend fun sendPasswordReset(email: String) {
+        auth.sendPasswordResetEmail(email.trim()).await()
+    }
+
     fun logout() = auth.signOut()
 
     /** Cod de invitație scurt, stabil, derivat din uid — FORJA-XXXXXX. */

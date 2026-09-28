@@ -91,6 +91,25 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
 
+    var notice by remember { mutableStateOf<String?>(null) }
+
+    fun forgot() {
+        if (loading) return
+        error = null; notice = null
+        if (email.isBlank()) { error = "Scrie emailul contului, apoi apasă din nou „Am uitat parola”."; return }
+        loading = true
+        scope.launch {
+            try {
+                app.auth.sendPasswordReset(email)
+                notice = "Ți-am trimis un email cu linkul de resetare. Verifică și dosarul Spam."
+            } catch (e: Exception) {
+                error = app.auth.humanError(e)
+            } finally {
+                loading = false
+            }
+        }
+    }
+
     fun submit() {
         if (loading) return
         error = null
@@ -177,6 +196,23 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
                 Reveal(key = msg, offsetY = 8.dp) {
                     Text(msg, style = Body.copy(color = Error, fontSize = 13.sp, lineHeight = 17.sp))
                 }
+            }
+            notice?.let { msg ->
+                Spacer(Modifier.height(14.dp))
+                Reveal(key = msg, offsetY = 8.dp) {
+                    Text(msg, style = Body.copy(color = Accent2, fontSize = 13.sp, lineHeight = 17.sp))
+                }
+            }
+            if (isLogin) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Am uitat parola",
+                    style = BodySmall.copy(color = TextSecondary),
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .pressable(::forgot)
+                        .padding(vertical = 6.dp, horizontal = 4.dp)
+                )
             }
 
             Spacer(Modifier.height(24.dp))
