@@ -138,6 +138,23 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
 
+    // Inventarul 4.3: o singură instanță a rutei CLEANUP. Pastila, modurile de așteptare și notificarea revin la ea
+    // (scot ce e deasupra) și îi cer pagina dorită; altfel o deschid.
+    fun openInventory(page: com.forja.app.feature.inventory.InvPage?) {
+        if (page != null) com.forja.app.feature.inventory.InventoryLinks.request(page)
+        val popped = try { nav.popBackStack(Route.CLEANUP, inclusive = false) } catch (_: Exception) { false }
+        if (!popped && nav.currentDestination?.route != Route.CLEANUP) {
+            try { nav.navigate(Route.CLEANUP) { launchSingleTop = true } } catch (_: Exception) { }
+        }
+    }
+    // Starea inventarului de pe disc (după o repornire): pastila apare, analiza neterminată se reia în fundal.
+    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            try { com.forja.app.core.inventory.Inventory.load(appContext) } catch (_: Exception) { }
+        }
+    }
+
     // Ruta cerută din afară (extra „forja_route”): notificarea Curățeniei (WP9) sau ecranele de blocare
     // („Mă întorc la copac” → Focus). Consumată o singură dată, doar când utilizatorul e deja în aplicație.
     val hostActivity = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
@@ -155,6 +172,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     popUpTo(Route.DASHBOARD) { inclusive = false }
                     launchSingleTop = true
                 }
+            } else if (wanted == Route.CLEANUP) {
+                openInventory(null)
             } else {
                 nav.navigate(wanted) { launchSingleTop = true }
             }
@@ -372,8 +391,48 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             composable(Route.BREATH) {
                 com.forja.app.feature.breath.BreathScreen()
             }
+            // Inventarul 4.3 (înlocuiește Curățenia): S1 start → S2 rulare → S4 dosare → S5 dosar → S6 aplicare.
             composable(Route.CLEANUP) {
-                com.forja.app.feature.cleanup.CleanupScreen(onBack = { nav.popBackStack() })
+                com.forja.app.feature.inventory.InventoryScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenWait = { w ->
+                        val target = when (w) {
+                            com.forja.app.feature.inventory.InvWait.Scroll -> Route.WAIT_SCROLL
+                            com.forja.app.feature.inventory.InvWait.Sport -> Route.WAIT_SPORT
+                            com.forja.app.feature.inventory.InvWait.Music -> Route.WAIT_MUSIC
+                        }
+                        nav.navigate(target) { launchSingleTop = true }
+                    }
+                )
+            }
+            // „Cât aștepți”: moduri pe tot ecranul, deasupra inventarului; pastila lor duce înapoi la el.
+            composable(
+                Route.WAIT_SCROLL,
+                enterTransition = modalEnter, exitTransition = fadeExit,
+                popEnterTransition = riseEnter, popExitTransition = modalExit
+            ) {
+                com.forja.app.feature.inventory.InventoryScrollScreen(
+                    onOpenInventory = { openInventory(it) },
+                    onMusic = { nav.navigate(Route.WAIT_MUSIC) { launchSingleTop = true } },
+                    onClose = { nav.popBackStack() }
+                )
+            }
+            composable(
+                Route.WAIT_SPORT,
+                enterTransition = modalEnter, exitTransition = fadeExit,
+                popEnterTransition = riseEnter, popExitTransition = modalExit
+            ) {
+                com.forja.app.feature.inventory.InventorySportScreen(
+                    onOpenInventory = { openInventory(it) },
+                    onClose = { nav.popBackStack() }
+                )
+            }
+            composable(
+                Route.WAIT_MUSIC,
+                enterTransition = modalEnter, exitTransition = fadeExit,
+                popEnterTransition = riseEnter, popExitTransition = modalExit
+            ) {
+                com.forja.app.feature.inventory.InventoryMusicScreen(onOpenInventory = { openInventory(it) })
             }
             composable(
                 Route.PERMISSIONS,
@@ -432,5 +491,16 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
         ) {
             ForjaTabBar(current = currentTab, onSelect = ::goTab)
         }
+
+        // Pastila globală a inventarului: oriunde, cât timp rularea e activă (nu pe ecranele Inventarului, unde
+        // progresul e deja pe ecran, și nu în modurile „Cât aștepți”, care o au în antet); la final: „Gata” + toast.
+        val inventoryRoutes = setOf(Route.CLEANUP, Route.WAIT_SCROLL, Route.WAIT_SPORT, Route.WAIT_MUSIC)
+        val noPillRoutes = setOf(Route.ONBOARDING, Route.LOGIN, Route.REGISTER, Route.SCANNER, Route.MEAL_CAMERA)
+        com.forja.app.feature.inventory.InventoryPillHost(
+            visibleOnRoute = route != null && route !in inventoryRoutes && route !in noPillRoutes,
+            toastOnRoute = route != null && route != Route.CLEANUP && route !in noPillRoutes,
+            onOpen = { openInventory(it) },
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
     }
 }

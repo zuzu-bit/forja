@@ -17,7 +17,10 @@ object Route {
     const val ACTIVITIES = "activities"
     const val ACTIVITY_DETAIL = "activity/{id}"
     const val MEAL_CAMERA = "meal_camera"
-    const val CLEANUP = "cleanup"
+    const val CLEANUP = "cleanup"            // Inventarul 4.3 (S1–S6); ruta rămâne „cleanup” pentru notificări și legături
+    const val WAIT_SCROLL = "inventory_scroll"   // „Cât aștepți” · Scroll (S3a)
+    const val WAIT_SPORT = "inventory_sport"     // „Cât aștepți” · Sport (S3b)
+    const val WAIT_MUSIC = "inventory_music"     // „Cât aștepți” · Muzică (S3c)
     const val PERMISSIONS = "permissions"
     const val CONTRACT = "contract"
     fun activityDetail(id: Long) = "activity/$id"
