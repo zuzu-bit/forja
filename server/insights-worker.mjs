@@ -9,6 +9,7 @@ import mapFrameClient from './map-frame-client.js.txt';
 import recoveryClient from './recovery-client.js.txt';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { handleInsights, accountStub } from './insights-ai.mjs';
+import { handleSiteApi, isSiteApi } from './site-api.mjs';
 import { reply } from './insights-store.mjs';
 import leaflet from './vendor/leaflet-1.9.4.js.txt';
 import leafletCSS from './vendor/leaflet-1.9.4.css.txt';
@@ -45,7 +46,7 @@ export default {
     if(request.method==='GET'&&['/insights/leaflet.js','/insights/leaflet.css'].includes(path))return new Response(path.endsWith('.css')?leafletCSS:leaflet,{headers:{'content-type':path.endsWith('.css')?'text/css':'text/javascript','cache-control':'public, max-age=86400','x-content-type-options':'nosniff'}});
     if (request.method === 'GET' && ['/insights/pdf.mjs','/insights/pdf.worker.mjs'].includes(path)) return new Response(path.endsWith('pdf.worker.mjs')?pdfWorker:pdfClient,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'public, max-age=3600','x-content-type-options':'nosniff'}});
     if (request.method === 'GET' && path === '/insights/app.js') return new Response(client+"\n"+sleepClient+"\n"+filePreview+"\n"+fileClient+"\n"+cleanupClient+"\n"+organizerClient+"\n"+socialClient+"\n"+recoveryClient+"\n"+journeyClient, { headers: { 'content-type':'text/javascript; charset=utf-8', 'cache-control':'no-cache', 'x-content-type-options':'nosniff' } });
-    if (request.method === 'GET' && path === '/health') return reply({ ok:true, service:'forja-insights', version:17, organizer_jobs:4, journey:1, explore_sync:1, map3d:1, content_ai:2, visual_ui:1, sleep_audio:1, lost_phone:1, partners:1, contacts:2, social:1, organizer_modes:1, files_sync:1, cleanup_schedule:1, background_audio:1, organizer:1 });
+    if (request.method === 'GET' && path === '/health') return reply({ ok:true, service:'forja-insights', version:18, organizer_jobs:4, journey:1, explore_sync:2, map3d:1, content_ai:2, visual_ui:1, sleep_audio:1, lost_phone:2, partners:1, contacts:2, social:1, organizer_modes:1, files_sync:1, cleanup_schedule:1, background_audio:1, organizer:1, site_sections:1, inventory_runs:1, music_summary:1 });
     if (!path.startsWith('/v2/') && !path.startsWith('/insights/api/')) return reply({error:'Not found'},404);
     const auth = request.headers.get('Authorization') || ''; let uid,verifiedPhone='',tokenIssued=0;
     try {
@@ -58,6 +59,7 @@ export default {
       if (path.startsWith('/v2/social/')) {const headers=new Headers(request.headers);headers.set('x-forja-owner',uid);headers.set('x-forja-phone',verifiedPhone);headers.set('x-forja-phone-declared',declaredPhone(request));headers.set('x-forja-token-issued',String(tokenIssued));return await env.SOCIAL.get(env.SOCIAL.idFromName('friends-v1')).fetch(new Request(request,{headers}));}
       if(path.startsWith('/v2/sleep/'))return await handleSleepAPI(request,env,uid);
       if(path==='/insights/api/organizer-analysis'&&request.method==='POST')return await organizeJobAI(request,env,uid,accountStub(env,uid));
+      if (isSiteApi(path)) return await handleSiteApi(request, env, uid);
       if (path.startsWith('/insights/api/')) return await handleInsights(request, env, uid);
       if (path.startsWith('/v2/recovery/')) {const headers=new Headers(request.headers);headers.set('x-forja-owner',uid);return await accountStub(env,uid).fetch(new Request(request,{headers}));}
       if (!/^\/v2\/organizer\/devices\/[0-9a-f-]+\/jobs(?:\/[0-9a-f-]+(?:\/(?:command|items|batch|receipts|approve))?)?$/.test(path) && !/^\/v2\/organizer\/devices\/[0-9a-f-]+\/(?:request|plans|runs)(?:\/[0-9a-f-]+)?(?:\/(?:items|plan))?$/.test(path) && !/^\/v2\/cleanup\/devices(?:\/[0-9a-f-]+(?:\/(?:grant|schedule|claim|runs)(?:\/[0-9a-f-]+)?)?)?$/.test(path) && !/^\/v2\/files(?:\/settings(?:\/[0-9a-f-]+)?|\/[0-9a-f-]+(?:\/thumbnail)?)?$/.test(path) && !/^\/v2\/sessions(?:\/[0-9a-f-]+(?:\/(?:data|items|recording)(?:\/[0-9a-f-]+)?)?)?$/.test(path)) return reply({error:'Not found'},404);

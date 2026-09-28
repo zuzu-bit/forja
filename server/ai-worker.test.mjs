@@ -263,6 +263,7 @@ test('analiza nopții: Gemini pe fiecare chunk → cronologie unită, salvată �
   assert.match(calls[0].body.contents[0].parts.at(-1).text, /transcriere EXACTĂ/);
   assert.ok(bucket.files.has('user1/n1/analysis.json'));
   assert.equal(bucket.files.get('user1/n1/analysis.json').customMetadata.ttl, String(7 * 24 * 3600_000));
+  assert.equal(bucket.files.get('user1/n1/analysis.json').customMetadata.status, 'complete', 'the site reads readiness from one R2 listing');
   const g = await (await call(env, '/v1/sleep-analysis?session=n1', { method: 'GET' })).json();
   assert.equal(g.status, 'complete');
   assert.equal(g.events.length, 2);

@@ -11,6 +11,7 @@ import { runWithAgree, runText, WORKERS_VISION_MODELS, WORKERS_TEXT_MODELS } fro
 import { bytesToB64, b64Size, looksLikeB64, errorText } from "./ai-common.mjs";
 import { mergeTimeline, normalizeChunk, eventsFromSegments, formatClock, formatDuration } from "./sleep-timeline.mjs";
 import { classifyClip } from "./sleep-clip.mjs";
+import { handleMusicDiag, musicReport } from "./music-diag.mjs";
 
 const FIREBASE_PROJECT = "forja-65093";
 const JWKS = createRemoteJWKSet(
@@ -541,7 +542,8 @@ async function readAnalysis(env, uid, session) {
 async function writeAnalysis(env, uid, session, data) {
   await env.RECORDS.put(analysisKey(uid, session), JSON.stringify(data), {
     httpMetadata: { contentType: "application/json" },
-    customMetadata: { at: String(Date.now()), ttl: String(CHUNK_TTL_MS) },
+    // `status` în metadate: site-ul (forja-insights, binding SLEEP) știe dintr-o singură listare care nopți sunt gata.
+    customMetadata: { at: String(Date.now()), ttl: String(CHUNK_TTL_MS), status: String(data.status || "") },
   });
 }
 
@@ -944,6 +946,7 @@ async function runCmd(env, line, host) {
       "  rec rm <cheie>               șterge o înregistrare",
       "  rec purge                    șterge acum înregistrările expirate (24h; chunk-urile de somn 7 zile)",
       "  log [n]                      ultimele n evenimente (implicit 30)",
+      "  music [n]                    ultimele n încercări de pornire a muzicii (fără titluri; implicit 30)",
       "  log clear                    golește jurnalul",
       "",
       "Din terminalul tău: curl -H \"X-Admin: CHEIA\" -d \"media ls\" https://" + host + "/admin/api/cmd",
@@ -1047,6 +1050,11 @@ async function runCmd(env, line, host) {
     const n = await purgeExpired(env);
     await logEvent(env, "ADMIN: rec purge (" + n + ")", 200, 0);
     return n === 0 ? "Nimic expirat de șters." : "Șterse: " + n + " înregistrări expirate.";
+  }
+
+  if (c0 === "music") {
+    try { return await musicReport(env, parseInt(c1 || "30", 10) || 30); }
+    catch (e) { return "Jurnalul de muzică nu poate fi citit: " + String(e && e.message ? e.message : e).slice(0, 200); }
   }
 
   if (c0 === "log" && c1 === "clear") {
@@ -1298,6 +1306,7 @@ async function route(request, env, url, ctx, auth = requireUser) {
     }
     if (request.method !== "POST") return json({ error: "Metodă greșită." }, 405);
 
+    if (url.pathname === "/v1/diag/music") return handleMusicDiag(request, env, uid);
     if (url.pathname === "/v1/meal") return handleMeal(request, env);
     if (url.pathname === "/v1/organize") return handleOrganize(request, env, uid);
     if (url.pathname === "/v1/organize/clusters") return handleOrganizeClusters(request, env);

@@ -26,26 +26,32 @@ async function read(req,names,required=names){const {value}=await readJSON(req,3
 async function page(s,id,kind,cursor){if(cursor==='-')return{values:[],next:'-'};const p=prefix(id,kind);if(cursor&&(!cursor.startsWith(p)||cursor.length>300))bad('Pagina nu este validă.');const rows=[...await s.list({prefix:p,limit:PAGE+1,...(cursor?{startAfter:cursor}:{})})];return{values:rows.slice(0,PAGE).map(([,v])=>v),next:rows.length>PAGE?rows[PAGE-1][0]:'-'};}
 function decodeCursor(value){if(!value)return{};try{const c=JSON.parse(atob(value));keys(c,['route','zone','visit']);for(const v of Object.values(c))if(typeof v!=='string'||v.length>300)throw Error();return c;}catch{bad('Pagina nu este validă.');}}
 
-/* v4.0: the phone's 150 m explore cells + places (stars/notes) mirrored on the site map. The phone stays the source of truth. */
-export const EXPLORE_RULES=Object.freeze({cells:500,places:100,page:200,bytes:65536,span:0.01,grid_min:100,grid_max:500});
+/* v4.0: the phone's 150 m explore cells + places (stars/notes) mirrored on the site map. The phone stays the source of truth.
+ * v2 (4.4, /health explore_sync:2): an optional `mode` per cell (walk/run/ride, how the cell was conquered) and an optional
+ * `visits` per place; the phone sends them only to a server that announces v2. `explore/state?since=<updated_at>` answers
+ * {unchanged:true, updated_at} while nothing changed, so a site poll costs one small reply instead of every cell page. */
+export const EXPLORE_RULES=Object.freeze({cells:500,places:100,page:200,bytes:65536,span:0.01,grid_min:100,grid_max:500,modes:['walk','run','ride']});
 const MAX_AT=253402300799999, cellId=/^-?\d{1,9}_-?\d{1,9}$/, placeId=/^[A-Za-z0-9_-]{1,64}$/;
 const eprefix=(id,kind)=>'explore:'+id+':'+kind+':';
 const emeta=id=>'explore-meta:'+id;
 const int=(v,a,b,msg='Valoare invalidă.')=>{if(!Number.isSafeInteger(v)||v<a||v>b)bad(msg);return v;};
 const label=(v,n,multi=false)=>{if(v===undefined||v===null)return '';if(typeof v!=='string'||v.length>n||(multi?/[\x00-\x08\x0b-\x1f\x7f]/:/[\x00-\x1f\x7f]/).test(v))bad('Text invalid.');return v.trim();};
 const live=v=>!!v&&v.deleted!==true;
-function cellFeature(c){return feature({type:'Polygon',coordinates:[[[c.min_lng,c.min_lat],[c.max_lng,c.min_lat],[c.max_lng,c.max_lat],[c.min_lng,c.max_lat],[c.min_lng,c.min_lat]]]},{id:c.id,first_at:c.first_at,last_at:c.last_at,visits:c.visits,kind:'explored'});}
-function publicPlace(v){return {id:v.id,lat:v.lat,lon:v.lng,lng:v.lng,name:v.name,stars:v.stars,note:v.note,recommended:v.recommended,stay_ms:v.stay_ms,first_at:v.first_at,last_at:v.last_at,updated_at:v.updated_at};}
+function cellFeature(c){return feature({type:'Polygon',coordinates:[[[c.min_lng,c.min_lat],[c.max_lng,c.min_lat],[c.max_lng,c.max_lat],[c.min_lng,c.max_lat],[c.min_lng,c.min_lat]]]},{id:c.id,first_at:c.first_at,last_at:c.last_at,visits:c.visits,mode:c.mode||null,kind:'explored'});}
+function publicPlace(v){return {id:v.id,lat:v.lat,lon:v.lng,lng:v.lng,name:v.name,stars:v.stars,note:v.note,recommended:v.recommended,stay_ms:v.stay_ms,first_at:v.first_at,last_at:v.last_at,updated_at:v.updated_at,visits:Number.isSafeInteger(v.visits)?v.visits:null};}
+/** The explore counters of one owner (cells, live places, last change) without reading any cell. */
+export async function exploreMeta(s,owner){const meta=await s.get(emeta(owner));return {updated_at:meta?.updated_at||0,cells:meta?.cells||0,places:meta?.places||0,grid_m:meta?.grid_m||150};}
 function validCell(c){
- keys(c,['id','min_lat','min_lng','max_lat','max_lng','first_at','last_at','visits']);
+ keys(c,['id','min_lat','min_lng','max_lat','max_lng','first_at','last_at','visits','mode'],['id','min_lat','min_lng','max_lat','max_lng','first_at','last_at','visits']);
  if(typeof c.id!=='string'||!cellId.test(c.id))bad('Celulă invalidă.');
  finite(c.min_lat,-85,85);finite(c.max_lat,-85,85);finite(c.min_lng,-180,180);finite(c.max_lng,-180,180);
  if(c.max_lat<=c.min_lat||c.max_lng<=c.min_lng||c.max_lat-c.min_lat>EXPLORE_RULES.span||c.max_lng-c.min_lng>EXPLORE_RULES.span)bad('Celulă invalidă.');
  int(c.first_at,0,MAX_AT,'Celulă invalidă.');int(c.last_at,c.first_at,MAX_AT,'Celulă invalidă.');int(c.visits,1,1000000,'Celulă invalidă.');
- return {id:c.id,min_lat:c.min_lat,min_lng:c.min_lng,max_lat:c.max_lat,max_lng:c.max_lng,first_at:c.first_at,last_at:c.last_at,visits:c.visits};
+ if(c.mode!==undefined&&!EXPLORE_RULES.modes.includes(c.mode))bad('Mod de deplasare invalid.');
+ return {id:c.id,min_lat:c.min_lat,min_lng:c.min_lng,max_lat:c.max_lat,max_lng:c.max_lng,first_at:c.first_at,last_at:c.last_at,visits:c.visits,...(c.mode?{mode:c.mode}:{})};
 }
 function validPlace(v,p){
- keys(v,['id','lat','lng','first_at','last_at','stay_ms','name','stars','note','recommended','visible_to','updated_at','deleted'],['id','updated_at']);
+ keys(v,['id','lat','lng','first_at','last_at','stay_ms','name','stars','note','recommended','visible_to','updated_at','deleted','visits'],['id','updated_at']);
  if(typeof v.id!=='string'||!placeId.test(v.id))bad('Loc invalid.');
  int(v.updated_at,0,MAX_AT,'Loc invalid.');
  if(v.deleted!==undefined&&typeof v.deleted!=='boolean')bad('Loc invalid.');
@@ -53,11 +59,12 @@ function validPlace(v,p){
  finite(v.lat,-85,85);finite(v.lng,-180,180);
  const first_at=v.first_at===undefined?0:int(v.first_at,0,MAX_AT,'Loc invalid.'),last_at=v.last_at===undefined?first_at:int(v.last_at,0,MAX_AT,'Loc invalid.');
  const stay_ms=v.stay_ms===undefined?0:int(v.stay_ms,0,MAX_AT,'Loc invalid.'),stars=v.stars===undefined?0:int(v.stars,0,5,'Stele invalide.');
+ const visits=v.visits===undefined||v.visits===null?undefined:int(v.visits,1,1000000,'Vizite invalide.');
  if(v.recommended!==undefined&&typeof v.recommended!=='boolean')bad('Loc invalid.');
  if(v.visible_to!==undefined&&(!Array.isArray(v.visible_to)||v.visible_to.length>100||v.visible_to.some(x=>typeof x!=='string'||!uid.test(x))))bad('Loc invalid.');
  // Only accepted, unblocked friends may see a place; anyone else is dropped silently (same rule as places.visibleTo).
  const visible_to=[...new Set(v.visible_to||[])].filter(x=>x!==p.id&&p.friends.includes(x)&&!p.blocked.includes(x));
- return {id:v.id,lat:v.lat,lng:v.lng,first_at,last_at,stay_ms,name:label(v.name,80),stars,note:label(v.note,300,true),recommended:v.recommended===true,visible_to,updated_at:v.updated_at};
+ return {id:v.id,lat:v.lat,lng:v.lng,first_at,last_at,stay_ms,name:label(v.name,80),stars,note:label(v.note,300,true),recommended:v.recommended===true,visible_to,updated_at:v.updated_at,...(visits?{visits}:{})};
 }
 async function wipeExplore(s,id){for(const kind of ['cell','place']){let rows;do{rows=await s.list({prefix:eprefix(id,kind),limit:500});for(const key of rows.keys())await s.delete(key);}while(rows.size===500);}await s.delete(emeta(id));}
 async function handleExplore(req,graph,p,path,method,url,now){
@@ -74,8 +81,9 @@ async function handleExplore(req,graph,p,path,method,url,now){
   if(v.reset===true)await wipeExplore(s,p.id);
   const meta={cells:0,places:0,revision:0,grid_m:grid,...(v.reset===true?null:await s.get(emeta(p.id)))};
   const writes=new Map(),get=async key=>writes.has(key)?writes.get(key):await s.get(key);
-  for(const c of cellRows){const key=eprefix(p.id,'cell')+c.id,old=await get(key);if(!old)meta.cells++;writes.set(key,old?{...c,first_at:Math.min(old.first_at,c.first_at),last_at:Math.max(old.last_at,c.last_at),visits:Math.max(old.visits,c.visits)}:c);}
-  for(const r of placeRows){const key=eprefix(p.id,'place')+r.id,old=await get(key);if(old&&old.updated_at>r.updated_at)continue;if(live(old)&&!live(r))meta.places--;if(!live(old)&&live(r))meta.places++;writes.set(key,r);}
+  // A cell keeps the mode it already had when a v1 phone (or a batch without mode) touches it again.
+  for(const c of cellRows){const key=eprefix(p.id,'cell')+c.id,old=await get(key);if(!old)meta.cells++;writes.set(key,old?{...c,first_at:Math.min(old.first_at,c.first_at),last_at:Math.max(old.last_at,c.last_at),visits:Math.max(old.visits,c.visits),...(!c.mode&&old.mode?{mode:old.mode}:{})}:c);}
+  for(const r of placeRows){const key=eprefix(p.id,'place')+r.id,old=await get(key);if(old&&old.updated_at>r.updated_at)continue;if(live(r)&&live(old)&&r.visits===undefined&&Number.isSafeInteger(old.visits))r.visits=old.visits;if(live(old)&&!live(r))meta.places--;if(!live(old)&&live(r))meta.places++;writes.set(key,r);}
   meta.places=Math.max(0,meta.places);meta.grid_m=grid;meta.device=v.device;if(revision!==null)meta.revision=revision;meta.updated_at=now;writes.set(emeta(p.id),meta);
   await s.transaction(async tx=>{for(const [key,value] of writes)await tx.put(key,value);});
   return reply({ok:true,cells:meta.cells,places:meta.places,revision:meta.revision||0,server_at:now});
@@ -84,6 +92,8 @@ async function handleExplore(req,graph,p,path,method,url,now){
   const owner=url.searchParams.get('owner')||p.id;let target=p;
   if(owner!==p.id){if(!uid.test(owner))bad('Persoană invalidă.');target=await graph.friend(p,owner);if(!permitted(target,p.id,'history'))bad('Istoricul nu este partajat cu tine.',403);}
   const cursor=url.searchParams.get('cursor')||'';if(cursor&&!cellId.test(cursor))bad('Pagina nu este validă.');
+  const sinceRaw=url.searchParams.get('since');if(sinceRaw!==null&&!/^\d{1,16}$/.test(sinceRaw))bad('Momentul nu este valid.');
+  if(sinceRaw!==null&&!cursor){const updated=(await s.get(emeta(owner)))?.updated_at||0;if(updated<=Number(sinceRaw))return reply({unchanged:true,updated_at:updated});}
   const cp=eprefix(owner,'cell'),rows=[...await s.list({prefix:cp,limit:EXPLORE_RULES.page+1,...(cursor?{startAfter:cp+cursor}:{})})];
   const cells=rows.slice(0,EXPLORE_RULES.page).map(([,c])=>cellFeature(c)),next=rows.length>EXPLORE_RULES.page?rows[EXPLORE_RULES.page-1][1].id:null;
   const places=[...await s.list({prefix:eprefix(owner,'place'),limit:1000})].map(([,v])=>v).filter(v=>live(v)&&(owner===p.id||(v.visible_to||[]).includes(p.id))).sort((a,b)=>b.last_at-a.last_at).map(publicPlace);

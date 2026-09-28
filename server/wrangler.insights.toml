@@ -12,6 +12,12 @@ binding = "AI"
 binding = "RECORDS"
 bucket_name = "forja-insights-data"
 
+# 4.4: the nights of forja-api (audio chunks + analysis.json, 7 days), read-only for the site's "Somn" section.
+# Keys are built only from the verified uid: ${uid}/s{id}/chunk_{i}.m4a and ${uid}/s{id}/analysis.json.
+[[r2_buckets]]
+binding = "SLEEP"
+bucket_name = "forja-sleep"
+
 [[durable_objects.bindings]]
 name = "INSIGHTS"
 class_name = "InsightsAccount"
