@@ -1,6 +1,6 @@
 // Groq (cheie GRATUITĂ de la console.groq.com, fără card) — API compatibil OpenAI: viziune Llama 4, text Llama 3.3 70B,
 // audio Whisper large v3 cu timpi pe segmente (verbose_json). A doua opinie gratuită după Gemini.
-import { AiError, fetchWithTimeout } from "./ai-common.mjs";
+import { AiError, fetchWithTimeout, readKey } from "./ai-common.mjs";
 import { chatCompletionsJson } from "./ai-openai.mjs";
 
 export const GROQ_BASE = "https://api.groq.com/openai/v1";
@@ -12,12 +12,20 @@ export const groq = {
   name: "groq",
   timeoutMs: 60000,
   supports: { images: true, documents: false, audio: false, verifyWithImages: false, transcribe: true },
-  available: (env) => typeof env?.GROQ_API_KEY === "string" && env.GROQ_API_KEY.length > 0,
+  // Cheia e citită cu trim(): un secret lipit cu spații sau ghilimele dă 401 fără explicații. O cheie Groq validă începe cu `gsk_`.
+  available: (env) => readKey(env, "GROQ_API_KEY").length > 0,
   // Cu imagini: modelele de viziune; doar text: Llama 3.3 70B (mai bun la română și la JSON).
   models: (env, { images = [] } = {}) => (images.length ? [...new Set([env?.GROQ_VISION_MODEL || GROQ_VISION_MODELS[0], ...GROQ_VISION_MODELS])] : [env?.GROQ_TEXT_MODEL || GROQ_TEXT_MODEL]),
   dailyLimit: 14400,
   generate(env, opts) {
-    return chatCompletionsJson({ ...opts, url: GROQ_BASE + "/chat/completions", apiKey: env.GROQ_API_KEY, provider: "groq", timeoutMs: opts.timeoutMs || this.timeoutMs });
+    return chatCompletionsJson({ ...opts, url: GROQ_BASE + "/chat/completions", apiKey: readKey(env, "GROQ_API_KEY"), provider: "groq", timeoutMs: opts.timeoutMs || this.timeoutMs });
+  },
+  /** Verificarea cheii (pentru diag): codul HTTP al lui GET /models (200 = bună, 401 = respinsă — cheia trebuie regenerată, format `gsk_…`; 0 = rețea). */
+  async keyCheck(env) {
+    try {
+      const resp = await fetchWithTimeout(GROQ_BASE + "/models", { method: "GET", headers: { authorization: "Bearer " + readKey(env, "GROQ_API_KEY") } }, 8000);
+      return resp.status;
+    } catch (_) { return 0; }
   },
 
   /** Transcriere cu timpi: {text, segments:[{startMs,endMs,text,noSpeechProb}], language}. */
@@ -29,7 +37,7 @@ export const groq = {
     form.append("response_format", "verbose_json");
     form.append("temperature", "0");
     if (language) form.append("language", language);
-    const resp = await fetchWithTimeout(GROQ_BASE + "/audio/transcriptions", { method: "POST", headers: { authorization: "Bearer " + env.GROQ_API_KEY }, body: form }, timeoutMs || 120000)
+    const resp = await fetchWithTimeout(GROQ_BASE + "/audio/transcriptions", { method: "POST", headers: { authorization: "Bearer " + readKey(env, "GROQ_API_KEY") }, body: form }, timeoutMs || 120000)
       .catch((e) => { e.provider = "groq"; e.model = GROQ_WHISPER_MODEL; throw e; });
     if (!resp.ok) throw new AiError("groq a răspuns cu " + resp.status, { provider: "groq", model: GROQ_WHISPER_MODEL, status: resp.status, fatal: resp.status === 429 || resp.status === 401 || resp.status === 403 });
     const data = await resp.json().catch(() => { throw new AiError("groq: răspuns care nu e JSON", { provider: "groq", model: GROQ_WHISPER_MODEL, kind: "json" }); });

@@ -2,9 +2,9 @@
 // Ordinea (decizia „fără bani”): gemini (cheie gratuită) → groq (cheie gratuită) → anthropic / openai (doar cu chei plătite) → workers (fără cheie).
 // Reguli: eroare de rețea/HTTP/JSON invalid → următorul model/furnizor; extragere JSON strictă + validare cu schema;
 // o singură reîncercare „repară JSON-ul” per furnizor; twoPass = a doua trecere de verificare; contor zilnic per furnizor (și per model la Gemini).
-import { AiError, errorText, bytesToB64 } from "./ai-common.mjs";
+import { AiError, errorText, bytesToB64, readCached, writeCached } from "./ai-common.mjs";
 import { extractJsonStrict, validate, TRANSCRIPT_SCHEMA } from "./ai-schemas.mjs";
-import { gemini } from "./ai-gemini.mjs";
+import { gemini, resetGeminiCache } from "./ai-gemini.mjs";
 import { groq } from "./ai-groq.mjs";
 import { anthropic } from "./ai-anthropic.mjs";
 import { openai } from "./ai-openai.mjs";
@@ -13,7 +13,7 @@ import { workers } from "./ai-workers.mjs";
 export const ALL_PROVIDERS = [gemini, groq, anthropic, openai, workers];
 // Orientativ, după paginile furnizorilor din septembrie 2026; cotele se schimbă, /v1/diag arată consumul real de azi.
 export const KNOWN_LIMITS = {
-  gemini: "nivel gratuit, per model (cote separate): Flash ≈ 250 cereri/zi, Flash-Lite ≈ 1 000/zi, Pro ≈ 50/zi",
+  gemini: "nivel gratuit, per model (cote separate, se schimbă des — nu le presupunem): un 429 la un model trece la următorul; lista de modele e descoperită din GET /models (cache 24 h)",
   groq: "nivel gratuit: llama-3.3-70b ≈ 14 400 cereri/zi; viziune Llama 4 ≈ 1 000/zi; Whisper ≈ 7 200 s audio/oră (≈ 4 chunk-uri de 30 min pe oră), 28 800 s/zi — o noapte întreagă se întinde pe mai multe ore",
   workers: "10 000 neuroni/zi (plan gratuit) — neuronii se văd doar în dash.cloudflare.com; aici se numără apelurile de model",
   anthropic: "după plată",
@@ -91,13 +91,13 @@ export async function budgetSnapshot(env) {
     if (p.budgetUnit) row.unitate = p.budgetUnit;
     if (p.perModelQuota) {
       row.modele = {};
-      for (const m of p.models(env, { images: [] })) row.modele[m] = { azi: await readBudget(env, modelKey(p.name, m, day)), limita: modelLimit(p, m) };
+      for (const m of await p.models(env, { images: [] })) row.modele[m] = { azi: await readBudget(env, modelKey(p.name, m, day)), limita: modelLimit(p, m) };
     }
     out[p.name] = row;
   }
   return out;
 }
-export function resetBudgetCache() { budgetCache.clear(); lastUsedByTask.clear(); }
+export function resetBudgetCache() { budgetCache.clear(); lastUsedByTask.clear(); keyCache.clear(); resetGeminiCache(); }
 
 const REPAIR_NOTE = "\n\nATENȚIE: răspunsul anterior NU a fost JSON valid conform schemei. Probleme: ";
 const VERIFY_RULES =
@@ -129,7 +129,10 @@ function parseAndValidate(text, schema) {
 /**
  * Motorul comun: încearcă furnizorii în ordine, modelele fiecăruia în ordine, cu o singură reparare de JSON per furnizor.
  * Bugetul de timp: cu `opts.timeoutMs` dat de apelant e pe TOT furnizorul (spec: „timp total ≤ 45 s, peste → următorul furnizor”);
- * altfel fiecare model primește timeout-ul furnizorului. Fiecare apel de model se numără în contorul zilnic.
+ * altfel fiecare model primește timeout-ul furnizorului. `opts.totalTimeoutMs` e plafonul pe TOATĂ cererea (toți furnizorii la un loc):
+ * clientul nu așteaptă niciodată un lanț mort. Fiecare apel de model se numără în contorul zilnic. Un 404 pe un model îl retrage
+ * (`p.retire`) și trece la următorul. A doua trecere (`twoPass`) se sare când primul pas a durat peste `twoPassMaxFirstPassMs`
+ * sau când furnizorul e în `twoPassSkip` (Workers: verificatorul nu vede poza și e lent).
  * Întoarce {json, provider, model, ms, verified?} sau aruncă AiError cu lista încercărilor (fără chei).
  */
 async function runJson(env, opts, need) {
@@ -139,17 +142,22 @@ async function runJson(env, opts, need) {
   if (!list.length) throw new AiError(need.audio ? "Nu există furnizor pentru audio (lipsă cheie Gemini)." : "Niciun furnizor AI configurat.", { kind: "unsupported" });
   const images = Array.isArray(opts.images) ? opts.images : [];
   const documents = Array.isArray(opts.documents) ? opts.documents : [];
+  const totalDeadline = opts.totalTimeoutMs > 0 ? t0 + opts.totalTimeoutMs : 0;
+  const twoPassSkip = new Set(Array.isArray(opts.twoPassSkip) ? opts.twoPassSkip : []);
   for (const p of list) {
     const imgs = p.supports.images ? images : [];
     const docs = p.supports.documents ? documents : [];
+    // Bugetul furnizorului: cel dat de rută, tăiat la ce a mai rămas din bugetul total. Sub o secundă nu mai pornim nimic.
+    let budgetMs = opts.timeoutMs || (need.audio ? p.audioTimeoutMs || p.timeoutMs : p.timeoutMs);
+    if (totalDeadline) budgetMs = Math.min(budgetMs, totalDeadline - Date.now());
+    if (budgetMs < 1000) { attempts.push(`${p.name}: bugetul total de timp s-a epuizat`); break; }
+    const providerDeadline = (opts.timeoutMs || totalDeadline) ? Date.now() + budgetMs : 0;
     // Poarta zilnică: la furnizorii cu cotă per model (Gemini) se sar doar modelele epuizate; furnizorul întreg abia când toate sunt.
-    const models = p.models(env, { images: imgs });
+    const models = await p.models(env, { images: imgs, audio: !!need.audio, task: opts.task || "" });
     const open = [];
     for (const model of models) if (!(await limitReached(env, p, model))) open.push(model);
     if (!open.length) { attempts.push(`${p.name}: limita zilnică atinsă`); continue; }
     if (open.length < models.length) attempts.push(`${p.name}: ${models.filter((m) => !open.includes(m)).join(", ")} la limita zilnică`);
-    const budgetMs = opts.timeoutMs || (need.audio ? p.audioTimeoutMs || p.timeoutMs : p.timeoutMs);
-    const providerDeadline = opts.timeoutMs ? Date.now() + budgetMs : 0;
     const trace = { modelCalls: 0 }; // workers: descrierile vizuale (refolosite la verificare) și numărul de apeluri env.AI.run
     let repaired = false;
     let stop = false;
@@ -168,9 +176,13 @@ async function runJson(env, opts, need) {
       };
       // 429 la un furnizor cu cotă per model (Gemini): următorul model are cota lui; 401/403 (și 429 la ceilalți) opresc furnizorul.
       const fatalStops = (e) => !!(e && e.fatal) && !(e.status === 429 && p.perModelQuota);
+      // 404 = modelul nu mai există pentru generare (Gemini 2.5 în 28.09): îl retragem 24 h și trecem la următorul.
+      const retire = async (e) => { if (e && e.status === 404 && typeof p.retire === "function") { try { await p.retire(env, model); } catch (_) { } return " (model retras 24 h)"; } return ""; };
       let text;
+      const t1 = Date.now();
       try { text = await call(opts.prompt); }
-      catch (e) { attempts.push(`${p.name}/${model}: ${errorText(e)}`); if (fatalStops(e)) { stop = true; break; } continue; }
+      catch (e) { attempts.push(`${p.name}/${model}: ${errorText(e)}${await retire(e)}`); if (fatalStops(e)) { stop = true; break; } continue; }
+      const firstPassMs = Date.now() - t1;
       let { json, errors } = parseAndValidate(text, opts.schema);
       if (!json && !repaired && remaining() > 5000) {
         repaired = true;
@@ -181,7 +193,8 @@ async function runJson(env, opts, need) {
       }
       if (!json) { attempts.push(`${p.name}/${model}: JSON invalid (${errors.slice(0, 3).join("; ")})`); continue; }
       let verified = false;
-      if (opts.twoPass && remaining() > 8000) {
+      const twoPassAllowed = opts.twoPass && !twoPassSkip.has(p.name) && !(opts.twoPassMaxFirstPassMs > 0 && firstPassMs > opts.twoPassMaxFirstPassMs);
+      if (twoPassAllowed && remaining() > 8000) {
         try {
           const verifyImgs = p.supports.verifyWithImages ? imgs : [];
           const text3 = await call(verifyPrompt(opts, p, imgs, trace, json), { images: verifyImgs, documents: [], audio: null });
@@ -246,14 +259,46 @@ export async function transcribe(env, { bytes, mime = "audio/mp4", language = ""
   throw err;
 }
 
-/** Raportul pentru /v1/diag: configurat/absent per furnizor, ordinea reală, consum, ultimul folosit — fără chei, niciodată. */
+// ── Verificarea cheilor (diag): GET /models la furnizor, o dată pe oră (memorie + KV/R2 `ai-keycheck/{furnizor}.json`). Doar codul HTTP. ──
+const KEY_CHECK_TTL_MS = 3600_000;
+const keyCache = new Map(); // furnizor → { status, checkedAt }
+export async function keyStatus(env, p) {
+  if (typeof p.keyCheck !== "function" || !p.available(env)) return null;
+  const now = Date.now();
+  const mem = keyCache.get(p.name);
+  if (mem && now - mem.checkedAt < KEY_CHECK_TTL_MS) return mem;
+  const stored = await readCached(env, `ai-keycheck/${p.name}.json`);
+  if (stored && Number.isFinite(stored.status)) { const r = { status: stored.status, checkedAt: Number(stored.at) || now }; keyCache.set(p.name, r); return r; }
+  const status = await p.keyCheck(env);
+  const r = { status: Number(status) || 0, checkedAt: now };
+  keyCache.set(p.name, r);
+  if (r.status) await writeCached(env, `ai-keycheck/${p.name}.json`, { status: r.status }, KEY_CHECK_TTL_MS);
+  return r;
+}
+/** „configured” / „configured but rejected (401)” / „absent” — cheia în sine nu apare niciodată. */
+export function keyLabel(available, check) {
+  if (!available) return "absent";
+  if (check && (check.status === 401 || check.status === 403)) return `configured but rejected (${check.status})`;
+  return "configured";
+}
+
+/** Raportul pentru /v1/diag: configurat/absent (+ cheie respinsă) per furnizor, ordinea reală, modelele Gemini descoperite, consum, ultimul folosit — fără chei, niciodată. */
 export async function diagProviders(env) {
   const configured = {};
-  for (const p of ALL_PROVIDERS) configured[p.name] = p.available(env) ? "configured" : "absent";
+  const keys = {};
+  for (const p of ALL_PROVIDERS) {
+    const check = await keyStatus(env, p);
+    configured[p.name] = keyLabel(p.available(env), check);
+    if (check) keys[p.name] = { http: check.status || "rețea", verificatLa: new Date(check.checkedAt).toISOString(), ...(check.status === 401 && p.name === "groq" ? { sfat: "cheia Groq e respinsă: regenereaz-o la console.groq.com/keys și pune întreaga valoare gsk_… în GROQ_API_KEY (GitHub → Settings → Secrets)" } : {}) };
+  }
   const order = providers(env).map((p) => p.name);
   const keyed = order.filter((n) => n !== "workers");
+  const models = {};
+  if (gemini.available(env)) { try { models.gemini = await gemini.catalogInfo(env); } catch (e) { models.gemini = { eroare: errorText(e) }; } }
   return {
     providers: configured,
+    keys,
+    models,
     order,
     mode: keyed.length ? "chei: " + keyed.join(", ") + " (apoi Workers AI)" : "fără chei — doar modelele Cloudflare (mai slabe); adaugă GEMINI_API_KEY sau GROQ_API_KEY (gratuite)",
     audio: gemini.available(env) ? "gemini (ascultare integrală)" : groq.available(env) ? "groq whisper (doar transcriere cu timpi)" : workers.available(env) ? "workers whisper (doar transcriere)" : "indisponibil",

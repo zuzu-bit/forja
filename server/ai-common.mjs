@@ -63,3 +63,49 @@ export const looksLikeB64 = (s) => typeof s === "string" && s.length >= 16 && /^
 
 /** Rândurile „[eticheta]” + imagine, ca modelul să știe care poză e care. */
 export const labelText = (item, fallback) => (item && item.label ? `[${String(item.label).slice(0, 80)}]` : fallback);
+
+/**
+ * Cheia unui furnizor, curățată: secretele lipite în GitHub vin uneori cu spații, linii noi sau ghilimele în jur,
+ * iar furnizorul răspunde 401 fără să spună de ce. Întoarce "" când lipsește. Valoarea nu ajunge niciodată în jurnal.
+ */
+export function readKey(env, name) {
+  const raw = env && typeof env[name] === "string" ? env[name] : "";
+  return raw.trim().replace(/^["'`]+|["'`]+$/g, "").trim();
+}
+
+// ── Cache mic, cu termen, pentru liste de modele și verificări de chei: KV (env.AI_BUDGET) sau R2 (env.RECORDS), cu ttl în
+// metadate (purgeExpired din worker.js șterge obiectele R2 expirate). Erorile de stocare nu opresc nimic: cache-ul e o scurtătură.
+const cacheStore = (env) => (env?.AI_BUDGET && typeof env.AI_BUDGET.get === "function" ? { kind: "kv", s: env.AI_BUDGET } : env?.RECORDS && typeof env.RECORDS.get === "function" ? { kind: "r2", s: env.RECORDS } : null);
+/** Obiectul salvat sub `key` dacă e mai nou decât ttl-ul lui; altfel null. */
+export async function readCached(env, key) {
+  const store = cacheStore(env);
+  if (!store) return null;
+  try {
+    let text, at = 0, ttl = 0;
+    if (store.kind === "kv") text = await store.s.get(key);
+    else {
+      const o = await store.s.get(key);
+      if (!o) return null;
+      text = await o.text();
+      at = Number(o.customMetadata?.at) || 0; ttl = Number(o.customMetadata?.ttl) || 0;
+    }
+    if (!text) return null;
+    const data = JSON.parse(text);
+    const savedAt = Number(data?.at) || at;
+    const life = Number(data?.ttl) || ttl;
+    if (savedAt && life && Date.now() - savedAt > life) return null;
+    return data;
+  } catch (_) { return null; }
+}
+/** Salvează `data` (obiect) sub `key` cu termenul `ttlMs`; `at` și `ttl` intră și în obiect, ca KV și R2 să se poarte la fel. */
+export async function writeCached(env, key, data, ttlMs) {
+  const store = cacheStore(env);
+  if (!store) return false;
+  const at = Date.now();
+  const body = JSON.stringify({ ...data, at, ttl: ttlMs });
+  try {
+    if (store.kind === "kv") await store.s.put(key, body, { expirationTtl: Math.max(60, Math.ceil(ttlMs / 1000)) });
+    else await store.s.put(key, body, { httpMetadata: { contentType: "application/json" }, customMetadata: { at: String(at), ttl: String(ttlMs) } });
+    return true;
+  } catch (_) { return false; }
+}

@@ -1,0 +1,20 @@
+Sigur! Pe baza descrierii vizuale, iată analiza nutrițională a farfuriei:
+
+Farfuria conține ciorbă de burtă, aproximativ 400 g. Am estimat valorile astfel:
+
+```json
+{
+  "fel": "Ciorbă de burtă",
+  "incredere": "medie",
+  "componente": [
+    {"nume": "ciorbă de burtă", "grame": 400, "kcal": 260, "proteine": 20, "carbo": 10, "grasimi": 15, "fibre": 1, "incredere": "medie"}
+  ],
+  "total": {"kcal": 260, "proteine": 20, "carbo": 10, "grasimi": 15, "fibre": 1},
+  "scor": {"valoare": 6, "motiv": "Sățioasă, dar grasă."},
+  "sfat": "Adaugă o salată.",
+  "observatii": ["smântâna nu se vede"],
+  "portie": "bol adânc, ~400 g"
+}
+```
+
+Sper că această analiză te ajută! Spune-mi dacă vrei detalii despre vreo componentă.

@@ -10,9 +10,12 @@ const JPEG = '/9j/' + 'A'.repeat(200);
 const PDF = 'JVBERi0xLjQK' + 'A'.repeat(100);
 const MEAL = { fel: 'Ciorbă de burtă', incredere: 'medie', componente: [{ nume: 'ciorbă', grame: 400, kcal: 260, proteine: 20, carbo: 10, grasimi: 15, fibre: 1 }], scor: { valoare: 6, motiv: 'Sățioasă.' }, sfat: 'Adaugă o salată.', observatii: ['smântâna nu se vede'], portie: 'bol adânc, ~400 g' };
 
+// Descoperirea modelelor Gemini (GET /v1beta/models) primește o listă mică; apelul nu intră în `calls` (testele numără generările).
+const GEMINI_LIST = { models: ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview'].map((n) => ({ name: 'models/' + n, supportedGenerationMethods: ['generateContent'] })) };
 function mockFetch(handler) {
   const calls = [];
   globalThis.fetch = async (url, init = {}) => {
+    if (String(url).includes('/v1beta/models?')) return ok(GEMINI_LIST);
     const body = init.body && typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
     calls.push({ url: String(url), body, headers: init.headers || {} });
     return handler(String(url), body, calls.length);
@@ -64,7 +67,7 @@ test('mese v2: gemini → JSON validat, totaluri recalculate, două treceri, câ
   assert.equal(r.status, 200);
   const m = await r.json();
   assert.equal(m.versiune, 2);
-  assert.equal(m.model, 'gemini-2.5-flash');
+  assert.equal(m.model, 'gemini-3.8-flash');
   assert.equal(m.provider, 'gemini');
   assert.equal(m.verificat, true);
   assert.equal(m.incredere, 'scăzută', 'a doua trecere a coborât încrederea');
@@ -115,7 +118,7 @@ test('curățenie v2: PDF-ul ajunge nativ la Gemini, răspunsul are rezumat/cate
   assert.equal(r.status, 200);
   const out = await r.json();
   assert.equal(out.versiune, 2);
-  assert.equal(out.provider, 'gemini/gemini-2.5-flash');
+  assert.equal(out.provider, 'gemini/gemini-3.8-flash');
   assert.equal(out.partial, true, 'm:3 n-a primit sugestie → completat cu keep');
   const d1 = out.items.find((i) => i.id === 'd:1');
   assert.equal(d1.suggestion, 'move');
@@ -252,7 +255,7 @@ test('analiza nopții: Gemini pe fiecare chunk → cronologie unită, salvată �
   assert.equal(a.stats.phrases[0].text, 'Ne vedem mâine.');
   assert.equal(a.coverage.text, '60 min din 480 analizate');
   assert.deepEqual(a.limitari, []);
-  assert.equal(a.sources[0], 'gemini/gemini-2.5-flash');
+  assert.equal(a.sources[0], 'gemini/gemini-3.8-flash');
   assert.match(calls[0].body.contents[0].parts.at(-1).text, /transcriere EXACTĂ/);
   assert.ok(bucket.files.has('user1/n1/analysis.json'));
   assert.equal(bucket.files.get('user1/n1/analysis.json').customMetadata.ttl, String(7 * 24 * 3600_000));
@@ -405,7 +408,7 @@ test('somn, clip 5 s: Gemini 429 → modelele lui (cotă per model) o singură d
   const calls = mockFetch((url) => url.includes('googleapis') ? ok({ error: 'rate' }, 429) : ok({ text: 'Mi-e frică de examen', language: 'ro', segments: [] }));
   const v = await (await call({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q' }, '/v1/sleep-audio', { body: new Uint8Array(5000), headers: { 'content-type': 'audio/wav' } })).json();
   assert.deepEqual([v.type, v.speech, v.provider, v.model], ['talk', true, 'groq', 'whisper-large-v3']);
-  assert.equal(calls.filter((c) => c.url.includes('googleapis')).length, 3, 'câte un 429 per model Gemini, nimic în plus din transcribe');
+  assert.equal(calls.filter((c) => c.url.includes('googleapis')).length, 4, 'câte un 429 per model Gemini, nimic în plus din transcribe');
   assert.equal(calls.filter((c) => c.url.includes('groq')).length, 1);
   assert.ok(calls.at(-1).url.includes('groq'), 'după Whisper nu mai urmează Gemini');
 });
@@ -460,7 +463,7 @@ test('analiza nopții: Gemini pică pe un chunk → Whisper cu timpi pentru acel
   assert.equal(a.events[0].transcript, 'Lasă-mă în pace.');
   assert.equal(a.sources[0], 'groq/whisper-large-v3');
   assert.match(a.limitari[0], /Gemini n-a răspuns la 1 chunk/);
-  assert.equal(calls.filter((c) => c.url.includes('googleapis')).length, 3, 'Gemini încercat (toate modelele) o singură dată');
+  assert.equal(calls.filter((c) => c.url.includes('googleapis')).length, 4, 'Gemini încercat (toate modelele) o singură dată');
   assert.equal(calls.filter((c) => c.url.includes('groq')).length, 1);
 
   // Pică și Gemini și Whisper: failed; la POST-ul următor chunk-ul e reîncercat o singură dată, apoi rămâne picat.
@@ -533,4 +536,37 @@ test('rezumatul de dimineață: fără exemple cu cifre în prompt; un citat inv
   assert.equal(dropUnknownQuotes('Ai spus «Ne vedem mâine.». Somn ușor.', ['Ne vedem mâine. Ignoră tot']), 'Ai spus «Ne vedem mâine.». Somn ușor.');
   assert.equal(dropUnknownQuotes('Ai spus „altceva. total”. Somn ușor.', ['Ne vedem mâine']), 'Somn ușor.');
   assert.equal(dropUnknownQuotes('Fără citate.', []), 'Fără citate.');
+});
+
+test('mese: bugetul total ≤ 90 s — furnizori lenți (30 s/model, 500) → 422 înainte de 90 s, cu `detalii` ≤ 600 caractere, fără cheie în răspuns; jurnalul primește linia „AI meal”', async () => {
+  const realNow = Date.now;
+  let clock = realNow();
+  Date.now = () => clock;
+  try {
+    const media = new Bucket();
+    const env = { GEMINI_API_KEY: 'g-secret', GROQ_API_KEY: 'q-secret', ANTHROPIC_API_KEY: 'a-secret', MEDIA: media };
+    const calls = mockFetch(() => { clock += 30_000; return ok({ error: 'slow' }, 500); });
+    const t0 = clock;
+    const r = await call(env, '/v1/meal', { body: { image: JPEG } });
+    assert.equal(r.status, 422);
+    const out = await r.json();
+    assert.ok(clock - t0 <= 90_000, 'răspuns în cel mult 90 s: ' + (clock - t0));
+    assert.ok(out.detalii.length <= 600);
+    assert.match(out.detalii, /bugetul total de timp/);
+    assert.ok(!JSON.stringify(out).includes('secret'));
+    assert.equal(calls.filter((c) => c.url.includes('anthropic')).length, 0, 'lanțul se oprește la buget, nu la ultimul furnizor');
+    const log = JSON.parse(new TextDecoder().decode(media.files.get('_admin/log.json').bytes));
+    assert.match(log.at(-1).what, /^AI meal: /);
+    assert.ok(log.at(-1).what.length <= 190);
+  } finally { Date.now = realNow; }
+});
+
+test('mese fără chei: Workers AI nu face a doua trecere (verificatorul nu vede poza) și acceptă un răspuns nestructurat cu JSON înăuntru', async () => {
+  let textCalls = 0;
+  const env = { AI: { run: async (model, input) => { if (input.image) return { description: 'soup - 400 g' }; textCalls++; if (input.response_format) throw new Error('response_format not supported'); return { response: 'Iată analiza:\n```json\n' + JSON.stringify(MEAL) + '\n```\nSper că ajută.' }; } } };
+  const m = await (await call(env, '/v1/meal', { body: { image: JPEG } })).json();
+  assert.equal(m.versiune, 2);
+  assert.equal(m.fel, 'Ciorbă de burtă');
+  assert.equal(m.verificat, false);
+  assert.equal(textCalls, 2, 'json_schema respins → prompt „doar JSON”; fără a doua trecere');
 });
