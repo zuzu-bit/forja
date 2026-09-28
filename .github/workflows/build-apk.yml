@@ -56,7 +56,26 @@ jobs:
           echo "== /v1/diag =="
           curl -s --max-time 120 "$URL/v1/diag?models=0" | jq . || true
           echo "== jurnal (ultimele cereri) =="
+          ACC=$(npx wrangler@3 whoami 2>&1 | grep -oE '[0-9a-f]{32}' | head -1 || true)
           curl -s --max-time 60 -H "X-Admin: $ACC" "$URL/admin/api/overview" | jq '.log // .' || true
+          echo "== test cap-coadă /v1/meal (cont de diagnostic + poză publică) =="
+          KEY=$(jq -r '.client[0].api_key[0].current_key' app/google-services.json)
+          PW=$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -c1-24)
+          EMAIL="ci-diag@forja.app"
+          TOK=$(curl -s "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$KEY" -H 'Content-Type: application/json' \
+                -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\",\"returnSecureToken\":true}" | jq -r '.idToken // empty')
+          if [ -z "$TOK" ]; then
+            TOK=$(curl -s "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$KEY" -H 'Content-Type: application/json' \
+                  -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\",\"returnSecureToken\":true}" | jq -r '.idToken // empty')
+          fi
+          [ -z "$TOK" ] && echo "Nu am putut obține un token de test." || true
+          curl -sL --max-time 60 -o /tmp/meal.jpg "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6d/Good_Food_Display_-_NCI_Visuals_Online.jpg/640px-Good_Food_Display_-_NCI_Visuals_Online.jpg" || true
+          ls -la /tmp/meal.jpg || true
+          B64=$(base64 -w0 /tmp/meal.jpg)
+          printf '{"image":"%s"}' "$B64" > /tmp/meal.json
+          T0=$(date +%s)
+          curl -s --max-time 300 -X POST -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' --data-binary @/tmp/meal.json "$URL/v1/meal" -w '\nHTTP %{http_code}\n' | head -c 4000
+          echo "durata: $(( $(date +%s) - T0 )) s"
       - name: Deploy serverul central FORJA (dacă secretele există)
         if: ${{ !inputs.diag_only }}
         id: deploy

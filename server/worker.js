@@ -136,7 +136,10 @@ async function handleMeal(request, env) {
     meal.verificat = !!r.verified && mealTotalsConsistent(meal.total);
     return json(meal);
   } catch (e) {
-    return json({ error: aiErrorMessage(e, "AI-ul n-a putut analiza poza. Încearcă un unghi de sus, cu lumină.") }, e && e.kind === "unsupported" ? 503 : 422);
+    // `detalii` = furnizor/model/clasa erorii (fără chei, fără conținut) — ca să vedem în diagnostic DE CE a picat.
+    const detalii = String(e && e.message ? e.message : e).slice(0, 600);
+    try { await logEvent(env, "AI meal: " + detalii.slice(0, 180), 422, 0); } catch (_) { }
+    return json({ error: aiErrorMessage(e, "AI-ul n-a putut analiza poza. Încearcă un unghi de sus, cu lumină."), detalii }, e && e.kind === "unsupported" ? 503 : 422);
   }
 }
 
@@ -297,7 +300,9 @@ async function handleOrganize(request, env, uid) {
     return json(sanitizeOrganize(r.json, ids, r.provider + "/" + r.model, blind));
   } catch (e) {
     if (e && e.kind === "unsupported") return json({ error: "AI indisponibil pe server." }, 503);
-    return json({ error: aiErrorMessage(e, "AI-ul n-a produs sugestii valide. Mai încearcă.") }, 422);
+    const detalii = String(e && e.message ? e.message : e).slice(0, 600);
+    try { await logEvent(env, "AI organize: " + detalii.slice(0, 180), 422, 0); } catch (_) { }
+    return json({ error: aiErrorMessage(e, "AI-ul n-a produs sugestii valide. Mai încearcă."), detalii }, 422);
   }
 }
 
