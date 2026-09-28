@@ -1,0 +1,354 @@
+// TEREN · Harta — harta telefonului pe ecran mare: zonele pe mod + strălucirea, locurile (nume/★/notă editabile),
+// recomandările, „Străzile tale”, Tu, camarazii, familia și telefonul (⌖). Tot aici: MapHost (o singură hartă MapLibre,
+// mutată între Teren și Găsire), Circle (/insights/api/cerc, comun cu Camarazi) și Explore (/v2/social/explore/state).
+
+// ───────────────────────── Harta comună ─────────────────────────
+const MapHost = {
+  renderer: null, loading: null, host: null, canvas: null, status: null, failed: false, listeners: new Set(), slot: null,
+  element() {
+    if (!MapHost.host) {
+      MapHost.canvas = h('div', {class: 'map-canvas', id: 'map-canvas'});
+      MapHost.status = h('div', {class: 'map-status', id: 'map-status', role: 'status', hidden: true});
+      MapHost.host = h('div', {class: 'map-host', id: 'map-host'}, MapHost.canvas, MapHost.status);
+    }
+    return MapHost.host;
+  },
+  script(src) {
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[data-src="${src}"]`);
+      if (existing?.dataset.ready) return resolve();
+      const n = existing || h('script', {src, dataset: {src}});
+      n.addEventListener('load', () => { n.dataset.ready = '1'; resolve(); }, {once: true});
+      n.addEventListener('error', () => reject(Error('Harta nu s-a putut încărca.')), {once: true});
+      if (!existing) document.head.append(n);
+    });
+  },
+  /** Încarcă MapLibre + randatorul doar când e nevoie de hartă (nimic la logare). */
+  ensure() {
+    if (MapHost.renderer || MapHost.failed) return Promise.resolve(MapHost.renderer);
+    if (MapHost.loading) return MapHost.loading;
+    MapHost.element();
+    MapHost.setStatus('Se încarcă harta…');
+    MapHost.loading = (async () => {
+      if (!document.querySelector('link[data-maplibre]')) document.head.append(h('link', {rel: 'stylesheet', href: '/insights/maplibre.css', dataset: {maplibre: '1'}}));
+      if (!window.maplibregl) await MapHost.script('/insights/maplibre.js');
+      if (!window.ForjaMapRenderer) await MapHost.script('/insights/map-renderer.js');
+      const r = window.ForjaMapRenderer.create(MapHost.canvas, {
+        reduced: reducedMotion(),
+        onReady: () => { MapHost.setStatus(''); MapHost.host.dataset.ready = '1'; delete MapHost.host.dataset.failed; for (const fn of MapHost.listeners) try { fn('ready'); } catch { /* ascultător stricat */ } },
+        onError: (e, fatal) => { if (fatal) { MapHost.host.dataset.failed = '1'; MapHost.setStatus('Harta nu se poate desena aici. Listele de lângă ea merg.', true); for (const fn of MapHost.listeners) try { fn('error'); } catch { /* idem */ } } },
+        onPick: pick => { for (const fn of MapHost.listeners) try { fn('pick', pick); } catch { /* idem */ } }
+      });
+      MapHost.renderer = r;
+      r.setMode(MapHost.mode || 'teren');
+      return r;
+    })().catch(e => { MapHost.failed = true; if (MapHost.host) MapHost.host.dataset.failed = '1'; MapHost.setStatus('Harta nu se poate desena aici. Listele de lângă ea merg.', true); throw e; }).finally(() => { MapHost.loading = null; });
+    return MapHost.loading;
+  },
+  setStatus(text, error = false) { const n = MapHost.status; if (!n) return; n.textContent = text; n.hidden = !text; n.classList.toggle('error', error); },
+  attach(slot, mode) {
+    const host = MapHost.element();
+    if (host.parentNode !== slot) slot.prepend(host);
+    MapHost.slot = slot; MapHost.mode = mode;
+    MapHost.renderer?.setMode(mode);
+    requestAnimationFrame(() => MapHost.renderer?.resize());
+  },
+  on(fn) { MapHost.listeners.add(fn); return () => MapHost.listeners.delete(fn); },
+  reset() { MapHost.renderer?.destroy(); MapHost.renderer = null; MapHost.failed = false; MapHost.loading = null; MapHost.host?.remove(); MapHost.host = null; MapHost.listeners.clear(); }
+};
+
+// ───────────────────────── Cercul (camarazi, familie, recomandări, trasee) ─────────────────────────
+const Circle = {
+  data: null, inflight: null, subscribers: new Set(),
+  load() {
+    if (Circle.inflight) return Circle.inflight;
+    Circle.inflight = api('/insights/api/cerc').then(d => { Circle.data = d; for (const fn of Circle.subscribers) try { fn(d); } catch { /* abonat stricat */ } return d; }).finally(() => { Circle.inflight = null; });
+    return Circle.inflight;
+  },
+  /** Sondare la 30 s cât Teren sau Camarazi e vizibil (§3.2). */
+  poll(owner) { Poll.every(owner + ':cerc', 30000, () => Circle.load(), false); },
+  reset() { Circle.data = null; Circle.inflight = null; }
+};
+
+// ───────────────────────── Explorarea (zone + locuri, din telefon prin „Și pe site”) ─────────────────────────
+const Explore = {
+  data: null, updatedAt: 0, inflight: null,
+  async load(force = false) {
+    if (Explore.inflight) return Explore.inflight;
+    Explore.inflight = (async () => {
+      if (!force && Explore.data && Explore.updatedAt) {
+        const probe = await api('/v2/social/explore/state?since=' + encodeURIComponent(Explore.updatedAt));
+        if (probe?.unchanged) return Explore.data;
+        if (!probe?.next_cursor) return Explore.accept([probe]);
+        return Explore.accept(await Explore.pages(probe));
+      }
+      const first = await api('/v2/social/explore/state');
+      return Explore.accept(await Explore.pages(first));
+    })().finally(() => { Explore.inflight = null; });
+    return Explore.inflight;
+  },
+  /** Până la 25 de pagini (5 000 de celule). */
+  async pages(first) {
+    const pages = [first];
+    let cursor = first?.next_cursor;
+    for (let i = 1; cursor && i < 25; i++) { const next = await api('/v2/social/explore/state?cursor=' + encodeURIComponent(cursor)); pages.push(next); cursor = next?.next_cursor; }
+    return pages;
+  },
+  accept(pages) {
+    const features = pages.flatMap(p => p?.cells?.features || []);
+    const places = pages[0]?.places || [];
+    Explore.data = {cells: {type: 'FeatureCollection', features}, places, grid_m: pages[0]?.grid_m || 150};
+    Explore.updatedAt = pages[0]?.updated_at || 0;
+    return Explore.data;
+  },
+  reset() { Explore.data = null; Explore.updatedAt = 0; Explore.inflight = null; }
+};
+
+// ───────────────────────── Secțiunea ─────────────────────────
+const MODE_LABELS = {walk: 'Pe jos', run: 'Alergare', ride: 'Bicicletă'};
+const Teren = {
+  body: null, slot: null, panel: null, tab: 'teritoriu', fitted: false, selected: null, pendingFocus: null, focusRoute: null, off: null, exploreError: null, circleError: null,
+  mount(body) {
+    Teren.slot = h('div', {class: 'map-slot', id: 'teren-map'});
+    Teren.panel = h('aside', {class: 'map-panel', id: 'teren-panel', 'aria-label': 'Terenul tău'});
+    body.append(h('div', {class: 'map-layout'}, Teren.slot, Teren.panel));
+    Teren.controls();
+  },
+  controls() {
+    const ctrl = h('div', {class: 'map-ctrls'},
+      h('button', {type: 'button', class: 'map-btn', id: 'teren-3d', 'aria-pressed': 'false', title: '3D', onclick: () => {
+        const r = MapHost.renderer; if (!r || !r.set3D(!r.threeD)) return; const b = $('teren-3d'); b.setAttribute('aria-pressed', String(r.threeD)); b.querySelector('span').textContent = r.threeD ? '2D' : '3D';
+      }}, icon('cube', 18), h('span', {text: '3D'})),
+      h('button', {type: 'button', class: 'map-btn', id: 'teren-layers-btn', 'aria-expanded': 'false', 'aria-controls': 'teren-layers', title: 'Straturi', onclick: () => Teren.toggleLayers()}, icon('layers', 18), h('span', {text: 'Straturi'})),
+      h('button', {type: 'button', class: 'map-btn', id: 'teren-fit', title: 'Centrează pe terenul tău', onclick: () => { Teren.pendingFocus = null; MapHost.renderer?.fitOwn(Teren.padding()); }}, icon('locate', 18), h('span', {text: 'Centrează'})));
+    const layers = h('div', {class: 'layers-pop', id: 'teren-layers', hidden: true, role: 'group', 'aria-label': 'Straturi'},
+      monoLabel('STRATURI'),
+      ...[['heat', 'Strălucire'], ['territories', 'Teritorii'], ['streets', 'Străzile tale'], ['places', 'Locuri'], ['friends', 'Camarazi']].map(([key, label]) =>
+        h('label', {class: 'layer-row'}, h('span', {text: label}), sw(true, label, on => { MapHost.renderer?.setLayers({[key]: on}); }))),
+      h('div', {class: 'layer-theme'}, monoLabel('HARTA'), h('div', {class: 'seg'},
+        h('button', {type: 'button', class: 'seg-btn active', dataset: {theme: 'night'}, onclick: e => Teren.theme('night', e)}, 'Noapte'),
+        h('button', {type: 'button', class: 'seg-btn', dataset: {theme: 'day'}, onclick: e => Teren.theme('day', e)}, 'Zi'))));
+    const chips = h('div', {class: 'map-chips', id: 'teren-chips'});
+    const empty = h('div', {class: 'map-empty', id: 'teren-empty', hidden: true});
+    Teren.slot.append(chips, ctrl, layers, empty);
+  },
+  theme(name, e) { MapHost.renderer?.setTheme(name); for (const b of e.currentTarget.parentNode.children) b.classList.toggle('active', b.dataset.theme === name); },
+  toggleLayers(force) { const pop = $('teren-layers'), open = force !== undefined ? force : pop.hidden; pop.hidden = !open; $('teren-layers-btn').setAttribute('aria-expanded', String(open)); },
+  padding() { const wide = matchMedia('(min-width: 1024px)').matches; return wide ? {top: 90, bottom: 60, left: 60, right: 420} : {top: 80, bottom: 40, left: 36, right: 36}; },
+  enter(detail) {
+    MapHost.attach(Teren.slot, 'teren');
+    Gasire.fitted = false;
+    Teren.off?.(); Teren.off = MapHost.on((kind, pick) => { if (Site.current !== 'teren') return; if (kind === 'ready') Teren.push(); if (kind === 'pick') Teren.pick(pick); });
+    const m = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec(detail || '');
+    Teren.pendingFocus = m ? {lat: Number(m[1]), lng: Number(m[2])} : null;
+    if (!Teren.pendingFocus) Teren.focusRoute = null;
+    Teren.focusDone = false;
+    MapHost.ensure().then(() => Teren.push()).catch(() => Teren.renderPanel());
+    if (!Explore.data || !Circle.data) Teren.renderPanel();
+    Poll.every('teren:explore', 60000, () => Teren.refreshExplore(), true);
+    Circle.poll('teren');
+    Teren.sub = Teren.sub || (() => { if (Site.current === 'teren') { Teren.circleError = null; Teren.push(); } });
+    Circle.subscribers.add(Teren.sub);
+    if (!Circle.data) Teren.refreshCircle();
+    if (!Gasire.devices) Gasire.fetch().then(() => { if (Site.current === 'teren') Teren.push(); }).catch(() => {});
+  },
+  async refreshExplore() {
+    try { await Explore.load(); Teren.exploreError = null; }
+    catch (e) {
+      if (e?.name === 'AbortError') return;
+      Teren.exploreError = e?.message || 'Zonele nu au venit.';
+      if (!Explore.data) Explore.data = {cells: {type: 'FeatureCollection', features: []}, places: [], failed: true};
+      else toast(Teren.exploreError);
+    }
+    if (Site.current === 'teren') Teren.push();
+  },
+  refreshCircle() {
+    return Circle.load().catch(e => { if (e?.name === 'AbortError') return; Teren.circleError = e?.message || 'Nu a mers.'; if (Site.current === 'teren') Teren.renderPanel(); });
+  },
+  leave() { Teren.toggleLayers(false); Circle.subscribers.delete(Teren.sub); Teren.off?.(); Teren.off = null; },
+  /** Trimite totul spre hartă prin setData; prima dată potrivește camera pe datele tale. */
+  push() {
+    const r = MapHost.renderer, c = Circle.data, e = Explore.data;
+    if (r?.ready) {
+      r.setMode('teren');
+      r.setData({
+        cells: e?.cells || null, places: e?.places || [], routes: c?.routes || [], recommended: c?.recommended || [],
+        me: c?.me || null, friends: c?.friends || [], family: c?.family || [],
+        devices: Gasire.devices || [], focusRoute: Teren.focusRoute, pin: Teren.pendingFocus, selected: Teren.selected || {}
+      });
+      // Legătura adâncă mută camera o singură dată; sondările următoare nu mai trag harta de sub mâna ta.
+      if (Teren.pendingFocus && !Teren.focusDone) { if (!(Teren.focusRoute && r.fitLine(Teren.focusRoute.polyline, Teren.padding()))) r.focus(Teren.pendingFocus, 16, Teren.padding()); Teren.focusDone = true; Teren.fitted = true; }
+      else if (!Teren.fitted && e && c) { Teren.fitted = r.fitOwn(Teren.padding()) || true; }
+    }
+    Teren.renderChips(); Teren.renderEmpty(); Teren.renderPanel();
+  },
+  renderChips() {
+    const box = $('teren-chips'); if (!box) return;
+    const cells = Explore.data?.cells?.features || [], places = Explore.data?.places || [];
+    const modes = {walk: 0, run: 0, ride: 0};
+    for (const f of cells) modes[['run', 'ride'].includes(f.properties?.mode) ? f.properties.mode : 'walk']++;
+    fill(box, 
+      h('span', {class: 'map-chip'}, h('b', {text: fmt.int(cells.length)}), ' ', cells.length === 1 ? 'zonă' : 'zone'),
+      h('span', {class: 'map-chip'}, h('b', {text: fmt.int(places.length)}), ' ', places.length === 1 ? 'loc' : 'locuri'),
+      h('span', {class: 'map-chip legend'}, ...Object.entries(MODE_LABELS).map(([k, label]) => h('span', {class: 'legend-item'}, h('i', {class: 'sq ' + k}), label))));
+  },
+  renderEmpty() {
+    const box = $('teren-empty'); if (!box) return;
+    const c = Circle.data, e = Explore.data;
+    const nothing = e && c && !(e.cells?.features?.length) && !(e.places?.length) && !(c.routes?.length) && !(c.me && typeof c.me.lat === 'number') && !(c.friends || []).some(f => typeof f.lat === 'number');
+    box.hidden = !nothing;
+    if (nothing && !box.firstChild) {
+      const off = Site.links.teren?.state === 'off';
+      box.append(h('div', {class: 'map-empty-card'}, mascot({size: 88, state: 'idle', hat: 'helmet'}), h('p', {class: 'state-title', text: 'Terenul se umple cu pașii tăi.'}),
+        h('p', {class: 'state-text', text: off ? 'Semnează contractul în FORJA. Zonele apar aici singure.' : 'Ieși pe jos, alergând sau pe bicicletă.'})));
+    }
+  },
+  renderPanel() {
+    const p = Teren.panel; if (!p) return;
+    const e = Explore.data, c = Circle.data;
+    if (!c && Teren.circleError) {
+      p.dataset.state = 'error';
+      fill(p, h('div', {class: 'panel-pad'}, errorState(Teren.circleError, async () => { Teren.circleError = null; Teren.renderPanel(); await Teren.refreshCircle(); })));
+      return;
+    }
+    if (!e || !c) {
+      if (p.dataset.state !== 'loading') { p.dataset.state = 'loading'; fill(p, h('div', {class: 'panel-pad'}, h('div', {class: 'sk sk-line'}), h('div', {class: 'sk sk-line short'}), h('div', {class: 'sk sk-card'}))); }
+      return;
+    }
+    p.dataset.state = 'ready';
+    const tabs = h('div', {class: 'tabs', role: 'tablist', 'aria-label': 'Teren'}, ...[['teritoriu', 'Teritoriu'], ['locuri', 'Locuri'], ['camarazi', 'Camarazi']].map(([id, label]) =>
+      h('button', {type: 'button', role: 'tab', class: 'tab' + (Teren.tab === id ? ' active' : ''), id: 'teren-tab-' + id, 'aria-selected': String(Teren.tab === id), tabindex: Teren.tab === id ? '0' : '-1', onclick: () => { Teren.tab = id; Teren.renderPanel(); }, onkeydown: tabKeys}, label)));
+    const view = Teren.tab === 'locuri' ? Teren.places() : Teren.tab === 'camarazi' ? Teren.friends() : Teren.territory();
+    const warn = Teren.exploreError && e.failed ? h('p', {class: 'panel-warn', text: 'Zonele nu au venit. Reîncerc singur.'}) : null;
+    const pad = h('div', {class: 'panel-pad', role: 'tabpanel', 'aria-labelledby': 'teren-tab-' + Teren.tab}, warn, view);
+    // Sondările (cerc 30 s, zone 60 s) redesenează panoul; fișa unui loc în lucru rămâne neatinsă: textul scris, stelele
+    // alese și cursorul (tastatura telefonului nu se închide). Se reface abia după „Salvează” sau la alt loc.
+    const kept = Teren.editing();
+    if (kept) { for (const n of [...p.childNodes]) if (n !== kept) n.remove(); p.append(tabs, pad); return; }
+    const sel = Teren.selected?.kind === 'place' ? Teren.placeCard(Teren.selected.id) : Teren.selected?.kind === 'rec' ? Teren.recCard(Teren.selected.id) : null;
+    fill(p, ...(sel ? [sel] : []), tabs, pad);
+  },
+  /** Fișa locului selectat, dacă e în lucru (schimbată și nesalvată, sau cu un câmp în focus). */
+  editing() {
+    const s = Teren.selected, card = Teren.panel?.querySelector(':scope > .place-card[data-id]');
+    if (!card || s?.kind !== 'place' || card.dataset.id !== s.id) return null;
+    if (!(Explore.data?.places || []).some(x => String(x.id) === s.id)) return null;
+    const a = document.activeElement, focused = !!a && card.contains(a) && a.matches('input, textarea');
+    return card.dataset.dirty === '1' || focused ? card : null;
+  },
+  territory() {
+    const cells = Explore.data.cells.features, c = Circle.data, modes = {walk: 0, run: 0, ride: 0};
+    for (const f of cells) modes[['run', 'ride'].includes(f.properties?.mode) ? f.properties.mode : 'walk']++;
+    const max = Math.max(1, ...Object.values(modes));
+    const mine = num(c.me?.exploreCells) ?? cells.length;
+    const board = [{name: 'Tu', cells: mine, me: true}, ...(c.friends || []).filter(f => num(f.exploreCells) !== null).map(f => ({name: f.name, cells: f.exploreCells}))].sort((a, b) => b.cells - a.cells);
+    const rank = board.findIndex(x => x.me) + 1;
+    return h('div', {class: 'terr'},
+      h('div', {class: 'terr-hero'}, hero(fmt.int(cells.length), cells.length === 1 ? 'zonă' : 'zone'), monoLabel('DE 150 M · ' + (fmt.dec(cells.length * 0.0225, 1)) + ' KM²')),
+      h('div', {class: 'mode-bars'}, ...Object.entries(MODE_LABELS).map(([k, label]) => h('div', {class: 'mode-row'}, h('i', {class: 'sq ' + k}), h('span', {class: 'mode-name', text: label}), bar(modes[k] / max, k), h('b', {text: fmt.int(modes[k])})))),
+      board.length > 1 ? h('div', {class: 'board'}, h('div', {class: 'block-head'}, monoLabel('ÎNTRE CAMARAZI'), monoLabel('LOCUL ' + rank + ' DIN ' + board.length, 'accent')),
+        ...board.slice(0, 5).map((x, i) => h('div', {class: 'board-row' + (x.me ? ' me' : '')}, h('span', {class: 'board-rank', text: String(i + 1)}), h('span', {class: 'board-name', text: x.me ? 'Tu' : firstName(x.name)}), h('b', {text: fmt.int(x.cells)})))) : null,
+      h('div', {class: 'terr-streets'}, icon('mars', 18), h('span', null, h('b', {text: fmt.int((c.routes || []).length)}), ' ', (c.routes || []).length === 1 ? 'traseu' : 'trasee', ' pe Străzile tale')));
+  },
+  places() {
+    const mine = [...(Explore.data.places || [])].sort((a, b) => (b.stars || 0) - (a.stars || 0) || (b.last_at || 0) - (a.last_at || 0));
+    const recs = Circle.data.recommended || [];
+    if (!mine.length && !recs.length) return h('p', {class: 'panel-empty', text: 'Un loc apare după ce stai acolo o vreme.'});
+    return h('div', {class: 'place-list'},
+      mine.length ? monoLabel('LOCURILE TALE · ' + mine.length) : null,
+      ...mine.map(p => h('button', {type: 'button', class: 'place-row' + (Teren.selected?.id === String(p.id) ? ' active' : ''), onclick: () => Teren.select('place', String(p.id), p)},
+        h('span', {class: 'place-pin'}, icon('star', 14), h('b', {text: String(p.stars || 0)})),
+        h('span', {class: 'place-text'}, h('span', {class: 'place-name', text: p.name || 'Loc fără nume'}), h('span', {class: 'place-meta', text: [num(p.visits) ? plural(p.visits, 'vizită', 'vizite') : null, p.last_at ? fmt.ago(p.last_at) : null].filter(Boolean).join(' · ')})),
+        icon('next', 16, 'dimmed'))),
+      recs.length ? monoLabel('RECOMANDATE · ' + recs.length) : null,
+      ...recs.map(p => h('button', {type: 'button', class: 'place-row rec' + (Teren.selected?.id === String(p.id) ? ' active' : ''), onclick: () => Teren.select('rec', String(p.id), p)},
+        h('span', {class: 'place-pin rec'}, icon('star', 14), h('b', {text: String(p.stars || 0)})),
+        h('span', {class: 'place-text'}, h('span', {class: 'place-name', text: p.name || 'Loc'}), h('span', {class: 'place-meta', text: 'de la ' + firstName(p.ownerName)})),
+        icon('next', 16, 'dimmed'))));
+  },
+  friends() {
+    // Un camarad-fantomă care te are în familie vine de două ori (friends cu ghost:true + family cu poziția din familyLoc):
+    // rândul lui folosește poziția familiei, ca pe hartă, și se poate alege.
+    const c = Circle.data, friends = c.friends || [], fam = new Map((c.family || []).map(f => [f.uid, f]));
+    const list = [...friends.map(f => fam.has(f.uid) ? {...f, lat: fam.get(f.uid).lat, lng: fam.get(f.uid).lng, at: fam.get(f.uid).at, family: true} : {...f, family: false}),
+      ...(c.family || []).filter(f => !friends.some(x => x.uid === f.uid)).map(f => ({...f, family: true}))];
+    if (!list.length) return h('p', {class: 'panel-empty', text: 'Niciun camarad încă.'});
+    return h('div', {class: 'place-list'}, ...list.map(f => {
+      const has = typeof f.lat === 'number' && (f.family || !f.ghost);
+      return h('button', {type: 'button', class: 'place-row', disabled: !has, onclick: () => { Teren.selected = {kind: 'friend', id: f.uid}; MapHost.renderer?.focus({lat: f.lat, lng: f.lng}, 15.5, Teren.padding()); Teren.push(); }},
+        avatar(f.name, {size: 34, cls: friendRing(f)}),
+        h('span', {class: 'place-text'}, h('span', {class: 'place-name', text: f.name}), h('span', {class: 'place-meta', text: friendLine(f, c.me)})),
+        has ? icon('next', 16, 'dimmed') : null);
+    }), h('a', {href: '#camarazi', class: 'panel-link'}, 'Toți camarazii', icon('next', 16)));
+  },
+  select(kind, id, point) {
+    Teren.selected = Teren.selected?.id === id && Teren.selected.kind === kind ? null : {kind, id};
+    if (Teren.selected) MapHost.renderer?.focus({lat: point.lat, lng: point.lng ?? point.lon}, 16, Teren.padding());
+    Teren.push();
+    if (Teren.selected && matchMedia('(max-width: 1023px)').matches) Teren.panel.scrollIntoView({block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth'});
+  },
+  pick(p) {
+    if (p.kind === 'device') { go('gasire'); return; }
+    if (p.kind === 'place' || p.kind === 'rec') { const list = p.kind === 'place' ? Explore.data?.places : Circle.data?.recommended; const item = (list || []).find(x => String(x.id) === p.id); if (item) { Teren.tab = 'locuri'; Teren.select(p.kind, p.id, item); } }
+    if (p.kind === 'friend') { Teren.tab = 'camarazi'; Teren.selected = {kind: 'friend', id: p.id}; Teren.push(); }
+  },
+  placeCard(id) {
+    const p = (Explore.data?.places || []).find(x => String(x.id) === id); if (!p) return null;
+    let stars = p.stars || 0;
+    const name = h('input', {class: 'field', id: 'place-name', maxlength: 80, value: p.name || '', placeholder: 'Loc fără nume', autocomplete: 'off'});
+    const note = h('textarea', {class: 'field', id: 'place-note', maxlength: 300, rows: 2, placeholder: 'O notă doar pentru tine'}); note.value = p.note || '';
+    const starRow = h('div', {class: 'stars', role: 'radiogroup', 'aria-label': 'Stele'});
+    const paintStars = () => { [...starRow.children].forEach((b, i) => { b.classList.toggle('on', i < stars); b.setAttribute('aria-checked', String(i + 1 === stars)); }); };
+    const dirty = () => { card.dataset.dirty = '1'; };
+    name.addEventListener('input', dirty); note.addEventListener('input', dirty);
+    for (let i = 1; i <= 5; i++) starRow.append(h('button', {type: 'button', role: 'radio', class: 'star', 'aria-label': plural(i, 'stea', 'stele'), onclick: () => { stars = stars === i ? 0 : i; paintStars(); dirty(); }}, icon('star', 22)));
+    paintStars();
+    const card = h('div', {class: 'place-card', dataset: {id: String(p.id)}},
+      h('div', {class: 'place-card-head'}, stamp('LOC'), h('button', {type: 'button', class: 'icon-btn', 'aria-label': 'Închide', onclick: () => { Teren.selected = null; Teren.push(); }}, icon('close', 18))),
+      h('label', {class: 'field-label', for: 'place-name', text: 'Nume'}), name,
+      starRow,
+      h('label', {class: 'field-label', for: 'place-note', text: 'Notă'}), note,
+      h('div', {class: 'place-card-meta'}, monoLabel([num(p.visits) ? plural(p.visits, 'vizită', 'vizite') : null, p.stay_ms ? fmt.dur(p.stay_ms / MIN) + ' stat' : null].filter(Boolean).join(' · ').toUpperCase() || 'LOC')),
+      btn('Salvează', async () => {
+        const body = {name: name.value.trim(), stars, note: note.value.trim()};
+        const updated = await api('/v2/social/explore/places/' + encodeURIComponent(p.id), {method: 'PATCH', body});
+        Object.assign(p, body, updated && typeof updated === 'object' ? {updated_at: updated.updated_at} : {});
+        toast('Salvat. Ajunge și în telefon.', true);
+        delete card.dataset.dirty; // salvat: la următoarea redesenare fișa se reface din datele noi
+        Teren.push();
+      }, 'btn btn-block'));
+    return card;
+  },
+  recCard(id) {
+    const p = (Circle.data?.recommended || []).find(x => String(x.id) === id); if (!p) return null;
+    return h('div', {class: 'place-card rec'},
+      h('div', {class: 'place-card-head'}, stamp('RECOMANDARE', 'blue'), h('button', {type: 'button', class: 'icon-btn', 'aria-label': 'Închide', onclick: () => { Teren.selected = null; Teren.push(); }}, icon('close', 18))),
+      h('p', {class: 'place-card-title', text: p.name || 'Loc'}),
+      h('div', {class: 'stars static'}, ...[1, 2, 3, 4, 5].map(i => h('span', {class: 'star' + (i <= (p.stars || 0) ? ' on' : '')}, icon('star', 18)))),
+      p.note ? h('p', {class: 'place-card-note', text: '„' + p.note + '”'}) : null,
+      monoLabel('DE LA ' + String(p.ownerName || 'un camarad').toUpperCase()));
+  },
+  reset() { Teren.exploreError = null; Teren.circleError = null; Teren.fitted = false; Teren.selected = null; Teren.pendingFocus = null; Teren.focusRoute = null; Teren.tab = 'teritoriu'; if (Teren.panel) delete Teren.panel.dataset.state; Explore.reset(); Circle.reset(); MapHost.reset(); Teren.off = null; }
+};
+function tabKeys(e) {
+  const tabs = [...e.currentTarget.parentNode.querySelectorAll('[role=tab]')], i = tabs.indexOf(e.currentTarget);
+  const next = e.key === 'ArrowRight' ? (i + 1) % tabs.length : e.key === 'ArrowLeft' ? (i + tabs.length - 1) % tabs.length : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+  if (next >= 0) { e.preventDefault(); tabs[next].click(); requestAnimationFrame(() => document.getElementById(tabs[next].id)?.focus()); }
+}
+/** Etichetele stării din FriendsSheet.kt. */
+function friendState(f) {
+  if (f.family && f.ghost) return 'fantomă · te vede familia';
+  if (f.ghost) return 'mod fantomă';
+  if (f.state === 'run') return 'aleargă acum';
+  if (f.state === 'ride') return 'pe roți acum';
+  if (f.state === 'walk') return 'se plimbă';
+  if (f.state === 'sleep') return 'doarme · nu-l trezi';
+  if (typeof f.lat !== 'number') return 'locație oprită';
+  return 'văzut ' + fmt.ago(f.at);
+}
+function friendLine(f, me) {
+  const d = me && typeof me.lat === 'number' && typeof f.lat === 'number' && (f.family || !f.ghost) ? distanceM(me, f) : null;
+  return [friendState(f), d !== null ? fmt.km(d) : null].filter(Boolean).join(' · ');
+}
+function friendRing(f) { return f.ghost ? 'ring-ghost' : f.state === 'sleep' ? 'ring-sleep' : ['run', 'walk', 'ride'].includes(f.state) ? 'ring-live' : typeof f.lat === 'number' ? 'ring-on' : 'ring-off'; }
+Site.register('teren', Teren);

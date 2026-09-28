@@ -1,0 +1,91 @@
+// CAMARAZI · Prieteni — aceiași camarazi ca în aplicație (Firestore, prin /insights/api/cerc): stare, distanță, vârsta
+// poziției, ♪ ce ascultă; familia; codul de invitație al aplicației; comutatorul „Din agendă” (/v2/social/contacts/discovery).
+const Camarazi = {
+  body: null, grid: null, side: null, discovery: null, sub: null,
+  mount(body) {
+    Camarazi.grid = h('div', {class: 'friends', id: 'camarazi-list'});
+    Camarazi.side = h('aside', {class: 'friends-side', id: 'camarazi-side'});
+    body.append(h('div', {class: 'friends-layout'}, Camarazi.grid, Camarazi.side));
+    Camarazi.body = body;
+  },
+  enter() {
+    Camarazi.sub = Camarazi.sub || (d => { if (Site.current === 'camarazi') Camarazi.render(d); });
+    Circle.subscribers.add(Camarazi.sub);
+    Circle.poll('camarazi');
+    if (Circle.data) Camarazi.render(Circle.data);
+    else {
+      fill(Camarazi.grid, skeleton());
+      Circle.load().catch(e => { if (e?.name !== 'AbortError') fill(Camarazi.grid, errorState(e?.message, () => { fill(Camarazi.grid, skeleton()); return Circle.load(); })); });
+    }
+    Camarazi.loadDiscovery();
+  },
+  leave() { Circle.subscribers.delete(Camarazi.sub); },
+  render(d) {
+    const friends = d.friends || [], family = d.family || [], me = d.me;
+    const onMap = friends.filter(f => typeof f.lat === 'number' && !f.ghost).length;
+    setLine('camarazi', friends.length ? `${plural(friends.length, 'camarad', 'camarazi')} · ${onMap} pe hartă` : '');
+    const famIds = new Set(family.map(f => f.uid));
+    const plain = friends.filter(f => !famIds.has(f.uid));
+    if (!friends.length && !family.length) {
+      fill(Camarazi.grid, emptyState('Niciun camarad încă.', 'Dă-le codul tău. Îl scriu în FORJA, la Camarazi.', null, 'idle'));
+    } else {
+      fill(Camarazi.grid, 
+        family.length ? h('div', {class: 'block-head'}, h('span', {class: 'head-ic'}, icon('heart', 15, 'blue'), monoLabel('FAMILIA · ' + family.length))) : null,
+        family.length ? h('div', {class: 'friend-grid'}, family.map(f => friendCard({...f, ...(friends.find(x => x.uid === f.uid) || {}), lat: f.lat, lng: f.lng, at: f.at, family: true}, me, true))) : null,
+        plain.length ? h('div', {class: 'block-head'}, monoLabel('CAMARAZI · ' + plain.length)) : null,
+        plain.length ? h('div', {class: 'friend-grid'}, plain.map(f => friendCard(f, me, false))) : null);
+    }
+    Camarazi.renderSide(d);
+  },
+  renderSide(d) {
+    const code = d.inviteCode;
+    const copy = btn('Copiază', async () => {
+      try { await navigator.clipboard.writeText(code); toast('Codul e copiat.', true); }
+      catch { toast('Codul: ' + code); }
+    }, 'btn btn-secondary', 'copy');
+    const codeCard = h('div', {class: 'card code-card'}, monoLabel('CODUL TĂU'),
+      code ? h('p', {class: 'invite-code', text: String(code).toUpperCase()}) : h('p', {class: 'muted', text: 'Codul apare după prima deschidere a Camarazilor în FORJA.'}),
+      code ? copy : null);
+    const disc = Camarazi.discovery;
+    const toggle = sw(!!disc?.on, 'Din agendă', on => Camarazi.setDiscovery(on));
+    toggle.disabled = !disc;
+    const discCard = h('div', {class: 'card disc-card'},
+      h('label', {class: 'toggle-row'}, h('span', {class: 'toggle-text'}, h('b', {text: 'Din agendă'}), h('span', {class: 'toggle-sub', id: 'camarazi-disc-sub', text: disc ? (disc.on ? 'Te găsesc după număr' + (disc.until ? ' · până la ' + fmt.day(disc.until) : '') : 'Oprit') : 'Se verifică…'})), toggle));
+    fill(Camarazi.side, codeCard, discCard);
+  },
+  async loadDiscovery() {
+    try { const st = await api('/v2/social/state'); Camarazi.discovery = {on: !!st?.me?.discoverable, until: st?.me?.discovery_until || null}; }
+    catch (e) { if (e?.name === 'AbortError') return; Camarazi.discovery = null; }
+    if (Circle.data && Site.current === 'camarazi') Camarazi.renderSide(Circle.data);
+  },
+  async setDiscovery(on) {
+    if (on) {
+      // Serverul cere un token proaspăt (≤ 5 min) ca să lege numărul de cont.
+      await Auth.renew();
+      try { const r = await api('/v2/social/contacts/discovery', {method: 'POST', body: {consent: true}}); Camarazi.discovery = {on: true, until: r?.until || null}; }
+      catch (e) { if (e?.status === 403) throw new ApiError('Adaugă numărul tău în FORJA, la Profil.', 403); throw e; }
+      toast('Te găsesc după număr.', true);
+    } else {
+      await api('/v2/social/contacts/discovery', {method: 'DELETE'});
+      Camarazi.discovery = {on: false, until: null};
+      toast('Din agendă e oprit.');
+    }
+    const sub = $('camarazi-disc-sub'); if (sub) sub.textContent = Camarazi.discovery.on ? 'Te găsesc după număr' + (Camarazi.discovery.until ? ' · până la ' + fmt.day(Camarazi.discovery.until) : '') : 'Oprit';
+  },
+  reset() { Camarazi.discovery = null; }
+};
+function friendCard(f, me, family) {
+  const has = typeof f.lat === 'number' && (family || !f.ghost);
+  const np = f.nowPlaying && f.nowPlaying.title ? f.nowPlaying : null;
+  const card = h(has ? 'a' : 'div', {class: 'card friend' + (family ? ' family' : '') + (f.ghost ? ' ghost' : ''), ...(has ? {href: '#teren/' + f.lat.toFixed(5) + ',' + f.lng.toFixed(5)} : {})},
+    h('div', {class: 'friend-top'}, avatar(f.name, {size: 48, cls: friendRing(f)}),
+      h('div', {class: 'friend-id'}, h('span', {class: 'friend-name', text: f.name || 'Camarad'}), h('span', {class: 'friend-state ' + friendRing(f), text: friendState(f)})),
+      family ? h('span', {class: 'fam-badge', title: 'Familie'}, icon('heart', 14)) : null),
+    h('div', {class: 'friend-meta'},
+      has && me && typeof me.lat === 'number' ? h('span', null, icon('locate', 14), fmt.km(distanceM(me, f))) : null,
+      f.at && (has || family) && (['run', 'walk', 'ride', 'sleep'].includes(f.state) || f.ghost) ? h('span', null, fmt.ago(f.at)) : null,
+      !has && !family ? h('span', {class: 'muted', text: f.ghost ? 'nu se vede pe hartă' : 'fără poziție'}) : null),
+    np ? h('div', {class: 'friend-music'}, h('span', {class: 'eq' + (reducedMotion() ? ' still' : '')}, h('i'), h('i'), h('i')), h('span', {class: 'np-title', text: np.title}), h('span', {class: 'np-artist', text: [np.artist, np.app].filter(Boolean).join(' · ')})) : null);
+  return card;
+}
+Site.register('camarazi', Camarazi);

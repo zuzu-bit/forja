@@ -1,0 +1,76 @@
+// JURNAL DE MARȘ · Mișcare — totalurile săptămânii, turele cu mini-traseu (desenat din polilinie) și antrenamentele,
+// prin /insights/api/mars?days=30. „Pe hartă” deschide Teren cu traseul evidențiat.
+const SPORT = {walk: ['Mers', 'walk'], run: ['Alergare', 'run'], ride: ['Ciclism', 'ride']};
+const Mars = {
+  data: null, body: null,
+  mount(body) { Mars.body = body; },
+  enter() { loadInto('mars', Mars.body, () => api('/insights/api/mars?days=30'), d => { Mars.data = d; Mars.render(d); }, {replaceOnError: !Mars.data}); },
+  render(d) {
+    const acts = [...(d.activities || [])].sort((a, b) => (b.startAt || 0) - (a.startAt || 0));
+    const works = [...(d.workouts || [])].sort((a, b) => (b.startAt || 0) - (a.startAt || 0));
+    const w = d.week || {km: 0, minutes: 0, sessions: 0};
+    if (!acts.length && !works.length) { setLine('mars', ''); fill(Mars.body, emptyState('Prima tură apare aici.', 'Pornește GO în FORJA sau un antrenament.', null, 'idle')); return; }
+    setLine('mars', '');
+    fill(Mars.body, 
+      h('div', {class: 'week-strip card'}, monoLabel('7 ZILE'),
+        h('div', {class: 'week-stats'}, statBlock('KILOMETRI', fmt.dec(w.km || 0, 1)), statBlock('MINUTE', fmt.int(w.minutes || 0)), statBlock('SESIUNI', fmt.int(w.sessions || 0)))),
+      acts.length ? h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Ture'}), monoLabel(plural(acts.length, 'tură', 'ture'))) : null,
+      acts.length ? h('div', {class: 'act-grid'}, acts.map(activityCard)) : null,
+      works.length ? h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Instrucție'}), monoLabel(plural(works.length, 'antrenament', 'antrenamente'))) : null,
+      works.length ? h('div', {class: 'work-list'}, works.map(workoutRow)) : null);
+  },
+  reset() { Mars.data = null; if (Mars.body) delete Mars.body.dataset.loaded; }
+};
+function activityCard(a) {
+  const [label, ic] = SPORT[a.type] || SPORT.run;
+  const km = (a.distanceM || 0) / 1000, minutes = (a.durationS || 0) / 60;
+  const pace = a.type === 'ride' ? (minutes > 0 ? fmt.dec(km / (minutes / 60), 1) + ' km/h' : '—') : (km > 0.05 ? paceText(minutes / km) + ' /km' : '—');
+  const pts = geoPoints(a.polyline);
+  const mid = pts[Math.floor(pts.length / 2)];
+  return h('article', {class: 'card act'},
+    routeSketch(pts, a.type),
+    h('div', {class: 'act-body'},
+      h('div', {class: 'act-top'}, h('span', {class: 'act-kind ' + ic}, icon(ic, 16), label), monoLabel(fmt.day(a.startAt).toUpperCase() + ' · ' + fmt.time(a.startAt))),
+      h('div', {class: 'act-stats'}, h('span', null, h('b', {text: fmt.dec(km, km < 10 ? 2 : 1)}), ' km'), h('span', null, h('b', {text: fmt.dur(minutes)})), h('span', null, h('b', {text: pace}))),
+      h('div', {class: 'act-foot'}, num(a.kcal) ? h('span', {class: 'muted', text: fmt.int(a.kcal) + ' kcal'}) : h('span'),
+        mid ? h('a', {href: '#teren/' + mid[0].toFixed(5) + ',' + mid[1].toFixed(5), class: 'chip-btn', onclick: () => { Teren.focusRoute = {id: a.id, type: a.type, polyline: a.polyline}; Teren.fitted = true; }}, icon('teren', 14), 'Pe hartă') : null)));
+}
+function paceText(minPerKm) { if (!Number.isFinite(minPerKm) || minPerKm <= 0) return '—'; const m = Math.floor(minPerKm), s = Math.round((minPerKm - m) * 60); return m + ':' + String(s === 60 ? 59 : s).padStart(2, '0'); }
+function geoPoints(poly) {
+  const out = [];
+  for (const pair of String(poly || '').split(';')) { const i = pair.indexOf(','); if (i <= 0) continue; const lat = Number(pair.slice(0, i)), lng = Number(pair.slice(i + 1)); if (Number.isFinite(lat) && Number.isFinite(lng)) out.push([lat, lng]); }
+  return out;
+}
+/** Mini-hartă fără fundal: traseul proiectat local (echirectangular), start olive, final amber, pe grila topografică. */
+function routeSketch(pts, type) {
+  const W = 120, H = 90, pad = 10;
+  const svg = s('svg', {class: 'route-sketch', viewBox: `0 0 ${W} ${H}`, width: W, height: H, 'aria-hidden': 'true'},
+    s('rect', {x: 0, y: 0, width: W, height: H, rx: 4, fill: '#101113'}),
+    ...[18, 36, 54, 72].map(y => s('path', {d: `M0 ${y} C30 ${y - 4} 60 ${y + 4} 120 ${y - 2}`, stroke: 'rgba(111,133,90,.10)', fill: 'none'})));
+  if (pts.length < 2) { svg.append(s('text', {x: W / 2, y: H / 2 + 4, 'text-anchor': 'middle', fill: '#5A5D63', 'font-size': 9, 'font-family': 'JetBrains Mono, monospace'}, document.createTextNode('FĂRĂ GPS'))); return svg; }
+  const lat0 = pts.reduce((a, p) => a + p[0], 0) / pts.length, k = Math.cos(lat0 * Math.PI / 180);
+  const xy = pts.map(([lat, lng]) => [lng * k, -lat]);
+  const xs = xy.map(p => p[0]), ys = xy.map(p => p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const scale = Math.min((W - 2 * pad) / Math.max(1e-9, maxX - minX), (H - 2 * pad) / Math.max(1e-9, maxY - minY));
+  const ox = (W - (maxX - minX) * scale) / 2, oy = (H - (maxY - minY) * scale) / 2;
+  const P = xy.map(([x, y]) => [ox + (x - minX) * scale, oy + (y - minY) * scale]);
+  const step = Math.max(1, Math.floor(P.length / 240));
+  const d = P.filter((_, i) => i % step === 0 || i === P.length - 1).map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('');
+  const color = type === 'ride' ? '#4FA3A0' : type === 'walk' ? '#6F855A' : '#F3B952';
+  svg.append(s('path', {d, fill: 'none', stroke: '#0A0A0B', 'stroke-width': 5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: 0.8}),
+    s('path', {d, fill: 'none', stroke: color, 'stroke-width': 2.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}),
+    s('circle', {cx: P[0][0], cy: P[0][1], r: 3.2, fill: '#6F855A', stroke: '#0A0A0B', 'stroke-width': 1.5}),
+    s('circle', {cx: P.at(-1)[0], cy: P.at(-1)[1], r: 3.2, fill: '#F3B952', stroke: '#0A0A0B', 'stroke-width': 1.5}));
+  return svg;
+}
+function workoutRow(w) {
+  return h('div', {class: 'work'},
+    h('span', {class: 'work-ic'}, icon('lift', 20)),
+    h('div', {class: 'work-body'}, h('span', {class: 'work-title', text: w.title || 'Antrenament'}), h('span', {class: 'work-meta', text: [fmt.day(w.startAt), w.kind, num(w.sets) ? plural(w.sets, 'serie', 'serii') : null].filter(Boolean).join(' · ')})),
+    h('div', {class: 'work-stats'},
+      h('span', null, h('b', {text: fmt.dur((w.durationS || 0) / 60)})),
+      num(w.volumeKg) ? h('span', null, h('b', {text: fmt.int(w.volumeKg)}), ' kg') : null,
+      num(w.kcal) ? h('span', null, h('b', {text: fmt.int(w.kcal)}), ' kcal') : null));
+}
+Site.register('mars', Mars);

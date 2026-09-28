@@ -1,0 +1,186 @@
+// INVENTAR · Poze și documente — rezumatele rulărilor Inventar din telefon (users/{uid}/inventory, prin /insights/api/inventar):
+// dosarele, „De aruncat”, unde s-au mutat; plus copiile din galerie din ultimele 24 h (/v2/files) cu previzualizare.
+const Inventar = {
+  data: null, body: null, runsBox: null, vaultBox: null, vault: {items: [], cursor: null, total: 0, loading: false}, thumbs: new Map(), preview: null, observer: null,
+  mount(body) {
+    Inventar.body = body;
+    Inventar.runsBox = h('div', {class: 'inv-runs', id: 'inventar-runs'});
+    Inventar.vaultBox = h('div', {class: 'inv-vault', id: 'inventar-vault'});
+    body.append(Inventar.runsBox, Inventar.vaultBox);
+    Inventar.observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => { for (const e of entries) if (e.isIntersecting) { Inventar.observer.unobserve(e.target); Inventar.thumb(e.target); } }, {rootMargin: '300px'}) : null;
+  },
+  enter(detail, changed) {
+    const draw = () => Inventar.render(Inventar.data, Site.detail);
+    if (Inventar.data && !changed) draw();
+    loadInto('inventar', Inventar.runsBox, () => api('/insights/api/inventar'), d => { Inventar.data = d; draw(); }, {replaceOnError: !Inventar.data});
+    if (!Inventar.vault.loaded) Inventar.loadVault(false);
+  },
+  render(d, detail) {
+    const runs = [...(d?.runs || [])].sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
+    const box = Inventar.runsBox;
+    if (detail) {
+      const run = runs.find(r => String(r.id) === detail);
+      setLine('inventar', '');
+      if (!run) { fill(box, h('a', {href: '#inventar', class: 'back-link'}, icon('back', 16), 'Inventar'), emptyState('Rularea nu mai e aici.', 'Site-ul păstrează ultimele 20 de rulări.', null, 'sorry')); return; }
+      fill(box, h('a', {href: '#inventar', class: 'back-link'}, icon('back', 16), 'Toate rulările'), runCard(run, true));
+      return;
+    }
+    if (!runs.length) {
+      setLine('inventar', '');
+      fill(box, emptyState('Niciun inventar încă.', 'Pornește Inventarul în FORJA. Dosarele apar aici.', null, 'idle'));
+      return;
+    }
+    setLine('inventar', plural(runs.length, 'rulare', 'rulări') + ' · ultima ' + fmt.ago(runs[0].finishedAt));
+    fill(box, runCard(runs[0], false),
+      runs.length > 1 ? h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Rulări anterioare'})) : null,
+      runs.length > 1 ? h('div', {class: 'run-list'}, runs.slice(1).map(r => h('a', {href: '#inventar/' + encodeURIComponent(r.id), class: 'run-row'},
+        h('span', {class: 'run-ic'}, icon(r.kind === 'docs' ? 'doc' : 'photo', 18)),
+        h('span', {class: 'run-text'}, h('b', {text: (r.kind === 'docs' ? 'Documente' : 'Poze') + ' · ' + plural((r.folders || []).length, 'dosar', 'dosare')}), h('span', {class: 'muted', text: fmt.ago(r.finishedAt) + ' · ' + (r.dest?.label || '')})),
+        h('span', {class: 'run-num', text: fmt.int(r.moved)}), icon('next', 16, 'dimmed')))) : null);
+  },
+  async loadVault(more) {
+    const v = Inventar.vault;
+    if (v.loading) return; v.loading = true;
+    if (!more) fill(Inventar.vaultBox, h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Copii din galerie'}), monoLabel('ULTIMELE 24 H')), h('div', {class: 'thumb-grid'}, Array.from({length: 6}, () => h('div', {class: 'sk sk-thumb'}))));
+    try {
+      const q = new URLSearchParams({kind: 'all'}); if (more && v.cursor) q.set('after', v.cursor);
+      const d = await api('/v2/files?' + q);
+      if (!more) v.items = [];
+      v.items.push(...(d?.items || [])); v.cursor = d?.next_cursor || null; v.total = d?.total ?? v.items.length; v.bytes = d?.bytes || 0; v.offset = (d?.server_at || Date.now()) - Date.now(); v.loaded = true;
+      Inventar.renderVault();
+    } catch (e) {
+      if (e?.name === 'AbortError') return;
+      fill(Inventar.vaultBox, h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Copii din galerie'})), errorState(e?.message, () => Inventar.loadVault(false)));
+    } finally { v.loading = false; }
+  },
+  renderVault() {
+    const v = Inventar.vault, now = Date.now() + (v.offset || 0);
+    const items = v.items.filter(i => !i.expires_at || i.expires_at > now);
+    const head = h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Copii din galerie'}), monoLabel(items.length ? `${fmt.int(v.total)} · ULTIMELE 24 H` : 'ULTIMELE 24 H'));
+    if (!items.length) { fill(Inventar.vaultBox, head, h('p', {class: 'panel-empty', text: 'Nicio copie în ultimele 24 de ore.'})); return; }
+    const grid = h('div', {class: 'thumb-grid'}, items.map(item => {
+      const kind = item.preview === 'image' || item.kind === 'photo' ? 'photo' : 'doc';
+      const cover = h('span', {class: 'thumb-cover'}, icon(kind === 'photo' ? 'photo' : 'doc', 26, 'dimmed'));
+      const t = h('button', {type: 'button', class: 'thumb', dataset: {file: item.id}, 'aria-label': 'Deschide ' + item.name, onclick: () => Inventar.open(item)}, cover,
+        h('span', {class: 'thumb-name', text: item.name}), h('span', {class: 'thumb-meta', text: fmt.bytes(item.bytes) + ' · ' + fmt.time(item.received_at)}));
+      if (item.thumbnail && Inventar.observer) { cover.dataset.id = item.id; Inventar.observer.observe(cover); }
+      return t;
+    }));
+    fill(Inventar.vaultBox, head, grid, v.cursor ? btn('Mai multe', () => Inventar.loadVault(true), 'btn btn-secondary btn-more') : null);
+  },
+  async thumb(cover) {
+    const id = cover.dataset.id;
+    try {
+      let url = Inventar.thumbs.get(id);
+      if (!url) { const blob = await api('/v2/files/' + encodeURIComponent(id) + '/thumbnail', {blob: true}); url = URL.createObjectURL(new Blob([blob], {type: blob.type || 'image/jpeg'})); Inventar.thumbs.set(id, url); }
+      if (cover.isConnected) fill(cover, h('img', {src: url, alt: '', loading: 'lazy', decoding: 'async'}));
+    } catch { /* rămâne iconița */ }
+  },
+  /** Previzualizare: imagine, PDF (pdf.js), text, DOCX (doar textul). Fără HTML din fișier. */
+  async open(item) {
+    Inventar.closePreview();
+    const d = $('preview-dialog'), body = $('preview-body'), state = {id: item.id, urls: [], task: null};
+    Inventar.preview = state;
+    $('preview-title').textContent = item.name;
+    $('preview-meta').textContent = fmt.bytes(item.bytes) + ' · primit ' + fmt.ago(item.received_at) + (item.expires_at ? ' · expiră la ' + fmt.time(item.expires_at) : '');
+    fill(body, h('div', {class: 'sk sk-preview'}));
+    fill($('preview-actions'), 
+      btn('Descarcă', () => Inventar.download(item), 'btn', 'download'),
+      btn('Șterge copia', async () => {
+        if (!await confirmSheet('Ștergi copia?', 'Originalul rămâne pe telefon.', 'Șterge copia', true)) return;
+        await api('/v2/files/' + encodeURIComponent(item.id), {method: 'DELETE'});
+        Inventar.vault.items = Inventar.vault.items.filter(x => x.id !== item.id); Inventar.vault.total = Math.max(0, Inventar.vault.total - 1);
+        closeDialog(d); Inventar.renderVault(); toast('Copia a fost ștearsă.');
+      }, 'btn btn-ghost-danger', 'trash'));
+    openDialog(d);
+    try {
+      const blob = await api('/v2/files/' + encodeURIComponent(item.id), {blob: true});
+      if (Inventar.preview !== state) return;
+      const type = item.media_type || blob.type || '';
+      if (item.preview === 'image' && /^image\/(jpeg|png|webp|gif|avif|bmp)$/.test(type)) {
+        const url = URL.createObjectURL(new Blob([blob], {type})); state.urls.push(url);
+        fill(body, h('img', {class: 'preview-img', src: url, alt: item.name}));
+      } else if (item.preview === 'pdf' && type === 'application/pdf') {
+        const pdfjs = await import('/insights/pdf.mjs'); if (Inventar.preview !== state) return;
+        pdfjs.GlobalWorkerOptions.workerSrc = '/insights/pdf.worker.mjs';
+        const task = pdfjs.getDocument({data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false, enableXfa: false, useSystemFonts: true, isOffscreenCanvasSupported: false});
+        state.task = task;
+        const pdf = await task.promise; if (Inventar.preview !== state) return;
+        const canvas = h('canvas', {class: 'preview-pdf', 'aria-label': 'Pagina documentului'}), label = monoLabel('');
+        let page = 1, busy = false;
+        const prev = h('button', {type: 'button', class: 'icon-btn', 'aria-label': 'Pagina precedentă'}, icon('back', 18)), next = h('button', {type: 'button', class: 'icon-btn', 'aria-label': 'Pagina următoare'}, icon('next', 18));
+        const draw = async () => {
+          if (busy || Inventar.preview !== state) return; busy = true; prev.disabled = next.disabled = true;
+          try {
+            const pg = await pdf.getPage(page); const base = pg.getViewport({scale: 1}), scale = Math.min(1.8, 1100 / base.width, 1500 / base.height), vp = pg.getViewport({scale});
+            canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+            state.render = pg.render({canvasContext: canvas.getContext('2d'), viewport: vp}); await state.render.promise;
+            label.textContent = `PAGINA ${page} DIN ${pdf.numPages}`;
+          } catch (e) { if (e?.name !== 'RenderingCancelledException') toast('Pagina nu poate fi afișată. Poți descărca fișierul.'); }
+          finally { busy = false; prev.disabled = page <= 1; next.disabled = page >= pdf.numPages; }
+        };
+        prev.onclick = () => { if (page > 1) { page--; draw(); } };
+        next.onclick = () => { if (page < pdf.numPages) { page++; draw(); } };
+        fill(body, canvas, h('div', {class: 'pdf-nav'}, prev, label, next));
+        await draw();
+      } else if (item.preview === 'text') {
+        const text = await blob.slice(0, 256 * 1024).text(); if (Inventar.preview !== state) return;
+        fill(body, h('pre', {class: 'preview-text', text}));
+      } else if (item.preview === 'docx') {
+        const xml = await readDocxXml(await blob.arrayBuffer()); if (Inventar.preview !== state) return;
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        if (doc.querySelector('parsererror')) throw Error('Documentul nu poate fi previzualizat. Îl poți descărca.');
+        const paragraphs = [...doc.getElementsByTagNameNS('*', 'p')].map(p => [...p.getElementsByTagNameNS('*', 't')].map(t => t.textContent).join('')).filter(Boolean);
+        fill(body, h('pre', {class: 'preview-text', text: paragraphs.join('\n\n')}));
+      } else fill(body, h('p', {class: 'muted', text: 'Formatul se deschide după descărcare.'}));
+    } catch (e) {
+      if (e?.name === 'AbortError' || Inventar.preview !== state) return;
+      fill(body, h('p', {class: 'preview-error', text: e?.message || 'Previzualizarea nu a mers. Poți descărca fișierul.'}));
+    }
+  },
+  async download(item) {
+    const blob = await api('/v2/files/' + encodeURIComponent(item.id), {blob: true});
+    const url = URL.createObjectURL(blob), a = h('a', {href: url, download: item.name});
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+  },
+  closePreview() {
+    const p = Inventar.preview; if (!p) return;
+    try { p.render?.cancel(); } catch { /* deja gata */ }
+    p.task?.destroy?.().catch?.(() => {});
+    p.urls.forEach(u => URL.revokeObjectURL(u));
+    Inventar.preview = null;
+    $('preview-body')?.replaceChildren();
+  },
+  reset() {
+    Inventar.closePreview(); Inventar.data = null; Inventar.observer?.disconnect();
+    for (const u of Inventar.thumbs.values()) URL.revokeObjectURL(u);
+    Inventar.thumbs.clear(); Inventar.vault = {items: [], cursor: null, total: 0, loading: false};
+    if (Inventar.runsBox) delete Inventar.runsBox.dataset.loaded;
+  }
+};
+$('preview-dialog')?.addEventListener('close', () => Inventar.closePreview());
+$('preview-close')?.addEventListener('click', () => closeDialog($('preview-dialog')));
+function runCard(run, full) {
+  const folders = [...(run.folders || [])].sort((a, b) => (b.count || 0) - (a.count || 0));
+  const shown = full ? folders : folders.slice(0, 8), max = Math.max(1, ...folders.map(f => f.count || 0));
+  const docs = run.kind === 'docs', trash = run.trash || {count: 0, bytes: 0};
+  return h('article', {class: 'card run-card'},
+    h('div', {class: 'run-head'},
+      h('span', {class: 'run-kind'}, icon(docs ? 'doc' : 'photo', 20), monoLabel((docs ? 'DOCUMENTE' : 'POZE') + (run.scope?.label ? ' · ' + String(run.scope.label).toUpperCase() : ''))),
+      monoLabel(fmt.dayLong(run.finishedAt).toUpperCase() + ' · ' + fmt.time(run.finishedAt))),
+    h('div', {class: 'run-stats' + (num(run.freedBytes) ? '' : ' three')},
+      statBlock('DOSARE', fmt.int(folders.length)),
+      statBlock('MUTATE', fmt.int(run.moved)),
+      statBlock('DE ARUNCAT', fmt.int(trash.count), null, trash.bytes ? fmt.bytes(trash.bytes) : null),
+      num(run.freedBytes) ? statBlock('ELIBERAT', fmt.bytes(run.freedBytes)) : null),
+    h('div', {class: 'run-dest'}, icon('folder', 18), h('span', {class: 'run-dest-label', text: run.dest?.label || 'Destinație'}), run.dest?.path ? h('code', {class: 'run-dest-path', text: run.dest.path}) : null),
+    run.failed > 0 ? h('p', {class: 'run-failed'}, icon('info', 16), plural(run.failed, 'fișier nu s-a mutat', 'fișiere nu s-au mutat') + '. Rămân la locul lor.') : null,
+    h('div', {class: 'folder-grid'},
+      trash.count > 0 ? h('div', {class: 'folder trash'}, h('span', {class: 'folder-ic'}, icon('trash', 20)), h('span', {class: 'folder-name', text: 'De aruncat'}),
+        h('span', {class: 'folder-meta', text: fmt.int(trash.count) + ' · ' + fmt.bytes(trash.bytes)}), h('span', {class: 'folder-note', text: docs ? 'în „De aruncat (FORJA)”' : 'se recuperează 30 de zile'})) : null,
+      shown.map(f => h('div', {class: 'folder'}, h('span', {class: 'folder-ic'}, icon('folder', 20)), h('span', {class: 'folder-name', text: f.name || 'Dosar'}),
+        h('span', {class: 'folder-meta', text: fmt.int(f.count) + (num(f.bytes) ? ' · ' + fmt.bytes(f.bytes) : '')}), bar((f.count || 0) / max)))),
+    !full && folders.length > shown.length ? h('a', {href: '#inventar/' + encodeURIComponent(run.id), class: 'panel-link'}, 'Toate cele ' + plural(folders.length, 'dosar', 'dosare'), icon('next', 16)) : null,
+    full && run.appVersion ? monoLabel('FORJA ' + run.appVersion + ' · ÎNCEPUT ' + fmt.time(run.startedAt), 'dim') : null);
+}
+Site.register('inventar', Inventar);

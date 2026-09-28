@@ -1,52 +1,506 @@
-/* Shared real geographic renderer: website + Android WebView. No tokens or API access. */
-(function(global){
- 'use strict';
- const empty=()=>({type:'FeatureCollection',features:[]});
- const collection=value=>value?.type==='FeatureCollection'&&Array.isArray(value.features)?value:empty();
- const feature=(kind,id,p,name)=>({type:'Feature',id:kind+':'+id,geometry:{type:'Point',coordinates:[p.lon,p.lat]},properties:{id:String(id),kind,name:name||'',label:(name||'').trim().split(/\s+/).slice(0,2).map(v=>v[0]||'').join('').toUpperCase()}});
- function create(container,options={}){
-  if(!global.maplibregl?.Map||(typeof global.maplibregl.supported==='function'&&!global.maplibregl.supported()))throw Error('Randarea vectorială nu este disponibilă pe acest dispozitiv.');
-  let loaded=false,disposed=false,mode3d=false,data={},failed=false;
-  const motion=()=>!global.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  let map;
-  const fail=error=>{if(disposed||failed)return;failed=true;loaded=false;clearTimeout(timeout);options.onError?.(error instanceof Error?error:Error(String(error?.message||error||'Harta vectorială nu s-a încărcat.')));};
-  // Install the deadline before WebGL/worker initialization; the constructor itself may throw.
-  const timeout=setTimeout(()=>fail(Error('3D loading timed out')),15000);
-  try{map=new global.maplibregl.Map({container,style:'https://tiles.openfreemap.org/styles/liberty',center:options.center||[24.9,45.8],zoom:options.zoom||6,attributionControl:true,pitch:0,maxPitch:65,canvasContextAttributes:{antialias:false}});
-   map.addControl(new global.maplibregl.NavigationControl({showCompass:true}),'bottom-right');
-  }catch(error){clearTimeout(timeout);try{map?.remove();}catch{}throw error;}
-  function paint(){if(!loaded)return;for(const key of ['routes','zones','visits','people','places','devices'])map.getSource('forja-'+key)?.setData(collection(data[key]));}
-  map.on('load',()=>{
-   if(disposed||failed)return;try{
-   // Heights are geographic attributes from OpenMapTiles/OSM, not random blocks.
-   const before=map.getStyle().layers.find(l=>l.type==='symbol')?.id;
-   map.addSource('forja-buildings',{type:'vector',url:'https://tiles.openfreemap.org/planet',attribution:'<a href="https://openfreemap.org">OpenFreeMap</a> · <a href="https://www.openmaptiles.org">© OpenMapTiles</a> · <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>'});
-   map.addLayer({id:'forja-buildings-3d',type:'fill-extrusion',source:'forja-buildings','source-layer':'building',minzoom:14,filter:['all',['!=',['get','hide_3d'],true],['>', ['to-number',['get','render_height'],0],0]],layout:{visibility:'none'},paint:{'fill-extrusion-color':'#c5ccb9','fill-extrusion-height':['to-number',['get','render_height'],0],'fill-extrusion-base':['to-number',['get','render_min_height'],0],'fill-extrusion-opacity':.85}},before);
-   for(const key of ['routes','zones','visits','people','places','devices'])map.addSource('forja-'+key,{type:'geojson',data:empty()});
-   map.addLayer({id:'forja-zones',type:'fill',source:'forja-zones',paint:{'fill-color':'#71C99B','fill-opacity':.26}});
-   map.addLayer({id:'forja-zone-edge',type:'line',source:'forja-zones',paint:{'line-color':'#37875d','line-width':1,'line-opacity':.55}});
-   map.addLayer({id:'forja-routes',type:'line',source:'forja-routes',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#4F92FF','line-width':4,'line-opacity':.92}});
-   for(const[key,color,radius]of [['visits','#F3B952',9],['places','#f6f6ed',7],['people','#c9e89c',18],['devices','#cbd2d8',10]])map.addLayer({id:'forja-'+key,type:'circle',source:'forja-'+key,paint:{'circle-radius':radius,'circle-color':color,'circle-stroke-color':'#23392b','circle-stroke-width':2}});
-   map.addLayer({id:'forja-place-stars',type:'symbol',source:'forja-places',filter:['>',['to-number',['get','stars'],0],0],layout:{'text-field':['concat','★ ',['to-string',['get','stars']]],'text-size':11,'text-font':['Noto Sans Regular'],'text-offset':[0,1.3],'text-allow-overlap':true},paint:{'text-color':'#20352a'}});
-   map.addLayer({id:'forja-names',type:'symbol',source:'forja-people',layout:{'text-field':['get','label'],'text-size':12,'text-font':['Noto Sans Regular'],'text-allow-overlap':true},paint:{'text-color':'#20352a'}});
-   map.on('click',event=>{const f=map.queryRenderedFeatures(event.point,{layers:['forja-people','forja-visits','forja-places','forja-devices']})[0];if(f){const p=f.properties;options.onPick?.({kind:p.kind,id:p.id,name:p.name||'',lon:f.geometry.coordinates[0],lat:f.geometry.coordinates[1]});}});
-   map.on('mousemove',event=>{map.getCanvas().style.cursor=map.queryRenderedFeatures(event.point,{layers:['forja-people','forja-visits','forja-places','forja-devices']}).length?'pointer':'';});
-   if(failed||disposed)return;loaded=true;paint();clearTimeout(timeout);options.onReady?.();
-   }catch(error){fail(error);}
-  });
-  map.on('error',event=>fail(event?.error||'Vector map source failed'));
-  map.on('webglcontextlost',()=>fail(Error('WebGL context lost')));
-  map.on('moveend',()=>{const p=map.getCenter();options.onMove?.({lat:p.lat,lon:p.lng,zoom:map.getZoom()});});
-  return {
-   setData(value){data=value||{};paint();},
-   set3D(enabled){if(!loaded||failed||disposed)return false;mode3d=!!enabled;map.setLayoutProperty('forja-buildings-3d','visibility',mode3d?'visible':'none');map.easeTo({pitch:mode3d?55:0,duration:motion()?600:0});return true;},
-   focus(p,zoom=16){map.flyTo({center:[p.lon,p.lat],zoom,duration:motion()?650:0});},
-   fit(points){if(!points.length)return;const bounds=new global.maplibregl.LngLatBounds();points.forEach(p=>bounds.extend([p.lon,p.lat]));map.fitBounds(bounds,{padding:70,maxZoom:15,duration:motion()?600:0});},
-   getCenter(){const p=map.getCenter();return {lat:p.lat,lon:p.lng,lng:p.lng,zoom:map.getZoom()};},
-   resize(){map.resize();},
-   destroy(){disposed=true;clearTimeout(timeout);map.remove();},
-   get ready(){return loaded&&!failed;},get mode3d(){return mode3d;}
+// FORJA · harta site-ului (MapLibre, un singur motor). Stilul OpenFreeMap „liberty” recolorat cu paleta ForjaStyle
+// (core/map/ForjaStyle.kt, Noapte implicit) și stiva de straturi a aplicației (core/map/MapLayers.kt): strălucirea sub zoom 13,
+// teritoriile colorate după mod (pe jos / alergare / bicicletă) cu conturul exterior (MapGeo.cellEdges), „Străzile tale”,
+// halourile de 100 m, locurile ★N, recomandările, camarazii, familia, „Tu”, telefonul (Găsire) cu cercul de precizie.
+// 2D/3D = aceeași hartă, doar înclinarea. Erorile de dale, glife sau sprite nu opresc harta; doar stilul sau WebGL.
+// Datele se schimbă numai prin setData pe surse — straturile se creează o singură dată.
+(function (root) {
+  'use strict';
+  const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+  const C = {amber: '#F3B952', olive: '#4A5D3A', olive2: '#6F855A', green: '#2FBE71', blue: '#9DBFE8', teal: '#4FA3A0', ember: '#FF6B57', ink: '#0A0A0B', card: '#1A1A1E', text: '#F4F2EE'};
+  const PALETTES = {
+    day: {bg: '#f3efe6', park: '#d9e3c4', parkEdge: 'rgba(140,170,120,0.5)', wood: 'hsla(88,32%,70%,0.6)', grass: 'rgba(190,208,168,1)', residential: 'hsla(35,30%,90%,0.5)', landuse: '#e6e4d6',
+      water: '#b9cde4', waterLine: '#a9bfd9', motorway: '#f0c58f', primary: '#f6e5b8', secondary: '#f9edcb', minor: '#ffffff', casingMajor: '#d9ab7c', casingMinor: '#d8d3ca', rail: '#c4c0b8',
+      building: '#e6e1d6', buildingEdge: '#d5cfc2', building3d: '#ece7dc', building3dOpacity: 0.92, boundary: '#8a8a90', boundaryMinor: '#c2c0bb',
+      placeText: '#2b2a26', roadText: '#6b675f', poiText: '#7a756c', waterText: '#5a6f8f', halo: 'rgba(243,239,230,0.9)', naturalEarthOpacity: 0.35},
+    night: {bg: '#141517', park: '#1c231b', parkEdge: 'rgba(111,133,90,0.35)', wood: 'hsla(110,12%,18%,0.6)', grass: 'rgba(40,50,38,0.5)', residential: 'hsla(0,0%,12%,0.6)', landuse: '#1a1c1f',
+      water: '#0f1a26', waterLine: '#16243a', motorway: '#4a3f2a', primary: '#3a3731', secondary: '#33312c', minor: '#2b2c30', casingMajor: '#0f1012', casingMinor: '#0f1012', rail: '#3a3b40',
+      building: '#1c1d21', buildingEdge: '#26272c', building3d: '#22232a', building3dOpacity: 0.85, boundary: '#4a4c55', boundaryMinor: '#3a3c44',
+      placeText: '#c9c6bd', roadText: '#9a978f', poiText: '#87847c', waterText: '#7e93ac', halo: 'rgba(10,10,11,0.85)', naturalEarthOpacity: 0}
   };
- }
- global.ForjaMapRenderer={create,feature,collection,empty};
-})(typeof window!=='undefined'?window:globalThis);
+  const PLACE_LABELS = ['label_city', 'label_city_capital', 'label_town', 'label_village', 'label_state', 'label_country_1', 'label_country_2', 'label_country_3'];
+  const ROAD_LABELS = ['highway-name-major', 'highway-name-minor', 'highway-name-path', 'airport'];
+  const WATER_LABELS = ['water_name_point_label', 'water_name_line_label', 'waterway_line_label'];
+  const POI_LABELS = ['poi_r1', 'poi_transit'];
+  const TEXT_LAYERS = [...PLACE_LABELS, 'label_other', ...ROAD_LABELS, ...WATER_LABELS, ...POI_LABELS];
+  const ROADS = {
+    motorway: ['road_motorway', 'bridge_motorway', 'tunnel_motorway'],
+    primary: ['road_trunk_primary', 'bridge_trunk_primary', 'tunnel_trunk_primary', 'road_link', 'bridge_link', 'tunnel_link', 'road_motorway_link', 'bridge_motorway_link', 'tunnel_motorway_link'],
+    secondary: ['road_secondary_tertiary', 'bridge_secondary_tertiary', 'tunnel_secondary_tertiary'],
+    minor: ['road_minor', 'bridge_street', 'tunnel_minor', 'road_service_track', 'bridge_service_track', 'tunnel_service_track', 'road_path_pedestrian', 'bridge_path_pedestrian', 'tunnel_path_pedestrian', 'aeroway_runway', 'aeroway_taxiway'],
+    casingMajor: ['road_motorway_casing', 'road_trunk_primary_casing', 'road_secondary_tertiary_casing', 'road_link_casing', 'road_motorway_link_casing', 'bridge_motorway_casing', 'bridge_trunk_primary_casing', 'bridge_secondary_tertiary_casing', 'bridge_link_casing', 'bridge_motorway_link_casing', 'tunnel_motorway_casing', 'tunnel_trunk_primary_casing', 'tunnel_secondary_tertiary_casing', 'tunnel_link_casing', 'tunnel_motorway_link_casing'],
+    casingMinor: ['road_minor_casing', 'road_service_track_casing', 'bridge_street_casing', 'bridge_service_track_casing', 'bridge_path_pedestrian_casing', 'tunnel_street_casing', 'tunnel_service_track_casing'],
+    rail: ['road_major_rail', 'road_transit_rail', 'bridge_major_rail', 'bridge_transit_rail', 'tunnel_major_rail', 'tunnel_transit_rail', 'road_major_rail_hatching', 'road_transit_rail_hatching', 'bridge_major_rail_hatching', 'bridge_transit_rail_hatching', 'tunnel_major_rail_hatching', 'tunnel_transit_rail_hatching']
+  };
+  const LANDUSE = ['landuse_pitch', 'landuse_track', 'landuse_cemetery', 'landuse_hospital', 'landuse_school', 'aeroway_fill', 'landcover_sand', 'landcover_ice'];
+
+  /** ForjaStyle.apply: recolorează liberty; straturile lipsă se sar (liberty poate evolua), niciodată nu aruncă. */
+  function applyPalette(map, theme) {
+    const l = PALETTES[theme] || PALETTES.night;
+    const has = id => { try { return !!map.getLayer(id); } catch { return false; } };
+    const paint = (id, prop, value) => { if (has(id)) try { map.setPaintProperty(id, prop, value); } catch { /* proprietate necunoscută pentru tipul stratului */ } };
+    const layout = (id, prop, value) => { if (has(id)) try { map.setLayoutProperty(id, prop, value); } catch { /* idem */ } };
+    paint('background', 'background-color', l.bg);
+    paint('natural_earth', 'raster-opacity', l.naturalEarthOpacity);
+    paint('park', 'fill-color', l.park); paint('park', 'fill-opacity', 0.6); paint('park', 'fill-outline-color', l.parkEdge);
+    paint('park_outline', 'line-color', l.parkEdge);
+    paint('landcover_wood', 'fill-color', l.wood); paint('landcover_grass', 'fill-color', l.grass);
+    paint('landuse_residential', 'fill-color', l.residential);
+    for (const id of LANDUSE) paint(id, 'fill-color', l.landuse);
+    paint('water', 'fill-color', l.water);
+    for (const id of ['waterway_river', 'waterway_other', 'waterway_tunnel']) paint(id, 'line-color', l.waterLine);
+    for (const [key, ids] of Object.entries(ROADS)) for (const id of ids) paint(id, 'line-color', l[key]);
+    paint('building', 'fill-color', l.building); paint('building', 'fill-outline-color', l.buildingEdge);
+    if (has('building')) try { const b = map.getLayer('building'); map.setLayerZoomRange('building', b.minzoom || 0, 24); } catch { /* fără zoom */ }
+    paint('building-3d', 'fill-extrusion-color', l.building3d);
+    paint('building-3d', 'fill-extrusion-vertical-gradient', true);
+    if (has('building-3d')) try { map.setFilter('building-3d', ['all', ['!=', ['get', 'hide_3d'], true], ['>', ['to-number', ['get', 'render_height'], 0], 0]]); } catch { /* filtru vechi */ }
+    paint('boundary_2', 'line-color', l.boundary); paint('boundary_3', 'line-color', l.boundaryMinor);
+    for (const id of PLACE_LABELS) { paint(id, 'text-color', l.placeText); paint(id, 'text-halo-color', l.halo); paint(id, 'text-halo-width', 1.2); }
+    paint('label_other', 'text-color', l.roadText); paint('label_other', 'text-halo-color', l.halo);
+    for (const id of ROAD_LABELS) { paint(id, 'text-color', l.roadText); paint(id, 'text-halo-color', l.halo); paint(id, 'text-halo-width', 1.2); }
+    for (const id of WATER_LABELS) { paint(id, 'text-color', l.waterText); paint(id, 'text-halo-color', l.halo); }
+    for (const id of POI_LABELS) { paint(id, 'text-color', l.poiText); paint(id, 'text-halo-color', l.halo); }
+    layout('poi_r20', 'visibility', 'none'); layout('poi_r7', 'visibility', 'none');
+    for (const id of TEXT_LAYERS) layout(id, 'text-field', ['coalesce', ['get', 'name'], ['get', 'name:latin'], ['get', 'name_en']]);
+  }
+
+  // ───────────────────────── Geometrie (funcții pure) ─────────────────────────
+  const fc = features => ({type: 'FeatureCollection', features});
+  const EMPTY = fc([]);
+  const isNum = v => typeof v === 'number' && Number.isFinite(v);
+  const MODES = new Set(['walk', 'run', 'ride']);
+  const geo = {
+    empty: () => fc([]),
+    /** Celulele din explore/state, cu `mode` normalizat (fără mod → pe jos, ca în aplicație). */
+    cells(collection) {
+      const out = [];
+      for (const f of collection?.features || []) {
+        if (f?.geometry?.type !== 'Polygon') continue;
+        const p = f.properties || {};
+        out.push({type: 'Feature', geometry: f.geometry, properties: {id: String(p.id || ''), visits: isNum(p.visits) ? p.visits : 1, mode: MODES.has(p.mode) ? p.mode : 'walk'}});
+      }
+      return fc(out);
+    },
+    /** Doar laturile fără vecin cucerit (grila „x_y”), într-o MultiLineString — teritoriul, nu tabla de șah. */
+    edges(cells) {
+      const list = cells.features, keys = new Set(), parsed = [];
+      for (const f of list) {
+        const m = /^(-?\d+)_(-?\d+)$/.exec(f.properties.id || '');
+        const x = m ? Number(m[1]) : null, y = m ? Number(m[2]) : null;
+        parsed.push([x, y]); if (m) keys.add(x + '_' + y);
+      }
+      const lines = [];
+      list.forEach((f, i) => {
+        const ring = f.geometry.coordinates[0];
+        let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+        for (const [lng, lat] of ring) { minLng = Math.min(minLng, lng); maxLng = Math.max(maxLng, lng); minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat); }
+        const [x, y] = parsed[i], known = x !== null;
+        if (!known || !keys.has(x + '_' + (y + 1))) lines.push([[minLng, maxLat], [maxLng, maxLat]]);
+        if (!known || !keys.has(x + '_' + (y - 1))) lines.push([[minLng, minLat], [maxLng, minLat]]);
+        if (!known || !keys.has((x + 1) + '_' + y)) lines.push([[maxLng, minLat], [maxLng, maxLat]]);
+        if (!known || !keys.has((x - 1) + '_' + y)) lines.push([[minLng, minLat], [minLng, maxLat]]);
+      });
+      return lines.length ? fc([{type: 'Feature', geometry: {type: 'MultiLineString', coordinates: lines}, properties: {}}]) : fc([]);
+    },
+    heat(cells) {
+      return fc(cells.features.map(f => {
+        const ring = f.geometry.coordinates[0];
+        const lng = (ring[0][0] + ring[2][0]) / 2, lat = (ring[0][1] + ring[2][1]) / 2;
+        return {type: 'Feature', geometry: {type: 'Point', coordinates: [lng, lat]}, properties: {visits: f.properties.visits}};
+      }));
+    },
+    /** „lat,lng;lat,lng;…” → [[lat,lng],…]; perechile invalide se ignoră (MapGeo.parsePolyline). */
+    parsePolyline(text) {
+      const out = [];
+      for (const pair of String(text || '').split(';')) {
+        const i = pair.indexOf(','); if (i <= 0) continue;
+        const lat = Number(pair.slice(0, i)), lng = Number(pair.slice(i + 1));
+        if (isNum(lat) && isNum(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) out.push([lat, lng]);
+      }
+      return out;
+    },
+    streets(routes) {
+      const out = [];
+      for (const r of routes || []) {
+        const pts = geo.parsePolyline(r?.polyline);
+        if (pts.length < 2) continue;
+        out.push({type: 'Feature', geometry: {type: 'LineString', coordinates: pts.map(([lat, lng]) => [lng, lat])}, properties: {id: String(r.id || ''), type: String(r.type || '')}});
+      }
+      return fc(out);
+    },
+    /** Cerc geodezic (poligon) — precizia telefonului, corectă și în 3D. */
+    circle(lat, lng, radiusM, steps = 56) {
+      const R = 6378137, pts = [], d = Math.max(1, radiusM) / R, la = lat * Math.PI / 180, lo = lng * Math.PI / 180;
+      for (let i = 0; i <= steps; i++) {
+        const b = (i / steps) * 2 * Math.PI;
+        const lat2 = Math.asin(Math.sin(la) * Math.cos(d) + Math.cos(la) * Math.sin(d) * Math.cos(b));
+        const lng2 = lo + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(la), Math.cos(d) - Math.sin(la) * Math.sin(lat2));
+        pts.push([lng2 * 180 / Math.PI, lat2 * 180 / Math.PI]);
+      }
+      return {type: 'Feature', geometry: {type: 'Polygon', coordinates: [pts]}, properties: {}};
+    },
+    /** [[minLng,minLat],[maxLng,maxLat]] peste orice coordonate [lng,lat]; null dacă nu e nimic. */
+    bounds(coords) {
+      let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity, n = 0;
+      for (const [lng, lat] of coords) { if (!isNum(lng) || !isNum(lat)) continue; a = Math.min(a, lng); b = Math.min(b, lat); c = Math.max(c, lng); d = Math.max(d, lat); n++; }
+      return n ? [[a, b], [c, d]] : null;
+    },
+    coordsOf(collection) {
+      const out = [];
+      const walk = g => { if (!g) return; if (g.type === 'Point') out.push(g.coordinates); else if (g.type === 'LineString' || g.type === 'MultiPoint') out.push(...g.coordinates); else if (g.type === 'Polygon' || g.type === 'MultiLineString') for (const r of g.coordinates) out.push(...r); };
+      for (const f of collection?.features || []) walk(f.geometry);
+      return out;
+    }
+  };
+  const pointOf = (lat, lng) => isNum(lat) && isNum(lng) ? [lng, lat] : null;
+  function distanceM(a, b) {
+    const R = 6371000, rad = Math.PI / 180, dLat = (b[1] - a[1]) * rad, dLng = (b[0] - a[0]) * rad;
+    const x = Math.sin(dLat / 2) ** 2 + Math.cos(a[1] * rad) * Math.cos(b[1] * rad) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
+  }
+  const km = m => m < 1000 ? Math.round(m / 10) * 10 + ' m' : (m / 1000).toFixed(m < 100000 ? 1 : 0).replace('.', ',') + ' km';
+  function ago(ms) { const d = Date.now() - ms; if (!isNum(ms) || ms <= 0) return ''; if (d < 60000) return 'acum'; if (d < 3600000) return Math.floor(d / 60000) + ' min'; if (d < 86400000) return Math.floor(d / 3600000) + ' h'; return Math.floor(d / 86400000) + ' z'; }
+  const initials = name => (String(name || '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('') || '?').toUpperCase();
+
+  // ───────────────────────── Imaginile pinilor (canvas, fonturile site-ului) ─────────────────────────
+  const DPR = () => Math.max(2, Math.min(3, (root.devicePixelRatio || 1)));
+  function canvas(w, h) {
+    if (typeof document === 'undefined') return null;
+    const c = document.createElement('canvas'), r = DPR();
+    c.width = Math.ceil(w * r); c.height = Math.ceil(h * r);
+    const g = c.getContext && c.getContext('2d'); if (!g) return null;
+    g.scale(r, r);
+    return {c, g, r};
+  }
+  const image = k => k ? {data: k.g.getImageData(0, 0, k.c.width, k.c.height), pixelRatio: k.r} : null;
+  function starPath(g, cx, cy, R, r) {
+    g.beginPath();
+    for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r : R; g.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
+    g.closePath();
+  }
+  function drawPlace(stars, rec, selected) {
+    const size = selected ? 38 : 34, tip = 8, k = canvas(size, size + tip); if (!k) return null;
+    const {g} = k, cx = size / 2, cy = size / 2, r = size / 2 - 2.5, ringColor = rec ? C.blue : C.amber;
+    g.fillStyle = ringColor; g.beginPath(); g.moveTo(cx - 5, size - 4); g.lineTo(cx + 5, size - 4); g.lineTo(cx, size + tip - 1.5); g.closePath(); g.fill();
+    g.fillStyle = C.card; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = ringColor; g.lineWidth = selected ? 3.5 : 2.5; g.stroke();
+    g.fillStyle = ringColor; starPath(g, stars > 0 ? cx - 5.5 : cx, cy, 6.2, 2.7); g.fill();
+    if (stars > 0) { g.fillStyle = C.text; g.font = '700 13px "Barlow Condensed", "Hanken Grotesk", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(stars), cx + 6, cy + 0.5); }
+    return image(k);
+  }
+  function drawPill(text, tone = 'dark') {
+    const font = '700 12px "Hanken Grotesk", sans-serif';
+    const probe = canvas(4, 4); if (!probe) return null;
+    probe.g.font = font;
+    const w = Math.ceil(Math.min(180, probe.g.measureText(text).width) + 14), hgt = 21, k = canvas(w, hgt); if (!k) return null;
+    const {g} = k;
+    g.fillStyle = tone === 'dark' ? 'rgba(10,10,11,0.88)' : 'rgba(243,185,82,0.95)';
+    roundRect(g, 0.5, 0.5, w - 1, hgt - 1, 4); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.12)'; g.lineWidth = 1; g.stroke();
+    g.fillStyle = tone === 'dark' ? C.text : C.ink; g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(text, w / 2, hgt / 2 + 0.5, w - 10);
+    return image(k);
+  }
+  function roundRect(g, x, y, w, hh, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + hh, r); g.arcTo(x + w, y + hh, x, y + hh, r); g.arcTo(x, y + hh, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+  /** Avatarul „bulă” din MapMarkers.kt: inel după stare, inițiale, punct de stare, ♥ familie, ♪ muzică, vârf-pin. */
+  function drawAvatar(o) {
+    const size = 52, tip = 10, k = canvas(size, size + tip); if (!k) return null;
+    const {g} = k, cx = size / 2, cy = size / 2, ringW = o.selected ? 3.5 : 3, r = size / 2 - ringW;
+    const ring = o.selected ? C.amber : o.ghost || o.state === 'sleep' ? C.blue : o.me ? C.olive : C.olive2;
+    g.fillStyle = o.me ? C.olive : C.olive2; g.beginPath(); g.moveTo(cx - 6, size - 4); g.lineTo(cx + 6, size - 4); g.lineTo(cx, size + tip - 2); g.closePath(); g.fill();
+    g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.strokeStyle = ring; g.lineWidth = ringW; g.stroke();
+    g.beginPath(); g.arc(cx, cy, r - 2, 0, Math.PI * 2); g.fillStyle = o.me ? '#232b1d' : C.card; g.fill();
+    g.fillStyle = C.text; g.font = `700 ${o.me ? 14 : 15}px "Hanken Grotesk", sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(o.me ? 'Tu' : initials(o.name), cx, cy + 0.5);
+    if (!o.ghost && ['run', 'walk', 'ride', 'sleep'].includes(o.state)) {
+      g.beginPath(); g.arc(size - 8, 8, 5, 0, Math.PI * 2); g.fillStyle = o.state === 'sleep' ? C.blue : C.green; g.fill(); g.lineWidth = 2; g.strokeStyle = C.ink; g.stroke();
+    }
+    if (o.family) {
+      g.beginPath(); g.arc(9, 9, 8.5, 0, Math.PI * 2); g.fillStyle = C.ink; g.fill();
+      g.beginPath(); g.arc(9, 9, 7, 0, Math.PI * 2); g.fillStyle = C.blue; g.fill();
+      g.fillStyle = C.ink; g.beginPath(); g.moveTo(9, 12.6); g.bezierCurveTo(3.8, 9.2, 5.4, 4.6, 9, 7.2); g.bezierCurveTo(12.6, 4.6, 14.2, 9.2, 9, 12.6); g.fill();
+    }
+    if (o.music) {
+      const bx = size - 10, by = size - 11;
+      g.beginPath(); g.arc(bx, by, 9, 0, Math.PI * 2); g.fillStyle = C.ink; g.fill();
+      g.beginPath(); g.arc(bx, by, 7.5, 0, Math.PI * 2); g.fillStyle = '#FFB35C'; g.fill();
+      g.fillStyle = C.ink; g.beginPath(); g.ellipse(bx - 1.3, by + 2.3, 2.3, 1.65, -0.38, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = C.ink; g.lineWidth = 1.3; g.lineCap = 'round'; g.beginPath(); g.moveTo(bx + 0.7, by + 1.9); g.lineTo(bx + 0.7, by - 4.4); g.quadraticCurveTo(bx + 4.1, by - 3.2, bx + 3.3, by - 0.4); g.stroke();
+    }
+    return image(k);
+  }
+  function drawDevice(fresh) {
+    const size = 44, tip = 9, k = canvas(size, size + tip); if (!k) return null;
+    const {g} = k, cx = size / 2, cy = size / 2, color = fresh ? C.amber : '#A7A9AE';
+    g.fillStyle = color; g.beginPath(); g.moveTo(cx - 6, size - 5); g.lineTo(cx + 6, size - 5); g.lineTo(cx, size + tip - 1.5); g.closePath(); g.fill();
+    g.beginPath(); g.arc(cx, cy, size / 2 - 2.5, 0, Math.PI * 2); g.fillStyle = C.ink; g.fill(); g.lineWidth = 3; g.strokeStyle = color; g.stroke();
+    g.strokeStyle = color; g.lineWidth = 2; g.lineCap = 'round';
+    g.beginPath(); g.arc(cx, cy, 8, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.arc(cx, cy, 2.6, 0, Math.PI * 2); g.fillStyle = color; g.fill();
+    for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) { g.beginPath(); g.moveTo(cx + dx * 11, cy + dy * 11); g.lineTo(cx + dx * 15, cy + dy * 15); g.stroke(); }
+    return image(k);
+  }
+  function drawPin() {
+    const k = canvas(26, 34); if (!k) return null;
+    const {g} = k;
+    g.fillStyle = C.ember; g.beginPath(); g.arc(13, 12, 10, Math.PI, 0); g.quadraticCurveTo(23, 20, 13, 32); g.quadraticCurveTo(3, 20, 3, 12); g.closePath(); g.fill();
+    g.lineWidth = 2; g.strokeStyle = C.ink; g.stroke();
+    g.beginPath(); g.arc(13, 12, 3.6, 0, Math.PI * 2); g.fillStyle = C.ink; g.fill();
+    return image(k);
+  }
+
+  // ───────────────────────── Harta ─────────────────────────
+  const SRC = ['forja-heat', 'forja-cells', 'forja-cells-edge', 'forja-streets', 'forja-focus', 'forja-accuracy', 'forja-places', 'forja-rec', 'forja-devices', 'forja-friends', 'forja-me', 'forja-pin'];
+  const TOGGLES = {heat: ['forja-heat'], territories: ['forja-cells-fill', 'forja-cells-line'], streets: ['forja-streets-casing', 'forja-streets'], places: ['forja-halos', 'forja-places', 'forja-places-label', 'forja-rec', 'forja-rec-label'], friends: ['forja-friends', 'forja-friends-label']};
+  const GASIRE_HIDDEN = ['forja-heat', 'forja-cells-fill', 'forja-cells-line', 'forja-streets-casing', 'forja-streets', 'forja-halos', 'forja-places', 'forja-places-label', 'forja-rec', 'forja-rec-label', 'forja-friends', 'forja-friends-label', 'forja-focus-glow', 'forja-focus'];
+  const PICKABLE = ['forja-places', 'forja-rec', 'forja-friends', 'forja-devices', 'forja-me'];
+  const HALO_PX_Z13 = 100 / (78271.517 * Math.cos(45 * Math.PI / 180) / 2 ** 13);
+
+  function supported(gl) { return !!gl && typeof gl.Map === 'function'; }
+
+  function create(container, opts = {}) {
+    const gl = root.maplibregl;
+    if (!supported(gl)) throw Error('Harta nu este disponibilă în acest browser.');
+    const reduced = opts.reduced !== undefined ? !!opts.reduced : (() => { try { return root.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } })();
+    const map = new gl.Map({container, style: opts.style || STYLE_URL, center: [25.0, 45.9], zoom: 5.6, maxPitch: 70, attributionControl: {compact: true}, fadeDuration: reduced ? 0 : 300, dragRotate: true, touchPitch: true});
+    const state = {ready: false, failed: false, theme: opts.theme || 'night', mode: 'teren', threeD: false, layers: {heat: true, territories: true, streets: true, places: true, friends: true},
+      raw: {}, fc: {}, images: new Map(), me: null, pulse: null, destroyed: false};
+    const api = {map, get ready() { return state.ready; }, get threeD() { return state.threeD; }, get mode() { return state.mode; }};
+    const duration = ms => reduced ? 0 : ms;
+    let timeout = setTimeout(() => { if (!state.ready) fail(Error('Harta nu a răspuns la timp.'), false); }, opts.timeoutMs || 20000);
+
+    function fail(error, fatal = true) {
+      if (fatal) { state.ready = false; state.failed = true; }
+      try { opts.onError && opts.onError(error, fatal); } catch { /* raportarea nu oprește harta */ }
+    }
+    map.on('error', e => {
+      const err = e && e.error, msg = String(err && err.message || '');
+      // Dale, glife, sprite sau o sursă a stilului: harta merge mai departe (MapLibre reîncearcă singur).
+      if (state.ready || e.sourceId || e.tile || /glyph|sprite|image|tile|source/i.test(msg)) return;
+      fail(err || Error('Stilul hărții nu s-a încărcat.'));
+    });
+    map.on('webglcontextlost', () => fail(Error('Placa grafică a oprit harta.')));
+    map.on('webglcontextrestored', () => { if (state.failed) { state.failed = false; install(); } });
+    map.on('styleimagemissing', e => provideImage(e.id));
+    // Datele FORJA intră imediat ce stilul e gata („style.load”), nu după ultima dală („load”): o dală lentă de la
+    // OpenFreeMap nu mai ține pe loc teritoriul, camarazii sau telefonul.
+    map.on('style.load', () => { clearTimeout(timeout); install(); });
+    map.on('load', () => { clearTimeout(timeout); install(); });
+    // Pentru teste și capturi: containerul spune când harta a terminat de desenat ultimele date.
+    map.on('idle', () => { try { container.dataset.idle = '1'; } catch { /* container detașat */ } });
+
+    function install() {
+      if (state.destroyed || state.ready) return;
+      try {
+        applyPalette(map, state.theme);
+        const anchor = map.getLayer('building') ? 'building' : (map.getStyle().layers || []).find(l => l.type === 'symbol')?.id;
+        for (const id of SRC) if (!map.getSource(id)) map.addSource(id, {type: 'geojson', data: EMPTY, ...(['forja-places', 'forja-me', 'forja-accuracy'].includes(id) ? {buffer: 0} : {})});
+        const ground = (layer) => { if (!map.getLayer(layer.id)) map.addLayer(layer, anchor); };
+        const top = (layer) => { if (!map.getLayer(layer.id)) map.addLayer(layer); };
+        // Pragurile de zoom ale aplicației, coborâte cu un nivel: pe ecranul mare orașul întreg încape la ~12, iar acolo
+        // vrem teritoriile, nu doar strălucirea.
+        ground({id: 'forja-heat', type: 'heatmap', source: 'forja-heat', maxzoom: 13, paint: {
+          'heatmap-weight': ['interpolate', ['linear'], ['to-number', ['get', 'visits']], 1, 0.35, 8, 1],
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 6, 5, 10, 16, 13, 32], 'heatmap-intensity': 0.9,
+          'heatmap-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.9, 11.5, 0.6, 12.6, 0],
+          'heatmap-color': ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(74,93,58,0)', 0.25, 'rgba(74,93,58,0.35)', 0.6, 'rgba(111,133,90,0.65)', 1, 'rgba(243,185,82,0.9)']}});
+        ground({id: 'forja-cells-fill', type: 'fill', source: 'forja-cells', minzoom: 10.5, paint: {
+          'fill-color': ['match', ['get', 'mode'], 'run', C.green, 'ride', C.teal, C.olive], 'fill-antialias': false,
+          'fill-opacity': ['interpolate', ['linear'], ['zoom'], 10.5, 0, 12.2, 0.4]}});
+        ground({id: 'forja-cells-line', type: 'line', source: 'forja-cells-edge', minzoom: 11, paint: {'line-color': C.olive2, 'line-width': 1, 'line-opacity': ['interpolate', ['linear'], ['zoom'], 11, 0, 12.5, 0.6]}});
+        const width = base => ['interpolate', ['linear'], ['zoom'], 12, base * 0.45, 16, base, 20, base * 1.8];
+        ground({id: 'forja-streets-casing', type: 'line', source: 'forja-streets', layout: {'line-cap': 'round', 'line-join': 'round'}, paint: {'line-color': '#1A1A1E', 'line-opacity': 0.5, 'line-width': width(7)}});
+        ground({id: 'forja-streets', type: 'line', source: 'forja-streets', layout: {'line-cap': 'round', 'line-join': 'round'}, paint: {'line-color': C.amber, 'line-width': width(5), 'line-opacity': 0.92}});
+        ground({id: 'forja-focus-glow', type: 'line', source: 'forja-focus', layout: {'line-cap': 'round', 'line-join': 'round'}, paint: {'line-color': C.amber, 'line-opacity': 0.25, 'line-width': width(18)}});
+        ground({id: 'forja-focus', type: 'line', source: 'forja-focus', layout: {'line-cap': 'round', 'line-join': 'round'}, paint: {'line-color': '#FFE39A', 'line-width': width(6)}});
+        ground({id: 'forja-halos', type: 'circle', source: 'forja-places', minzoom: 13, paint: {
+          'circle-radius': ['interpolate', ['exponential', 2], ['zoom'], 13, HALO_PX_Z13, 19, HALO_PX_Z13 * 64],
+          'circle-color': 'rgba(243,185,82,0.08)', 'circle-stroke-color': 'rgba(243,185,82,0.33)', 'circle-stroke-width': 1.5, 'circle-pitch-alignment': 'map'}});
+        ground({id: 'forja-accuracy-fill', type: 'fill', source: 'forja-accuracy', paint: {'fill-color': C.amber, 'fill-opacity': 0.1}});
+        ground({id: 'forja-accuracy-line', type: 'line', source: 'forja-accuracy', paint: {'line-color': C.amber, 'line-opacity': 0.55, 'line-width': 1.5}});
+        const symbol = (id, source, extra = {}) => top({id, type: 'symbol', source, layout: {'icon-image': ['get', 'icon'], 'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'symbol-sort-key': ['to-number', ['get', 'sort']], ...extra.layout}, paint: {'icon-opacity': ['to-number', ['coalesce', ['get', 'alpha'], 1]], ...extra.paint}, ...(extra.minzoom ? {minzoom: extra.minzoom} : {})});
+        const label = (id, source, minzoom) => top({id, type: 'symbol', source, minzoom, layout: {'icon-image': ['get', 'label'], 'icon-anchor': 'top', 'icon-offset': [0, 3], 'icon-allow-overlap': false, 'icon-ignore-placement': false, 'icon-optional': false}, paint: {'icon-opacity': ['to-number', ['coalesce', ['get', 'alpha'], 1]]}});
+        symbol('forja-places', 'forja-places'); label('forja-places-label', 'forja-places', 14.5);
+        symbol('forja-rec', 'forja-rec'); label('forja-rec-label', 'forja-rec', 14.5);
+        top({id: 'forja-me-pulse', type: 'circle', source: 'forja-me', paint: {'circle-color': C.olive2, 'circle-radius': 18, 'circle-opacity': 0.18, 'circle-pitch-alignment': 'map'}});
+        symbol('forja-devices', 'forja-devices');
+        symbol('forja-friends', 'forja-friends'); label('forja-friends-label', 'forja-friends', 0);
+        symbol('forja-me', 'forja-me'); label('forja-me-label', 'forja-me', 0);
+        symbol('forja-pin', 'forja-pin');
+        if (!state.picking) for (const id of PICKABLE) {
+          state.picking = true;
+          map.on('click', id, e => { const f = e.features && e.features[0]; if (!f) return; const [lng, lat] = f.geometry.coordinates; opts.onPick && opts.onPick({kind: f.properties.kind, id: f.properties.id, lat, lng}); });
+          map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
+          map.on('mouseleave', id, () => { map.getCanvas().style.cursor = ''; });
+        }
+        state.ready = true; state.failed = false;
+        render(Object.keys(state.raw));
+        applyVisibility();
+        setBuildings();
+        startPulse();
+        opts.onReady && opts.onReady(api);
+      } catch (e) { fail(e); }
+    }
+
+    function provideImage(id) {
+      if (state.images.has(id) && map.hasImage && !map.hasImage(id)) try { const im = state.images.get(id); if (im) map.addImage(id, im.data, {pixelRatio: im.pixelRatio}); } catch { /* deja adăugată */ }
+    }
+    /** Înregistrează o imagine desenată o singură dată, după cheie. */
+    function img(key, draw) {
+      if (!state.images.has(key)) state.images.set(key, draw());
+      if (state.ready) try { if (!map.hasImage || !map.hasImage(key)) { const im = state.images.get(key); if (im) map.addImage(key, im.data, {pixelRatio: im.pixelRatio}); } } catch { /* repetat */ }
+      return key;
+    }
+    const pill = (text, tone) => img('pill|' + tone + '|' + text, () => drawPill(text, tone));
+
+    function build(kind) {
+      const r = state.raw;
+      if (kind === 'cells') { const cells = geo.cells(r.cells); state.fc.cells = cells; return {'forja-cells': cells, 'forja-cells-edge': geo.edges(cells), 'forja-heat': geo.heat(cells)}; }
+      if (kind === 'routes') { const streets = geo.streets(r.routes); state.fc.streets = streets; return {'forja-streets': streets}; }
+      if (kind === 'focusRoute') return {'forja-focus': r.focusRoute ? geo.streets([r.focusRoute]) : EMPTY};
+      if (kind === 'places') {
+        const sel = r.selected || {}, out = [];
+        for (const p of r.places || []) {
+          const pt = pointOf(p.lat, isNum(p.lng) ? p.lng : p.lon); if (!pt) continue;
+          const stars = Math.max(0, Math.min(5, Math.round(p.stars || 0))), selected = sel.kind === 'place' && sel.id === String(p.id);
+          out.push({type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'place', id: String(p.id), sort: selected ? 3 : 1, icon: img(`place|${stars}|0|${selected ? 1 : 0}`, () => drawPlace(stars, false, selected)), label: pill(p.name ? String(p.name).slice(0, 26) : 'Loc fără nume', 'dark')}});
+        }
+        const places = fc(out); state.fc.places = places; return {'forja-places': places};
+      }
+      if (kind === 'recommended') {
+        const sel = r.selected || {}, out = [];
+        for (const p of r.recommended || []) {
+          const pt = pointOf(p.lat, p.lng); if (!pt) continue;
+          const stars = Math.max(0, Math.min(5, Math.round(p.stars || 0))), selected = sel.kind === 'rec' && sel.id === String(p.id);
+          out.push({type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'rec', id: String(p.id), sort: selected ? 3 : 0, icon: img(`place|${stars}|1|${selected ? 1 : 0}`, () => drawPlace(stars, true, selected)), label: pill(String(p.name || 'Recomandare').slice(0, 26), 'dark')}});
+        }
+        return {'forja-rec': fc(out)};
+      }
+      if (kind === 'me') {
+        const m = r.me, pt = m && pointOf(m.lat, m.lng); state.me = pt;
+        if (!pt) return {'forja-me': EMPTY};
+        const ghost = !!m.ghost, age = ago(m.at);
+        return {'forja-me': fc([{type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'me', id: 'me', sort: 5, alpha: ghost ? 0.55 : 1, icon: img('av|me|' + (ghost ? 1 : 0), () => drawAvatar({me: true, ghost})), label: pill(ghost ? 'Tu · fantomă' : age && age !== 'acum' ? 'Tu · ' + age : 'Tu', 'dark')}}])};
+      }
+      if (kind === 'friends' || kind === 'family') {
+        const sel = r.selected || {}, out = [], me = state.me;
+        const add = (f, family) => {
+          const pt = pointOf(f.lat, f.lng); if (!pt) return;
+          const selected = sel.kind === 'friend' && sel.id === String(f.uid);
+          const music = !family && !!(f.nowPlaying && f.nowPlaying.title);
+          const key = `av|${initials(f.name)}|${f.state || ''}|${family ? 1 : 0}|${music ? 1 : 0}|${selected ? 1 : 0}`;
+          const dist = me ? distanceM(me, pt) : null;
+          const text = (String(f.name || '').split(/\s+/)[0] || 'Camarad') + (dist !== null ? ' · ' + km(dist) : f.at ? ' · ' + ago(f.at) : '');
+          out.push({type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'friend', id: String(f.uid), sort: selected ? 4 : ['run', 'walk', 'ride'].includes(f.state) ? 2 : 1, alpha: family ? 0.55 : 1,
+            icon: img(key, () => drawAvatar({name: f.name, state: f.state, family, music, selected})), label: pill(text, 'dark')}});
+        };
+        for (const f of r.friends || []) if (!f.ghost) add(f, false);
+        const friendIds = new Set((r.friends || []).filter(f => !f.ghost && isNum(f.lat)).map(f => f.uid));
+        for (const f of r.family || []) if (!friendIds.has(f.uid)) add(f, true);
+        const friends = fc(out); state.fc.friends = friends; return {'forja-friends': friends};
+      }
+      if (kind === 'devices') {
+        const out = [], acc = [];
+        for (const d of r.devices || []) {
+          const p = d.position || d.last; const pt = p && pointOf(p.lat, isNum(p.lon) ? p.lon : p.lng); if (!pt) continue;
+          const fresh = !!(d.position && d.position.fresh) || (Date.now() - (p.at || 0) < 10 * 60000);
+          out.push({type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'device', id: String(d.id), sort: 6, icon: img('dev|' + (fresh ? 1 : 0), () => drawDevice(fresh))}});
+          if (isNum(p.accuracy) && p.accuracy > 0) acc.push(geo.circle(pt[1], pt[0], Math.min(p.accuracy, 5000)));
+        }
+        const devices = fc(out); state.fc.devices = devices; return {'forja-devices': devices, 'forja-accuracy': fc(acc)};
+      }
+      if (kind === 'pin') { const pt = r.pin && pointOf(r.pin.lat, r.pin.lng); return {'forja-pin': pt ? fc([{type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'pin', id: 'pin', sort: 7, icon: img('pin', drawPin)}}]) : EMPTY}; }
+      return {};
+    }
+    function render(kinds) {
+      if (!state.ready) return;
+      const order = ['me', 'cells', 'routes', 'focusRoute', 'places', 'recommended', 'friends', 'devices', 'pin'];
+      const wanted = new Set(kinds.map(k => k === 'family' ? 'friends' : k === 'selected' ? ['places', 'recommended', 'friends'] : k).flat());
+      if (wanted.has('me')) wanted.add('friends');
+      for (const kind of order) {
+        if (!wanted.has(kind)) continue;
+        for (const [id, data] of Object.entries(build(kind))) { const src = map.getSource(id); if (src && src.setData) src.setData(data); }
+      }
+    }
+    function visible(id) {
+      if (state.mode === 'gasire') return !GASIRE_HIDDEN.includes(id);
+      if (id === 'forja-accuracy-fill' || id === 'forja-accuracy-line') return false;
+      for (const [key, ids] of Object.entries(TOGGLES)) if (ids.includes(id)) return !!state.layers[key];
+      return true;
+    }
+    function applyVisibility() {
+      if (!state.ready) return;
+      for (const layer of map.getStyle().layers || []) if (layer.id.startsWith('forja-')) try { map.setLayoutProperty(layer.id, 'visibility', visible(layer.id) ? 'visible' : 'none'); } catch { /* strat dispărut */ }
+    }
+    function setBuildings() {
+      const l = PALETTES[state.theme] || PALETTES.night;
+      try {
+        if (map.getLayer('building-3d')) { map.setLayoutProperty('building-3d', 'visibility', state.threeD ? 'visible' : 'none'); map.setPaintProperty('building-3d', 'fill-extrusion-opacity', state.threeD ? l.building3dOpacity : 0); }
+        if (map.getLayer('building')) map.setPaintProperty('building', 'fill-opacity', state.threeD ? 0.35 : 1);
+      } catch { /* stil fără clădiri */ }
+    }
+    /** Pulsul lui „Tu” (ca în aplicație); static sub mișcare redusă. */
+    function startPulse() {
+      if (reduced || state.pulse || typeof root.requestAnimationFrame !== 'function') return;
+      let last = 0;
+      const frame = t => {
+        if (state.destroyed) return;
+        state.pulse = root.requestAnimationFrame(frame);
+        if (t - last < 50 || (typeof document !== 'undefined' && document.hidden)) return;
+        last = t;
+        const k = (t % 2000) / 2000;
+        try { map.setPaintProperty('forja-me-pulse', 'circle-radius', 14 + k * 22); map.setPaintProperty('forja-me-pulse', 'circle-opacity', 0.32 * (1 - k)); } catch { /* stil în schimbare */ }
+      };
+      state.pulse = root.requestAnimationFrame(frame);
+    }
+    function fitTo(coords, maxZoom = 15.5, padding = 64) {
+      const b = geo.bounds(coords); if (!b) return false;
+      const pad = typeof padding === 'number' ? padding : padding;
+      if (b[0][0] === b[1][0] && b[0][1] === b[1][1]) map.jumpTo({center: b[0], zoom: Math.min(maxZoom, 15.5)});
+      else map.fitBounds(b, {padding: pad, maxZoom, duration: duration(600)});
+      return true;
+    }
+
+    Object.assign(api, {
+      /** Orice subset: {cells, routes, places, recommended, friends, family, me, devices, focusRoute, pin, selected}. */
+      setData(partial) {
+        if (!partial) return;
+        const kinds = [];
+        for (const [k, v] of Object.entries(partial)) { if (v === undefined) continue; state.raw[k] = v; kinds.push(k); }
+        try { container.dataset.idle = '0'; } catch { /* container detașat */ }
+        render(kinds);
+      },
+      setMode(mode) { state.mode = mode === 'gasire' ? 'gasire' : 'teren'; applyVisibility(); },
+      setLayers(layers) { Object.assign(state.layers, layers || {}); applyVisibility(); return {...state.layers}; },
+      get layers() { return {...state.layers}; },
+      setTheme(theme) { state.theme = theme === 'day' ? 'day' : 'night'; if (state.ready) { applyPalette(map, state.theme); setBuildings(); } return state.theme; },
+      get theme() { return state.theme; },
+      set3D(on) {
+        if (!state.ready) return false;
+        state.threeD = !!on; setBuildings();
+        map.easeTo({pitch: state.threeD ? 55 : 0, bearing: state.threeD ? -17 : 0, duration: duration(700)});
+        return true;
+      },
+      /** Pe datele tale: celule, locuri, trasee; altfel poziția ta; altfel camarazii. */
+      fitOwn(padding = 64) {
+        if (!state.ready) return false;
+        const own = [...geo.coordsOf(state.fc.cells), ...geo.coordsOf(state.fc.places), ...geo.coordsOf(state.fc.streets)];
+        if (own.length) return fitTo(own, 15.5, padding);
+        if (state.me) { map.jumpTo({center: state.me, zoom: 14.5}); return true; }
+        const friends = geo.coordsOf(state.fc.friends);
+        if (friends.length) return fitTo(friends, 14.5, padding);
+        return false;
+      },
+      fitDevices(padding = 80) { if (!state.ready) return false; const pts = geo.coordsOf(state.fc.devices); if (!pts.length) return false; return fitTo(pts, 16.5, padding); },
+      hasOwnData() { return !!(state.fc.cells?.features.length || state.fc.places?.features.length || state.fc.streets?.features.length || state.me); },
+      focus(point, zoom = 16, padding) { if (!state.ready || !point) return false; const c = pointOf(point.lat, isNum(point.lng) ? point.lng : point.lon); if (!c) return false; map.easeTo({center: c, zoom: Math.max(map.getZoom(), zoom), duration: duration(700), ...(padding ? {padding} : {})}); return true; },
+      fitLine(polyline, padding = 72) { if (!state.ready) return false; const pts = geo.parsePolyline(polyline).map(([lat, lng]) => [lng, lat]); return pts.length ? fitTo(pts, 16, padding) : false; },
+      resize() { try { map.resize(); } catch { /* container ascuns */ } },
+      destroy() { state.destroyed = true; clearTimeout(timeout); if (state.pulse && root.cancelAnimationFrame) root.cancelAnimationFrame(state.pulse); try { map.remove(); } catch { /* deja eliminată */ } }
+    });
+    return api;
+  }
+
+  root.ForjaMapRenderer = {create, geo, applyPalette, PALETTES, STYLE_URL, supported: () => supported(root.maplibregl)};
+})(typeof window !== 'undefined' ? window : globalThis);

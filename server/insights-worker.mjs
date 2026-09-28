@@ -1,28 +1,10 @@
-import sleepClient from './sleep-client.js.txt';
 import {handleSleepAPI} from './sleep-api.mjs';
 import {organizeJobAI} from './organizer-job-ai.mjs';
-import maplibre from './vendor/maplibre-5.10.0.js.txt';
-import maplibreCSS from './vendor/maplibre-5.10.0.css.txt';
-import mapRenderer from './map-renderer.js.txt';
-import mapFrame from './map-frame.html';
-import mapFrameClient from './map-frame-client.js.txt';
-import recoveryClient from './recovery-client.js.txt';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { handleInsights, accountStub } from './insights-ai.mjs';
 import { handleSiteApi, isSiteApi } from './site-api.mjs';
 import { reply } from './insights-store.mjs';
-import leaflet from './vendor/leaflet-1.9.4.js.txt';
-import leafletCSS from './vendor/leaflet-1.9.4.css.txt';
-import socialClient from './social-client.js.txt';
-import journeyClient from './journey-client.js.txt';
-import html from './insights.html';
-import client from './insights-client.js.txt';
-import fileClient from './files-client.js.txt';
-import organizerClient from './organizer-client.js.txt';
-import cleanupClient from './cleanup-client.js.txt';
-import filePreview from './files-preview.js.txt';
-import pdfClient from './vendor/pdfjs-5.6.205.mjs.txt';
-import pdfWorker from './vendor/pdfjs-worker-5.6.205.mjs.txt';
+import { siteStatic } from './site-static.mjs';
 export { SocialGraph } from './social.mjs';
 export { InsightsAccount } from './insights-store.mjs';
 
@@ -33,19 +15,7 @@ const keys = createRemoteJWKSet(new URL('https://www.googleapis.com/service_acco
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
-    if (request.method === 'GET' && ['/', '/admin', '/insights', '/insights/'].includes(path)) {
-      return new Response(html, { headers: {
-        'content-type':'text/html; charset=utf-8', 'cache-control':'no-store',
-        'content-security-policy':"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://tiles.openfreemap.org; img-src 'self' blob: data: https://tile.openstreetmap.org https://tiles.openfreemap.org; media-src blob:; worker-src 'self' blob:; font-src blob: data:; frame-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
-        'referrer-policy':'strict-origin-when-cross-origin', 'x-content-type-options':'nosniff'
-      } });
-    }
-    if(request.method==='GET'&&path==='/insights/map-frame')return new Response(mapFrame,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-cache','content-security-policy':"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://tiles.openfreemap.org; img-src 'self' blob: data: https://tile.openstreetmap.org https://tiles.openfreemap.org; worker-src 'self' blob:; font-src blob: data:; base-uri 'none'; frame-ancestors 'self'; form-action 'none'",'x-content-type-options':'nosniff'}});
-    const mapAssets={'/insights/maplibre.js':[maplibre,'text/javascript'],'/insights/maplibre.css':[maplibreCSS,'text/css'],'/insights/map-renderer.js':[mapRenderer,'text/javascript'],'/insights/map-frame.js':[mapFrameClient,'text/javascript']};
-    if(request.method==='GET'&&mapAssets[path])return new Response(mapAssets[path][0],{headers:{'content-type':mapAssets[path][1]+'; charset=utf-8','cache-control':'no-cache','x-content-type-options':'nosniff'}});
-    if(request.method==='GET'&&['/insights/leaflet.js','/insights/leaflet.css'].includes(path))return new Response(path.endsWith('.css')?leafletCSS:leaflet,{headers:{'content-type':path.endsWith('.css')?'text/css':'text/javascript','cache-control':'public, max-age=86400','x-content-type-options':'nosniff'}});
-    if (request.method === 'GET' && ['/insights/pdf.mjs','/insights/pdf.worker.mjs'].includes(path)) return new Response(path.endsWith('pdf.worker.mjs')?pdfWorker:pdfClient,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'public, max-age=3600','x-content-type-options':'nosniff'}});
-    if (request.method === 'GET' && path === '/insights/app.js') return new Response(client+"\n"+sleepClient+"\n"+filePreview+"\n"+fileClient+"\n"+cleanupClient+"\n"+organizerClient+"\n"+socialClient+"\n"+recoveryClient+"\n"+journeyClient, { headers: { 'content-type':'text/javascript; charset=utf-8', 'cache-control':'no-cache', 'x-content-type-options':'nosniff' } });
+    const asset = siteStatic(request, path); if (asset) return asset;
     if (request.method === 'GET' && path === '/health') return reply({ ok:true, service:'forja-insights', version:18, organizer_jobs:4, journey:1, explore_sync:2, map3d:1, content_ai:2, visual_ui:1, sleep_audio:1, lost_phone:2, partners:1, contacts:2, social:1, organizer_modes:1, files_sync:1, cleanup_schedule:1, background_audio:1, organizer:1, site_sections:1, inventory_runs:1, music_summary:1 });
     if (!path.startsWith('/v2/') && !path.startsWith('/insights/api/')) return reply({error:'Not found'},404);
     const auth = request.headers.get('Authorization') || ''; let uid,verifiedPhone='',tokenIssued=0;

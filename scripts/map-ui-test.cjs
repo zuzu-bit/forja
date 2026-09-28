@@ -1,74 +1,152 @@
-// Regression tests for the shipped public map frame. No network, WebGL or location access.
-// These verify fallback/control behavior; real tile/render evidence requires the browser.
-const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const server=path.resolve(__dirname,'../server');
-const {JSDOM}=require(process.env.FORJA_JSDOM||require.resolve('jsdom',{paths:[server]}));
-const frame=fs.readFileSync(path.join(server,'map-frame.html'),'utf8'),source=fs.readFileSync(path.join(server,'map-frame-client.js.txt'),'utf8');
-const checks=[];
-function fixture(mode='deferred'){
- const dom=new JSDOM(frame,{url:'https://forja.test/insights/map-frame',runScripts:'outside-only'}),w=dom.window,events=[],errors=[],creations=[],drawn=[],handlers={},tileHandlers={};
- const base={center:{lat:45.8,lng:24.9},zoom:6,removed:false,setView(p,z){this.center={lat:p[0],lng:p[1]};this.zoom=z;return this;},getCenter(){return this.center;},getZoom(){return this.zoom;},on(name,callback){handlers[name]=callback;return this;},fitBounds(){return this;},invalidateSize(){},remove(){this.removed=true;}};
- const tiles={addTo(){return this;},on(name,callback){tileHandlers[name]=callback;return this;}};
- const overlay={clearLayers(){drawn.length=0;},addTo(){return this;}};
- w.L={map:()=>base,control:{zoom:()=>({addTo(){}})},layerGroup:()=>overlay,tileLayer:()=>tiles,geoJSON(data){return {addTo(){drawn.push(data);return this;}}},marker(){return{}},divIcon(value){return value;}};
- w.ForjaMapHost={event(raw){events.push(JSON.parse(raw));}};w.console.error=(...args)=>errors.push(args.join(' '));
- w.ForjaMapRenderer={create(container,options){
-  if(mode==='throw'){w.document.getElementById(container).append(w.document.createElement('canvas'));throw Error('Failed to initialize WebGL');}
-  const vector={options,center:{lat:options.center[1],lon:options.center[0],zoom:options.zoom},destroyed:false,data:null,three:false,resizes:0,setData(data){this.data=data;},resize(){this.resizes++;},set3D(enabled){this.three=enabled;return true;},focus(p,z){this.center={...p,zoom:z};},fit(){},getCenter(){return this.center;},destroy(){this.destroyed=true;}};creations.push(vector);return vector;
- }};
- w.eval(source);return {dom,w,events,errors,creations,base,drawn,tileHandlers,$:id=>w.document.getElementById(id),close(){dom.window.close();}};
+// Run after npm ci --prefix server: node scripts/map-ui-test.cjs
+// The site map end to end in jsdom: the real client (site-*.js.txt) + the real renderer (map-renderer.js.txt) over a MapLibre
+// stand-in. Checks what Lana saw as "the map is not updated": one MapLibre map, ForjaStyle Night, fitted on her own data, data
+// updates through setData only, 3D as pitch on the same map, tolerant of tile errors, polling only while visible, Găsire mode.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const {randomUUID} = require('node:crypto');
+const {server, createFixture, installMockFetch, clientSource} = require('./ux-fixture.cjs');
+let JSDOM;
+try { ({JSDOM} = require(process.env.FORJA_JSDOM || require.resolve('jsdom', {paths: [server]}))); }
+catch { throw Error('Run npm ci --prefix server, or set FORJA_JSDOM to an installed jsdom package path.'); }
+const html = fs.readFileSync(path.join(server, 'insights.html'), 'utf8');
+const renderer = fs.readFileSync(path.join(server, 'map-renderer.js.txt'), 'utf8');
+const tick = (ms = 20) => new Promise(resolve => setTimeout(resolve, ms));
+async function until(fn, label, ms = 3000) { const start = Date.now(); while (Date.now() - start < ms) { if (fn()) return; await tick(10); } throw Error('Timed out: ' + label); }
+
+function page({profile = 'rich', styleFails = false} = {}) {
+  const dom = new JSDOM(html, {url: 'https://forja.test/insights', runScripts: 'outside-only', pretendToBeVisual: true});
+  const w = dom.window, errors = [], maps = [];
+  w.addEventListener('error', e => errors.push(e.error || e.message));
+  w.addEventListener('unhandledrejection', e => errors.push(e.reason));
+  w.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
+  w.HTMLElement.prototype.scrollIntoView = () => {};
+  w.scrollTo = () => {};
+  w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  w.HTMLDialogElement.prototype.close = function () { this.open = false; };
+  w.crypto.randomUUID = randomUUID;
+  w.HTMLCanvasElement.prototype.getContext = () => null; // jsdom fără canvas: pinii nu se desenează, restul hărții da
+  w.AbortController = AbortController; w.Response = Response;
+  w.URL.createObjectURL = () => 'blob:x'; w.URL.revokeObjectURL = () => {};
+  w.matchMedia = q => ({matches: /reduce/.test(q) || /min-width: 1024px/.test(q), addEventListener() {}, removeEventListener() {}});
+  class Map {
+    constructor(options) {
+      this.options = options; this.handlers = {}; this.sources = {}; this.paint = {}; this.layout = {}; this.images = {};
+      this.style = ['background', 'water', 'park', 'building', 'building-3d', 'road_minor', 'label_city'].map(id => ({id, type: id === 'building-3d' ? 'fill-extrusion' : id === 'label_city' ? 'symbol' : 'fill'}));
+      this.added = 0; this.canvas = {style: {}}; maps.push(this);
+      setTimeout(() => styleFails ? this.fire('error', {error: Error('Failed to fetch style')}) : this.fire('load'), 5);
+    }
+    on(name, a, b) { const fn = typeof a === 'function' ? a : b; (this.handlers[name] ||= []).push(fn); return this; }
+    fire(name, e = {}) { for (const fn of this.handlers[name] || []) fn(e); }
+    getLayer(id) { return this.style.find(l => l.id === id); }
+    getStyle() { return {layers: this.style}; }
+    addLayer(l, before) { this.added++; const i = before ? this.style.findIndex(x => x.id === before) : -1; if (i >= 0) this.style.splice(i, 0, l); else this.style.push(l); }
+    addSource(id, spec) { this.sources[id] = {...spec, sets: 0, setData(d) { this.data = d; this.sets++; }}; }
+    getSource(id) { return this.sources[id]; }
+    setPaintProperty(id, k, v) { (this.paint[id] ||= {})[k] = v; }
+    setLayoutProperty(id, k, v) { (this.layout[id] ||= {})[k] = v; }
+    setFilter() {} setLayerZoomRange() {}
+    hasImage(id) { return !!this.images[id]; } addImage(id, d) { this.images[id] = d; }
+    easeTo(v) { this.ease = v; } fitBounds(b, o) { this.fit = {b, o}; } jumpTo(v) { this.jump = v; } getZoom() { return 12; }
+    getCanvas() { return this.canvas; } resize() {} remove() { this.removed = true; }
+  }
+  w.maplibregl = {Map};
+  w.eval(renderer);
+  const fixture = createFixture(profile, Date.now());
+  installMockFetch(w, fixture);
+  w.eval(clientSource() + '\nwindow.__ux = {Poll, MapHost, Teren, Gasire, Circle, Explore};');
+  const $ = id => { const n = w.document.getElementById(id); assert(n, 'Missing #' + id); return n; };
+  return {w, $, maps, fixture, errors, ux: w.__ux};
 }
-function check(name,fn){const f=fixture();try{fn(f);checks.push(name);}finally{f.close();}}
-check('2D exists immediately and readiness waits for a real raster tile receipt',f=>{
- assert(f.w.ForjaMap);assert(!f.$('map').hidden);assert(f.$('vector').hidden);assert.equal(f.creations.length,0);assert.equal(f.w.ForjaMap.ready,false);
- f.tileHandlers.tileerror();assert.equal(f.w.ForjaMap.ready,false);assert.match(f.$('map-status').textContent,/conexiunea/);
- f.tileHandlers.tileload();assert.equal(f.w.ForjaMap.ready,true);assert.equal(f.events.filter(e=>e.type==='ready').length,1);assert.equal(f.events.find(e=>e.type==='ready').mode,'2d');f.tileHandlers.tileload();assert.equal(f.events.filter(e=>e.type==='ready').length,1);
-});
-{
- const f=fixture('throw');try{
-  f.tileHandlers.tileload();f.w.ForjaMap.set3D(true);assert(!f.base.removed);assert(f.$('vector').hidden);assert.equal(f.$('vector').children.length,0);assert.equal(f.$('vector').style.pointerEvents,'none');assert.match(f.$('map-status').dataset.error,/Failed to initialize WebGL/);assert.equal(f.w.ForjaMap.mode3d,false);assert.equal(f.events.at(-1).recoverable,true);
-  const data={people:{type:'FeatureCollection',features:[{type:'Feature',properties:{id:'p'},geometry:{type:'Point',coordinates:[26.1,44.4]}}]}};f.w.ForjaMap.setData(data);assert.equal(f.drawn[0],data.people);f.w.ForjaMap.focus({lat:44.4,lon:26.1},15);assert.equal(f.base.center.lat,44.4);assert.equal(f.base.zoom,15);
-  checks.push('synchronous WebGL failure leaves interactive 2D with truthful error and retained overlays');
- }finally{f.close();}
+async function login(p) {
+  p.$('login-email').value = 'lana@example.test'; p.$('login-password').value = 'x';
+  p.$('login-form').dispatchEvent(new p.w.Event('submit', {bubbles: true, cancelable: true}));
+  await tick(40);
 }
-check('3D receives the current 2D camera and overlays only when ready',f=>{
- f.w.ForjaMap.focus({lat:44.4,lon:26.1},16);const data={places:{type:'FeatureCollection',features:[]}};f.w.ForjaMap.setData(data);f.w.ForjaMap.set3D(true);const vector=f.creations[0];assert.equal(vector.options.zoom,16);assert.deepEqual([...vector.options.center],[26.1,44.4]);assert.equal(f.$('vector').style.opacity,'0');assert.equal(f.$('vector').style.pointerEvents,'none');assert.equal(f.w.ForjaMap.mode3d,false);
- vector.options.onReady();assert.equal(vector.data,data);assert.equal(vector.three,true);assert.equal(f.w.ForjaMap.mode3d,true);assert.equal(f.$('vector').style.pointerEvents,'auto');
- vector.center={lat:46.7,lon:23.6,zoom:18};f.w.ForjaMap.set3D(false);assert.equal(f.base.center.lat,46.7);assert.equal(f.base.zoom,18);assert(f.$('vector').hidden);
-});
-check('late 3D readiness after cancellation cannot hide the 2D map',f=>{
- f.w.ForjaMap.set3D(true);const vector=f.creations[0];f.w.ForjaMap.set3D(false);vector.options.onReady();assert.equal(f.w.ForjaMap.mode3d,false);assert(f.$('vector').hidden);assert.equal(f.$('vector').style.pointerEvents,'none');assert.equal(vector.destroyed,true,'Cancelled pending renderer must be released before another attempt');
-});
-check('post-ready vector failure preserves camera and overlays on 2D',f=>{
- const data={routes:{type:'FeatureCollection',features:[{type:'Feature',geometry:{type:'LineString',coordinates:[[26.1,44.4],[26.2,44.5]]},properties:{}}]}};f.w.ForjaMap.setData(data);f.w.ForjaMap.set3D(true);const vector=f.creations[0];vector.options.onReady();vector.center={lat:47.1,lon:27.5,zoom:17};vector.options.onError(Error('WebGL context lost'));
- assert.equal(f.w.ForjaMap.mode3d,false);assert(f.$('vector').hidden);assert.equal(vector.destroyed,true);assert.equal(f.base.center.lat,47.1);assert.equal(f.base.zoom,17);assert.equal(f.drawn[0],data.routes);assert.match(f.$('map-status').dataset.error,/WebGL context lost/);
-});
-check('destroyed frame ignores late readiness',f=>{
- f.w.ForjaMap.set3D(true);const vector=f.creations[0];f.w.ForjaMap.destroy();vector.options.onReady();assert.equal(vector.destroyed,true);assert.equal(f.base.removed,true);assert.equal(f.w.ForjaMap.mode3d,false);
-});
-function rendererFixture(mode='normal'){
- const dom=new JSDOM('<div id="vector"></div>',{runScripts:'outside-only'}),w=dom.window,timers=new Map(),errors=[],events={},maps=[],sources=new Map();let timerId=0,ready=0;
- w.matchMedia=()=>({matches:false});w.setTimeout=fn=>{timers.set(++timerId,fn);return timerId;};w.clearTimeout=id=>timers.delete(id);
- class MapStub{
-  constructor(){if(mode==='constructor')throw Error('Failed to initialize WebGL');this.removed=false;maps.push(this);}
-  addControl(){}on(name,callback){events[name]=callback;return this;}getStyle(){return {layers:[]};}
-  addSource(id){sources.set(id,{setData(){}});}getSource(id){return sources.get(id);}addLayer(){if(mode==='layer')throw Error('Layer setup failed');}
-  getCenter(){return {lat:44.4,lng:26.1};}getZoom(){return 16;}getCanvas(){return {style:{}};}queryRenderedFeatures(){return[];}
-  setLayoutProperty(){}easeTo(){}flyTo(){}resize(){}remove(){this.removed=true;}
- }
- w.maplibregl={Map:MapStub,NavigationControl:class{}};w.eval(fs.readFileSync(path.join(server,'map-renderer.js.txt'),'utf8'));
- return {w,timers,errors,events,maps,create(){return w.ForjaMapRenderer.create('vector',{onError:e=>errors.push(e),onReady:()=>ready++});},get ready(){return ready;},close(){dom.window.close();}};
-}
-{
- const f=rendererFixture('constructor');try{assert.throws(()=>f.create(),/Failed to initialize WebGL/);assert.equal(f.timers.size,0);checks.push('renderer constructor failure clears its deadline and retains the exact cause');}finally{f.close();}
-}
-{
- const f=rendererFixture();try{const renderer=f.create();assert.equal(f.timers.size,1);[...f.timers.values()][0]();assert.match(f.errors[0].message,/timed out/);f.events.load();assert.equal(f.ready,0);assert.equal(renderer.ready,false);renderer.destroy();checks.push('renderer timeout rejects a late load instead of reviving failed 3D');}finally{f.close();}
-}
-{
- const f=rendererFixture('layer');try{const renderer=f.create();f.events.load();assert.equal(f.ready,0);assert.match(f.errors[0].message,/Layer setup failed/);assert.equal(renderer.ready,false);assert.equal(f.timers.size,0);renderer.destroy();checks.push('layer setup exceptions reach fallback instead of silently losing the watchdog');}finally{f.close();}
-}
-{
- const f=rendererFixture();try{const renderer=f.create();f.events.load();assert.equal(f.ready,1);assert.equal(renderer.ready,true);assert.equal(renderer.getCenter().zoom,16);f.events.webglcontextlost();assert.match(f.errors[0].message,/WebGL context lost/);assert.equal(renderer.ready,false);assert.equal(renderer.set3D(true),false);f.events.load();assert.equal(f.ready,1);renderer.destroy();checks.push('post-ready WebGL loss invalidates readiness and reports recoverable failure');}finally{f.close();}
-}
-console.log(JSON.stringify({passed:checks.length,checks,live_tiles:false,webgl_render:false},null,2));
+async function open(p, hash) { p.w.location.hash = '#' + hash; await tick(40); }
+const checks = [];
+async function check(name, fn) { await fn(); checks.push(name); }
+
+(async () => {
+  await check('one MapLibre map on OpenFreeMap liberty, recoloured Night, fitted on her own territory', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'teren');
+    await until(() => p.$('map-host').dataset.ready === '1' && p.maps[0]?.fit, 'fit');
+    const map = p.maps[0];
+    assert.equal(p.maps.length, 1);
+    assert.equal(map.options.style, 'https://tiles.openfreemap.org/styles/liberty');
+    assert.equal(map.paint.background['background-color'], '#141517');
+    const cells = p.fixture.data.explore.features.flatMap(f => f.geometry.coordinates[0]);
+    const lngs = cells.map(c => c[0]), lats = cells.map(c => c[1]);
+    assert(map.fit.b[0][0] <= Math.min(...lngs) && map.fit.b[1][0] >= Math.max(...lngs), 'bounds cover every cell (lng)');
+    assert(map.fit.b[0][1] <= Math.min(...lats) && map.fit.b[1][1] >= Math.max(...lats), 'bounds cover every cell (lat)');
+    assert.equal(map.fit.o.padding.right, 420, 'the side panel does not hide the territory');
+    assert.equal(map.sources['forja-cells'].data.features.length, p.fixture.data.explore.features.length);
+    assert.equal(map.sources['forja-friends'].data.features.length, 5, '4 visible friends + Mama (Radu once)');
+    assert.equal(map.sources['forja-streets'].data.features.length, 6);
+    assert.equal(map.sources['forja-me'].data.features.length, 1);
+    assert.equal(p.errors.length, 0, p.errors.join('\n'));
+  });
+
+  await check('updates arrive through setData on the same sources; no layer is rebuilt; the camera stays', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'teren');
+    await until(() => p.maps[0]?.fit, 'fit');
+    const map = p.maps[0], added = map.added, sets = map.sources['forja-friends'].sets, fit = map.fit;
+    p.fixture.data.cerc.friends[1].lat += 0.01;
+    await p.ux.Circle.load(); await tick(30);
+    assert.equal(map.added, added, 'no new layers');
+    assert(map.sources['forja-friends'].sets > sets, 'friends updated by setData');
+    assert.equal(map.fit, fit, 'no refit on a poll');
+  });
+
+  await check('3D is pitch on the same map; the layers popover hides layers without removing them', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'teren');
+    await until(() => p.$('map-host').dataset.ready === '1', 'ready');
+    const map = p.maps[0];
+    p.$('teren-3d').click();
+    assert.equal(map.ease.pitch, 55); assert.equal(p.$('teren-3d').getAttribute('aria-pressed'), 'true'); assert.equal(p.$('teren-3d').textContent, '2D');
+    assert.equal(map.layout['building-3d'].visibility, 'visible');
+    p.$('teren-3d').click();
+    assert.equal(map.ease.pitch, 0);
+    p.$('teren-layers-btn').click(); assert(!p.$('teren-layers').hidden);
+    const heat = [...p.$('teren-layers').querySelectorAll('.switch')][0];
+    heat.click(); await tick(20);
+    assert.equal(map.layout['forja-heat'].visibility, 'none');
+    assert(map.getLayer('forja-heat'), 'still installed');
+    assert.equal(p.maps.length, 1);
+  });
+
+  await check('tile errors after load leave the map alive; a style failure shows an honest status and the panel stays usable', async () => {
+    let p = page();
+    await tick(20); await login(p); await open(p, 'teren');
+    await until(() => p.$('map-host').dataset.ready === '1', 'ready');
+    p.maps[0].fire('error', {error: Error('tile 404'), sourceId: 'openmaptiles', tile: {}});
+    assert.equal(p.$('map-host').dataset.failed, undefined); assert(p.$('map-status').hidden);
+    p = page({styleFails: true});
+    await tick(20); await login(p); await open(p, 'teren');
+    await until(() => p.$('map-host').dataset.failed === '1', 'failed');
+    assert(!p.$('map-status').hidden); assert.match(p.$('map-status').textContent, /Harta nu se poate desena aici/);
+    await until(() => p.$('teren-panel').querySelector('.terr'), 'panel still renders');
+  });
+
+  await check('the map is shared with Găsire: phone mode, fitted on the device, fast polling only during a command', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'gasire');
+    await until(() => p.maps[0] && p.$('map-host').dataset.ready === '1' && p.maps[0].sources['forja-devices'].data?.features?.length, 'device on map');
+    const map = p.maps[0];
+    assert.equal(map.layout['forja-cells-fill'].visibility, 'none'); assert.equal(map.layout['forja-accuracy-fill'].visibility, 'visible');
+    assert.equal(p.$('gasire-map').querySelector('#map-host') !== null, true);
+    assert.equal(p.ux.Poll.jobs.get('gasire:devices').ms, 30000);
+    await open(p, 'teren');
+    assert(p.$('teren-map').querySelector('#map-host'), 'the same host moved to Teren');
+    assert.equal(map.layout['forja-cells-fill'].visibility, 'visible');
+    assert.equal(p.maps.length, 1);
+    assert(!p.ux.Poll.jobs.has('gasire:devices'), 'Găsire stops polling when hidden');
+  });
+
+  console.log(JSON.stringify({ok: true, checks}, null, 1));
+  process.exit(0);
+})().catch(error => { console.error(error); process.exit(1); });

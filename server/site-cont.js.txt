@@ -1,0 +1,57 @@
+// LIVRET · Cont și contract — contul, contractul (versiune, dată), fiecare conductă cu „ultima dată”, pauza primirii
+// pe site (/insights/api/intake), confidențialitatea pe scurt și ieșirea. Prin /insights/api/cont.
+const PIPES = {
+  sesiune: ['Sesiunea telefonului', 'phone'], galerie: ['Copii din galerie', 'photo'], explorare: ['Zone și locuri', 'teren'], agenda: ['Din agendă', 'camarazi'],
+  somn: ['Nopți', 'moon'], gasire: ['Găsire', 'gasire'], mese: ['Mese', 'ratie'], miscare: ['Mișcare', 'mars'], muzica: ['Muzică', 'muzica'], inventar: ['Inventar', 'inventar']
+};
+const PRIVACY = [
+  ['Doar tu', 'Site-ul arată doar datele contului tău. Camarazii nu văd nimic de aici.'],
+  ['Poziția', 'Ultimele 24 de ore pe site; ultima poziție a telefonului, 7 zile.'],
+  ['Galeria', 'Copii ale ultimelor poze, 24 de ore, cel mult 500. Originalele rămân pe telefon.'],
+  ['Nopțile', 'Înregistrările se șterg singure după 7 zile.'],
+  ['Unde', 'Google Firebase (jurnale, poziție, camarazi) și Cloudflare (site, nopți, analize).'],
+  ['Ieșirea', '„Ieși” șterge din browser tot ce ține de cont.']
+];
+/** „Din vin. 25 sept. ” — fără punct dublu după luna prescurtată. */
+function since(ms) { const d = fmt.day(ms); return 'Din ' + d + (d.endsWith('.') ? ' ' : '. '); }
+const Cont = {
+  data: null, body: null, ownChip: true,
+  mount(body) { Cont.body = body; },
+  enter() { loadInto('cont', Cont.body, () => api('/insights/api/cont'), d => { Cont.data = d; Cont.render(d); }, {replaceOnError: !Cont.data}); },
+  render(d) {
+    const me = d.me || Site.me || {}, c = d.contract || {}, current = c.current || 3;
+    const signed = num(c.version) !== null && num(c.at) !== null && !c.revokedAt;
+    const state = !signed ? (c.revokedAt ? 'revoked' : 'none') : c.version < current ? 'old' : 'ok';
+    setChip('cont', {state: state === 'ok' ? 'on' : state === 'old' ? 'stale' : 'off'}, {ok: 'CONTRACT v' + c.version, old: 'SEMNEAZĂ v' + current, revoked: 'REVOCAT', none: 'NESEMNAT'}[state]);
+    setLine('cont', '');
+    const contract = h('article', {class: 'card contract-card ' + state},
+      h('div', {class: 'contract-top'}, stamp('CONTRACT', state === 'ok' ? '' : state === 'old' ? 'amber' : 'ember'), monoLabel(state === 'ok' || state === 'old' ? 'VERSIUNEA ' + c.version : '')),
+      h('p', {class: 'contract-title', text: {ok: 'Semnat.', old: 'Semnat, dar vechi.', revoked: 'Revocat.', none: 'Nesemnat.'}[state]}),
+      h('p', {class: 'contract-text', text: {ok: since(c.at) + 'Totul pleacă doar pentru tine.', old: 'Deschide FORJA și semnează versiunea ' + current + '. Până atunci, site-ul primește doar jurnalele.', revoked: since(c.revokedAt) + 'Nimic nu mai pleacă spre site.', none: 'Semnează-l în FORJA. Posturile se aprind singure.'}[state]}));
+    const pipes = h('div', {class: 'card pipes'}, h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Ce pleacă din telefon'}), monoLabel('ULTIMA DATĂ')),
+      h('ul', {class: 'pipe-list'}, (d.pipes || []).map(p => {
+        const [label, ic] = PIPES[p.key] || [p.key, 'info'];
+        const age = p.lastAt ? Date.now() - p.lastAt : Infinity, st = !p.lastAt ? 'off' : age < 2 * DAY ? 'on' : 'stale';
+        return h('li', {class: 'pipe'}, h('span', {class: 'pipe-ic'}, icon(ic, 18)), h('span', {class: 'pipe-name', text: label}), h('i', {class: 'dot ' + st}), h('span', {class: 'pipe-when', text: p.lastAt ? fmt.ago(p.lastAt) : 'niciodată'}));
+      })));
+    const paused = !!d.intake?.paused;
+    const intake = h('div', {class: 'card intake'},
+      h('label', {class: 'toggle-row'}, h('span', {class: 'toggle-text'}, h('b', {text: 'Primirea pe site'}), h('span', {class: 'toggle-sub', id: 'cont-intake-sub', text: paused ? 'În pauză. Telefonul păstrează tot.' : 'Pornită'})),
+        sw(!paused, 'Primirea pe site', async on => {
+          const cur = await api('/insights/api/intake');
+          const next = await api('/insights/api/intake', {method: 'POST', body: {accepting: on, revision: cur?.revision}});
+          const accepting = next?.accepting !== undefined ? !!next.accepting : on;
+          Cont.data.intake = {paused: !accepting};
+          $('cont-intake-sub').textContent = accepting ? 'Pornită' : 'În pauză. Telefonul păstrează tot.';
+          toast(accepting ? 'Primirea a pornit.' : 'Primirea e în pauză.', accepting);
+        })));
+    const account = h('div', {class: 'card account'}, avatar(me.name || me.email, {size: 56, cls: 'ring-on'}),
+      h('div', {class: 'account-text'}, h('span', {class: 'account-name', text: me.name || 'Contul tău'}), h('span', {class: 'account-mail', text: me.email || Auth.session?.email || ''})),
+      h('button', {type: 'button', class: 'btn btn-ghost-danger', id: 'cont-logout', onclick: () => signOut()}, icon('logout', 18), h('span', {text: 'Ieși'})));
+    const privacy = h('details', {class: 'card privacy'}, h('summary', null, h('span', {class: 'block-title', text: 'Ce vede site-ul'}), icon('next', 16, 'chev')),
+      h('dl', {class: 'privacy-list'}, PRIVACY.flatMap(([k, v]) => [h('dt', {text: k}), h('dd', {text: v})])));
+    fill(Cont.body, h('div', {class: 'cont-grid'}, h('div', {class: 'cont-col'}, account, contract, intake, privacy), pipes));
+  },
+  reset() { Cont.data = null; if (Cont.body) delete Cont.body.dataset.loaded; }
+};
+Site.register('cont', Cont);
