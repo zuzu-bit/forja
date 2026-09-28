@@ -1,7 +1,8 @@
 // Routerul AI — un singur punct de intrare pentru tot ce cere un model pe forja-api.
 // Ordinea (decizia „fără bani”): gemini (cheie gratuită) → groq (cheie gratuită) → anthropic / openai (doar cu chei plătite) → workers (fără cheie).
 // Reguli: eroare de rețea/HTTP/JSON invalid → următorul model/furnizor; extragere JSON strictă + validare cu schema;
-// o singură reîncercare „repară JSON-ul” per furnizor; twoPass = a doua trecere de verificare; contor zilnic per furnizor (și per model la Gemini).
+// o singură reîncercare „repară JSON-ul” per furnizor; twoPass = a doua trecere de verificare; contor zilnic per furnizor (și per model la Gemini);
+// modelele în răcire după un 429 (hook-ul `cooling` al furnizorului, la Gemini 65 s) sunt sărite fără apel.
 import { AiError, errorText, bytesToB64, readCached, writeCached } from "./ai-common.mjs";
 import { extractJsonStrict, validate, TRANSCRIPT_SCHEMA } from "./ai-schemas.mjs";
 import { gemini, resetGeminiCache } from "./ai-gemini.mjs";
@@ -13,7 +14,7 @@ import { workers } from "./ai-workers.mjs";
 export const ALL_PROVIDERS = [gemini, groq, anthropic, openai, workers];
 // Orientativ, după paginile furnizorilor din septembrie 2026; cotele se schimbă, /v1/diag arată consumul real de azi.
 export const KNOWN_LIMITS = {
-  gemini: "nivel gratuit, per model (cote separate, se schimbă des — nu le presupunem): un 429 la un model trece la următorul; lista de modele e descoperită din GET /models (cache 24 h)",
+  gemini: "nivel gratuit, per model (cote separate, pe minut și pe zi; sonda din 28.09: gemini-3.8-flash = 5 cereri/min): un 429 pune modelul în răcire 65 s și trece la următorul; lista de modele e descoperită din GET /models (cache 24 h)",
   groq: "nivel gratuit: llama-3.3-70b ≈ 14 400 cereri/zi; viziune (dacă lista /models are un model de viziune — Llama 4 a fost retras în 28.09) ≈ 1 000/zi; Whisper ≈ 7 200 s audio/oră (≈ 4 chunk-uri de 30 min pe oră), 28 800 s/zi — o noapte întreagă se întinde pe mai multe ore",
   workers: "10 000 neuroni/zi (plan gratuit) — neuronii se văd doar în dash.cloudflare.com; aici se numără apelurile de model",
   anthropic: "după plată",
@@ -132,20 +133,24 @@ function parseAndValidate(text, schema) {
  * altfel fiecare model primește timeout-ul furnizorului. `opts.totalTimeoutMs` e plafonul pe TOATĂ cererea (toți furnizorii la un loc):
  * clientul nu așteaptă niciodată un lanț mort. Fiecare apel de model se numără în contorul zilnic. Un 404 pe un model îl retrage
  * (`p.retire`) și trece la următorul. A doua trecere (`twoPass`) se sare când primul pas a durat peste `twoPassMaxFirstPassMs`
- * sau când furnizorul e în `twoPassSkip` (Workers: verificatorul nu vede poza și e lent).
- * Întoarce {json, provider, model, ms, verified?} sau aruncă AiError cu lista încercărilor (fără chei).
+ * sau când furnizorul e în `twoPassSkip` (Workers: verificatorul nu vede poza și e lent). Un model în răcire (`p.cooling`, după un 429)
+ * e sărit fără apel. `opts.imagesByProvider[nume]` înlocuiește pozele pentru un furnizor (ex. Workers: 1–2 miniaturi per grup, nu 24).
+ * Întoarce {json, provider, model, ms, verified?, attempts, tries:[{provider, model, code}], visionLabels} sau aruncă AiError cu lista
+ * încercărilor (fără chei); `tries` = fiecare model încercat, cu codul (429, 503, json, network…; „ok” la câștigător) — pentru jurnal.
  */
 async function runJson(env, opts, need) {
   const t0 = Date.now();
   const attempts = [];
+  const tries = [];
   const list = providers(env).filter((p) => (!need.audio || p.supports.audio));
   if (!list.length) throw new AiError(need.audio ? "Nu există furnizor pentru audio (lipsă cheie Gemini)." : "Niciun furnizor AI configurat.", { kind: "unsupported" });
   const images = Array.isArray(opts.images) ? opts.images : [];
   const documents = Array.isArray(opts.documents) ? opts.documents : [];
   const totalDeadline = opts.totalTimeoutMs > 0 ? t0 + opts.totalTimeoutMs : 0;
   const twoPassSkip = new Set(Array.isArray(opts.twoPassSkip) ? opts.twoPassSkip : []);
+  const byProvider = opts.imagesByProvider && typeof opts.imagesByProvider === "object" ? opts.imagesByProvider : {};
   for (const p of list) {
-    const imgs = p.supports.images ? images : [];
+    const imgs = p.supports.images ? (Array.isArray(byProvider[p.name]) ? byProvider[p.name] : images) : [];
     const docs = p.supports.documents ? documents : [];
     // Bugetul furnizorului: cel dat de rută, tăiat la ce a mai rămas din bugetul total. Sub o secundă nu mai pornim nimic.
     let budgetMs = opts.timeoutMs || (need.audio ? p.audioTimeoutMs || p.timeoutMs : p.timeoutMs);
@@ -167,6 +172,12 @@ async function runJson(env, opts, need) {
       const deadline = providerDeadline || Date.now() + budgetMs;
       const remaining = () => deadline - Date.now();
       if (remaining() < 1000) { attempts.push(`${p.name}/${model}: bugetul de timp al furnizorului s-a epuizat`); break; }
+      // Răcirea după 429 (Gemini: cota pe minut): modelul e sărit fără apel; verificarea e leneșă, doar pentru modelele la care ajungem.
+      if (typeof p.cooling === "function") {
+        let cd = null;
+        try { cd = await p.cooling(env, model); } catch (_) { cd = null; }
+        if (cd && cd.until > Date.now()) { attempts.push(`${p.name}/${model}: în răcire după 429${cd.limit ? ` (limită ${cd.limit})` : ""}, încă ${Math.max(1, Math.ceil((cd.until - Date.now()) / 1000))} s (sărit)`); continue; }
+      }
       const call = async (prompt, extra = {}) => {
         try {
           return await p.generate(env, { ...opts, model, prompt, images: imgs, documents: docs, audio: need.audio ? opts.audio : null, timeoutMs: Math.max(1000, remaining()), trace, ...extra });
@@ -183,7 +194,7 @@ async function runJson(env, opts, need) {
       let text;
       const t1 = Date.now();
       try { text = await call(opts.prompt); }
-      catch (e) { attempts.push(`${p.name}/${model}: ${errorText(e)}${await retire(e)}`); if (fatalStops(e)) { stop = true; break; } continue; }
+      catch (e) { tries.push({ provider: p.name, model, code: tryCode(e) }); attempts.push(`${p.name}/${model}: ${errorText(e)}${await retire(e)}`); if (fatalStops(e)) { stop = true; break; } continue; }
       const firstPassMs = Date.now() - t1;
       let { json, errors } = parseAndValidate(text, opts.schema);
       if (!json && !repaired && remaining() > 5000) {
@@ -191,9 +202,9 @@ async function runJson(env, opts, need) {
         try {
           const text2 = await call(opts.prompt + REPAIR_NOTE + errors.join("; ") + ". Răspunde DOAR cu obiectul JSON cerut, fără text în plus, fără ```.");
           ({ json, errors } = parseAndValidate(text2, opts.schema));
-        } catch (e) { attempts.push(`${p.name}/${model} (reparare): ${errorText(e)}`); if (fatalStops(e)) { stop = true; break; } }
+        } catch (e) { attempts.push(`${p.name}/${model} (reparare): ${errorText(e)}`); if (fatalStops(e)) { tries.push({ provider: p.name, model, code: tryCode(e) }); stop = true; break; } }
       }
-      if (!json) { attempts.push(`${p.name}/${model}: JSON invalid (${errors.slice(0, 3).join("; ")})`); continue; }
+      if (!json) { tries.push({ provider: p.name, model, code: "json" }); attempts.push(`${p.name}/${model}: JSON invalid (${errors.slice(0, 3).join("; ")})`); continue; }
       let verified = false;
       const twoPassAllowed = opts.twoPass && !twoPassSkip.has(p.name) && !(opts.twoPassMaxFirstPassMs > 0 && firstPassMs > opts.twoPassMaxFirstPassMs);
       if (twoPassAllowed && remaining() > 8000) {
@@ -206,13 +217,32 @@ async function runJson(env, opts, need) {
       }
       const ms = Date.now() - t0;
       noteUse(opts.task, p.name, model, ms);
-      return { json, provider: p.name, model, ms, verified, attempts };
+      tries.push({ provider: p.name, model, code: "ok" });
+      return { json, provider: p.name, model, ms, verified, attempts, tries, visionLabels: Array.isArray(trace.visionLabels) ? trace.visionLabels.slice() : null };
     }
     if (stop) continue;
   }
   const err = new AiError("Niciun model n-a răspuns valid. " + attempts.slice(-3).join(" | "), { kind: "http" });
   err.attempts = attempts;
+  err.tries = tries;
   throw err;
+}
+/** Codul scurt al unei încercări picate, pentru jurnal: statusul HTTP sau clasa erorii (network, json, empty, blocked…). */
+const tryCode = (e) => (e && e.status ? e.status : e && e.kind ? e.kind : "eroare");
+
+/**
+ * Linia compactă de jurnal pentru un apel reușit: „gemini/gemini-3.8-flash · 2 încercări · 21 s · înainte: gemini-3.7-flash 429”.
+ * Doar nume de furnizori/modele, coduri și durate — niciodată conținut sau chei.
+ */
+export function triesSummary(r) {
+  const tries = Array.isArray(r?.tries) && r.tries.length ? r.tries : [{ provider: r?.provider, model: r?.model, code: "ok" }];
+  const n = tries.length;
+  const ms = Math.max(0, Number(r?.ms) || 0);
+  const secs = ms >= 10_000 ? String(Math.round(ms / 1000)) : String(Math.round(ms / 100) / 10).replace(".", ",");
+  const failed = tries.filter((t) => t.code !== "ok");
+  let line = `${r?.provider}/${r?.model} · ${n} ${n === 1 ? "încercare" : "încercări"} · ${secs} s`;
+  if (failed.length) line += " · înainte: " + failed.slice(-3).map((t) => `${t.provider === r?.provider ? "" : t.provider + "/"}${t.model} ${t.code}`).join(", ");
+  return line;
 }
 
 /** Poze (+PDF-uri la anthropic/gemini) → JSON validat. images:[{b64,mime,label?}], documents:[{b64,mime,name,label?}]. */

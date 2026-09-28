@@ -135,6 +135,38 @@ export const ORGANIZE_SCHEMA = {
   },
 };
 
+// ── Inventar 4.3: numele grupurilor de poze (POST /v1/organize/clusters) ──
+export const CLUSTER_KEEP = ["da", "poate", "nu"];
+/**
+ * Schema răspunsului pentru un lot de grupuri. Cu `ids` (cele din cerere) id-ul devine enum, iar lista are cel puțin câte un obiect
+ * pe grup: Gemini/Workers sunt constrânși la id-urile primite, iar un răspuns care sare un grup e reparat o dată de router.
+ * Lungimile sunt largi aici (nume ≤ 60): tăierea la 24 de caractere, curățarea și regula conservatoare pentru „nu” le face
+ * `sanitizeClusters` (ai-clusters.mjs), ca un nume de 25 de caractere să nu coste o reparare.
+ */
+export function clustersSchema(ids = []) {
+  const list = Array.isArray(ids) ? ids.map(String).filter(Boolean) : [];
+  return {
+    type: "object",
+    required: ["clusters"],
+    properties: {
+      clusters: {
+        type: "array", ...(list.length ? { minItems: list.length } : {}), maxItems: Math.max(8, list.length * 2),
+        items: {
+          type: "object",
+          required: ["id", "nume", "tema", "categorie", "pastrare", "motiv"],
+          properties: {
+            id: list.length ? { type: "string", enum: list } : str(80),
+            nume: str(60), tema: str(40), categorie: str(40),
+            pastrare: { type: "string", enum: CLUSTER_KEEP },
+            motiv: str(240),
+          },
+        },
+      },
+    },
+  };
+}
+export const CLUSTERS_SCHEMA = clustersSchema();
+
 // ── Somn: un clip de 5 s ──
 export const SLEEP_AUDIO_SCHEMA = {
   type: "object",
@@ -262,4 +294,4 @@ export function normalizeMeal(parsed, model = "") {
   };
 }
 
-export const SCHEMAS = { MEAL_SCHEMA, ORGANIZE_SCHEMA, SLEEP_AUDIO_SCHEMA, SLEEP_EVENTS_SCHEMA, SUMMARY_SCHEMA, TRANSCRIPT_SCHEMA };
+export const SCHEMAS = { MEAL_SCHEMA, ORGANIZE_SCHEMA, CLUSTERS_SCHEMA, SLEEP_AUDIO_SCHEMA, SLEEP_EVENTS_SCHEMA, SUMMARY_SCHEMA, TRANSCRIPT_SCHEMA };

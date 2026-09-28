@@ -3,7 +3,8 @@
 // lor de cont FORJA (Firebase), iar serverul analizează cu AI-ul companiei.
 
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { visionJson, textJson, audioJson, transcribe, hasAudioProvider, providers, diagProviders, ALL_PROVIDERS } from "./ai-router.mjs";
+import { visionJson, textJson, audioJson, transcribe, hasAudioProvider, providers, diagProviders, triesSummary, ALL_PROVIDERS } from "./ai-router.mjs";
+import { parseClustersRequest, nameClusters, CLUSTERS_MAX_BODY } from "./ai-clusters.mjs";
 import { MEAL_SCHEMA, ORGANIZE_SCHEMA, SLEEP_AUDIO_SCHEMA, SLEEP_EVENTS_SCHEMA, SUMMARY_SCHEMA, normalizeMeal, mealTotalsConsistent, extractJsonStrict } from "./ai-schemas.mjs";
 import { runWithAgree, runText, WORKERS_VISION_MODELS, WORKERS_TEXT_MODELS } from "./ai-workers.mjs";
 import { bytesToB64, b64Size, looksLikeB64, errorText } from "./ai-common.mjs";
@@ -55,9 +56,17 @@ function clampStr(v, max) {
 const hasGroq = (env) => providers(env).some((p) => p.name === "groq");
 const aiErrorMessage = (e, fallback) => {
   const msg = String(e && e.message ? e.message : e);
+  // Răcirea după 429 (cota Gemini e pe minut) și 503 „high demand” sunt trecătoare: nu le numim „limită zilnică”.
+  if (/răcire|ocupat/.test(msg)) return "Serverul AI e ocupat acum. Mai încearcă peste un minut.";
   if (/limita zilnic|429/.test(msg)) return "Limita zilnică a serverului AI e atinsă. Încearcă mai târziu.";
   return fallback;
 };
+// Jurnalul vede și reușitele (ca să se vadă rezervele): „AI meal ok: gemini/gemini-3.8-flash · 2 încercări · 21 s · înainte: …”.
+// Doar furnizor/model/cod/durată — fără conținut, fără chei. Se așteaptă (nu waitUntil): două scrieri paralele în același
+// _admin/log.json și-ar pierde una alteia rândul.
+async function logAiOk(env, label, r) {
+  try { await logEvent(env, `AI ${label} ok: ${triesSummary(r)}`.slice(0, 180), 200, Number(r && r.ms) || 0); } catch (_) { }
+}
 
 // ── Autodiagnoză: furnizori (fără chei), consum, modele Cloudflare care răspund pe acest cont (citită de CI la deploy) ──
 const TINY_JPEG_B64 =
@@ -69,6 +78,7 @@ async function handleDiag(env, { models = true } = {}) {
   const results = await diagProviders(env);
   results.r2 = env.RECORDS ? "OK: binding prezent" : "ERR: lipsă binding";
   results.organize = "ok (v2, PDF)";
+  results["organize-clusters"] = "ok";
   results.meal = "v2 (două treceri, ≤ 90 s în total)";
   results.sleep = env.RECORDS ? "chunk-uri + cronologie" : "fără R2: doar clipuri";
   if (models && env.AI) {
@@ -141,6 +151,7 @@ async function handleMeal(request, env) {
     meal.provider = r.provider;
     // „verificat” înseamnă ce va vedea clientul: a doua trecere a răspuns ȘI totalurile respectă 4P+4C+9G ±15 % după normalizare.
     meal.verificat = !!r.verified && mealTotalsConsistent(meal.total);
+    await logAiOk(env, "meal", r);
     return json(meal);
   } catch (e) {
     // `detalii` = furnizor/model/clasa erorii (fără chei, fără conținut) — ca să vedem în diagnostic DE CE a picat.
@@ -309,12 +320,39 @@ async function handleOrganize(request, env, uid) {
     // Groq/OpenAI/Workers nu primesc PDF-ul: pentru documentele fără text extras, un rezumat al lor ar fi inventat.
     const seesPdf = !!((ALL_PROVIDERS.find((p) => p.name === r.provider) || {}).supports || {}).documents;
     const blind = new Set(seesPdf ? [] : items.filter((i) => i.pdf && !i.text).map((i) => i.id));
+    await logAiOk(env, "organize", r);
     return json(sanitizeOrganize(r.json, ids, r.provider + "/" + r.model, blind));
   } catch (e) {
     if (e && e.kind === "unsupported") return json({ error: "AI indisponibil pe server." }, 503);
     const detalii = String(e && e.message ? e.message : e).slice(0, 600);
     try { await logEvent(env, "AI organize: " + detalii.slice(0, 180), 422, 0); } catch (_) { }
     return json({ error: aiErrorMessage(e, "AI-ul n-a produs sugestii valide. Mai încearcă."), detalii }, 422);
+  }
+}
+
+// ═══ Inventar 4.3: grupuri de poze → nume de dosare (ai-clusters.mjs are contractul, promptul și curățarea) ═══
+// POST /v1/organize/clusters {clusters:[{id, count, from, to, loc?, hints, thumbs}], locale:"ro"} → {clusters:[{id, nume, tema,
+// categorie, pastrare, motiv}], provider, model}. Limite: ≤ 4 grupuri, ≤ 24 miniaturi, fiecare ≤ 80 KB base64, corp ≤ 6 MB.
+async function handleOrganizeClusters(request, env) {
+  const declared = Number(request.headers.get("content-length") || 0);
+  if (declared > CLUSTERS_MAX_BODY) return json({ error: "Cererea e prea mare (max 6 MB)." }, 413);
+  let body;
+  try {
+    const buf = await request.arrayBuffer();
+    if (buf.byteLength > CLUSTERS_MAX_BODY) return json({ error: "Cererea e prea mare (max 6 MB)." }, 413);
+    body = JSON.parse(new TextDecoder().decode(buf));
+  } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
+  const parsed = parseClustersRequest(body);
+  if (parsed.error) return json({ error: parsed.error }, parsed.status);
+  try {
+    const { out, r } = await nameClusters(env, parsed);
+    await logAiOk(env, "clusters", r);
+    return json(out);
+  } catch (e) {
+    if (e && e.kind === "unsupported") return json({ error: "AI indisponibil pe server." }, 503);
+    const detalii = String(e && e.message ? e.message : e).slice(0, 600);
+    try { await logEvent(env, "AI clusters: " + detalii.slice(0, 180), 422, 0); } catch (_) { }
+    return json({ error: aiErrorMessage(e, "AI-ul n-a putut numi grupurile. Mai încearcă."), detalii }, 422);
   }
 }
 
@@ -1268,6 +1306,7 @@ async function route(request, env, url, ctx, auth = requireUser) {
 
     if (url.pathname === "/v1/meal") return handleMeal(request, env);
     if (url.pathname === "/v1/organize") return handleOrganize(request, env, uid);
+    if (url.pathname === "/v1/organize/clusters") return handleOrganizeClusters(request, env);
     if (url.pathname === "/v1/sleep-audio") return handleSleepAudio(request, env);
     if (url.pathname === "/v1/sleep-analyze") return handleSleepAnalyze(request, env, uid, ctx);
     if (url.pathname === "/v1/sleep-summary") return handleSleepSummary(request, env);
