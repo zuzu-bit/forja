@@ -127,6 +127,10 @@ object ContactsSync {
                     .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
                     .build()
                 WorkManager.getInstance(app).enqueueUniquePeriodicWork(WORK_PERIODIC, ExistingPeriodicWorkPolicy.KEEP, req)
+                // Cineva din agendă ți-a cerut prietenia după ultima comparare (a intrat de curând pe FORJA): regulile
+                // din 4.4 vor ca telefonul tău s-o confirme, deci comparăm acum, nu la rularea de mâine.
+                val uid = app.auth.currentUid
+                if (uid != null && app.friends.hasContactRequestSince(uid, app.prefs.contactsSyncedAt.first())) runNow(app)
             } catch (_: Exception) { }
         }
     }

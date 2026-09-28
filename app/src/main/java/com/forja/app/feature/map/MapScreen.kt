@@ -67,6 +67,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -943,7 +944,9 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                         app.prefs.setExploreSyncedAt(0L)
                         ExploreSync.schedule(context)
                         ExploreSync.kick(context)
-                        toast.show("Explorarea merge și pe site. Intră în panoul online cu același cont.")
+                        // Aceeași poartă ca ExploreSync.push: contractul semnat în versiunea de acum (Prefs.contractSigned).
+                        val signed = try { app.prefs.contractSigned.first() } catch (_: Exception) { false }
+                        toast.show(if (signed) "Explorarea merge și pe site. Intră în panoul online cu același cont." else "Pleacă pe site după ce semnezi contractul.")
                     } else {
                         ExploreSync.cancel(context)
                         toast.show("Oprit. Explorarea rămâne doar în telefon.")

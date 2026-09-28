@@ -8,7 +8,9 @@ import com.google.firebase.firestore.SetOptions
 
 /**
  * Sincronizarea în baza de date a companiei (Firestore-ul FORJA):
- * jurnalele urcă la contul fiecărui utilizator — users/{uid}/meals|sleep|activities.
+ * jurnalele urcă la contul fiecărui utilizator — users/{uid}/meals|sleep|activities —, iar din 4.4 și
+ * antrenamentele (users/{uid}/workouts), rația (users/{uid}/settings/targets) și emailul contului
+ * (users/{uid}/settings/account). Tot sub users/{uid}/…: regulile le dau doar proprietarului.
  * Pozele și clipurile audio NU se stochează nicăieri: se analizează și dispar.
  * Scrierile folosesc cache-ul offline Firestore — fără net, se trimit la revenire.
  */
@@ -92,6 +94,22 @@ object CloudSync {
                 ),
                 SetOptions.merge()
             )
+        } catch (_: Exception) { }
+    }
+
+    /** Un antrenament terminat (payload din [SitePayloads.workout]) → users/{uid}/workouts/w{id}. */
+    fun workout(uid: String?, localId: Long, doc: Map<String, Any?>) {
+        uid ?: return
+        try {
+            db.collection("users").document(uid).collection("workouts").document("w$localId").set(doc, SetOptions.merge())
+        } catch (_: Exception) { }
+    }
+
+    /** Rația zilnică (payload din [SitePayloads.targetsDoc]) → users/{uid}/settings/targets. */
+    fun targets(uid: String?, doc: Map<String, Any>) {
+        uid ?: return
+        try {
+            db.collection("users").document(uid).collection("settings").document("targets").set(doc, SetOptions.merge())
         } catch (_: Exception) { }
     }
 }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 
 /** Un prieten, cu starea lui live — onest: doar ce a publicat el. */
@@ -82,7 +83,15 @@ class FriendsRepository(
 ) {
     private fun friendshipId(a: String, b: String) = listOf(a, b).sorted().joinToString("_")
 
-    /** Adaugă un prieten prin codul lui de invitație. Prietenia e reciprocă, imediată. */
+    private companion object {
+        /** Cererile din agendă (4.4): `friendRequests/{de la}_{către}`. */
+        const val REQUESTS = "friendRequests"
+    }
+
+    /**
+     * Adaugă un prieten prin codul lui de invitație. Prietenia e reciprocă, imediată. Codul intră în document ca dovadă:
+     * regulile din 4.4 cer ca el să fie codul din profilul lui de acum (cu regulile vechi e doar un câmp în plus).
+     */
     suspend fun addFriendByCode(myUid: String, code: String): Result<String> {
         val clean = code.trim().uppercase().removePrefix("FORJA-")
         if (clean.length < 4) return Result.failure(IllegalArgumentException("Codul e prea scurt."))
@@ -90,33 +99,96 @@ class FriendsRepository(
         val otherUid = inv.getString("uid")
             ?: return Result.failure(IllegalArgumentException("Cod necunoscut. Verifică-l cu prietenul tău."))
         if (otherUid == myUid) return Result.failure(IllegalArgumentException("Acesta e chiar codul tău."))
-        if (!createFriendship(myUid, otherUid)) return Result.failure(IllegalArgumentException("Sunteți deja prieteni."))
+        if (!createFriendship(myUid, otherUid, clean)) {
+            // Refuzat: fie prietenia există deja, fie codul nu mai e al lui (și-a primit unul nou).
+            val exists = friendshipExists(myUid, otherUid)
+            return Result.failure(
+                IllegalArgumentException(if (exists == false) "Codul s-a schimbat. Cere-i codul nou." else "Sunteți deja prieteni.")
+            )
+        }
         val other = db.collection("users").document(otherUid).get().await()
         return Result.success(other.getString("name") ?: "Prieten nou")
     }
 
     /**
-     * Prietenie directă, fără cod: potrivire reciprocă din agendă (ambii au rulat sincronizarea). Idempotentă —
-     * `friendships/{a_b}` se scrie doar dacă nu există. Întoarce true când a fost creată acum.
+     * Prietenie directă, fără cod: potrivire reciprocă din agendă. Idempotentă. Întoarce true când a fost creată acum.
+     *
+     * Regulile din 4.4 cer dovada că și el vrea: cererea lui, `friendRequests/{el}_{eu}`, scrisă de telefonul lui la
+     * aceeași potrivire. Deci: încercăm prietenia; dacă e refuzată și nu există încă, lăsăm cererea noastră, iar
+     * telefonul lui o face la următoarea comparare a agendei (vezi [hasContactRequestSince]). Cu regulile vechi
+     * prietenia se creează din prima, iar cererea (refuzată acolo) nici nu mai e nevoie.
      */
     suspend fun addFriendDirect(myUid: String, otherUid: String): Boolean {
         if (otherUid.isBlank() || otherUid == myUid) return false
-        return createFriendship(myUid, otherUid)
+        if (createFriendship(myUid, otherUid, null)) {
+            forgetRequests(myUid, otherUid)
+            return true
+        }
+        if (friendshipExists(myUid, otherUid) != true) requestFriendship(myUid, otherUid)
+        return false
     }
 
     /**
      * Scrie `friendships/{a_b}` FĂRĂ să citească înainte: regulile refuză citirea unui document inexistent
      * (`resource` e null în `request.auth.uid in resource.data.members`), deci un `get()` ar da PERMISSION_DENIED
-     * tocmai pentru prieteniile noi. Regulile permit `create` membrilor și interzic `update`, așa că
-     * PERMISSION_DENIED la scriere înseamnă „există deja”. Întoarce true când a fost creată acum.
+     * tocmai pentru prieteniile noi. Regulile permit `create` membrilor (cu dovadă) și interzic `update`, așa că
+     * PERMISSION_DENIED la scriere înseamnă „există deja” sau „fără dovadă”. Întoarce true când a fost creată acum.
      */
-    private suspend fun createFriendship(myUid: String, otherUid: String): Boolean = try {
-        db.collection("friendships").document(friendshipId(myUid, otherUid))
-            .set(mapOf("members" to listOf(myUid, otherUid).sorted(), "since" to System.currentTimeMillis()))
-            .await()
+    private suspend fun createFriendship(myUid: String, otherUid: String, code: String?): Boolean = try {
+        val data = HashMap<String, Any>()
+        data["members"] = listOf(myUid, otherUid).sorted()
+        data["since"] = System.currentTimeMillis()
+        if (!code.isNullOrBlank()) data["code"] = code
+        db.collection("friendships").document(friendshipId(myUid, otherUid)).set(data).await()
         true
     } catch (e: FirebaseFirestoreException) {
         if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) false else throw e
+    }
+
+    /**
+     * Există prietenia? Citirea merge doar când există (ești membru); lipsa dă PERMISSION_DENIED → false.
+     * null = nu știm (fără net).
+     */
+    private suspend fun friendshipExists(myUid: String, otherUid: String): Boolean? = try {
+        withTimeoutOrNull(5_000L) {
+            db.collection("friendships").document(friendshipId(myUid, otherUid)).get().await().exists()
+        }
+    } catch (e: FirebaseFirestoreException) {
+        if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) false else null
+    } catch (_: Exception) {
+        null
+    }
+
+    /** `friendRequests/{eu}_{el}`, cu ora serverului (regulile o cer; o cerere mai veche de 30 de zile nu mai contează). */
+    private suspend fun requestFriendship(myUid: String, otherUid: String) {
+        try {
+            withTimeoutOrNull(5_000L) {
+                db.collection(REQUESTS).document("${myUid}_$otherUid")
+                    .set(mapOf("from" to myUid, "to" to otherUid, "at" to FieldValue.serverTimestamp()))
+                    .await()
+            }
+        } catch (_: Exception) { /* regulile vechi nu cunosc cererile: acolo prietenia nici nu are nevoie de ele */ }
+    }
+
+    /** După prietenie, cererile nu mai au rost. Fără așteptare; eșecul nu contează. */
+    private fun forgetRequests(myUid: String, otherUid: String) {
+        try {
+            db.collection(REQUESTS).document("${otherUid}_$myUid").delete()
+            db.collection(REQUESTS).document("${myUid}_$otherUid").delete()
+        } catch (_: Exception) { }
+    }
+
+    /**
+     * Cineva din agenda mea a cerut prietenia după [sinceMs] (a intrat pe FORJA după ultima mea comparare)? Atunci
+     * agenda se compară acum, nu la rularea zilnică, și prietenia se face azi. Cu regulile vechi: false.
+     */
+    suspend fun hasContactRequestSince(myUid: String, sinceMs: Long): Boolean = try {
+        val snap = withTimeoutOrNull(5_000L) {
+            db.collection(REQUESTS).whereEqualTo("to", myUid).limit(20).get().await()
+        }
+        snap?.documents?.any { (it.getTimestamp("at")?.toDate()?.time ?: 0L) > sinceMs } == true
+    } catch (_: Exception) {
+        false
     }
 
     /**
@@ -216,12 +288,19 @@ class FriendsRepository(
     suspend fun sendEnergy(fromUid: String, fromName: String, toUid: String): Boolean {
         val day = LocalDate.now().toString()
         val id = "${toUid}_${day}_$fromUid"
-        val doc = db.collection("energy").document(id).get().await()
-        if (doc.exists()) return false
-        db.collection("energy").document(id).set(
-            mapOf("to" to toUid, "from" to fromUid, "fromName" to fromName, "day" to day, "at" to System.currentTimeMillis())
-        ).await()
-        return true
+        // Fără citire înainte: regulile de dinainte de 4.4 refuză citirea documentului lipsă, deci fulgerul nu pleca
+        // niciodată. Scrierea directă merge cu ambele: a doua oară azi e un `update`, refuzat → „deja trimis”.
+        return try {
+            // Fără net scrierea rămâne în coadă și pleacă singură; nu ținem ecranul în așteptare.
+            withTimeoutOrNull(8_000L) {
+                db.collection("energy").document(id).set(
+                    mapOf("to" to toUid, "from" to fromUid, "fromName" to fromName, "day" to day, "at" to System.currentTimeMillis())
+                ).await()
+            }
+            true
+        } catch (e: FirebaseFirestoreException) {
+            if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) false else throw e
+        }
     }
 
     /** Ascultă energia primită azi — pentru toast „X ți-a trimis energie". */
