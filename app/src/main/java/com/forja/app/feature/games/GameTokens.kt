@@ -36,8 +36,14 @@ internal val AnvilFoot = Color(0xFF3A3D44)
 /** Lada din ASALT: olive, cu scânduri mai închise. */
 internal val CratePlank = Color(0xFF4A5D3A)
 
-/** Voalul de sub cardurile de pauză și final. */
-internal val GameScrim = Surface0.copy(alpha = 0.72f)
+/**
+ * Voalul de sub cardurile de pauză și final, peste toată suprafața de sub antet: aproape opac, ca ce rămâne în jurul
+ * cardului (tabla, coloana, zidul) să se citească drept fundal, nu drept etichete și piese tăiate de marginea cardului.
+ */
+internal val GameScrim = Surface0.copy(alpha = 0.9f)
+
+/** De unde începe voalul: sub antetul de 44 dp (cu marginea de sus de 12). Antetul (pastila) rămâne viu. */
+internal const val GAME_COVER_TOP_DP = 56
 
 /** Culoarea fiecărei piese ZID, indexată pe cod (0 gol, 1–7 I O T S Z J L, 8 moloz). */
 internal val ZidKindColors: Array<Color> = arrayOf(
@@ -64,6 +70,12 @@ internal val AsaltBrickColors: Array<Color> = arrayOf(
     Sage,           // m · Schije
     Sage            // s · Calm
 )
+
+/**
+ * Marginea dinăuntrul terenului ASALT (dp, pe fiecare latură): zidul și pereții scânteii stau la 4 dp de conturul
+ * cardului, nu lipite de el (ca celulele ZID). Lumea jocului se scalează în interior; cardul o înconjoară.
+ */
+internal const val ASALT_INSET_DP = 4
 
 /** Coloana laterală a ZID (URM., REZ., contorul, mascota). */
 internal const val ZID_SIDE_DP = 64

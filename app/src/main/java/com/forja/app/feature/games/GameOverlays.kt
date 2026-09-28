@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -55,6 +56,7 @@ import com.forja.app.core.designsystem.LocalReducedMotion
 import com.forja.app.core.designsystem.OnAccent
 import com.forja.app.core.designsystem.Surface1
 import com.forja.app.core.designsystem.TextDim
+import com.forja.app.core.designsystem.TextDim2
 import com.forja.app.core.designsystem.TextPrimary
 import com.forja.app.core.designsystem.TextSecondary
 import com.forja.app.core.designsystem.components.EmberField
@@ -73,7 +75,6 @@ import com.forja.app.feature.inventory.R6
 import com.forja.app.feature.inventory.R8
 import com.forja.app.feature.inventory.Raised
 import com.forja.app.feature.inventory.Rule
-import com.forja.app.feature.inventory.W06
 import com.forja.app.feature.inventory.W09
 import com.forja.app.feature.inventory.cond
 import com.forja.app.feature.inventory.fmtCount
@@ -173,10 +174,13 @@ internal fun ReadyGlyph(modifier: Modifier = Modifier, description: String = "At
     )
 }
 
-/** 3 · 2 · 1 după „Continuă”: cifre-erou amber de 96, schimbate la 600 ms (fără scalare sub mișcare redusă). */
+/**
+ * 3 · 2 · 1 după „Continuă”: cifre-erou amber de 96, schimbate la 600 ms (fără scalare sub mișcare redusă).
+ * Stă ÎN tablă / teren (nu peste tot ecranul): cifra cade în mijlocul câmpului, iar voalul întunecă doar câmpul.
+ */
 @Composable
 internal fun CountdownDigit(n: Int, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize().background(GameScrim.copy(alpha = 0.35f)), contentAlignment = Alignment.Center) {
+    Box(modifier.fillMaxSize().clip(R8).background(GameScrim.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
         androidx.compose.runtime.key(n) {
             PopIn(visible = true, fromScale = 1.5f) {
                 Text("$n", style = hero(96, color = Amber), modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
@@ -262,14 +266,21 @@ internal fun ToggleIcon(on: Boolean, iconOn: ImageVector, iconOff: ImageVector, 
 
 // ───────────────────────────── Cardurile ─────────────────────────────
 
-/** Voalul și cardul centrat (Surface1, R8). Atingerile nu trec la tablă. */
+/** Marginile cardului în voal (sus, lângă antet, puțin mai mult aer). */
+internal val GameCardInset = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 8.dp)
+
+/**
+ * Voalul (toată suprafața primită, margine la margine) și cardul centrat în el (Surface1, R8), cu [GameCardInset].
+ * Atingerile nu trec la tablă.
+ */
 @Composable
 internal fun GameCardScrim(modifier: Modifier = Modifier, behind: @Composable () -> Unit = {}, card: @Composable () -> Unit) {
     Box(
         modifier
             .fillMaxSize()
             .background(GameScrim)
-            .clickable(remember { MutableInteractionSource() }, indication = null, onClick = {}),
+            .clickable(remember { MutableInteractionSource() }, indication = null, onClick = {})
+            .padding(GameCardInset),
         contentAlignment = Alignment.Center
     ) {
         behind()
@@ -361,8 +372,8 @@ internal fun ResultCard(ui: ResultUi, actions: ResultActions, modifier: Modifier
     val won = ui.kind == ResultKind.Won
     val reduced = LocalReducedMotion.current
     BoxWithConstraints(modifier.fillMaxSize()) {
-        // pe ecranele scunde (S23) mascota și scorul se strâng puțin
-        val compact = maxHeight < 600.dp
+        // pe ecranele scunde mascota și scorul se strâng puțin (înălțimea cardului = voalul minus marginile lui)
+        val compact = maxHeight - 20.dp < 600.dp
         GameCardScrim(
             behind = {
                 if (won && !reduced) EmberField(Modifier.fillMaxSize(), count = 36, alpha = 0.7f)
@@ -405,8 +416,8 @@ internal fun ResultCard(ui: ResultUi, actions: ResultActions, modifier: Modifier
 }
 
 /**
- * Placa texturată cu puncte (zona degetului): aceleași gesturi ca pe tablă, fără nimic scris. Două săgeți stinse
- * (stânga, dreapta) și, la ZID, una în jos arată că e o suprafață de comandă.
+ * Placa texturată cu puncte (zona degetului): aceleași gesturi ca pe tablă, fără nimic scris. Două săgeți calme
+ * (stânga, dreapta) și, la ZID, una în jos, plus marginea olive, arată că e o suprafață de comandă, nu un panou gol.
  */
 @Composable
 internal fun ThumbPad(modifier: Modifier = Modifier, down: Boolean = false) {
@@ -414,7 +425,7 @@ internal fun ThumbPad(modifier: Modifier = Modifier, down: Boolean = false) {
         modifier
             .clip(R8)
             .background(Surface1.copy(alpha = 0.6f))
-            .border(1.dp, W06, R8)
+            .border(1.dp, Accent2.copy(alpha = 0.2f), R8)
             .drawWithCache {
                 val step = 14.dp.toPx()
                 val r = 1.1.dp.toPx()
@@ -437,7 +448,7 @@ internal fun ThumbPad(modifier: Modifier = Modifier, down: Boolean = false) {
                     }
                 }
                 val hintStroke = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                val hintColor = Color.White.copy(alpha = 0.13f)
+                val hintColor = TextDim2
                 onDrawBehind {
                     drawPoints(pts, androidx.compose.ui.graphics.PointMode.Points, c, strokeWidth = 2 * r, cap = StrokeCap.Round)
                     drawPath(hint, hintColor, style = hintStroke)

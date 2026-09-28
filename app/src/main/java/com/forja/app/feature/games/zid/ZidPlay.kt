@@ -44,6 +44,7 @@ import com.forja.app.core.games.zid.ZidEngine
 import com.forja.app.core.games.zid.ZidGoal
 import com.forja.app.core.games.zid.ZidPhase
 import com.forja.app.feature.games.CountdownDigit
+import com.forja.app.feature.games.GAME_COVER_TOP_DP
 import com.forja.app.feature.games.GameHeader
 import com.forja.app.feature.games.GameOverlay
 import com.forja.app.feature.games.HudLabel
@@ -171,6 +172,7 @@ internal fun ZidPlayContent(
                     ) {
                         ZidBoard(play.engine, play.fx, play.frame, clearDelayMs, Modifier.fillMaxSize())
                         if (overlay is GameOverlay.Ready) ReadyGlyph()
+                        if (overlay is GameOverlay.Countdown) CountdownDigit(overlay.n)
                         if (quad) PopIn(visible = true, fromScale = 0.4f) { Text("×4", style = hero(64, color = Amber)) }
                     }
                     Spacer(Modifier.width(ZID_GAP_DP.dp))
@@ -188,11 +190,11 @@ internal fun ZidPlayContent(
                 )
             }
         }
-        val cover = Modifier.fillMaxSize().padding(top = 62.dp)
+        // voalul acoperă tot ce e sub antet, de la o margine la alta; cardul își pune singur marginile
+        val cover = Modifier.fillMaxSize().padding(top = GAME_COVER_TOP_DP.dp)
         when (overlay) {
-            is GameOverlay.Pause -> PauseCard(overlay.ui, actions.pause, cover.padding(horizontal = 12.dp, vertical = 8.dp))
-            is GameOverlay.Result -> ResultCard(overlay.ui, actions.result, cover.padding(horizontal = 12.dp, vertical = 8.dp))
-            is GameOverlay.Countdown -> CountdownDigit(overlay.n, cover)
+            is GameOverlay.Pause -> PauseCard(overlay.ui, actions.pause, cover)
+            is GameOverlay.Result -> ResultCard(overlay.ui, actions.result, cover)
             else -> Unit
         }
     }

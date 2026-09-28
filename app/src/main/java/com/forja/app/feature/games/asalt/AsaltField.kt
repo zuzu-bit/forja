@@ -37,6 +37,7 @@ import com.forja.app.core.games.asalt.AsaltEngine.Companion.SLOW
 import com.forja.app.core.games.asalt.AsaltEngine.Companion.STEEL
 import com.forja.app.core.games.asalt.AsaltEngine.Companion.WIDE
 import com.forja.app.core.games.asalt.AsaltPhase
+import com.forja.app.feature.games.ASALT_INSET_DP
 import com.forja.app.feature.games.AnvilBody
 import com.forja.app.feature.games.AnvilFace
 import com.forja.app.feature.games.AnvilFaceShade
@@ -242,13 +243,15 @@ internal fun DrawScope.drawAnvil(cx: Float, top: Float, halfW: Float, h: Float, 
 
 /**
  * Terenul ASALT (390 × 600 unități, scalat la lățime): zidul, capsulele, nicovala, scânteile cu dâră și strălucire,
- * exploziile. Redesenat în faza de desen la fiecare cadru nou (`frame`), fără recompoziție și fără alocări.
+ * exploziile. Cardul (fundalul, conturul) ocupă tot; lumea jocului stă înăuntru, la [ASALT_INSET_DP] de contur.
+ * Redesenat în faza de desen la fiecare cadru nou (`frame`), fără recompoziție și fără alocări.
  */
 @Composable
 internal fun AsaltField(engine: AsaltEngine, fx: AsaltFx, frame: State<Long>, reduced: Boolean, modifier: Modifier = Modifier) {
     Box(
         modifier.drawWithCache {
-            val u = size.width / AsaltEngine.W.toFloat()
+            val inset = ASALT_INSET_DP.dp.toPx()
+            val u = (size.width - 2f * inset) / AsaltEngine.W.toFloat()
             val bw = AsaltEngine.BW.toFloat() * u
             val bh = AsaltEngine.BH.toFloat() * u
             val top0 = AsaltEngine.TOP.toFloat() * u
@@ -289,9 +292,9 @@ internal fun AsaltField(engine: AsaltEngine, fx: AsaltFx, frame: State<Long>, re
                 drawRoundRect(Surface1, cornerRadius = fieldCorner)
                 drawRect(forge)
                 // linia de pericol sub nicovală
-                val dangerY = paddleY + anvilH + 5f * u
+                val dangerY = inset + paddleY + anvilH + 5f * u
                 drawLine(W06, Offset(0f, dangerY), Offset(size.width, dangerY), guideW)
-                translate(shake, 0f) {
+                translate(inset + shake, inset) {
                     // ── zidul ──
                     val pulse = if (e.assist && !reduced) 0.55f + 0.45f * (0.5f + 0.5f * sin(fx.clockMs / 1000f * 2f * PI.toFloat() * 1.4f)) else 1f
                     for (row in 0 until AsaltEngine.ROWS) {

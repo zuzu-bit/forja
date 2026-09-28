@@ -190,8 +190,16 @@ fun levelMapUi(game: GameId, p: GameProgress, selected: Int?, resume: Int?, pill
 
 private val FRACTIONS = floatArrayOf(0.50f, 0.72f, 0.80f, 0.62f, 0.38f, 0.20f, 0.28f)
 private val NODE_STEP = 88.dp
-private val PATH_PAD_BOTTOM = 70.dp
-private val PATH_PAD_TOP = 70.dp
+/**
+ * Capetele drumului se sting pe EDGE_FADE (cât un nod întreg, nu doar marginea lui): un nod tăiat de antet sau de buton
+ * dispare treptat, cu cifra cu tot. Capetele drumului stau în afara stingerii când harta e derulată până la capăt:
+ * sus nodul (≤ 30 dp peste centru), jos nodul și stelele lui (≤ 42 dp sub centru).
+ */
+private val EDGE_FADE = 56.dp
+private val PATH_PAD_BOTTOM = 42.dp + EDGE_FADE
+private val PATH_PAD_TOP = 32.dp + EDGE_FADE
+private val FadeIn = arrayOf(0f to Surface0, 0.45f to Surface0.copy(alpha = 0.8f), 1f to Color.Transparent)
+private val FadeOut = arrayOf(0f to Color.Transparent, 0.55f to Surface0.copy(alpha = 0.8f), 1f to Surface0)
 
 /**
  * Harta nivelurilor: un drum pe liniile de nivel, nivelul 1 jos și urcând; fortul (boss) e pătrat; nodul curent pulsează,
@@ -221,12 +229,12 @@ fun LevelMapContent(state: LevelMapUi, actions: LevelMapActions, modifier: Modif
             LevelPath(state, actions)
             // capetele drumului se sting în fundal
             Box(
-                Modifier.align(Alignment.TopCenter).fillMaxWidth().height(28.dp)
-                    .background(Brush.verticalGradient(listOf(Surface0, Color.Transparent)))
+                Modifier.align(Alignment.TopCenter).fillMaxWidth().height(EDGE_FADE)
+                    .background(Brush.verticalGradient(*FadeIn))
             )
             Box(
-                Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(28.dp)
-                    .background(Brush.verticalGradient(listOf(Color.Transparent, Surface0)))
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(EDGE_FADE)
+                    .background(Brush.verticalGradient(*FadeOut))
             )
             val stampText = state.stamp
             if (stampText != null) {
