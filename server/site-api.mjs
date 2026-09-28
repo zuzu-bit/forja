@@ -31,7 +31,7 @@ const BASE = `https://firestore.googleapis.com/v1/${DOCS}`;
 const MIN = 60000, HOUR = 3600000;
 export const SITE_RULES = Object.freeze({
   cerc_live_ms: 20000, cerc_slow_ms: 10 * MIN, friends_ms: 10 * MIN, azi_ms: 20000, now_playing_ms: 10 * MIN,
-  contract_current: 3, friends_max: 100, routes: 30, route_points: 300, mini_route_points: 120, route_page: 5, route_bytes: 600 * 1024, mars_polylines: 8,
+  contract_current: 3, friends_max: 100, routes: 30, route_points: 300, mini_route_points: 120, route_page: 5, route_bytes: 600 * 1024, mars_polylines: 8, stale_max_ms: 10 * MIN,
   somn_days: [1, 60, 14], ratie_days: [1, 90, 30], mars_days: [1, 90, 30], inventar_runs: 20, events_max: 1000,
 });
 const SECTIONS = ['azi', 'cerc', 'somn', 'ratie', 'mars', 'muzica', 'paza', 'inventar', 'cont'];
@@ -304,8 +304,9 @@ async function cerc(ctx) {
     const friends = await cachedFriends(env, fs, uid, now, cache);
     if (friends.write) writes.friends = friends.write;
     const fresh = await cercLive(fs, uid, friends.uids, now);
-    // A failed refresh never overwrites what we had: an older answer (with its own updated_at) beats an empty map.
-    if (fresh.failed && live) ctx.stale = true;
+    // A failed refresh never overwrites what we had: an answer up to 10 min old (with its own updated_at) beats an empty map.
+    // Older than that it is not served, so a friend who has since turned ghost cannot reappear from the cache.
+    if (fresh.failed && live && now - live.at <= SITE_RULES.stale_max_ms) ctx.stale = true;
     else {
       live = { at: now, me: fresh.me, friends: fresh.friends, family: fresh.family, inviteCode: fresh.inviteCode };
       if (!fresh.failed && !friends.failed) writes['cerc-live'] = live;
@@ -315,7 +316,7 @@ async function cerc(ctx) {
   if (due || building) {
     const recommended = due ? await recommendedPlaces(fs, uid) : slow.recommended;
     const routes = await updateRoutes(fs, uid, slow);
-    if (recommended === null && routes.failed && slow) ctx.stale = true;
+    if (recommended === null && routes.failed && slow && now - slow.at <= SITE_RULES.stale_max_ms) ctx.stale = true;
     else {
       const { failed, ...kept } = routes;
       slow = { at: due ? now : slow.at, recommended: recommended ?? slow?.recommended ?? [], ...kept };

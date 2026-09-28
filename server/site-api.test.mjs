@@ -286,6 +286,8 @@ test('cerc: Firestore down → the last answer from the DO, or 503 when there is
   r = await f.call('/insights/api/cerc', { now: NOW + 60000 });
   assert.equal(r.status, 200, 'the stale tier is served instead of an empty map');
   assert.equal(r.body.updated_at, NOW); assert.equal(r.body.friends.length, 3);
+  resetSiteCache();
+  assert.equal((await f.call('/insights/api/cerc', { now: NOW + 11 * MIN })).status, 503, 'never older than 10 minutes');
   f.fs.down = false; resetSiteCache();
   f.fs.deny.add('users/carol');
   r = await f.call('/insights/api/cerc', { now: NOW + 11 * MIN });
