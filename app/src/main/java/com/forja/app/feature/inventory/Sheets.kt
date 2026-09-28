@@ -329,7 +329,7 @@ internal fun ApplyConfirmBody(ui: ApplyConfirmUi, onApply: () -> Unit, onDest: (
             ConfirmRow(
                 icon = InvIcons.Trash, tint = Error, bg = Error.copy(alpha = 0.12f),
                 title = if (photos) "${fmtCount(ui.trashCount)} la gunoi · ${fmtSize(ui.trashBytes)}" else "${fmtCount(ui.trashCount)} deoparte",
-                sub = if (photos) "Se recuperează 30 de zile" else "Nimic nu se șterge"
+                sub = if (photos) "Recuperezi 30 de zile" else "Nimic nu se șterge"
             )
         }
         Spacer(Modifier.height(10.dp))
@@ -369,7 +369,7 @@ private fun DestRow(title: String, path: String, onClick: () -> Unit) {
 
 /**
  * „Locație”: unde ajung dosarele. Poze: Galerie · FORJA / Direct în Galerie / Lângă Cameră / Alt dosar…;
- * documente: În folderul ales / Alt folder…. Rândul ales poartă bifa; calea stă mono sub nume.
+ * documente: În dosarul ales / Alt dosar…. Rândul ales poartă bifa; calea stă mono sub nume.
  */
 @Composable
 internal fun LocationBody(ui: LocationUi, onBack: () -> Unit, onPick: (InvDest) -> Unit, onOther: () -> Unit) {

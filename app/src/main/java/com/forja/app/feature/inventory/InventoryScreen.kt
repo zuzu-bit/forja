@@ -160,7 +160,7 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
     }
     fun pickFolder(andStart: Boolean) {
         startAfterTree = andStart
-        try { treeLauncher.launch(null) } catch (_: Exception) { startAfterTree = false; toast.show("Nu pot deschide folderele.") }
+        try { treeLauncher.launch(null) } catch (_: Exception) { startAfterTree = false; toast.show("Nu pot deschide dosarele.") }
     }
     // „Locație” → „Alt dosar…” (poze): selectorul pornește în Pictures; alegerea se traduce în RELATIVE_PATH.
     val photoDestLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -177,7 +177,7 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
             if (kind == InvKind.Photos) photoDestLauncher.launch(DocumentsContract.buildDocumentUri(EXTERNAL_DOCS, "primary:Pictures"))
             else docsDestLauncher.launch(vm.docsPickerStart())
         } catch (_: Exception) {
-            toast.show("Nu pot deschide folderele.")
+            toast.show("Nu pot deschide dosarele.")
         }
     }
     // Ecranul final: selectorul sistemului în modul „răsfoiește”, pornit în noua locație (pasul 2 din OpenPlace).

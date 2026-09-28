@@ -77,7 +77,7 @@ class DestinationsTest {
         val source = tree("primary:Documents")
         val default = InvDest.Tree(null, "Organizate")
         assertEquals("Organizate", DestNames.short(default))
-        assertEquals("În folderul ales", DestNames.option(default))
+        assertEquals("În dosarul ales", DestNames.option(default))
         assertEquals("Documents/Organizate", DestNames.path(default, source))
         val custom = InvDest.Tree(tree("primary:Documents/Arhivă"), "")
         assertEquals("Arhivă", DestNames.short(custom))

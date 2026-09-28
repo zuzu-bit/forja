@@ -52,20 +52,20 @@ internal object DocPipeline {
         val zone = ZoneId.systemDefault()
         val organizer = DocumentOrganizer(ctx, ctl.app.prefs)
         val tree = ctl.meta.tree?.let { Uri.parse(it) } ?: organizer.persistedTree()
-            ?: throw InvFailure("Alege folderul cu documente, apoi pornește din nou.")
+            ?: throw InvFailure("Alege dosarul cu documente, apoi pornește din nou.")
         if (ctl.meta.tree == null) {
             ctl.meta = ctl.meta.copy(tree = tree.toString())
             ctl.saveMeta()
         }
 
         val items: List<ItemRec> = withContext(Dispatchers.IO) { InventoryStore.readItems(ctx, ctl.runId) } ?: run {
-            ctl.enter(InvStage.Scanning, "Citesc folderul")
+            ctl.enter(InvStage.Scanning, "Citesc dosarul")
             val scanned = scan(ctl, organizer, tree)
             ctl.checkAlive()
             if (scanned.isNotEmpty()) withContext(Dispatchers.IO) { InventoryStore.writeItems(ctx, ctl.runId, scanned) }
             scanned
         }
-        if (items.isEmpty()) throw InvFailure("Nimic nou în folder.")
+        if (items.isEmpty()) throw InvFailure("Nimic nou în dosar.")
 
         // Gruparea provizorie (după familie: PDF-uri, Tabele…) — doar „cutiile” de pe ecran; dosarele finale vin după AI.
         ctl.enter(InvStage.Grouping, "Grupez fișierele")
@@ -84,12 +84,12 @@ internal object DocPipeline {
     }
 
     private suspend fun scan(ctl: RunCtl, organizer: DocumentOrganizer, tree: Uri): List<ItemRec> {
-        ctl.report(InvStage.Scanning, 0.05, null, "Citesc folderul", force = true)
+        ctl.report(InvStage.Scanning, 0.05, null, "Citesc dosarul", force = true)
         // Destinația aleasă în Inventar, când e un dosar din folderul analizat, nu se re-scanează (e deja în ordine).
         val skips = DocDest.skips(tree, DocDest.savedTree(ctl.ctx, ctl.app.prefs))
         val (docs, warnings) = organizer.inventory(tree, skipDirIds = skips)
         ctl.checkAlive()
-        if (docs.isEmpty() && warnings.isNotEmpty()) throw InvFailure("Nu mai am acces la folder. Alege-l din nou.")
+        if (docs.isEmpty() && warnings.isNotEmpty()) throw InvFailure("Nu mai am acces la dosar. Alege-l din nou.")
         // Gunoiul propriu și fișierele de lucru ale mutărilor („.forja-….part”) nu intră în inventar.
         val kept = docs.filter { it.isLoose() }
         val ai = AiGate.likely(ctl.app)
