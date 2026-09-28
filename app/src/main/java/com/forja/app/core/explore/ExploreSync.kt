@@ -154,7 +154,11 @@ object ExploreSync {
                 .setInitialDelay(delay, TimeUnit.MILLISECONDS)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
                 .build()
-            WorkManager.getInstance(app).enqueueUniqueWork(WORK_CELL, ExistingWorkPolicy.KEEP, req)
+            // Ora ținută minte promite o rulare care pornește la ea sau după. KEEP ar arunca cererea dacă una încă merge
+            // (poate a citit baza înainte de celula asta) sau așteaptă netul (poate porni înainte de oră), iar celulele
+            // din restul ferestrei n-ar mai programa nimic. APPEND_OR_REPLACE o pune după ea; una încheiată o înlocuiește.
+            // Cel mult o verigă la 5 minute (fereastra de mai sus), fiecare ieftină când nu e nimic nou.
+            WorkManager.getInstance(app).enqueueUniqueWork(WORK_CELL, ExistingWorkPolicy.APPEND_OR_REPLACE, req)
         } catch (_: Exception) { }
     }
 
