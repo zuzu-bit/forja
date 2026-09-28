@@ -70,15 +70,12 @@ fun PrimaryButton(
             .graphicsLayer { alpha = if (enabled) 1f else 0.5f }
             .clip(shape)
             .background(AccentGradient)
+            // Luciul peste TOT butonul. Înainte stătea în interiorul padding-ului și desena o „pastilă” mai deschisă în buton.
+            .background(Color(0x14FFFFFF))
             .then(if (enabled) Modifier.pressable(onClick) else Modifier)
             .padding(vertical = if (small) 12.dp else 16.dp, horizontal = 18.dp),
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            Modifier
-                .matchParentSize()
-                .background(Color(0x14FFFFFF), shape)
-        ) {}
         androidx.compose.material3.Text(
             text = text,
             style = if (small) ButtonTextSmall else ButtonText,
