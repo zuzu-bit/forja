@@ -1,6 +1,6 @@
 // OpenAI (Chat Completions, JSON mode, imagini `image_url` data:) — opțional, doar cu OPENAI_API_KEY.
 // Același protocol îl vorbește și Groq (ai-groq.mjs), de aceea corpul cererii e o funcție reutilizabilă.
-import { AiError, postJson, labelText } from "./ai-common.mjs";
+import { AiError, postJson, labelText, readKey } from "./ai-common.mjs";
 
 export const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -31,11 +31,11 @@ export const openai = {
   name: "openai",
   timeoutMs: 60000,
   supports: { images: true, documents: false, audio: false, verifyWithImages: true },
-  available: (env) => typeof env?.OPENAI_API_KEY === "string" && env.OPENAI_API_KEY.length > 0,
+  available: (env) => readKey(env, "OPENAI_API_KEY").length > 0,
   models: (env) => [...new Set([env?.OPENAI_MODEL || "gpt-5", "gpt-4.1"])],
   dailyLimit: null,
   generate(env, opts) {
     // gpt-5 acceptă doar max_completion_tokens și fără temperature; gpt-4.1 le acceptă pe amândouă.
-    return chatCompletionsJson({ ...opts, url: OPENAI_URL, apiKey: env.OPENAI_API_KEY, provider: "openai", timeoutMs: opts.timeoutMs || this.timeoutMs, maxTokensField: "max_completion_tokens" });
+    return chatCompletionsJson({ ...opts, url: OPENAI_URL, apiKey: readKey(env, "OPENAI_API_KEY"), provider: "openai", timeoutMs: opts.timeoutMs || this.timeoutMs, maxTokensField: "max_completion_tokens" });
   },
 };

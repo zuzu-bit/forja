@@ -10,7 +10,8 @@ const object = value => value && typeof value === 'object' && !Array.isArray(val
 const typeOf = value => typeof value === 'boolean' ? 'boolean' : typeof value === 'number' ? (Number.isInteger(value) ? 'integer' : 'number') : 'string';
 const fixed = value => 'Valoare fixă: ' + JSON.stringify(value) + '.';
 
-export function geminiAvailable(env) { return typeof env?.GEMINI_API_KEY === 'string' && env.GEMINI_API_KEY.length > 0; }
+const geminiKey = env => (typeof env?.GEMINI_API_KEY === 'string' ? env.GEMINI_API_KEY : '').trim().replace(/^["'`]+|["'`]+$/g, '');
+export function geminiAvailable(env) { return geminiKey(env).length > 0; }
 
 /**
  * Derives a relaxed schema Gemini accepts: const → single-value string enum (non-string or empty constants become a typed field
@@ -80,7 +81,7 @@ export async function geminiGenerate(env, input, fetcher = fetch) {
     thinkingConfig: { thinkingBudget: 0 } };
   if (input.schema) { generationConfig.responseMimeType = 'application/json'; generationConfig.responseSchema = geminiSchema(input.schema); }
   const body = { ...(input.system ? { system_instruction: { parts: [{ text: String(input.system) }] } } : {}), contents: [{ role: 'user', parts: input.parts }], generationConfig };
-  const response = await fetcher(GEMINI_ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const response = await fetcher(GEMINI_ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': geminiKey(env) }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!response.ok) { const error = new Error('gemini_http_' + response.status); error.httpStatus = response.status; throw error; }
   const data = await response.json();
   if (data?.promptFeedback?.blockReason) throw new Error('gemini_blocked');

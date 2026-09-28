@@ -11,8 +11,8 @@ OpenAI se folosesc DOAR dacă cineva le pune cheia (probabil nu); Workers AI e m
 
 | Secret (GitHub) | De unde | Ce aduce | Limite / cost |
 |---|---|---|---|
-| `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → „Create API key” (cont Google, fără card) | Poze (mese, curățenie), **PDF nativ** și **singura cale pentru AUDIO integral**: clipurile de 5 s și chunk-urile de 30 min sunt ascultate întregi (vorbit cu transcriere exactă, sforăit cu intensitate, tuse). Modele: `gemini-2.5-flash`, apoi `gemini-2.5-flash-lite`; `2.5-pro` doar dacă răspunde. | Gratuit, orientativ, cu cote SEPARATE per model: Flash ≈ 250 cereri/zi, Flash-Lite ≈ 1 000/zi, Pro ≈ 50/zi (un 429 la Flash trece la Flash-Lite, nu la alt furnizor; contorul e per model). O noapte de 8 h în chunk-uri de 30 min = 16 cereri. Dacă ar fi plătit: ≈ 0,3 $/noapte la Flash, ≈ 1,2 $ la Pro. |
-| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) (cont, fără card) | A doua opinie gratuită: viziune cu Llama 4 Scout/Maverick (poze), text cu Llama 3.3 70B (rezumate, curățenie fără PDF), **Whisper large v3 cu timpi pe segmente** (transcriere pentru clipuri și chunk-uri când Gemini lipsește sau pică). Nu citește PDF (primește doar textul extras). | Gratuit, orientativ: `llama-3.3-70b` ≈ 14 400 cereri/zi; viziune Llama 4 ≈ 1 000/zi; Whisper ≈ 7 200 s audio/oră (≈ 4 chunk-uri de 30 min pe oră), 28 800 s/zi — o noapte întreagă prin Groq Whisper se întinde pe mai multe ore. |
+| `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → „Create API key” (cont Google, fără card) | Poze (mese, curățenie), **PDF nativ** și **singura cale pentru AUDIO integral**: clipurile de 5 s și chunk-urile de 30 min sunt ascultate întregi (vorbit cu transcriere exactă, sforăit cu intensitate, tuse). Modelele NU mai sunt fixate în cod: lista se descoperă din `GET /v1beta/models` (vezi „Lista dinamică de modele Gemini”). | Gratuit, cu cote SEPARATE per model (limitele exacte se schimbă des, nu le mai presupunem: în diag `limita: null`); un 429 la un model trece la modelul următor, nu la alt furnizor; contorul e per model. O noapte de 8 h în chunk-uri de 30 min = 16 cereri. |
+| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) (cont, fără card). **Formatul cheii: începe cu `gsk_`** (≈ 56 de caractere). O valoare fără `gsk_` (de exemplu un id de organizație sau un token copiat pe jumătate) dă 401 la orice cerere. | A doua opinie gratuită: viziune cu Llama 4 Scout/Maverick (poze), text cu Llama 3.3 70B (rezumate, curățenie fără PDF), **Whisper large v3 cu timpi pe segmente** (transcriere pentru clipuri și chunk-uri când Gemini lipsește sau pică). Nu citește PDF (primește doar textul extras). | Gratuit, orientativ: `llama-3.3-70b` ≈ 14 400 cereri/zi; viziune Llama 4 ≈ 1 000/zi; Whisper ≈ 7 200 s audio/oră (≈ 4 chunk-uri de 30 min pe oră), 28 800 s/zi — o noapte întreagă prin Groq Whisper se întinde pe mai multe ore. |
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) (plătit) | Cea mai bună analiză foto/PDF/text (`claude-fable-5-1`, apoi `claude-opus-5-5`, `claude-sonnet-5`). Fără audio. | ≈ 0,10–0,30 $ per masă cu `claude-fable-5-1` (două treceri de ~2,5k tokeni intrare + ~1k ieșire, la 10 $/50 $ per MTok, gândirea mereu pornită; trimitem `output_config.effort: "low"` ca un apel să încapă în bugetele de 45–60 s); ≈ 0,05 $ cu `claude-opus-5-5` / `claude-sonnet-5` (pune `ANTHROPIC_MODEL`). Se folosește doar dacă cheia există. |
 | `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com) (plătit) | Opțional: poze + text (`gpt-5`, apoi `gpt-4.1`). Fără PDF nativ, fără audio. | După plată. |
 | *(fără nicio cheie)* | — | **Workers AI** (Cloudflare, inclus): Llama 3.2 Vision descrie poza, Llama 3.3 70B pune cifrele/JSON-ul și face a doua trecere de verificare; Whisper large v3 turbo transcrie; clasificarea sforăit/zgomot/liniște se face în Worker, pe energie și periodicitatea respirației (0,5–2 Hz). **Mai slab** decât Gemini/Groq: `/v1/diag` o spune clar („fără chei — doar modelele Cloudflare”). | 10 000 neuroni/zi pe planul gratuit — neuronii se văd doar în dash.cloudflare.com; `/v1/diag` numără apelurile de model (`unitate: "apeluri model"`) și nu pretinde o poartă zilnică pe care n-o poate măsura. |
@@ -26,23 +26,62 @@ Recomandare: pune măcar `GEMINI_API_KEY` (audio) și `GROQ_API_KEY` (a doua opi
    (`GEMINI_API_KEY`, `GROQ_API_KEY`, …), valoarea = cheia.
 3. Rulează workflow-ul **build-apk** (sau dă un push). Jobul `deploy-api` publică worker-ul și pune fiecare cheie găsită ca
    secret pe `forja-api` (`wrangler secret put`), doar dacă există. Rezumatul rulării spune „Chei AI puse pe worker: …”.
-4. Verifică: `curl https://<worker>.workers.dev/v1/diag?models=0` → `providers: { gemini: "configured", … }`, `order`, `budget`.
-   Cheile nu apar niciodată în diag, în jurnal sau în răspunsuri.
+4. Verifică: `curl https://<worker>.workers.dev/v1/diag?models=0` → `providers: { gemini: "configured", … }`, `order`, `budget`,
+   `models.gemini.ordine` (lista descoperită). O cheie pusă, dar greșită, apare ca `"configured but rejected (401)"` (serverul face
+   `GET /models` la furnizor o dată pe oră, cu cache în R2 `ai-keycheck/{furnizor}.json`; la Groq, `keys.groq.sfat` spune ce e de făcut).
+   Cheile se citesc cu `trim()` (spații, linii noi, ghilimele lipite din greșeală nu mai strică nimic) și nu apar niciodată în diag,
+   în jurnal sau în răspunsuri.
 
 Ca să scoți o cheie: șterge secretul din GitHub și rulează `npx wrangler secret delete GEMINI_API_KEY` din `server/`
 (sau din dash.cloudflare.com → Workers → forja-api → Settings → Variables).
+
+## Lista dinamică de modele Gemini (de ce 2.5 a răspuns 404)
+
+Diagnosticul din 28.09 (test cap-coadă din CI, poză reală): `gemini-2.5-flash`, `gemini-2.5-pro` și `gemini-2.5-flash-lite` erau încă
+LISTATE de `GET /v1beta/models` (cu `generateContent` printre metode), dar `generateContent` răspundea **404** — Google le retrăsese
+pentru generare pe cheile gratuite, iar cheia Lanei avea deja `gemini-3.x` (3.5 → 3.8 flash, 3.1-pro-preview), `gemini-omni-1.1-flash`
+și `gemini-3.5-transcribe`. O listă fixată în cod ar fi picat la fiecare schimbare de generație, așa că `ai-gemini.mjs` o descoperă:
+
+- La prima folosire din zi: `GET https://generativelanguage.googleapis.com/v1beta/models?pageSize=100` (cu `x-goog-api-key`; paginile
+  următoare sunt urmate). Rămân doar numele `gemini-…` cu `supportedGenerationMethods ⊇ generateContent`, fără
+  `tts / image / embedding / robotics / computer-use / live / transcribe / native-audio`.
+- Ordinea: **flash** (non-lite, non-preview) după versiune descrescător (3.8 → 3.7 → 3.6 → 3.5 → 2.5 → omni-1.1), apoi **flash-lite**,
+  apoi **pro** (inclusiv preview), apoi celelalte preview-uri, iar aliasurile `gemini-flash-latest` / `-flash-lite-latest` / `-pro-latest`
+  ca rezervă la sfârșit. `GEMINI_MODEL` din env (dacă e pus) trece primul.
+- **Audio** (clipuri, chunk-uri): `gemini-omni-1.1-flash` (audio+video), apoi `gemini-2.5-flash-native-audio-latest`, apoi flash-urile
+  obișnuite (acceptă audio inline). **Transcriere** (`transcribe`): `gemini-3.5-transcribe` primul, dacă e listat.
+- Cache 24 h în R2 `ai-models/gemini.json` (sau KV `AI_BUDGET`, dacă e legat), cu `at`/`ttl` în metadate — `purgeExpired` îl șterge
+  la expirare; în memorie per izolat. **Un 404 la `generateContent` marchează modelul „retras” 24 h** (în același cache) și routerul
+  trece la următorul; la cererea următoare nu-l mai încearcă.
+- Dacă descoperirea pică (rețea, 5xx, răspuns fără listă): lista statică `["gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest",
+  "gemini-3.1-pro-preview"]` (`GEMINI_MODELS`), reîncercată după 10 minute.
+- Un 400 la `generateContent` (model nou care nu acceptă `thinkingBudget: 0`, sau `responseSchema` prea strictă) se reîncearcă o dată
+  fără `thinkingConfig`, apoi o dată fără `responseSchema` (JSON-ul rămâne cerut prin `responseMimeType` și validat de router).
+- `/v1/diag` → `models.gemini`: `sursa` (discovery/static), `descoperitLa`, `ordine`, `audio`, `transcriere`, `retrase`.
+
+Ordinea așteptată cu cheia Lanei (28.09): 3.8-flash, 3.7-flash, 3.6-flash, 3.5-flash, (2.5-flash → 404, retras), omni-1.1-flash,
+3.5-flash-lite, 3.1-flash-lite, (2.5-flash-lite → retras), 3.1-pro-preview, (2.5-pro → retras), 3-flash-preview, omni-flash-preview,
+flash-latest, flash-lite-latest, pro-latest.
 
 ## Ce face fiecare rută cu routerul
 
 - `POST /v1/meal` — **mese v2**: poza → `visionJson` cu două treceri (a doua verifică porțiile și kcal ≈ 4P + 4C + 9G ±15 %
   și coboară încrederea unde nu se vede clar). Răspuns compatibil cu v1 (`fel`, `incredere`, `componente[nume, grame, kcal,
   proteine, carbo, grasimi]`) + `fibre`, `incredere` per componentă, `total`, `scor{valoare 1–10, motiv}`, `sfat`, `observatii[]`,
-  `portie`, `model`, `provider`, `verificat`, `versiune: 2`. Timp ≤ 45 s pe TOT furnizorul (toate modelele lui la un loc), apoi următorul.
+  `portie`, `model`, `provider`, `verificat`, `versiune: 2`. Timp: ≤ 45 s pe TOT furnizorul (toate modelele lui la un loc), apoi următorul,
+  și **≤ 90 s pe toată cererea** (`totalTimeoutMs`: furnizorii rămași nu mai pornesc, clientul cu 5 min nu așteaptă un lanț mort);
+  a doua trecere se sare când prima a durat peste 25 s sau când furnizorul e Workers (verificatorul lui nu vede poza).
   Regula kcal ≈ 4P + 4C + 9G ±15 % nu e lăsată doar modelului: `normalizeMeal` o impune pe fiecare componentă (kcal care se contrazice
   devine 4P+4C+9G, încrederea coboară la cel mult „medie”, corectura e spusă în `observatii`); `verificat` e adevărat doar când a doua
   trecere a răspuns ȘI totalurile sunt coerente. Verificatorul fără poză nu e pus să judece „față de imagine”: Workers primește
-  descrierea modelului de vedere, Groq verifică doar coerența cifrelor.
-- `POST /v1/organize` — **curățenie v2**: iteme cu miniaturi și/sau `pdfB64` (≤ 4 MB, cel mult 6 per cerere; 30 iteme / 8 MB).
+  descrierea modelului de vedere, Groq verifică doar coerența cifrelor. La Workers, JSON-ul e forțat cu `response_format: { type:
+  "json_schema", json_schema: { name, schema } }` la `llama-3.3-70b`; dacă runtime-ul îl respinge, același model primește promptul „doar
+  JSON”, iar extractorul tolerant + o reparare scot obiectul dintr-un răspuns cu text în jur (28.09: rezerva întorcea proză fără JSON).
+  La orice eșec al lanțului, jurnalul serverului primește linia `AI meal: …` (furnizor/model/clasă de eroare, ≤ 180 caractere) și răspunsul
+  422 are `detalii` (≤ 600 caractere) — fără chei, fără conținut.
+- `POST /v1/organize` — **curățenie v2**: iteme cu miniaturi (≤ 200 KB fiecare) și/sau `pdfB64` (≤ 4 MB, cel mult 6 per cerere; 30 iteme / 8 MB).
+  Un lot (aplicația trimite 24 de poze sau 6 PDF-uri o dată, automat, după scanare) iese în ≤ 60 s: 40 s pe furnizor, 60 s în total;
+  fără lacăt per utilizator, deci mai multe loturi pot merge în paralel.
   PDF-ul ajunge nativ la Gemini/Claude; Groq/OpenAI/Workers primesc doar `text` + metadate — pentru un PDF fără text extras, la
   acești furnizori `rezumat` rămâne `""` și `confidence` „scăzută” (promptul o cere, `sanitizeOrganize` o impune: nimic „ghicit”). Per item, pe lângă v1
   (`suggestion`, `folder`, `reason`, `confidence`): `rezumat`, `categorie`, `dosar` (≤ 24 caractere), `sterge{recomandat, motiv,
@@ -67,14 +106,16 @@ Ca să scoți o cheie: șterge secretul din GitHub și rulează `npx wrangler se
   Fără Gemini: Whisper cu timpi (doar vorbit; limitarea e spusă în `limitari`); fără nimic: `{status:"clips_only"}`.
 - `POST /v1/sleep-summary` — rezumatul de dimineață, 2–4 propoziții calde și oneste din cifre și citate reale (`timeline`
   cu statistici și până la 6 citate); `POST /v1/sleep-talk-summary` — două propoziții din frazele auzite. Fără chei → Llama.
-- `GET /v1/diag` — `providers` (configured/absent), `order`, `mode`, `audio`, `lastUsed` per sarcină, `budget` (consum azi +
-  limita cunoscută; la Gemini și per model, în `modele`; la Workers `unitate: "apeluri model"`, limita reală în neuroni nu se
-  măsoară aici), modelele Cloudflare care răspund (`?models=0` sare testul lor, ~30 s).
+- `GET /v1/diag` — `providers` (configured / configured but rejected (401) / absent), `keys` (codul HTTP al verificării și când s-a
+  făcut), `models.gemini` (ordinea descoperită), `order`, `mode`, `audio`, `lastUsed` per sarcină, `budget` (consum azi + limita
+  cunoscută; la Gemini și per model, în `modele`; la Workers `unitate: "apeluri model"`, limita reală în neuroni nu se măsoară aici),
+  modelele Cloudflare care răspund (`?models=0` sare testul lor, ~30 s).
 
 ## Limite zilnice și siguranță
 
 - Contor per furnizor și zi (`ai-budget:{furnizor}:{zi}`), iar la Gemini și per model (`ai-budget:gemini/{model}:{zi}` — cotele
-  gratuite sunt găleți separate: Flash 250, Flash-Lite 1 000, Pro 50), în KV (`AI_BUDGET`, dacă e legat) sau R2 (`RECORDS`).
+  gratuite sunt găleți separate; limita per model nu se mai presupune: `null`, iar 429 trece la modelul următor), în KV (`AI_BUDGET`,
+  dacă e legat) sau R2 (`RECORDS`).
   Se numără fiecare apel de model (la Workers fiecare `env.AI.run`). Pe Workers rulează mai multe izolate în paralel: cache-ul din
   memorie ține cel mult 60 s și incrementarea citește mai întâi valoarea stocată. La limită se sare modelul (Gemini) sau furnizorul;
   la 429 Gemini trece la modelul următor (cota lui e separată), ceilalți furnizori trec la furnizorul următor.
@@ -82,12 +123,14 @@ Ca să scoți o cheie: șterge secretul din GitHub și rulează `npx wrangler se
 - Textul venit de la client (note, fraze, nume de fișiere, text din documente) intră în prompt mărginit și marcat ca DATE,
   între « »; cifrele sunt limitate la intervale reale (`bounded`).
 - Timeouts: Gemini 90 s (audio 180 s), Groq/Claude/OpenAI 60 s, Workers 60 s — per model, când ruta nu dă un buget. Când ruta dă
-  `timeoutMs`, el e bugetul pe TOT furnizorul (toate modelele lui): mese 45 s; clip de 5 s 20 s (Gemini) + 30 s (Whisper); chunk 180 s.
+  `timeoutMs`, el e bugetul pe TOT furnizorul (toate modelele lui): mese 45 s; curățenie 40 s; clip de 5 s 20 s (Gemini) + 30 s (Whisper);
+  chunk 180 s. `totalTimeoutMs` plafonează toată cererea (mese 90 s, curățenie 60 s).
 
 ## Cum adaugi un furnizor nou
 
 1. `server/ai-<nume>.mjs` cu obiectul `{ name, timeoutMs, supports:{images, documents, audio, verifyWithImages, transcribe?},
-   available(env), models(env, {images}), dailyLimit | perModelQuota + modelLimits, budgetUnit?, generate(env, {model, system,
+   available(env), models(env, {images, audio, task}) (poate fi async), retire?(env, model) (la 404), keyCheck?(env) → cod HTTP (pentru
+   diag), dailyLimit | perModelQuota + modelLimits, budgetUnit?, generate(env, {model, system,
    prompt, images, documents, audio, schema, maxTokens, timeoutMs, trace}) → text, transcribe?(env, {bytes, mime, language,
    timeoutMs}) → {text, segments, language, model, calls?} }`. `trace` e un obiect al routerului: pune în el `modelCalls` (câte
    apeluri de model ai făcut) și `visionNotes` (descrierile pozelor, dacă verificatorul tău nu vede imaginea). Erorile se aruncă ca
@@ -95,4 +138,5 @@ Ca să scoți o cheie: șterge secretul din GitHub și rulează `npx wrangler se
    furnizor cu `perModelQuota` un 429 trece doar la modelul următor).
 2. Îl pui în `ALL_PROVIDERS` din `ai-router.mjs`, la locul lui în ordine, și în `KNOWN_LIMITS`.
 3. Secretul: în tabelul de mai sus, în lista `for K in …` din `.github/workflows/build-apk.yml` (jobul `deploy-api`) și în `env:`.
-4. Teste: `server/ai-router.test.mjs` (ordine, fallback, reparare JSON) — `cd server && node --check worker.js && npm test`.
+4. Teste: `server/ai-router.test.mjs` (ordine, fallback, reparare JSON), `server/ai-gemini.test.mjs` (descoperire, 404 retras, chei,
+   diag, Workers JSON forțat, buget de timp) — `cd server && node --check worker.js && npm test`.

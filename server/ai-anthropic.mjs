@@ -1,5 +1,5 @@
 // Claude (Anthropic Messages API) — cea mai bună analiză foto/PDF/text, DOAR dacă există ANTHROPIC_API_KEY (cheie plătită).
-import { AiError, postJson, labelText } from "./ai-common.mjs";
+import { AiError, postJson, labelText, readKey } from "./ai-common.mjs";
 
 export const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
@@ -10,7 +10,7 @@ export const anthropic = {
   name: "anthropic",
   timeoutMs: 60000,
   supports: { images: true, documents: true, audio: false, verifyWithImages: true },
-  available: (env) => typeof env?.ANTHROPIC_API_KEY === "string" && env.ANTHROPIC_API_KEY.length > 0,
+  available: (env) => readKey(env, "ANTHROPIC_API_KEY").length > 0,
   models: (env) => [...new Set([env?.ANTHROPIC_MODEL || "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5"])],
   dailyLimit: null,
 
@@ -37,7 +37,7 @@ export const anthropic = {
       ...(EFFORT_MODELS.test(model) ? { output_config: { effort: "low" } } : {}),
       messages: [{ role: "user", content }],
     };
-    const data = await postJson(ANTHROPIC_URL, { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, body, timeoutMs || this.timeoutMs, "anthropic", model);
+    const data = await postJson(ANTHROPIC_URL, { "x-api-key": readKey(env, "ANTHROPIC_API_KEY"), "anthropic-version": "2023-06-01" }, body, timeoutMs || this.timeoutMs, "anthropic", model);
     if (data?.stop_reason === "refusal") throw new AiError("anthropic a refuzat cererea", { provider: "anthropic", model, kind: "blocked" });
     const text = (Array.isArray(data?.content) ? data.content : []).filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join("");
     if (!text.trim()) throw new AiError("anthropic: răspuns gol", { provider: "anthropic", model, kind: "empty" });

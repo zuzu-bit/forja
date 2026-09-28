@@ -11,10 +11,23 @@ const MEAL = { fel: 'Pui cu orez', incredere: 'ridicată', componente: [{ nume: 
 const KEYS = { GEMINI_API_KEY: 'g-secret', GROQ_API_KEY: 'q-secret', ANTHROPIC_API_KEY: 'a-secret', OPENAI_API_KEY: 'o-secret' };
 const aiMock = (text = JSON.stringify(MEAL)) => ({ run: async (model, input) => (input.image ? { description: 'chicken - 150 g, rice - 100 g' } : { response: text }) });
 
+// Descoperirea modelelor Gemini (GET /v1beta/models) primește o listă mică și realistă: patru modele de generare + trei de exclus.
+// Apelul nu intră în `calls` (testele numără apelurile de generare); `calls.discovery` spune de câte ori s-a cerut lista.
+const GEMINI_LIST = { models: [
+  { name: 'models/gemini-3.5-flash', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+  { name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['generateContent'] },
+  { name: 'models/gemini-3.5-flash-lite', supportedGenerationMethods: ['generateContent'] },
+  { name: 'models/gemini-3.1-pro-preview', supportedGenerationMethods: ['generateContent'] },
+  { name: 'models/gemini-2.5-flash-preview-tts', supportedGenerationMethods: ['generateContent'] },
+  { name: 'models/gemini-embedding-001', supportedGenerationMethods: ['embedContent'] },
+  { name: 'models/gemini-3.5-transcribe', supportedGenerationMethods: ['generateContent'] },
+] };
 /** Înlocuiește fetch-ul global pentru un test; întoarce jurnalul apelurilor (url + corp parsat). */
 function mockFetch(handler) {
   const calls = [];
+  calls.discovery = 0;
   globalThis.fetch = async (url, init = {}) => {
+    if (String(url).includes('/v1beta/models?')) { calls.discovery++; return ok(GEMINI_LIST); }
     const body = init.body && typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
     calls.push({ url: String(url), body, headers: init.headers || {} });
     return handler(String(url), body, calls.length);
@@ -29,6 +42,7 @@ test('ordinea furnizorilor după env: gemini → groq → anthropic → openai �
   assert.deepEqual(providers({ GROQ_API_KEY: 'x' }).map((p) => p.name), ['groq']);
   assert.deepEqual(providers({}).map((p) => p.name), []);
   assert.deepEqual(providers({ GEMINI_API_KEY: '' }).map((p) => p.name), []);
+  assert.deepEqual(providers({ GEMINI_API_KEY: ' \n ', GROQ_API_KEY: '""' }).map((p) => p.name), [], 'doar spații sau ghilimele = cheie lipsă');
 });
 
 test('fallback: gemini 500 pe toate modelele → groq 429 (fatal, sare modelele rămase) → anthropic răspunde', async () => {
@@ -43,7 +57,9 @@ test('fallback: gemini 500 pe toate modelele → groq 429 (fatal, sare modelele 
   assert.equal(r.model, 'claude-fable-5-1');
   assert.equal(r.json.fel, 'Pui cu orez');
   const gemini = calls.filter((c) => c.url.includes('googleapis'));
-  assert.equal(gemini.length, 3, 'toate cele trei modele Gemini încercate');
+  assert.equal(gemini.length, 4, 'toate cele patru modele Gemini descoperite au fost încercate');
+  assert.deepEqual(gemini.map((c) => c.url.split('/models/')[1].split(':')[0]), ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview'], 'ordinea: flash după versiune, flash-lite, pro');
+  assert.equal(calls.discovery, 1, 'lista de modele se cere o singură dată');
   assert.equal(calls.filter((c) => c.url.includes('groq')).length, 1, '429 la groq = un singur apel');
   assert.ok(calls.every((c) => !JSON.stringify(c.url).includes('secret')), 'cheile nu apar în URL');
   assert.equal(calls.find((c) => c.url.includes('googleapis')).headers['x-goog-api-key'], 'g-secret');
@@ -60,8 +76,8 @@ test('JSON invalid → o singură reparare per furnizor, apoi următorul furnizo
   const r = await visionJson({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q' }, { task: 'meal', prompt: 'x JSON', images: [{ b64: 'AAAA', mime: 'image/jpeg' }], schema: MEAL_SCHEMA });
   assert.equal(r.provider, 'groq');
   const gemini = calls.filter((c) => c.url.includes('googleapis'));
-  // 3 modele + o singură reparare (la primul model) = 4 apeluri, nu 6
-  assert.equal(gemini.length, 4);
+  // 4 modele + o singură reparare (la primul model) = 5 apeluri, nu 8
+  assert.equal(gemini.length, 5);
   assert.match(gemini[1].body.contents[0].parts.at(-1).text, /NU a fost JSON valid/);
   assert.ok(!gemini[2].body.contents[0].parts.at(-1).text.includes('NU a fost JSON valid'));
 });
@@ -137,32 +153,31 @@ test('transcribe: groq whisper cu segmente (verbose_json), apoi workers whisper 
   await assert.rejects(() => transcribe({ GROQ_API_KEY: 'q' }, { bytes: new Uint8Array(10) }), /Transcrierea/);
 });
 
-test('bugetul zilnic: la Gemini cota e per model (Flash epuizat → Flash-Lite), furnizorul e sărit doar cu toate modelele la limită; consumul se vede în diag, cheile nu', async () => {
+test('bugetul zilnic: la Gemini contorul e per model (limită necunoscută → null), 429 pe un model trece la următorul, toate 429 → furnizorul următor; consumul se vede în diag, cheile nu', async () => {
   const kv = new Map();
   const env = { GEMINI_API_KEY: 'g-secret', GROQ_API_KEY: 'q-secret', AI_BUDGET: { get: async (k) => kv.get(k) ?? null, put: async (k, v) => kv.set(k, v) } };
   const day = new Date().toISOString().slice(0, 10);
-  kv.set(`ai-budget:gemini/gemini-2.5-flash:${day}`, '250');
-  let calls = mockFetch((url) => url.includes('googleapis') ? ok(geminiReply('{"summary":"ok"}')) : ok(openaiReply('{"summary":"ok"}')));
+  let calls = mockFetch((url) => url.includes('gemini-3.8-flash:') ? ok({ error: 'rate' }, 429) : url.includes('googleapis') ? ok(geminiReply('{"summary":"ok"}')) : ok(openaiReply('{"summary":"ok"}')));
   let r = await textJson(env, { task: 'sum', prompt: 'p JSON', schema: SUMMARY_SCHEMA });
   assert.equal(r.provider, 'gemini');
-  assert.equal(r.model, 'gemini-2.5-flash-lite', 'Flash la limită → Flash-Lite (cota lui), nu alt furnizor');
-  assert.equal(calls.length, 1);
-  assert.equal(kv.get(`ai-budget:gemini/gemini-2.5-flash-lite:${day}`), '1');
-  assert.equal(kv.get(`ai-budget:gemini:${day}`), '1', 'contorul furnizorului numără toate apelurile lui');
-  kv.set(`ai-budget:gemini/gemini-2.5-flash-lite:${day}`, '1000');
-  kv.set(`ai-budget:gemini/gemini-2.5-pro:${day}`, '50');
-  resetBudgetCache();
-  calls = mockFetch(() => ok(openaiReply('{"summary":"ok"}')));
+  assert.equal(r.model, 'gemini-3.5-flash', '429 la 3.8-flash → 3.5-flash (cota lui), nu alt furnizor');
+  assert.equal(calls.length, 2);
+  assert.equal(kv.get(`ai-budget:gemini/gemini-3.8-flash:${day}`), '1');
+  assert.equal(kv.get(`ai-budget:gemini/gemini-3.5-flash:${day}`), '1');
+  assert.equal(kv.get(`ai-budget:gemini:${day}`), '2', 'contorul furnizorului numără toate apelurile lui');
+  calls = mockFetch((url) => url.includes('googleapis') ? ok({ error: 'rate' }, 429) : ok(openaiReply('{"summary":"ok"}')));
   r = await textJson(env, { task: 'sum', prompt: 'p JSON', schema: SUMMARY_SCHEMA });
-  assert.equal(r.provider, 'groq', 'toate modelele Gemini la limită → furnizorul următor');
-  assert.ok(calls.every((c) => c.url.includes('groq')));
+  assert.equal(r.provider, 'groq', 'toate modelele Gemini la 429 → furnizorul următor');
+  assert.equal(calls.filter((c) => c.url.includes('googleapis')).length, 4);
   assert.equal(kv.get(`ai-budget:groq:${day}`), '1');
   const diag = await diagProviders(env);
   assert.deepEqual(diag.providers, { gemini: 'configured', groq: 'configured', anthropic: 'absent', openai: 'absent', workers: 'absent' });
-  assert.equal(diag.budget.gemini.azi, 1);
-  assert.deepEqual(diag.budget.gemini.modele['gemini-2.5-flash'], { azi: 250, limita: 250 });
-  assert.deepEqual(diag.budget.gemini.modele['gemini-2.5-flash-lite'], { azi: 1000, limita: 1000 });
-  assert.equal(diag.budget.gemini.modele['gemini-2.5-pro'].limita, 50);
+  assert.equal(diag.budget.gemini.azi, 6);
+  assert.deepEqual(diag.budget.gemini.modele['gemini-3.8-flash'], { azi: 2, limita: null }, 'limita per model nu se mai presupune');
+  assert.deepEqual(Object.keys(diag.budget.gemini.modele), ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview']);
+  assert.deepEqual(diag.models.gemini.ordine, ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview']);
+  assert.equal(diag.models.gemini.sursa, 'discovery');
+  assert.equal(diag.models.gemini.transcriere, 'gemini-3.5-transcribe');
   assert.equal(diag.budget.groq.azi, 1);
   assert.equal(diag.lastUsed.sum.provider, 'groq');
   assert.ok(!JSON.stringify(diag).includes('secret'));
@@ -170,11 +185,11 @@ test('bugetul zilnic: la Gemini cota e per model (Flash epuizat → Flash-Lite),
   assert.match(none.mode, /fără chei/);
 });
 
-test('gemini: 429 e per model — Flash la 429 → Flash-Lite răspunde, fără să sară tot furnizorul', async () => {
-  const calls = mockFetch((url) => url.includes('gemini-2.5-flash:') ? ok({ error: 'rate' }, 429) : ok(geminiReply(JSON.stringify(MEAL))));
+test('gemini: 429 e per model — 3.8-flash la 429 → 3.5-flash răspunde, fără să sară tot furnizorul', async () => {
+  const calls = mockFetch((url) => url.includes('gemini-3.8-flash:') ? ok({ error: 'rate' }, 429) : ok(geminiReply(JSON.stringify(MEAL))));
   const r = await visionJson({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q' }, { task: 'meal', prompt: 'x JSON', images: [{ b64: 'AAAA', mime: 'image/jpeg' }], schema: MEAL_SCHEMA });
   assert.equal(r.provider, 'gemini');
-  assert.equal(r.model, 'gemini-2.5-flash-lite');
+  assert.equal(r.model, 'gemini-3.5-flash');
   assert.equal(calls.length, 2);
   assert.ok(calls.every((c) => c.url.includes('googleapis')));
 });
@@ -192,7 +207,7 @@ test('timeoutMs de la apelant = buget pe TOT furnizorul: modelele rămase nu mai
     resetBudgetCache();
     calls = mockFetch(slow);
     await visionJson({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q' }, { task: 'meal', prompt: 'x JSON', images: [{ b64: 'AAAA', mime: 'image/jpeg' }], schema: MEAL_SCHEMA });
-    assert.equal(calls.filter((c) => c.url.includes('googleapis')).length, 3, 'fără timeoutMs fiecare model are bugetul lui');
+    assert.equal(calls.filter((c) => c.url.includes('googleapis')).length, 4, 'fără timeoutMs fiecare model are bugetul lui');
   } finally { Date.now = realNow; }
 });
 
