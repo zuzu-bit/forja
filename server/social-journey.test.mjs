@@ -118,3 +118,42 @@ test('tombstones remove places, reset wipes before upsert and history deletion c
  assert.equal((await f.call('bob','explore/state')).cells.features.length,0,'owner scoped');
  assert.equal((await f.call('alice','explore/unknown')).status,404);
 });
+
+// ── explore sync v2 (4.4): mode per cell, visits per place, state?since ──
+test('explore v2: optional mode per cell and visits per place are stored, merged and returned',async()=>{
+ const f=fixture();
+ let r=await sync(f,'alice',{cells:[cell(1,1,{mode:'run'}),cell(2,1)],places:[place('p1',{visits:7}),place('p2')]});assert.equal(r.status,200);
+ let state=await f.call('alice','explore/state');const byId=id=>state.cells.features.find(c=>c.properties.id===id).properties;
+ assert.equal(byId('1_1').mode,'run');assert.equal(byId('2_1').mode,null,'a v1 cell has no mode');
+ assert.equal(state.places.find(p=>p.id==='p1').visits,7);assert.equal(state.places.find(p=>p.id==='p2').visits,null);
+ await sync(f,'alice',{cells:[cell(1,1,{visits:4})],places:[place('p1',{name:'Lacul',updated_at:1759003700000})]});
+ state=await f.call('alice','explore/state');assert.equal(byId('1_1').mode,'run','a batch without mode keeps the known mode');assert.equal(byId('1_1').visits,4);
+ assert.equal(state.places.find(p=>p.id==='p1').visits,7,'a newer place row without visits keeps the count');assert.equal(state.places.find(p=>p.id==='p1').name,'Lacul');
+ await sync(f,'alice',{cells:[cell(1,1,{mode:'ride'}),cell(2,1,{mode:'walk'})],places:[place('p1',{visits:9,updated_at:1759003800000})]});
+ state=await f.call('alice','explore/state');assert.equal(byId('1_1').mode,'ride');assert.equal(byId('2_1').mode,'walk');assert.equal(state.places.find(p=>p.id==='p1').visits,9);
+ assert.equal((await f.call('alice','explore/places/p1','PATCH',{stars:5})).visits,9,'a site edit keeps the visits');
+ for(const bad of [{mode:'fly'},{mode:''},{mode:null},{mode:1}])assert.equal((await sync(f,'alice',{cells:[cell(3,3,bad)]})).status,400);
+ for(const bad of [{visits:0},{visits:1.5},{visits:'3'}])assert.equal((await sync(f,'alice',{places:[place('p9',bad)]})).status,400);
+ assert.equal((await sync(f,'alice',{cells:[cell(3,3,{speed:3})]})).status,400,'other unknown fields are still refused');
+});
+test('explore state?since answers unchanged until something new arrives',async()=>{
+ let clock=1759100000000;const real=Date.now;Date.now=()=>clock;
+ try{
+  const f=fixture();
+  let r=await f.call('alice','explore/state?since=0');assert.equal(r.unchanged,true);assert.equal(r.updated_at,0);
+  await sync(f,'alice',{cells:[cell(1,1)]});
+  r=await f.call('alice','explore/state?since=0');assert.equal(r.unchanged,undefined);assert.equal(r.cells.features.length,1);const at=r.updated_at;assert.equal(at,clock);
+  r=await f.call('alice','explore/state?since='+at);assert.equal(r.status,200);assert.deepEqual(Object.keys(r).sort(),['status','unchanged','updated_at']);assert.equal(r.updated_at,at);
+  clock+=60000;await sync(f,'alice',{places:[place('p1')]});
+  r=await f.call('alice','explore/state?since='+at);assert.equal(r.unchanged,undefined);assert.equal(r.places.length,1);assert.equal(r.updated_at,clock);
+  clock+=60000;await f.call('alice','explore/places/p1','PATCH',{name:'Nou'});assert.equal((await f.call('alice','explore/state?since='+(clock-60000))).unchanged,undefined,'a site edit also moves updated_at');
+  for(const bad of ['x','-1','1.5','12345678901234567'])assert.equal((await f.call('alice','explore/state?since='+bad)).status,400);
+  assert.equal((await f.call('alice','explore/state?since='+clock+'&cursor=1_1')).unchanged,undefined,'next pages are never short-circuited');
+  await friends(f);assert.equal((await f.call('bob','explore/state?owner=alice&since=0')).status,403,'since does not bypass the history grant');
+ }finally{Date.now=real;}
+});
+test('site-meta tells when explore and the agenda listing last moved, without cells, friends or hashes',async()=>{
+ const f=fixture();let m=await f.call('alice','site-meta');assert.equal(m.status,200);assert.deepEqual(m.explore,{updated_at:0,cells:0,places:0,grid_m:150});assert.deepEqual(m.contacts,{discoverable:false,until:null,verified:false});
+ await sync(f,'alice',{cells:[cell(1,1),cell(2,2)],places:[place('p1')]});m=await f.call('alice','site-meta');assert.equal(m.explore.cells,2);assert.equal(m.explore.places,1);assert(m.explore.updated_at>0);
+ assert.equal(JSON.stringify(m).includes('hash'),false);assert.equal((await f.call('bob','site-meta')).explore.cells,0,'owner scoped');
+});

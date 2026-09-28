@@ -1,4 +1,4 @@
-import {handleJourney,journeyShared,ownJourneyLocation,legacyVisible,revokeJourneyGrant,stopSharing} from './social-journey.mjs';
+import {handleJourney,journeyShared,ownJourneyLocation,legacyVisible,revokeJourneyGrant,stopSharing,exploreMeta} from './social-journey.mjs';
 import {handleContacts} from './social-contacts.mjs';
 import {readJSON,reply} from './insights-store.mjs';
 import {bad,keys} from './phone-schema.mjs';
@@ -33,6 +33,8 @@ export class SocialGraph {
   const body=async allowed=>{const {value}=await readJSON(req,8192);keys(value,allowed);return value;};
   const journeyResult=await handleJourney(req,this,p,path);if(journeyResult)return journeyResult;
   const contactResult=await handleContacts(req,this,p,path);if(contactResult)return contactResult;
+  // 4.4 site sections (Azi, Livret): when the app's explore mirror and the agenda listing last moved, without friends or cells.
+  if(path==='/site-meta'&&method==='GET')return reply({explore:await exploreMeta(this.s,uid),contacts:{discoverable:(p.discovery?.until||0)>now,until:p.discovery?.until||null,verified:p.discovery?.verified===true}});
   if(path==='/state'&&method==='GET'){
    const friends=[];for(const id of p.friends){const f=await this.get(id);if(!f||f.blocked.includes(uid)||p.blocked.includes(id)||!f.friends.includes(uid))continue;const location=await this.shared(f,uid);friends.push({id:f.id,name:f.name,location,mode:location?f.session?.mode||'family':null,checkin:location?f.checkin||null:null});}
    const incoming=[];for(const id of p.incoming){const f=await this.get(id);if(f&&!f.blocked.includes(uid)&&!p.blocked.includes(id))incoming.push({id,name:f.name});}
