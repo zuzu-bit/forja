@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { handleSiteApi, isSiteApi, resetSiteCache, simplifyPolyline, initials, SITE_RULES } from './site-api.mjs';
+import { handleSiteApi, isSiteApi, resetSiteCache, simplifyPolyline, initials, SITE_RULES, FirestoreReader } from './site-api.mjs';
 import { applyUsageRollup, usageDays } from './site-store.mjs';
 import { firestoreValue } from './insights-ai.mjs';
 import { InsightsAccount } from './insights-store.mjs';
@@ -733,4 +733,19 @@ test('helpers: initials and polyline simplification', () => {
   assert.equal(simplifyPolyline(straight, 100).split(';').length, 2, 'a straight street keeps its two ends');
   const zigzag = Array.from({ length: 500 }, (_, i) => `${44 + i * 0.0001},${26 + (i % 2) * 0.001}`).join(';');
   assert.equal(simplifyPolyline(zigzag, 100).split(';').length, 100);
+});
+
+test('batchGet splits more than 10 documents into batches of 10 (the new rules allow 20 exists() per request)', async () => {
+  const sizes = [];
+  const fetcher = async (url, init) => {
+    const body = JSON.parse(init.body);
+    sizes.push(body.documents.length);
+    return new Response(JSON.stringify(body.documents.map(name => ({ found: { name, fields: { name: { stringValue: name.split('/').pop() } } } }))), { status: 200 });
+  };
+  const fs = new FirestoreReader('me', 'tok', fetcher);
+  const paths = Array.from({ length: 25 }, (_, i) => `users/f${i}`);
+  const out = await fs.batchGet(paths, ['name']);
+  assert.deepEqual(sizes, [10, 10, 5]);
+  assert.equal(out.size, 25);
+  assert.equal(out.get('users/f24').name, 'f24');
 });

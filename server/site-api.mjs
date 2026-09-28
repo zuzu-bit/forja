@@ -64,6 +64,7 @@ function encode(v) {
 const docOf = d => ({ ...firestoreFields(d.fields), id: d.name.split('/').pop() });
 export const where = (field, op, value) => ({ fieldFilter: { field: { fieldPath: field }, op, value: encode(value) } });
 
+const BATCH_MAX = 10;
 export class FirestoreReader {
   constructor(uid, token, fetcher = fetch) { this.uid = uid; this.token = token; this.fetcher = fetcher; this.reads = 0; this.calls = 0; this.okCalls = 0; this.failures = 0; }
   /** Rules may refuse a read (403): that data is simply not visible. Network errors and 5xx count as failures. */
@@ -96,6 +97,14 @@ export class FirestoreReader {
   async batchGet(paths, fields) {
     const out = new Map(paths.map(p => [p, null]));
     if (!paths.length) return out;
+    // Regulile noi (FIRESTORE-RULES.md) fac un exists() pe prietenie pentru fiecare profil, iar o cerere cu mai multe
+    // documente are voie la 20 de verificări: loturi de câte BATCH_MAX, fiecare cu propria revenire la 403.
+    if (paths.length > BATCH_MAX) {
+      for (let i = 0; i < paths.length; i += BATCH_MAX) {
+        for (const [k, v] of await this.batchGet(paths.slice(i, i + BATCH_MAX), fields)) out.set(k, v);
+      }
+      return out;
+    }
     const r = await this.send(`${BASE}:batchGet`, { documents: paths.map(p => `${DOCS}/${p}`), mask: { fieldPaths: fields } });
     this.reads += paths.length;
     if (r.status === 403) {
