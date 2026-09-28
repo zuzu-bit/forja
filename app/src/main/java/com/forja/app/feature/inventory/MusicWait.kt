@@ -283,18 +283,18 @@ fun InventoryMusicScreen(onOpenInventory: (InvPage) -> Unit) {
 /**
  * S3c (Muzica.dc.html): fundal radial cald, pastila + egalizatorul mic, eroul, piesa, comenzile, comutatoarele.
  * Pe ecrane joase (S23: 696 dp utili) eroul se strânge la 200 dp, ca totul să încapă fără derulare. Cu piesa arătată,
- * fiecare rând în plus sub comenzi („Nu a pornit.” / „Deschide Spotify”, cartea care cântă) ia 24 dp din inel, ca
- * rândul de jos să nu se lipească de comutatoare (și pe S23, și pe 393 × 851).
+ * rândul care urmează unei atingeri pe Play („Nu a pornit.” / „Deschide Spotify”, sub comenzi) ia locul frazei de jos,
+ * nu din inel: la trecerea din „pornește” nimic de deasupra comenzilor nu se mișcă sub deget. Doar cartea care cântă
+ * alături (nu vine dintr-o atingere pe Play) ia 24 dp din inel. Așa încap și cele mai pline stări, fără derulare
+ * (și pe S23, și pe 393 × 851).
  */
 @Composable
 fun MusicWaitContent(state: MusicUiState, actions: MusicActions, modifier: Modifier = Modifier) {
     val known = state.access && state.title != null
     val starting = state.start == StartUi.Starting
     val reduced = LocalReducedMotion.current
-    val extraRows = if (!known) 0 else listOf(
-        state.start is StartUi.Failed || state.start is StartUi.NeedsTap,
-        state.other?.playing == true
-    ).count { it }
+    val failLine = known && (state.start is StartUi.Failed || state.start is StartUi.NeedsTap)
+    val bookRow = known && state.other?.playing == true
     BoxWithConstraints(
         modifier
             .fillMaxSize()
@@ -316,7 +316,8 @@ fun MusicWaitContent(state: MusicUiState, actions: MusicActions, modifier: Modif
             known -> 10.dp
             else -> 12.dp
         }
-        val ringTarget = (if (compact) 200.dp else 300.dp) - 24.dp * extraRows
+        // Inelul nu depinde de pornire: „Nu a pornit.” / „Deschide Spotify” iau locul frazei de jos (mai jos).
+        val ringTarget = (if (compact) 200.dp else 300.dp) - (if (bookRow) 24.dp else 0.dp)
         val ringSize by animateDpAsState(ringTarget, if (reduced) snap() else tween(300), label = "musicRingSize")
         TopBottomColumn(
             padding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = if (compact) 20.dp else 24.dp),
@@ -356,13 +357,16 @@ fun MusicWaitContent(state: MusicUiState, actions: MusicActions, modifier: Modif
                 }
                 TogglesCard(state, actions, compact)
             },
-            bottom = {
-                Text(
-                    "Când tace muzica, inventarul e gata.",
-                    style = body(14),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
+            // Cât „Nu a pornit.” / „Deschide Spotify” stă sub comenzi, fraza de jos (cu spațiul ei, ~30 dp) lipsește.
+            bottom = if (failLine) null else {
+                {
+                    Text(
+                        "Când tace muzica, inventarul e gata.",
+                        style = body(14),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         )
     }
@@ -753,7 +757,7 @@ object MusicWaitSamples {
     /** Cel mai plin caz obișnuit: piesa de top, pe pauză, Play n-a pornit (eticheta TOP + „Nu a pornit.”). */
     val resumeFailedTop = resumeFailed.copy(top = true)
 
-    /** Și mai plin: pe lângă „Deschide Spotify”, cartea audio cântă alături (inelul se strânge de două ori). */
+    /** Și mai plin: pe lângă „Deschide Spotify” (fără fraza de jos), cartea audio cântă alături (inelul, cu 24 dp mai mic). */
     val pausedNeedsTapBook = paused.copy(
         start = StartUi.NeedsTap("Deschide Spotify"),
         other = OtherUi("Fetele care ard", MediaKind.SPOKEN, playing = true)

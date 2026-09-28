@@ -36,6 +36,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -102,16 +103,25 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
         }
     }
 
-    // Ghidajul primei vizite arată rândul „Muzică”. Rândul stă deasupra pliului (sub citat, și pe S23); doar dacă un font
-    // mărit îl împinge în jumătatea de jos, hubul derulează o dată până la el, ca ținta să apară în primele 3 s.
+    // Ghidajul primei vizite arată rândul „Muzică”. Rândul stă deasupra pliului (sub citat; pe S23 se termină la ~470 dp
+    // din 696, iar bara de file acoperă doar de la 576 în jos): hubul derulează o dată până la el numai dacă un font
+    // mărit îi împinge marginea de jos sub bara de file (cei 120 dp de jos), ca ținta să apară întreagă în primele 3 s.
     val scroll = rememberScrollState()
     val guideSeen by remember { Tutorial.seen(context, "antrenament") }.collectAsState(initial = true)
-    var musicRowCenter by remember { mutableFloatStateOf(-1f) }
+    var musicRowTop by remember { mutableFloatStateOf(-1f) }
+    var musicRowBottom by remember { mutableFloatStateOf(-1f) }
     var viewport by remember { mutableIntStateOf(0) }
-    LaunchedEffect(guideSeen, exercises.size, musicRowCenter > 0f && viewport > 0) {
-        if (guideSeen || musicRowCenter <= 0f || viewport <= 0 || musicRowCenter < viewport * 0.6f) return@LaunchedEffect
+    val density = LocalDensity.current
+    // Pozițiile rândului sunt în conținut, sub bara de stare: pe ecran (nederulat) rândul stă mai jos cu înălțimea ei.
+    val statusTop = WindowInsets.statusBars.getTop(density)
+    val tabBarReserve = with(density) { 120.dp.toPx() }
+    LaunchedEffect(guideSeen, plans.size, exercises.size, musicRowBottom > 0f && viewport > 0) {
+        if (guideSeen || musicRowBottom <= 0f || viewport <= 0) return@LaunchedEffect
         delay(250)
-        val target = (musicRowCenter - viewport * 0.45f).toInt().coerceIn(0, scroll.maxValue)
+        // Citite după pauză: planurile și exercițiile venite între timp au așezat deja rândul.
+        if (statusTop + musicRowBottom <= viewport - tabBarReserve) return@LaunchedEffect
+        val center = statusTop + (musicRowTop + musicRowBottom) / 2f
+        val target = (center - viewport * 0.45f).toInt().coerceIn(0, scroll.maxValue)
         if (target > scroll.value) scroll.animateScrollTo(target)
     }
 
@@ -131,7 +141,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
                 onOpenSheet = { sheetOpen = true }
             ),
             scroll = scroll,
-            onMusicRow = { musicRowCenter = it },
+            onMusicRow = { top, bottom -> musicRowTop = top; musicRowBottom = bottom },
             onViewport = { viewport = it }
         )
     }
@@ -170,7 +180,7 @@ data class HubActions(
 /**
  * Hubul Antrenament, fără ViewModel (și pentru capturi): antetul, planurile, citatul, rândul „Muzică” (deasupra
  * pliului și pe S23: muzica pornește odată cu sesiunea, deci se vede de la intrare), exercițiile de azi și „Începe
- * sesiunea”. [onMusicRow] = mijlocul rândului „Muzică” în conținut (pentru ghidaj).
+ * sesiunea”. [onMusicRow] = marginea de sus și cea de jos ale rândului „Muzică” în conținut, în px (pentru ghidaj).
  */
 @Composable
 fun WorkoutHubContent(
@@ -182,7 +192,7 @@ fun WorkoutHubContent(
     actions: HubActions,
     modifier: Modifier = Modifier,
     scroll: ScrollState = rememberScrollState(),
-    onMusicRow: (Float) -> Unit = {},
+    onMusicRow: (top: Float, bottom: Float) -> Unit = { _, _ -> },
     onViewport: (Int) -> Unit = {}
 ) {
     Column(
@@ -271,7 +281,10 @@ fun WorkoutHubContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                .onGloballyPositioned { onMusicRow(it.positionInParent().y + it.size.height / 2f) }
+                .onGloballyPositioned {
+                    val y = it.positionInParent().y
+                    onMusicRow(y, y + it.size.height)
+                }
         )
 
         Spacer(Modifier.height(22.dp))
