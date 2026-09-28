@@ -64,4 +64,21 @@ RULES=$PWD/firestore.rules OLD_RULES=$PWD/firestore.rules.old \
   npx firebase emulators:exec --only firestore --project demo-forja "node firestore.rules.test.mjs"
 ```
 
-Rezultatul la 4.4 este de 47 de verificări, trecute pe ambele seturi de reguli.
+Rezultatul la 4.4:
+
+- 50 de verificări trecute cu regulile noi, dintre care 3 pentru citirile site-ului;
+- 47 de verificări trecute cu regulile vechi.
+
+### Ce trebuie să respecte serverul site-ului
+
+Site-ul citește profilurile prietenilor prin REST, cu tokenul utilizatorului (`documents:batchGet`). Două reguli:
+
+- **Loturi de cel mult 20 de profiluri.** Fiecare profil de prieten costă o verificare `exists()`. O cerere
+  multi-document are voie la 20 de verificări, iar la 21 de prieteni tot lotul primește 403. Loturile de 10
+  păstrează o marjă pentru prieteniile cu id în ordinea inversă, care cer 2 verificări.
+- **Doar prieteni de acum.** Un singur profil refuzat în lot (un fost prieten, un străin) face tot lotul 403.
+  Uid-urile se iau din `friendships` (members array-contains eu) chiar înainte de batchGet. La 403 se reîncearcă
+  document cu document și se sar cele refuzate.
+
+Emailul contului nu se citește din `users/{uid}`. Se ia din tokenul verificat (câmpul `email`) sau din
+`users/{uid}/settings/account`.

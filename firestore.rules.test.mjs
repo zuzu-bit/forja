@@ -30,6 +30,30 @@ async function check(label, fn) {
   catch (e) { failures++; console.log('  FAIL ' + label + '\n       ' + (e?.message || e)); }
 }
 
+// Site-ul (worker-ul forja-insights) citește prin REST cu tokenul utilizatorului: documents:batchGet.
+// Emulatorul acceptă un JWT nesemnat (alg „none”), ca în @firebase/rules-unit-testing.
+function mockToken(uid) {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  return b64({ alg: 'none', typ: 'JWT' }) + '.' + b64({
+    iss: 'https://securetoken.google.com/demo-forja', aud: 'demo-forja', iat: now, exp: now + 3600, auth_time: now,
+    sub: uid, user_id: uid, firebase: { sign_in_provider: 'password', identities: {} },
+  }) + '.';
+}
+async function batchGet(uid, paths) {
+  const root = 'projects/demo-forja/databases/(default)/documents';
+  const r = await fetch(`http://${host}:${port}/v1/${root}:batchGet`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + mockToken(uid) },
+    body: JSON.stringify({ documents: paths.map((x) => `${root}/${x}`) }),
+  });
+  return r.status;
+}
+async function expectStatus(promise, want) {
+  const got = await promise;
+  if (got !== want) throw new Error(`HTTP ${got}, așteptat ${want}`);
+}
+
 async function seed(env) {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
@@ -154,6 +178,24 @@ async function suite(name, rules, { tightened }) {
   await check('străinul NU o citește', () => assertFails(getDoc(doc(cristi, 'energy', eid))));
   await check('străinul NU ghicește energia altora (document lipsă)', () => assertFails(getDoc(doc(cristi, 'energy', `${ANA}_${DAY}_${BOGDAN}`))));
   await check('nu trimit în numele altcuiva', () => assertFails(setDoc(doc(cristi, 'energy', `${ANA}_${DAY}_${BOGDAN}`), { to: ANA, from: BOGDAN, day: DAY, at: 13 })));
+
+  // ── site-ul: batchGet cu tokenul meu (P1, secțiunile Teren/Camarazi) ──
+  if (tightened) {
+    const many = Array.from({ length: 21 }, (_, i) => `f${String(i).padStart(2, '0')}Prieten`);
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      for (const f of many) {
+        await setDoc(doc(db, 'users', f), { name: f, lat: 1, lng: 2 });
+        await setDoc(doc(db, 'friendships', sortedId(ANA, f)), { members: [ANA, f].sort(), since: 1 });
+      }
+    });
+    await check('site: eu + prietenii într-un batchGet (≤ 20 de prieteni)', () =>
+      expectStatus(batchGet(ANA, [`users/${ANA}`, ...many.slice(0, 20).map((f) => `users/${f}`)]), 200));
+    await check('site: 21 de prieteni într-un batchGet → refuzat (limita de 20 de verificări); se citesc pe loturi', () =>
+      expectStatus(batchGet(ANA, many.map((f) => `users/${f}`)), 403));
+    await check('site: un străin în lot strică tot lotul → doar prieteni în batchGet', () =>
+      expectStatus(batchGet(ANA, [`users/${BOGDAN}`, `users/${CRISTI}`]), 403));
+  }
 
   await env.cleanup();
 }
