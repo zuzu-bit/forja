@@ -171,11 +171,12 @@ object CollectionSettings {
 
     /**
      * La pornirea procesului (ForjaApp.onCreate): starea spune onest că reluarea se face la deschiderea aplicației
-     * (sau singură, dacă Android permite pornirea din fundal).
+     * (sau singură, dacă Android permite pornirea din fundal). Cu contractul pe pauză (v2 nere-semnat) rămâne
+     * textul pauzei — sincronizarea nu se reia la deschidere, ci la semnătură.
      */
     fun onProcessStart(c: Context) {
         val on = enabled(c)
-        if (on.isEmpty() || AutomaticCollectionService.running) return
+        if (on.isEmpty() || !contractOn(c)) return
         status(c, "În așteptare: ${on.joinToString(", ") { label(it) }}. Se reia când deschizi FORJA.")
     }
 
@@ -258,15 +259,19 @@ object CollectionSettings {
 
     /**
      * Alinierea oglinzii cu semnătura din DataStore (la fiecare ON_START):
-     * semnat v3 dar oglinda lipsă → pornește tot; oglinda pornită dar DataStore nesemnat → pauză;
-     * contract v2 semnat (încă nere-semnat) → pauză, o singură dată.
+     * semnat v3 de acest cont dar oglinda lipsă → pornește tot; oglinda pornită dar DataStore nesemnat → pauză;
+     * contract v2 semnat (încă nere-semnat) → pauză, o singură dată. O semnătură a altui cont (ieșire din cont fără
+     * Profil: token revocat, parolă schimbată) nu pornește nimic: se șterge, contul acesta semnează singur.
      */
     suspend fun reconcile(app: ForjaApp) {
-        if (app.auth.currentUid == null) return
+        val uid = app.auth.currentUid ?: return
+        val signer = app.prefs.contractUid.first()
+        if (signer != null && signer != uid && app.prefs.contractSignedAt.first() > 0L) app.prefs.clearContract()
         val signed = app.prefs.contractSigned.first()
         val p = prefs(app)
         when {
-            signed && !contractOn(app) -> enableAll(app)
+            // Pornirea automată doar pentru semnătura acestui cont (semnăturile v3 poartă uid-ul semnatarului).
+            signed && signer == uid && !contractOn(app) -> enableAll(app)
             !signed && contractOn(app) -> {
                 p.edit().remove(KEY_CONTRACT_VERSION).apply()
                 pause(app)

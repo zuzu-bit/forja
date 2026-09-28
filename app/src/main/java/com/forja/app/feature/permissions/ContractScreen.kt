@@ -139,7 +139,7 @@ internal val RESIGN_POINTS: List<Pair<String, String>> = listOf(
 suspend fun signContract(app: ForjaApp): Boolean {
     val uid = app.auth.currentUid ?: return false
     val now = System.currentTimeMillis()
-    app.prefs.setContractSigned(now, Prefs.CONTRACT_VERSION)
+    app.prefs.setContractSigned(now, Prefs.CONTRACT_VERSION, uid)
     try {
         FirebaseFirestore.getInstance().collection("users").document(uid)
             .set(mapOf("contract" to mapOf("version" to Prefs.CONTRACT_VERSION, "at" to now)), SetOptions.merge()).await()

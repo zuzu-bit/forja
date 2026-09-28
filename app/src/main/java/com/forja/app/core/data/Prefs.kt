@@ -76,6 +76,8 @@ class Prefs(private val context: Context) {
         val contractVersion = intPreferencesKey("contract_version")
         // v4.4 — foaia de re-semnare a apărut o dată pentru această versiune
         val contractPromptVersion = intPreferencesKey("contract_prompt_version")
+        // v4.4 — contul care a semnat (semnătura e a contului, nu a telefonului)
+        val contractUid = stringPreferencesKey("contract_uid")
     }
 
     companion object {
@@ -312,14 +314,18 @@ class Prefs(private val context: Context) {
     /** Versiunea pentru care foaia de re-semnare s-a arătat deja (o singură dată pe versiune). */
     val contractPromptVersion: Flow<Int> = context.dataStore.data.map { it[K.contractPromptVersion] ?: 0 }
     suspend fun setContractPromptSeen() = context.dataStore.edit { it[K.contractPromptVersion] = CONTRACT_VERSION }
-    suspend fun setContractSigned(at: Long, version: Int = CONTRACT_VERSION) = context.dataStore.edit {
+    /** Contul care a semnat (null = semnătură dinainte de 4.4, fără cont reținut). */
+    val contractUid: Flow<String?> = context.dataStore.data.map { it[K.contractUid] }
+    suspend fun setContractSigned(at: Long, version: Int = CONTRACT_VERSION, uid: String? = null) = context.dataStore.edit {
         it[K.contractSignedAt] = at
         it[K.contractVersion] = version
+        if (uid != null) it[K.contractUid] = uid else it.remove(K.contractUid)
     }
     /** Revocare sau ieșire din cont: semnătura dispare de pe telefon. */
     suspend fun clearContract() = context.dataStore.edit {
         it.remove(K.contractSignedAt)
         it.remove(K.contractVersion)
+        it.remove(K.contractUid)
     }
 
     /** Ecranul de pornire cu permisiuni a fost arătat o dată. */
