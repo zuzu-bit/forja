@@ -7,7 +7,6 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -18,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -118,20 +118,24 @@ fun MacroRing(
     }
 }
 
-/** Inel kcal gata compus: numeral mare, „din N”, culoare de depășire. */
+/**
+ * Inel kcal gata compus: numeral mare, „din N”, culoare de depășire.
+ * `targetLabel` = ținta deja formatată de ecran („2 306”), ca inelul să scrie numărul la fel ca restul cardului.
+ */
 @Composable
 fun KcalRing(
     kcal: Int,
     target: Int,
     modifier: Modifier = Modifier,
     ringSize: Dp = 132.dp,
-    key: Any? = null
+    key: Any? = null,
+    targetLabel: String? = null
 ) {
     val t = target.coerceAtLeast(1)
     MacroRing(progress = kcal.toFloat() / t, modifier = modifier, ringSize = ringSize, key = key) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CountUpNumeral(target = kcal.toFloat(), size = 30, decimals = 0)
-            Text("din $t kcal", style = BodyTiny.copy(color = TextSecondary))
+            Text("din ${targetLabel ?: t}\u00A0kcal", style = BodyTiny.copy(color = TextSecondary))
         }
     }
 }
@@ -158,16 +162,17 @@ fun MacroBar(
     val over = flagOver && ratio > 1f
     val p = animatedFill(ratio, key)
     Column(modifier) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(label, style = monoLabel(9, 0.14f).copy(color = color))
-                Spacer(Modifier.size(6.dp))
-                Text("$grams g", style = BodyStrong.copy(fontSize = 13.sp))
-            }
+        // Eticheta mono, gramele și reperul stau pe aceeași linie de bază (aliniate jos, eticheta mică părea mai jos).
+        Row(Modifier.fillMaxWidth()) {
+            Text(label, style = monoLabel(9, 0.14f).copy(color = color), modifier = Modifier.alignByBaseline())
+            Spacer(Modifier.width(6.dp))
+            Text("$grams\u00A0g", style = BodyStrong.copy(fontSize = 13.sp), modifier = Modifier.alignByBaseline())
             if (target != null) {
+                Spacer(Modifier.weight(1f))
                 Text(
-                    if (grams > target) "peste reper cu ${grams - target} g" else "reper $target g",
-                    style = BodyTiny.copy(color = if (over) Error else TextDim)
+                    if (grams > target) "peste reper cu ${grams - target}\u00A0g" else "reper $target\u00A0g",
+                    style = BodyTiny.copy(color = if (over) Error else TextDim),
+                    modifier = Modifier.alignByBaseline()
                 )
             }
         }

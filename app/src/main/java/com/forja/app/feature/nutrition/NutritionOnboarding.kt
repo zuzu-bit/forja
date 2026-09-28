@@ -414,6 +414,8 @@ private fun ResultStep(p: BodyProfile, bottomInset: Dp, onBack: () -> Unit, onNe
     val targets = remember(p) { Targets.of(p) }
     val bmi = p.bmi
     val band = Bmi.band(bmi)
+    // Banda de sus · cardul care se derulează · bara fixă cu butonul. Butonul nu mai plutește peste rație
+    // (acoperea rândul de jos pe 393 dp și mai mult pe S23); textul se stinge sub bară, nu se taie.
     Column(Modifier.fillMaxSize()) {
         // Banda pal-olive de sus, cu progresul și mascota fericită.
         Column(Modifier.fillMaxWidth().background(Color(0xFF1B2417)).statusBarsPadding()) {
@@ -422,66 +424,96 @@ private fun ResultStep(p: BodyProfile, bottomInset: Dp, onBack: () -> Unit, onNe
                 PopIn { Mascot(state = MascotState.Happy, hat = MascotHat.Chef, size = 150.dp) }
             }
         }
-        Column(
-            Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-        ) {
-            Reveal(index = 0) {
-                ForjaCard(Modifier.fillMaxWidth().offset(y = (-12).dp), radius = 22.dp, padding = 18.dp) {
-                    Text("Indicele tău", style = Body.copy(color = TextSecondary, fontSize = 15.sp))
-                    Spacer(Modifier.height(4.dp))
-                    Text("Indice de masă corporală", style = BodyTiny.copy(color = TextDim))
-                    Spacer(Modifier.height(24.dp))
-                    BmiScale(bmi)
-                    Spacer(Modifier.height(18.dp))
-                    // Caseta verde: titlul categoriei + două propoziții calde, oneste.
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(PaleFill)
-                            .padding(16.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(20.dp).clip(CircleShape).background(Positive), contentAlignment = Alignment.Center) {
-                                Text("✓", style = BodyStrong.copy(fontSize = 12.sp, color = Color(0xFF0A0A0B)))
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+            ) {
+                // Cardul începe sub bandă, întreg (cu offset negativ, colțurile de sus intrau sub ea).
+                Spacer(Modifier.height(14.dp))
+                Reveal(index = 0) {
+                    ForjaCard(Modifier.fillMaxWidth(), radius = 22.dp, padding = 18.dp) {
+                        Text("Indicele tău", style = Body.copy(color = TextSecondary, fontSize = 15.sp))
+                        Spacer(Modifier.height(4.dp))
+                        Text("Indice de masă corporală", style = BodyTiny.copy(color = TextDim))
+                        Spacer(Modifier.height(24.dp))
+                        BmiScale(bmi)
+                        Spacer(Modifier.height(18.dp))
+                        // Caseta verde: titlul categoriei + două propoziții calde, oneste.
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(PaleFill)
+                                .padding(16.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(20.dp).clip(CircleShape).background(Positive), contentAlignment = Alignment.Center) {
+                                    Text("✓", style = BodyStrong.copy(fontSize = 12.sp, color = Color(0xFF0A0A0B)))
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Text(band.title, style = BodyStrong.copy(fontSize = 17.sp))
                             }
-                            Spacer(Modifier.width(8.dp))
-                            Text(band.title, style = BodyStrong.copy(fontSize = 17.sp))
+                            Spacer(Modifier.height(6.dp))
+                            Text(band.text, style = Body.copy(color = TextPrimary, fontSize = 15.sp, lineHeight = 21.sp))
                         }
-                        Spacer(Modifier.height(6.dp))
-                        Text(band.text, style = Body.copy(color = TextPrimary, fontSize = 15.sp, lineHeight = 21.sp))
-                    }
-                    Spacer(Modifier.height(20.dp))
-                    InfoRow(Icons.Outlined.DirectionsRun, "Activitate", BodyProfile.ACTIVITIES.getOrElse(p.activity) { "—" })
-                    InfoRow(Icons.Outlined.Eco, "Dietă", BodyProfile.DIETS.getOrElse(p.diet) { "Echilibrată" })
-                    InfoRow(Icons.Outlined.LocalFireDepartment, "Metabolism", targets?.let { Bmi.metabolism(it, p) } ?: "—")
-                    Spacer(Modifier.height(12.dp))
-                    SectionLabel("Rația ta", color = Accent2)
-                    Spacer(Modifier.height(4.dp))
-                    Text(targets?.summary ?: "Lipsesc date. Mergi înapoi și completează.", style = BodyStrong.copy(fontSize = 18.sp))
-                    if (targets != null) {
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            "Mifflin-St Jeor ${Targets.explain(p)}. Consum ${Targets.fmt(targets.tdee)} kcal, ${BodyProfile.GOALS[p.goal.coerceIn(0, 2)].lowercase()}. Reper, nu prescripție.",
-                            style = BodyTiny.copy(color = TextDim)
-                        )
+                        Spacer(Modifier.height(20.dp))
+                        // Rația vine imediat după indice (e rezultatul de zi cu zi, trebuie să se vadă fără derulare pe
+                        // cât se poate), apoi pe ce se sprijină. Kcal pe un rând, macro-urile pe al doilea (încap și pe
+                        // 360 dp, fără „G 62 g” rămas singur). Cum e calculată stă la „i”, nu într-un rând gri sub cifre.
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            SectionLabel("Rația ta", color = Accent2, modifier = Modifier.weight(1f))
+                            if (targets != null) {
+                                InfoDot(
+                                    title = "Rația ta",
+                                    text = "Mifflin-St Jeor, ${Targets.explain(p)}. Consum ${Targets.fmt(targets.tdee)}\u00A0kcal pe zi, " +
+                                        "obiectiv: ${BodyProfile.GOALS[p.goal.coerceIn(0, 2)].lowercase()}. Reper, nu prescripție.",
+                                    size = 18
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        if (targets != null) {
+                            Text(targets.kcalLabel, style = BodyStrong.copy(fontSize = 22.sp))
+                            Spacer(Modifier.height(2.dp))
+                            Text(targets.macros, style = Body.copy(color = TextSecondary, fontSize = 15.sp))
+                        } else {
+                            Text("Lipsesc date. Mergi înapoi și completează.", style = BodyStrong.copy(fontSize = 16.sp))
+                        }
+                        Spacer(Modifier.height(22.dp))
+                        InfoRow(Icons.Outlined.DirectionsRun, "Activitate", BodyProfile.ACTIVITIES.getOrElse(p.activity) { "—" })
+                        InfoRow(Icons.Outlined.Eco, "Dietă", BodyProfile.DIETS.getOrElse(p.diet) { "Echilibrată" })
+                        InfoRow(Icons.Outlined.LocalFireDepartment, "Metabolism", targets?.let { Bmi.metabolism(it, p) } ?: "—", last = true)
                     }
                 }
+                Spacer(Modifier.height(24.dp))
             }
-            Spacer(Modifier.height(90.dp))
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(24.dp)
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Surface0)))
+            )
         }
-    }
-    Box(Modifier.fillMaxSize().navigationBarsPadding().padding(bottom = 22.dp + bottomInset), contentAlignment = Alignment.BottomCenter) {
-        PrimaryButton(text = "Înainte ›", onClick = onNext, enabled = targets != null, modifier = Modifier.widthIn(min = 200.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(Surface0)
+                .navigationBarsPadding()
+                .padding(top = 6.dp, bottom = 22.dp + bottomInset),
+            contentAlignment = Alignment.Center
+        ) {
+            PrimaryButton(text = "Înainte ›", onClick = onNext, enabled = targets != null, modifier = Modifier.widthIn(min = 200.dp))
+        }
     }
 }
 
 @Composable
-private fun InfoRow(icon: ImageVector, label: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun InfoRow(icon: ImageVector, label: String, value: String, last: Boolean = false) {
+    Row(Modifier.fillMaxWidth().padding(bottom = if (last) 0.dp else 16.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, contentDescription = null, tint = EmberHot, modifier = Modifier.size(30.dp))
         Spacer(Modifier.width(16.dp))
         Column {

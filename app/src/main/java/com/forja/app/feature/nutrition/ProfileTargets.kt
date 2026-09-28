@@ -46,7 +46,15 @@ data class BodyProfile(
 
 /** Rația zilnică calculată: kcal + P/C/G în grame, cu explicația într-o linie. */
 data class Targets(val kcal: Int, val protein: Int, val carbs: Int, val fat: Int, val bmr: Int, val tdee: Int) {
-    val summary: String get() = "${Targets.fmt(kcal)} kcal · P $protein g · C $carbs g · G $fat g"
+    /** „2 306 kcal” — numărul nu se desparte de unitate la capăt de rând. */
+    val kcalLabel: String get() = "${fmt(kcal)}${NB}kcal"
+
+    /** „P 156 g · C 281 g · G 62 g” — rândul se poate rupe doar după „·”, niciodată între literă, cifră și „g”. */
+    val macros: String get() =
+        listOf("P" to protein, "C" to carbs, "G" to fat).joinToString("$NB· ") { (k, g) -> "$k$NB$g${NB}g" }
+
+    /** „2 306 kcal · P 156 g · C 281 g · G 62 g”. */
+    val summary: String get() = "$kcalLabel$NB· $macros"
 
     companion object {
         /** Mifflin-St Jeor. Nebinar → media formulelor (onest: formula are doar două ramuri). */
@@ -70,13 +78,22 @@ data class Targets(val kcal: Int, val protein: Int, val carbs: Int, val fat: Int
             return Targets(kcal, protein, carbs, fat, bmr.roundToInt(), tdee.roundToInt())
         }
 
-        /** „1 850” — mii separate cu spațiu subțire, ca în raportul de zi. */
+        /**
+         * Spațiu care nu se rupe (U+00A0): între mii și între număr și unitate. Fonturile FORJA îl au toate; spațiul
+         * subțire de dinainte (U+2009) lipsea din Hanken și, mai rău, lăsa rândul să se rupă în „2 / 306”.
+         */
+        private const val NB = '\u00A0'
+
+        /**
+         * „1 850” — miile despărțite de un spațiu care nu se rupe. Același format peste tot pe cardul zilei: inelul,
+         * „Ținta ta”, „mai ai … kcal” (înainte: „2306”, „2 306” și „rația 2306” pe același card).
+         */
         fun fmt(n: Int): String {
             val s = n.toString()
             if (s.length <= 3) return s
             val out = StringBuilder()
             s.forEachIndexed { i, c ->
-                if (i > 0 && (s.length - i) % 3 == 0) out.append(' ')
+                if (i > 0 && (s.length - i) % 3 == 0) out.append(NB)
                 out.append(c)
             }
             return out.toString()
