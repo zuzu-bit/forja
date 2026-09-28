@@ -2,6 +2,7 @@
 // Utilizatorii NU au chei: aplicația trimite pozele/sunetele aici cu tokenul
 // lor de cont FORJA (Firebase), iar serverul analizează cu AI-ul companiei.
 
+import { mediaGetOptions, mediaResponse } from "./media-serve.mjs";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { visionJson, textJson, audioJson, transcribe, hasAudioProvider, providers, diagProviders, triesSummary, ALL_PROVIDERS } from "./ai-router.mjs";
 import { parseClustersRequest, nameClusters, CLUSTERS_MAX_BODY } from "./ai-clusters.mjs";
@@ -1265,20 +1266,13 @@ async function route(request, env, url, ctx, auth = requireUser) {
       if (!env.MEDIA) return json({ error: "Media neconfigurată." }, 404);
       const key = decodeURIComponent(url.pathname.slice("/media/".length)).replace(/[^0-9a-zA-Z._-]/g, "");
       if (!key) return json({ error: "Lipsește fișierul." }, 400);
-      let obj = await env.MEDIA.get(key);
+      let obj = await env.MEDIA.get(key, mediaGetOptions(request));
       if (!obj && SELF_MEDIA[key] && env.AI) {
         try { await generateMedia(env, key, SELF_MEDIA[key] + ", " + SELF_MEDIA_STYLE); } catch (_) {}
-        obj = await env.MEDIA.get(key);
+        obj = await env.MEDIA.get(key, mediaGetOptions(request));
       }
       if (!obj) return json({ error: "Nu există." }, 404);
-      const type = key.endsWith(".mp4") ? "video/mp4" : key.endsWith(".png") ? "image/png" : "image/jpeg";
-      return new Response(obj.body, {
-        headers: {
-          "content-type": type,
-          "cache-control": "public, max-age=604800, immutable",
-          "accept-ranges": "bytes",
-        },
-      });
+      return mediaResponse(obj, key, request);
     }
 
     const uid = await auth(request);

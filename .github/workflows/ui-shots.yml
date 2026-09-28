@@ -15,6 +15,13 @@ on:
         required: false
         default: ""
         type: string
+  # Pornit și din build-apk.yml (intrarea „ui_shots”), cât timp fișierul ăsta nu e pe ramura implicită.
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write

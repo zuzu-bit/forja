@@ -11,6 +11,14 @@ on:
         description: "Doar diagnostic: jurnalul serverului + furnizorii AI (fără deploy, fără build)."
         type: boolean
         default: false
+      shorts:
+        description: "Doar FORJA Shorts: construiește clipurile și le urcă în R2 (fără deploy, fără build)."
+        type: boolean
+        default: false
+      ui_shots:
+        description: "Doar capturile de ecran (Roborazzi) → release ui-shots-latest (fără deploy, fără build)."
+        type: boolean
+        default: false
   push:
     branches: [ main ]
     paths:
@@ -30,7 +38,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  shorts:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.shorts }}
+    uses: ./.github/workflows/shorts.yml
+    with:
+      rotate_pct: 0
+      burn_captions: false
+      dry_run: false
+    secrets: inherit
+
+  ui-shots:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.ui_shots }}
+    uses: ./.github/workflows/ui-shots.yml
+    with:
+      ref: ${{ github.ref_name }}
+    secrets: inherit
+
   deploy-api:
+    if: ${{ !inputs.shorts && !inputs.ui_shots }}
     runs-on: ubuntu-latest
     outputs:
       url: ${{ steps.deploy.outputs.url }}
@@ -279,7 +304,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: deploy-api
-    if: always() && !inputs.diag_only
+    if: always() && !inputs.diag_only && !inputs.shorts && !inputs.ui_shots
     steps:
       - name: Checkout
         uses: actions/checkout@v4

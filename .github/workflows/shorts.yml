@@ -17,6 +17,18 @@ on:
         description: "Probă: construiește fără să urce în R2; clipurile rămân ca artifact 7 zile."
         type: boolean
         default: false
+  # Pornit și din build-apk.yml (intrarea „shorts”), cât timp fișierul ăsta nu e pe ramura implicită.
+  workflow_call:
+    inputs:
+      rotate_pct:
+        type: number
+        default: 0
+      burn_captions:
+        type: boolean
+        default: false
+      dry_run:
+        type: boolean
+        default: false
   schedule:
     # Lunar, pe 1, la 04:23 UTC: o treime din clipuri se înlocuiește cu altele noi.
     - cron: "23 4 1 * *"
