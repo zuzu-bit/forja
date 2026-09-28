@@ -7,6 +7,7 @@ import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -19,11 +20,18 @@ import com.forja.app.core.cleanup.OrgItem
 import com.forja.app.core.cleanup.OrganizerJobs
 import com.forja.app.core.cleanup.OrganizerLedger
 import com.forja.app.core.inventory.ApplyResult
+import com.forja.app.core.inventory.DocCounter
+import com.forja.app.core.inventory.DocDest
+import com.forja.app.core.inventory.InvDest
 import com.forja.app.core.inventory.InvKind
 import com.forja.app.core.inventory.InvPlan
 import com.forja.app.core.inventory.InvProgress
 import com.forja.app.core.inventory.InvScope
 import com.forja.app.core.inventory.Inventory
+import com.forja.app.core.inventory.Landing
+import com.forja.app.core.inventory.MediaRoots
+import com.forja.app.core.inventory.TreePaths
+import com.forja.app.core.inventory.mediaRootFromTree
 import com.forja.app.core.music.Music
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -43,12 +51,13 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Ce a ales omul în S1. */
+/** Ce a ales omul în S1. `lastN` = N-ul din „Ultimele N” (reținut în Prefs). */
 data class StartSelection(
     val kind: InvKind = InvKind.Photos,
     val scope: ScopeChoice = ScopeChoice.All,
     val albumId: Long? = null,
-    val albumName: String? = null
+    val albumName: String? = null,
+    val lastN: Int = 500
 )
 
 /** Cum s-a încheiat o aplicare. */
@@ -74,7 +83,8 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
     val selection: StateFlow<StartSelection> = _selection.asStateFlow()
 
     private data class PhotoStats(val access: Boolean, val count: Int?, val bytes: Long?)
-    private data class DocStats(val tree: Uri?, val name: String?, val count: Int?, val bytes: Long?)
+    /** `count`/`bytes` = fișierele libere, `organized` = cele deja în dosare (DocCensus). */
+    private data class DocStats(val tree: Uri?, val name: String?, val count: Int?, val bytes: Long?, val organized: Int? = null)
 
     private val photo = MutableStateFlow(PhotoStats(access = InvPermissions.hasPhotoAccess(app), count = null, bytes = null))
     private val docs = MutableStateFlow(DocStats(null, null, null, null))
@@ -92,10 +102,12 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
             photoCount = p.count,
             photoBytes = p.bytes,
             scope = s.scope,
+            lastN = s.lastN,
             albumName = s.albumName,
             docFolder = d.name,
             docCount = d.count,
             docBytes = d.bytes,
+            docOrganized = d.organized,
             estimateSec = e,
             laptopPending = l.size
         )
@@ -103,16 +115,29 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
 
     private val organizer = DocumentOrganizer(app, forja.prefs)
 
+    // Numărătoarea folderului: ultima terminată și cea în curs. Declarate ÎNAINTEA lui init, care pornește prima
+    // numărătoare (un inițializator scris mai jos ar suprascrie docsJob după init).
+    private var docsAt = 0L
+    private var docsJob: Job? = null
+
     init {
         // Motorul face și muncă de CPU (plan, grupare) pe firul apelantului: nimic din el pe firul principal.
         viewModelScope.launch(Dispatchers.Default) { try { Inventory.load(ctx) } catch (e: CancellationException) { throw e } catch (_: Exception) { } }
         refreshPhotoStats()
-        viewModelScope.launch { loadDocTree(organizer.persistedTree()) }
-        // Estimarea sinceră a motorului, la fiecare schimbare de alegere (cu o mică întârziere, ca să nu alerge la fiecare atingere).
+        // Prima numărătoare trece prin docsJob: revenirea în ecran (ON_RESUME imediat după compunere) nu mai pornește
+        // un al doilea BFS în paralel cu ea.
+        docsJob = viewModelScope.launch { loadDocTree(organizer.persistedTree()) }
+        // „Ultimele N”: ultima alegere.
         viewModelScope.launch {
-            combine(_selection, photo, docs) { s, p, d -> Triple(s, p.access, d.tree) }
+            val n = try { forja.prefs.inventoryLastN.first() } catch (e: CancellationException) { throw e } catch (_: Exception) { 0 }
+            if (n > 0) _selection.value = _selection.value.copy(lastN = n)
+        }
+        // Estimarea sinceră a motorului, la fiecare schimbare de alegere (cu o mică întârziere, ca să nu alerge la fiecare
+        // atingere) și când se schimbă ce e de făcut (fișiere libere după o aplicare, poze aruncate).
+        viewModelScope.launch {
+            combine(_selection, photo, docs) { s, p, d -> EstimateKey(s, p.access, p.count, d.tree, d.count) }
                 .distinctUntilChanged()
-                .collectLatest { (s, access, tree) ->
+                .collectLatest { (s, access, _, tree) ->
                     delay(220)
                     val scope = scopeOf(s, tree)
                     val sec = when {
@@ -129,7 +154,29 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { OrganizerLedger.changed.collect { refreshLaptop() } }
     }
 
-    fun pickKind(kind: InvKind) { _selection.value = _selection.value.copy(kind = kind) }
+    private data class EstimateKey(val s: StartSelection, val access: Boolean, val photos: Int?, val tree: Uri?, val docs: Int?)
+
+    fun pickKind(kind: InvKind) {
+        _selection.value = _selection.value.copy(kind = kind)
+        // Pe „Documente” cifrele din placă trebuie să fie proaspete (cel mult o dată la 30 s, ca la revenire).
+        if (kind == InvKind.Documents) refreshDocs(force = false)
+    }
+
+    /**
+     * „Ultimele N” din foaie: N ≥ câte poze are galeria înseamnă de fapt „Tot” (și nu se reține); altfel scopul trece
+     * pe „Ultimele N” și N se ține minte pentru data viitoare.
+     */
+    fun pickLastN(n: Int) {
+        if (n <= 0) return
+        val total = photo.value.count
+        if (total != null && total > 0 && n >= total) {
+            _selection.value = _selection.value.copy(scope = ScopeChoice.All)
+            return
+        }
+        val v = n.coerceIn(1, 999_999)
+        _selection.value = _selection.value.copy(scope = ScopeChoice.LastN, lastN = v)
+        viewModelScope.launch { try { forja.prefs.setInventoryLastN(v) } catch (e: CancellationException) { throw e } catch (_: Exception) { } }
+    }
 
     fun pickScope(scope: ScopeChoice) {
         val s = _selection.value
@@ -166,23 +213,96 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
             organizer.rememberTree(tree)
             docs.value = DocStats(tree, organizer.treeName(tree), null, null)
             if (startAfter && _selection.value.kind == InvKind.Documents && start()) onStarted()
-            loadDocTree(tree)
+            docsJob?.cancel()
+            docsJob = viewModelScope.launch { loadDocTree(tree) }
         }
     }
 
+    /**
+     * Numărătoarea folderului (fișiere libere + în dosare). La același folder cifrele vechi rămân pe placă până vin
+     * cele noi (fără „—” la fiecare revenire în ecran).
+     */
     private suspend fun loadDocTree(tree: Uri?) {
         if (tree == null) return
-        docs.value = DocStats(tree, organizer.treeName(tree), null, null)
-        try {
-            val (items, _) = organizer.inventory(tree)
-            docs.value = DocStats(tree, organizer.treeName(tree), items.size, items.sumOf { it.sizeBytes })
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-        }
+        val name = organizer.treeName(tree)
+        if (docs.value.tree != tree) docs.value = DocStats(tree, name, null, null)
+        val c = try { DocCounter.census(ctx, tree) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+        docsAt = SystemClock.elapsedRealtime()
+        if (docs.value.tree == tree) docs.value = DocStats(tree, name, c?.loose, c?.looseBytes, c?.organized)
+    }
+
+    /** Recitește folderul: după o aplicare ([force]) sau la revenirea în ecran (cel mult o dată la 30 s — BFS-ul costă). */
+    fun refreshDocs(force: Boolean) {
+        val tree = docs.value.tree ?: return
+        if (!force && (docsJob?.isActive == true || SystemClock.elapsedRealtime() - docsAt < DOCS_REFRESH_MS)) return
+        docsJob?.cancel()
+        docsJob = viewModelScope.launch { loadDocTree(tree) }
+    }
+
+    /**
+     * Ecranul revine în față: galeria și folderul se pot fi schimbat între timp. Folderul (BFS întreg) doar pe
+     * „Documente”; pe „Poze” îl recitim când omul trece pe „Documente” ([pickKind]).
+     */
+    fun onResume() {
+        refreshPhotoStats()
+        if (_selection.value.kind == InvKind.Documents) refreshDocs(force = false)
     }
 
     val hasDocTree: Boolean get() = docs.value.tree != null
+
+    // ─────────────────────────── Destinația („Locație”) ───────────────────────────
+
+    /** Rândul ales în „Locație”. Se reține pentru rularea următoare. */
+    fun setDestination(dest: InvDest) {
+        when (dest) {
+            is InvDest.Media -> setPhotoRoot(dest.root)
+            is InvDest.Tree -> setDocsDest(dest.tree)
+        }
+    }
+
+    private fun setPhotoRoot(root: String) {
+        val r = MediaRoots.normalize(root) ?: return
+        edit { Inventory.setDestination(InvDest.Media(r)) }
+        viewModelScope.launch { try { forja.prefs.setInventoryPhotoRoot(r) } catch (e: CancellationException) { throw e } catch (_: Exception) { } }
+    }
+
+    /** „Alt dosar…” (poze): folderul ales în selector, tradus în RELATIVE_PATH. False = nu e în Pictures sau DCIM. */
+    fun pickPhotoFolder(tree: Uri): Boolean {
+        val root = mediaRootFromTree(tree) ?: return false
+        setPhotoRoot(root)
+        return true
+    }
+
+    /**
+     * Documente: alt folder (`tree`, dosarele direct în el) sau `null` = „Organizate” în folderul ales. Permisiunea
+     * noii destinații se păstrează (planul se poate aplica după zile); a celei vechi se eliberează, dacă nu e și sursa.
+     */
+    fun setDocsDest(tree: Uri?) {
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val source = plan.value?.source ?: docs.value.tree
+                val chosen = tree?.takeUnless { source != null && TreePaths.same(it, source) }
+                val old = DocDest.savedTree(ctx, forja.prefs)
+                if (chosen != null) DocDest.take(ctx, chosen)
+                forja.prefs.setInventoryDocsDest(chosen?.toString() ?: "")
+                val savedSource = try { forja.prefs.cleanupDocsTree.first() } catch (_: Exception) { "" }
+                if (old != null && (chosen == null || !TreePaths.same(old, chosen)) && (source == null || !TreePaths.same(old, source)) &&
+                    old.toString() != savedSource) DocDest.release(ctx, old)
+                Inventory.setDestination(InvDest.Tree(chosen, if (chosen == null) DocumentOrganizer.ROOT_FOLDER else ""))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** Unde pornește selectorul „Alt folder…”: destinația curentă, altfel folderul analizat. */
+    fun docsPickerStart(): Uri? {
+        val p = plan.value
+        val tree = (p?.dest as? InvDest.Tree)?.tree ?: p?.source ?: docs.value.tree ?: return null
+        val id = TreePaths.treeDocId(tree) ?: return null
+        return try { android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, id) } catch (_: Exception) { null }
+    }
 
     /** Pornește analiza în fundal. False dacă lipsește folderul (documente). */
     fun start(): Boolean {
@@ -201,7 +321,7 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun scopeOf(s: StartSelection, tree: Uri?): InvScope = when {
         s.kind == InvKind.Documents -> InvScope(all = true, tree = tree)
-        s.scope == ScopeChoice.Last500 -> InvScope(all = false, lastN = 500)
+        s.scope == ScopeChoice.LastN -> InvScope(all = false, lastN = s.lastN)
         s.scope == ScopeChoice.Album && s.albumId != null -> InvScope(all = false, bucketId = s.albumId)
         else -> InvScope(all = true)
     }
@@ -285,6 +405,11 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         _applying.value = true
         applyJob = viewModelScope.launch {
             var total = ApplyResult(0, 0, 0, 0L)
+            var landing: Landing? = null
+            // Nemutatele: cele pierdute în fiecare rundă + cele încă în plan după ultima (un eșec reîncercat în runda
+            // următoare nu se numără de două ori; aceeași regulă ca rezumatul de pe site, AppliedRec.failed).
+            var lost = 0
+            var pending = 0
             var rounds = 0
             try {
                 while (rounds < 64) {
@@ -305,6 +430,9 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
                     if (rounds > 0 && w == null && t == null) break
                     val r = runApply()
                     total = ApplyResult(total.moved + r.moved, total.trashed + r.trashed, total.failed + r.failed, total.freedBytes + r.freedBytes)
+                    lost += r.lost
+                    pending = r.pending
+                    landing = landing?.merge(r.landing) ?: r.landing
                     rounds++
                     if (w == null && t == null) break
                     if (r.moved + r.trashed == 0) break
@@ -316,14 +444,20 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
                     folders = confirm.folders,
                     items = total.moved + total.trashed,
                     freedBytes = if (total.freedBytes > 0) total.freedBytes else if (total.trashed > 0) confirm.trashBytes else 0L,
-                    failed = total.failed,
-                    musicStopped = stopped
+                    failed = lost + pending,
+                    musicStopped = stopped,
+                    place = landing,
+                    runId = p.runId,
+                    showSite = contractSigned.value
                 )
                 // Rezultatul se publică ÎNAINTE ca „applying” să cadă: ecranul trece direct la sigilare / final.
                 _outcome.value = if (complete) ApplyOutcome.Complete else ApplyOutcome.Partial
             } finally {
                 _applyWaiting.value = false
                 _applying.value = false
+                // Cifrele din S1 după mutări: pozele aruncate au plecat din galerie, documentele stau acum în dosare.
+                refreshPhotoStats()
+                if (confirm.kind == InvKind.Documents) refreshDocs(force = true)
             }
         }
     }
@@ -376,6 +510,9 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         super.onCleared()
     }
 }
+
+/** Cel mult o numărătoare a folderului de documente la 30 s, la revenirea în ecran. */
+private const val DOCS_REFRESH_MS = 30_000L
 
 /** Permisiunile de galerie (aceleași reguli ca în Echipare) + locația din poze (API 29+) + notificările (33+). */
 internal object InvPermissions {

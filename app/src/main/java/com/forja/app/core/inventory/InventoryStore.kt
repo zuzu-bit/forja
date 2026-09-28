@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.forja.app.core.cleanup.DocumentOrganizer
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -98,6 +99,18 @@ internal data class FolderRec(
     val user: Boolean = false
 )
 
+/**
+ * Unde ajung lucrurile (4.4). Poze: [mediaRoot] = rădăcina RELATIVE_PATH („Pictures/FORJA/”, „DCIM/FORJA/”,
+ * „Pictures/Vacanțe/”). Documente: [tree] = arborele destinație (null = folderul sursă) și [sub] = subdosarul din el
+ * („Organizate”, sau "" când dosarele stau direct în arborele ales). Planurile 4.3 nu îl au (null → implicitul).
+ */
+@Serializable
+internal data class DestRec(
+    val mediaRoot: String? = null,
+    val tree: String? = null,
+    val sub: String = DocumentOrganizer.ROOT_FOLDER
+)
+
 /** Planul editabil. `reasons`/`origin` există doar pentru elementele din „De aruncat”. */
 @Serializable
 internal data class PlanDoc(
@@ -108,8 +121,31 @@ internal data class PlanDoc(
     val redirects: Map<String, String> = emptyMap(),
     val ghosts: List<FolderRec> = emptyList(),
     val seq: Int = 0,
-    val provider: String? = null
+    val provider: String? = null,
+    val dest: DestRec? = null
 )
+
+/** Ce s-a mutat într-un dosar, adunat peste toate rundele de aplicare (pentru rezumatul de pe site). */
+@Serializable
+internal data class FolderTally(val count: Int = 0, val bytes: Long = 0L)
+
+/**
+ * Totalul aplicărilor unei rulări (o rulare mare se aplică în mai multe runde de ≤ 500). Eșecurile: [lost] = elemente
+ * ieșite din plan fără să ajungă la locul lor (șterse între timp), [pending] = cele rămase în plan după ultima rundă
+ * (se pot reîncerca; nu se adună de la o rundă la alta, ca o reîncercare reușită să nu fie numărată de două ori).
+ */
+@Serializable
+internal data class AppliedRec(
+    val moved: Int = 0,
+    val trashed: Int = 0,
+    val lost: Int = 0,
+    val pending: Int = 0,
+    val trashBytes: Long = 0L,
+    val folders: Map<String, FolderTally> = emptyMap(),
+    val lastAt: Long = 0L
+) {
+    val failed: Int get() = lost + pending
+}
 
 @Serializable
 internal data class RunMeta(
@@ -134,7 +170,8 @@ internal data class RunMeta(
     val itemCount: Int = 0,
     val trashCount: Int = 0,
     val trashBytes: Long = 0L,
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val applied: AppliedRec? = null
 )
 
 @Serializable

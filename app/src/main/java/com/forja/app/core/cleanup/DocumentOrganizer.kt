@@ -102,7 +102,11 @@ class DocumentOrganizer(private val context: Context, private val prefs: Prefs) 
 
     // ─────────────────────────── Folderul persistat ───────────────────────────
 
-    /** Folderul ales data trecută, dacă permisiunea persistentă (citire + scriere) mai există. */
+    /**
+     * Folderul ales data trecută, dacă permisiunea persistentă (citire + scriere) mai există. Când folderul salvat a
+     * dispărut, cade pe cea mai nouă permisiune — dar NU pe destinația documentelor din Inventar (și ea e o permisiune
+     * persistentă): altfel folderul în care am mutat ar deveni, pe tăcute, folderul de analizat.
+     */
     suspend fun persistedTree(): Uri? = withContext(Dispatchers.IO) {
         val perms = try { cr.persistedUriPermissions } catch (_: Exception) { emptyList() }
         val usable = perms.filter { it.isReadPermission && it.isWritePermission }
@@ -110,7 +114,8 @@ class DocumentOrganizer(private val context: Context, private val prefs: Prefs) 
         val saved = try { prefs.cleanupDocsTree.first() } catch (_: Exception) { "" }
         val match = usable.firstOrNull { it.uri.toString() == saved }?.uri
         if (match != null) return@withContext match
-        val fallback = usable.maxByOrNull { it.persistedTime }?.uri
+        val dest = try { prefs.inventoryDocsDest.first() } catch (_: Exception) { "" }
+        val fallback = usable.filter { dest.isBlank() || it.uri.toString() != dest }.maxByOrNull { it.persistedTime }?.uri
         if (fallback != null) try { prefs.setCleanupDocsTree(fallback.toString()) } catch (_: Exception) { }
         fallback
     }
@@ -134,12 +139,18 @@ class DocumentOrganizer(private val context: Context, private val prefs: Prefs) 
 
     // ─────────────────────────── Inventar (BFS) ───────────────────────────
 
+    /**
+     * Fișierele din arbore (BFS, ≤ [maxDepth] niveluri, ≤ [limit]), fără dosarele ignorate („Organizate”, „.git”…).
+     * [startDocId] pornește din alt dosar al arborelui (ex. „Organizate”, pentru numărătoarea Inventarului; căile
+     * rămân relative la el); [skipDirIds] = dosare sărite după id (destinația aleasă în Inventar, când e în folder).
+     */
     suspend fun inventory(
-        tree: Uri, recursive: Boolean = true, maxDepth: Int = 8, limit: Int = 15_000
+        tree: Uri, recursive: Boolean = true, maxDepth: Int = 8, limit: Int = 15_000,
+        startDocId: String? = null, skipDirIds: Set<String> = emptySet()
     ): Pair<List<DocItem>, List<String>> = withContext(Dispatchers.IO) {
         val out = ArrayList<DocItem>()
         val warnings = ArrayList<String>()
-        val rootId = try { DocumentsContract.getTreeDocumentId(tree) } catch (e: Exception) {
+        val rootId = startDocId ?: try { DocumentsContract.getTreeDocumentId(tree) } catch (e: Exception) {
             return@withContext out to listOf("Folderul nu mai e accesibil. Alege-l din nou.")
         }
         val queue = ArrayDeque<Triple<String, String, Int>>()   // (documentId, cale relativă, adâncime)
@@ -168,7 +179,7 @@ class DocumentOrganizer(private val context: Context, private val prefs: Prefs) 
                         if (flags and DocumentsContract.Document.FLAG_VIRTUAL_DOCUMENT != 0) continue
                         val childPath = if (path.isEmpty()) name else "$path/$name"
                         if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-                            if (recursive && depth < maxDepth && name !in IGNORED_DIRS && !name.startsWith(".")) {
+                            if (recursive && depth < maxDepth && name !in IGNORED_DIRS && !name.startsWith(".") && docId !in skipDirIds) {
                                 queue.add(Triple(docId, childPath, depth + 1))
                             }
                             continue
@@ -189,6 +200,23 @@ class DocumentOrganizer(private val context: Context, private val prefs: Prefs) 
         }
         if (truncated) warnings += "Am oprit la $limit fișiere — alege un folder mai mic pentru restul."
         out to warnings
+    }
+
+    /** Id-ul subdosarului [name] direct sub [parentDocId] (implicit rădăcina arborelui); null dacă nu există. */
+    suspend fun childDirId(tree: Uri, name: String, parentDocId: String? = null): String? = withContext(Dispatchers.IO) {
+        val parent = parentDocId ?: try { DocumentsContract.getTreeDocumentId(tree) } catch (_: Exception) { return@withContext null }
+        val proj = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE
+        )
+        try {
+            cr.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, parent), proj, null, null, null)?.use { c ->
+                while (c.moveToNext()) {
+                    if (c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR && c.getString(1) == name) return@withContext c.getString(0)
+                }
+            }
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        null
     }
 
     // ─────────────────────────── Detecții ───────────────────────────
