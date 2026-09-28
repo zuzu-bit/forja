@@ -185,6 +185,12 @@ class LostPhoneService : Service(), LocationListener {
         ticker = scope.launch {
             while (isActive) {
                 delay(EXEC_BEAT_MS)
+                // Urmărirea nu merge nevăzută: notificările oprite între timp închid căutarea, iar site-ul află de ce.
+                if (!ring && !LostPhoneRecovery.notices(this@LostPhoneService)) {
+                    finalStatus("notification_missing")
+                    endLocal(markHandled = true)
+                    break
+                }
                 show()
                 // Între bătăile de minut ale serviciului contractului: „Oprește” sau „+10 min” de pe site ajung în ≤ 15 s.
                 try { Finder.beat(this@LostPhoneService, lastFix ?: Finder.bestFix(this@LostPhoneService)) }
@@ -195,17 +201,22 @@ class LostPhoneService : Service(), LocationListener {
 
     /** Prim-plan dacă Android îl permite; altfel notificarea obișnuită, aceeași. */
     private fun promote(ring: Boolean) {
-        val type = when {
-            Build.VERSION.SDK_INT < 29 -> 0
-            LostPhoneRecovery.locationPermission(this) -> ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            ring && Build.VERSION.SDK_INT >= 34 -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE
-            else -> 0
+        // Locație dacă e permisă (din fundal cere „Tot timpul”); pentru sonerie, altfel serviciul scurt (Android 14+).
+        val types = buildList {
+            if (Build.VERSION.SDK_INT < 29) add(0)
+            else {
+                if (LostPhoneRecovery.locationPermission(this@LostPhoneService)) add(ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+                if (ring && Build.VERSION.SDK_INT >= 34) add(ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE)
+                if (Build.VERSION.SDK_INT < 34 && isEmpty()) add(0)
+            }
         }
-        foreground = try {
-            ServiceCompat.startForeground(this, ID, notification(), type)
-            true
-        } catch (_: Exception) {
-            false
+        foreground = types.any { type ->
+            try {
+                ServiceCompat.startForeground(this, ID, notification(), type)
+                true
+            } catch (_: Exception) {
+                false
+            }
         }
         if (!foreground) show()
     }
@@ -301,24 +312,31 @@ class LostPhoneService : Service(), LocationListener {
 
     /** „Am găsit telefonul”: site-ul află „găsit”, apoi comanda se închide. */
     private fun found() {
-        val a = cmd; val d = device
         FinderRinger.stop(this)
-        if (a != null && d != null) {
-            val app = applicationContext
-            ForjaApp.from(app).appScope.launch {
-                try {
-                    withTimeout(8_000) {
-                        LostPhoneRecovery.call(app, d, "status", buildJsonObject {
-                            put("secret", d.secret); put("command", a.id); put("status", "found")
-                        })
-                    }
-                } catch (e: CancellationException) {
-                    if (e !is kotlinx.coroutines.TimeoutCancellationException) throw e
-                } catch (_: Exception) { }
-                LostPhoneRecovery.queue(app, d, "stop", a.id)
-            }
-        }
+        finalStatus("found", thenStop = true)
         endLocal(markHandled = true)
+    }
+
+    /**
+     * Ultima stare a comenzii, trimisă din afara serviciului (care se oprește imediat după): „found” sau
+     * „notification_missing”. `thenStop` = comanda se închide și pe site (cu reîncercare).
+     */
+    private fun finalStatus(status: String, thenStop: Boolean = false) {
+        val a = cmd ?: return
+        val d = device ?: return
+        val app = applicationContext
+        ForjaApp.from(app).appScope.launch {
+            try {
+                withTimeout(8_000) {
+                    LostPhoneRecovery.call(app, d, "status", buildJsonObject {
+                        put("secret", d.secret); put("command", a.id); put("status", status)
+                    })
+                }
+            } catch (e: CancellationException) {
+                if (e !is kotlinx.coroutines.TimeoutCancellationException) throw e
+            } catch (_: Exception) { }
+            if (thenStop) LostPhoneRecovery.queue(app, d, "stop", a.id)
+        }
     }
 
     /** Oprește tot ce face comanda; `stopService` = și serviciul (altfel urmează o comandă nouă). */
