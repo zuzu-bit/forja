@@ -69,7 +69,12 @@ jobs:
                   -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\",\"returnSecureToken\":true}" | jq -r '.idToken // empty')
           fi
           [ -z "$TOK" ] && echo "Nu am putut obține un token de test." || true
-          curl -sL --max-time 60 -o /tmp/meal.jpg "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6d/Good_Food_Display_-_NCI_Visuals_Online.jpg/640px-Good_Food_Display_-_NCI_Visuals_Online.jpg" || true
+          echo "== modelele Gemini disponibile pentru cheie (doar nume) =="
+          curl -s --max-time 60 -H "x-goog-api-key: $GEMINI_API_KEY" "https://generativelanguage.googleapis.com/v1beta/models?pageSize=100" | jq -r '(.models // [])[] | .name' | grep -i "gemini" | head -40 || true
+          echo "== cheia Groq (doar codul HTTP; 200 = validă) =="
+          curl -s -o /dev/null -w '%{http_code}\n' --max-time 30 -H "Authorization: Bearer $GROQ_API_KEY" "https://api.groq.com/openai/v1/models" || true
+          echo "lungime cheie Groq: ${#GROQ_API_KEY} · începe cu gsk_: $([ "${GROQ_API_KEY#gsk_}" != "$GROQ_API_KEY" ] && echo da || echo nu)"
+          curl -sL --max-time 60 -o /tmp/meal.jpg "$URL/media/meal_dinner.jpg" || true
           ls -la /tmp/meal.jpg || true
           B64=$(base64 -w0 /tmp/meal.jpg)
           printf '{"image":"%s"}' "$B64" > /tmp/meal.json
