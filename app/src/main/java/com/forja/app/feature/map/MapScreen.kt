@@ -943,7 +943,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                         app.prefs.setExploreSyncedAt(0L)
                         ExploreSync.schedule(context)
                         ExploreSync.kick(context)
-                        toast.show("Explorarea merge și pe site. Intră în panoul online cu același cont.")
+                        toast.show(if (com.forja.app.core.sync.CollectionSettings.contractOn(context)) "Explorarea merge și pe site. Intră în panoul online cu același cont." else "Pleacă pe site după ce semnezi contractul.")
                     } else {
                         ExploreSync.cancel(context)
                         toast.show("Oprit. Explorarea rămâne doar în telefon.")

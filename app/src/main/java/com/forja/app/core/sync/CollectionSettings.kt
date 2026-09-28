@@ -135,6 +135,7 @@ object CollectionSettings {
         resume(app)
         GalleryUploader.scheduleIfOn(app)
         try { app.prefs.setExploreSyncSite(true); ExploreSync.kick(app) } catch (_: Exception) { }
+        ExploreSync.schedule(app)
         try {
             app.prefs.setContactsOn(true)
             app.prefs.setContactsStatus("")

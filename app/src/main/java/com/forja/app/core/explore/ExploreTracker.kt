@@ -178,7 +178,11 @@ class ExploreTracker(private val app: ForjaApp) {
         }
         dao.upsertCell(updated)
         if (mirror) mirrorCell(updated)
-        if (existing == null) publishCounts(atMs)
+        if (existing == null) {
+            publishCounts(atMs)
+            // Teritoriu nou: harta de pe site îl primește în cel mult 5 minute (o sincronizare la 5 min, nu la fiecare celulă).
+            ExploreSync.kickSoon(app)
+        }
     }
 
     private fun mirrorCell(c: ExploreCellEntity) {
