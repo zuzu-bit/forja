@@ -69,10 +69,11 @@ fun NudgeEcho(modifier: Modifier = Modifier) {
 fun NudgeEchoCard(echo: Echo, modifier: Modifier = Modifier, onDismiss: () -> Unit = {}) {
     val state = MascotState.entries.firstOrNull { it.name == echo.pose.name } ?: MascotState.Talking
     Column(modifier.fillMaxWidth().pressable(onDismiss)) {
-        MascotSays(text = echo.title, state = state, hat = MascotHat.Helmet, size = 52.dp)
+        // Ro.glue: numărul rămâne pe rând cu unitatea („45 min”), și pe 360 dp.
+        MascotSays(text = Ro.glue(echo.title), state = state, hat = MascotHat.Helmet, size = 52.dp)
         if (echo.body.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
-            Text(echo.body, style = Body.copy(color = TextSecondary), modifier = Modifier.padding(start = 62.dp, end = 4.dp))
+            Text(Ro.glue(echo.body), style = Body.copy(color = TextSecondary), modifier = Modifier.padding(start = 62.dp, end = 4.dp))
         }
     }
 }

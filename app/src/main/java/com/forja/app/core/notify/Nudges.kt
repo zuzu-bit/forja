@@ -293,9 +293,8 @@ object Nudges {
                 val total = try { app.db.exploreDao().countPlacesOnce() } catch (_: Exception) { 0 }
                 val view = PlaceView(p.name, (p.stayMs / 60_000L).toInt(), p.visits, total, revisit)
                 val d = NudgeSnapshot.basics(app).copy(place = view)
-                if (postEvent(app, NudgeContext.NewPlace, d, specFor(NudgeContext.NewPlace, NotifIds.place(p.id)), Channels.EXPLORE)) {
-                    NudgeStore.markSyncEvent(app)
-                }
+                // Fără markSyncEvent: vestea a plecat deja aici, iar rândul permanent n-o mai repetă (NudgeRules.placeAnnounced).
+                postEvent(app, NudgeContext.NewPlace, d, specFor(NudgeContext.NewPlace, NotifIds.place(p.id)), Channels.EXPLORE)
             } catch (_: Exception) { }
         }
     }

@@ -76,9 +76,10 @@ internal object Notifier {
         val content = spec.content ?: openIntent(c, spec, echoKey)
         val b = NotificationCompat.Builder(c, spec.channel)
             .setSmallIcon(spec.smallIcon)
-            .setContentTitle(r.title)
-            .setContentText(r.body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(r.body))
+            // Ro.glue: „45 min”, „3,4 km” nu se mai rup la capăt de rând (doar afișarea; replica reținută rămâne la fel).
+            .setContentTitle(Ro.glue(r.title))
+            .setContentText(Ro.glue(r.body))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(Ro.glue(r.body)))
             .setAutoCancel(true)
             .setGroup(spec.group)
             .setContentIntent(content)

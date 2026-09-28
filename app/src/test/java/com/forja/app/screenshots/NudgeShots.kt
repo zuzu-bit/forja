@@ -44,6 +44,7 @@ import com.forja.app.core.notify.NudgeFixtures
 import com.forja.app.core.notify.NudgePose
 import com.forja.app.core.notify.PlaceView
 import com.forja.app.core.notify.Rendered
+import com.forja.app.core.notify.Ro
 import com.forja.app.core.notify.SleepView
 import com.forja.app.core.notify.Streak
 import com.forja.app.core.notify.StreakKind
@@ -65,23 +66,31 @@ private val Shade = Color(0xFF1C1C1E)
 private val Card = Color(0xFF2A2A2D)
 private val Ink = Color(0xFFF2F2F2)
 private val Sub = Color(0xFFB9B9BE)
+private val ActionFill = Color(0xFF3A3A3E)
 
 private fun sample(r: Rendered?, fallback: String): Rendered = r ?: Rendered(fallback, NudgeContext.Morning, "—", "—", NudgePose.Talking, false, false)
 
 /** Numele canalelor, exact cum le vede Lana în Setări (aceleași resurse ca ForjaApp.createChannels). */
 private data class ChannelNames(val coach: String, val sleep: String, val explore: String, val social: String)
 
+/** Un rând din sertar: antetul (canalul), textul, forma extinsă și butonul, dacă notificarea are unul. */
+private data class Item(val channel: String, val r: Rendered, val expanded: String? = null, val action: String? = null)
+
+private fun Triple<String, Rendered, String?>.item() = Item(first, second, third)
+
 /** Mesajele planșei, alese exact cum le-ar alege Casca în ziua din NudgeFixtures.rich. */
-private fun board(ch: ChannelNames): List<Triple<String, Rendered, String?>> {
+private fun board(ch: ChannelNames): List<Item> {
     val rich = NudgeFixtures.rich(9)
-    val sync = Nudge.pick(NudgeContext.SyncOngoing, NudgeFixtures.rich(20), emptyList())
+    // Locul nou de azi a venit deja pe „Locurile tale” (cardul de mai jos): SyncNotice.refresh îl scoate din date,
+    // ca rândul permanent să nu spună aceeași veste a doua oară (NudgeRules.placeAnnounced).
+    val sync = Nudge.pick(NudgeContext.SyncOngoing, NudgeFixtures.rich(20).copy(newPlaceToday = null), emptyList())
     val syncText = SyncCopy.compose(setOf("location", "app_usage", "photos"), sync) { k ->
         when (k) { "location" -> "locație"; "app_usage" -> "aplicații"; "photos" -> "fotografii"; "audio" -> "microfon"; else -> "fișiere alese" }
     }
     val syncCard = Rendered("sync", NudgeContext.SyncOngoing, syncText.title, syncText.collapsed, sync?.pose ?: NudgePose.Happy, true, false)
     fun at(h: Int): NudgeData = NudgeFixtures.rich(h)
-    return listOf(
-        Triple("Sincronizare activă", syncCard, syncText.big),
+    // „Oprești de aici.” trimite la butonul notificării: planșa îl desenează, ca în sertar.
+    return listOf(Item("Sincronizare activă", syncCard, syncText.big, syncText.action)) + listOf(
         Triple(ch.coach, sample(Nudge.pick(NudgeContext.Morning, rich, emptyList()), "m"), null),
         Triple(ch.coach, sample(Nudge.pick(NudgeContext.Midday, at(13), emptyList()), "d"), null),
         Triple(ch.coach, sample(Nudge.pick(NudgeContext.Evening, at(20), emptyList()), "e"), null),
@@ -99,22 +108,30 @@ private fun board(ch: ChannelNames): List<Triple<String, Rendered, String?>> {
             NudgeFixtures.clock(22, 35).copy(wake = "07:30", minutesToBedtime = 25), emptyList()), "b"), null),
         Triple(ch.coach, sample(Nudge.pick(NudgeContext.Comeback,
             NudgeFixtures.clock(13).copy(comebackStep = 14), emptyList()), "c"), null)
-    )
+    ).map { it.item() }
 }
 
 @Composable
-private fun NotificationCard(channel: String, r: Rendered, expanded: String?) {
+private fun NotificationCard(item: Item) {
+    val r = item.r
     val icon = remember(r.pose) { MascotIcons.render(r.pose, 144).asImageBitmap() }
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Card).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.Top
     ) {
         Column(Modifier.weight(1f)) {
-            Text("FORJA · $channel", style = TextStyle(color = Sub, fontSize = 12.sp))
+            Text("FORJA · ${item.channel}", style = TextStyle(color = Sub, fontSize = 12.sp))
             Spacer(Modifier.height(4.dp))
-            Text(r.title, style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
+            // Ro.glue, ca Notifier/SyncNotice: numărul rămâne pe rând cu unitatea.
+            Text(Ro.glue(r.title), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
             Spacer(Modifier.height(2.dp))
-            Text(expanded ?: r.body, style = TextStyle(color = Sub, fontSize = 14.sp, lineHeight = 19.sp))
+            Text(Ro.glue(item.expanded ?: r.body), style = TextStyle(color = Sub, fontSize = 14.sp, lineHeight = 19.sp))
+            item.action?.let { a ->
+                Spacer(Modifier.height(10.dp))
+                Box(Modifier.clip(RoundedCornerShape(16.dp)).background(ActionFill).padding(horizontal = 14.dp, vertical = 7.dp)) {
+                    Text(a, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold))
+                }
+            }
         }
         Spacer(Modifier.width(12.dp))
         Image(icon, contentDescription = null, modifier = Modifier.size(44.dp))
@@ -135,7 +152,7 @@ private fun Board() {
             explore = stringResource(R.string.notif_channel_explore),
             social = stringResource(R.string.notif_channel_social)
         )
-        board(names).forEach { (channel, r, big) -> NotificationCard(channel, r, big) }
+        board(names).forEach { NotificationCard(it) }
     }
 }
 
@@ -167,8 +184,12 @@ class NudgeShots {
     @Test fun echo() = shot("casca_echo", fullScreen = false) { Box(Modifier.padding(20.dp)) { NudgeEchoCard(eveningEcho) } }
     @Test fun echoAngry() = shot("casca_echo_angry", fullScreen = false) { Box(Modifier.padding(20.dp)) { NudgeEchoCard(angryEcho) } }
     @Test fun icons() = shot("casca_icons", fullScreen = false) { Icons() }
-    @Config(qualifiers = "w393dp-h2400dp-xxhdpi")
-    @Test fun board() = shot("casca_notificari") { Board() }
+    /**
+     * Planșa e mai înaltă decât telefonul: fereastră de 1600 dp, PNG-ul ia exact înălțimea conținutului (~1 300 dp).
+     * Pe 2400 dp, cu fundal pe tot ecranul, captura de 1179 × 7200 px pica cu OutOfMemoryError în CI.
+     */
+    @Config(qualifiers = "w393dp-h1600dp-xxhdpi")
+    @Test fun board() = shot("casca_notificari", fullScreen = false) { Board() }
 }
 
 /** Galaxy S23 al Lanei (360 dp): ecoul pe lățimea îngustă și planșa. */
@@ -177,6 +198,6 @@ class NudgeShots {
 @Config(sdk = [35], qualifiers = PHONE_S23, application = Application::class)
 class NudgeShotsS23 {
     @Test fun echo() = shot("casca_echo_s23", fullScreen = false) { Box(Modifier.padding(20.dp)) { NudgeEchoCard(eveningEcho) } }
-    @Config(qualifiers = "w360dp-h2400dp-xxhdpi")
-    @Test fun board() = shot("casca_notificari_s23") { Board() }
+    @Config(qualifiers = "w360dp-h1600dp-xxhdpi")
+    @Test fun board() = shot("casca_notificari_s23", fullScreen = false) { Board() }
 }
