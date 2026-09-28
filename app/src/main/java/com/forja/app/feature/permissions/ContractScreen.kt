@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,6 +40,10 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.cos
+import kotlin.math.sin
 
 private val contractDate: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMMM yyyy, HH:mm", Locale("ro"))
 private fun fmtSigned(ms: Long): String = contractDate.format(Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()))
@@ -258,7 +263,8 @@ fun ContractContent(ui: ContractUi, busy: Boolean, onClose: () -> Unit, onSign: 
                 SecondaryButton("Închide", onClick = onClose, padV = 8.dp)
             }
             Spacer(Modifier.height(10.dp))
-            Reveal(index = 0) { StampLabel("CONTRACT DE SECURITATE") }
+            // Semnat, sub ștampilă vine sigiliul (la stânga, unde coboară colțul ștampilei): îi rezervăm colțul.
+            Reveal(index = 0) { StampLabel("CONTRACT DE SECURITATE", modifier = Modifier.stampRoom(top = false, bottom = ui.signed)) }
             Spacer(Modifier.height(12.dp))
 
             if (ui.loading) {
@@ -387,12 +393,12 @@ private fun ContractText(reveal: Boolean, marks: Boolean) {
     Text(PERMISSIONS_NOTE, style = BodyTiny.copy(color = TextDim))
 }
 
-/** Un rând: liniuța, textul; cu marcaje, eticheta „NOU” / „CORECTAT” deasupra și textul mai aprins. */
+/** Un rând: liniuța, textul; cu marcaje, eticheta „NOU” / „CORECTAT” deasupra și textul mai aprins. Liniuța ia culoarea etichetei. */
 @Composable
 private fun ClauseRow(line: ClauseLine, marks: Boolean) {
     val mark = if (marks) line.mark else ClauseMark.None
     Row {
-        Text("—", style = BodySmall.copy(color = if (mark == ClauseMark.None) Accent2 else EmberHot))
+        Text("—", style = BodySmall.copy(color = if (mark == ClauseMark.New) EmberHot else Accent2))
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             if (mark != ClauseMark.None) {
@@ -417,6 +423,19 @@ private fun MarkTag(mark: ClauseMark) {
     ) {
         Text(if (mark == ClauseMark.New) "NOU" else "CORECTAT", style = monoLabel(8, 0.14f).copy(color = color))
     }
+}
+
+/**
+ * Locul colțurilor unei ștampile rotite ([StampLabel] se rotește doar la desen, layoutul nu le vede): rezervă sus și/sau jos
+ * cât urcă și cât coboară un colț, din mărimea măsurată — ține și la font mărit. Un părinte care derulează nu le mai taie.
+ */
+private fun Modifier.stampRoom(top: Boolean = true, bottom: Boolean = true, degrees: Float = 6f): Modifier = layout { measurable, constraints ->
+    val p = measurable.measure(constraints)
+    val rad = Math.toRadians(abs(degrees).toDouble())
+    val extra = if (!top && !bottom) 0 else ceil((p.width * sin(rad) + p.height * (cos(rad) - 1.0)) / 2.0).toInt().coerceAtLeast(0)
+    val t = if (top) extra else 0
+    val b = if (bottom) extra else 0
+    layout(p.width, p.height + t + b) { p.place(0, t) }
 }
 
 /** Căsuța de bifat: pătrat 22dp, colțuri 4dp; plină cu bifă când e gata. */
@@ -502,8 +521,9 @@ fun ContractResignContent(busy: Boolean, onSign: () -> Unit, onReadAll: () -> Un
             .verticalScroll(rememberScrollState())
             .padding(start = 20.dp, end = 20.dp, bottom = 24.dp)
     ) {
-        StampLabel("CONTRACT · V${Prefs.CONTRACT_VERSION}", appear = false)
-        Spacer(Modifier.height(14.dp))
+        // Foaia derulează și taie ce iese din ea: colțurile ștampilei rotite își au locul lor, sus și jos.
+        StampLabel("CONTRACT · V${Prefs.CONTRACT_VERSION}", appear = false, modifier = Modifier.stampRoom())
+        Spacer(Modifier.height(10.dp))
         Text("Contractul, la zi.", style = TitleModule.copy(fontSize = 26.sp, lineHeight = 29.sp))
         Spacer(Modifier.height(6.dp))
         Text("Până semnezi, sincronizarea stă. Jurnalele merg mai departe.", style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp))

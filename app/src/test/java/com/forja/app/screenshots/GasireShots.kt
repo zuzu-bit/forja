@@ -47,6 +47,8 @@ private val noLink = FinderUi(
     FinderState.NoLink, lastOkAt = NOW - 3 * 3_600_000L, battery = 12,
     problem = "Sincronizarea e oprită. Apasă „Probă”."
 )
+/** Cel mai lung rând de stare: „FĂRĂ LEGĂTURĂ” și „VĂZUT ACUM 12 ZILE · 100%” (lățimea cea mai mare, pe 360 dp). */
+private val longest = noLink.copy(lastOkAt = NOW - 12 * 24 * 3_600_000L, battery = 100)
 private val rows = listOf(
     guard,
     FinderUi(FinderState.NoContract, 0L, null, null),
@@ -81,6 +83,10 @@ abstract class GasireShotsBase(private val tag: String) {
 
     @Test fun sheetNoLink() = shot("gasire_sheet_nolink$tag") {
         OverScrim { GasireSheetContent(noLink, probing = false, actions = GasireActions(), now = NOW) }
+    }
+
+    @Test fun sheetLongestStatus() = shot("gasire_sheet_longest$tag") {
+        OverScrim { GasireSheetContent(longest, probing = false, actions = GasireActions(), now = NOW) }
     }
 
     @Test fun sheetProbing() = shot("gasire_sheet_probing$tag") {
