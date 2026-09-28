@@ -37,10 +37,13 @@ const Ratie = {
   },
   chart(days, targets, selected) {
     const byKey = new Map(days.map(d => [d.date, d])), cols = [];
-    for (let i = 29; i >= 0; i--) { const t = Date.now() - i * DAY, key = fmt.keyOf(t); cols.push({key, t, d: byKey.get(key)}); }
+    // Un cont nou nu vede 27 de coloane goale: fereastra începe la prima zi cu mese (cel puțin 7, cel mult 30).
+    const first = Math.min(...days.filter(d => d.kcal || (d.meals || []).length).map(d => fmt.dateKey(d.date)));
+    const span = Math.max(7, Math.min(30, Number.isFinite(first) ? Math.round((fmt.dateKey(fmt.keyOf(Date.now())) - first) / DAY) + 1 : 30));
+    for (let i = span - 1; i >= 0; i--) { const t = fmt.dateKey(fmt.keyOf(Date.now())) + 12 * HOUR - i * DAY, key = fmt.keyOf(t); cols.push({key, t, d: byKey.get(key)}); }
     const max = Math.max(targets?.kcal || 0, ...cols.map(c => c.d?.kcal || 0), 1) * 1.1;
-    const chart = h('div', {class: 'card ratie-chart'}, h('div', {class: 'block-head tight'}, monoLabel('30 DE ZILE · KCAL'), targets?.kcal ? monoLabel('ȚINTA ' + fmt.int(targets.kcal), 'accent') : null),
-      h('div', {class: 'bars dense'},
+    const chart = h('div', {class: 'card ratie-chart'}, h('div', {class: 'block-head tight'}, monoLabel(plural(span, 'zi', 'zile').toUpperCase() + ' · KCAL'), targets?.kcal ? monoLabel('ȚINTA ' + fmt.int(targets.kcal), 'accent') : null),
+      h('div', {class: 'bars' + (span > 14 ? ' dense' : ' roomy')},
         targets?.kcal ? h('span', {class: 'target-line', style: {bottom: (targets.kcal / max * 100) + '%'}}) : null,
         cols.map(c => h('button', {type: 'button', class: 'bar-col' + (c.key === selected ? ' sel' : ''), disabled: !c.d, title: fmt.day(c.t) + (c.d ? ' · ' + fmt.int(c.d.kcal) + ' kcal' : ''), 'aria-label': fmt.day(c.t) + (c.d ? ' ' + fmt.int(c.d.kcal) + ' kcal' : ''), onclick: () => { Ratie.day = c.key; Ratie.render(); }},
           h('span', {class: 'bar-fill' + (targets?.kcal && (c.d?.kcal || 0) > targets.kcal * 1.05 ? ' over' : ''), style: {height: ((c.d?.kcal || 0) / max * 100) + '%'}})))),

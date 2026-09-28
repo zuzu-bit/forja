@@ -393,7 +393,10 @@ a.tile-night:hover{background:linear-gradient(180deg,#132035,#0e1726)}
 .find-hub{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:var(--r-btn);border:1px dashed var(--stroke2);color:var(--text2);font-size:12.5px;line-height:1.4}
 .find-hub .ic{flex:none;color:var(--dim)}
 .find-hub:hover{color:var(--text)}
-.no-device .map-slot{filter:saturate(.3) brightness(.7)}
+/* Fără telefon: nicio hartă goală, doar starea onestă, ca la celelalte secțiuni. */
+.no-device .map-layout{height:auto;min-height:0;border:0;background:none;overflow:visible;border-radius:0}
+.no-device .map-slot{display:none}
+.no-device .map-panel{position:static;width:auto;border:0;background:none;box-shadow:none}
 .menu-list{display:flex;flex-direction:column;gap:4px}
 .menu-row{display:flex;align-items:center;gap:12px;height:52px;padding:0 12px;border-radius:var(--r-btn);border:0;background:var(--util);font:600 15px/1 var(--body);text-align:left}
 .menu-row:hover{background:#202126}
@@ -409,7 +412,6 @@ a.tile-night:hover{background:linear-gradient(180deg,#132035,#0e1726)}
 .run-dest .ic{color:var(--olive2)}
 .run-dest-label{font-weight:700}
 .run-dest-path{font:500 12px/1 var(--mono);color:var(--text2);background:rgba(255,255,255,.04);padding:5px 7px;border-radius:3px}
-.run-scope{margin-left:auto;font:500 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
 .run-failed{display:flex;align-items:center;gap:8px;color:var(--ember);font-size:13.5px}
 .folder-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
 .folder{display:flex;flex-direction:column;gap:6px;padding:14px;border-radius:var(--r-card);background:var(--s2);border:1px solid var(--stroke);min-width:0}
@@ -459,7 +461,7 @@ body.night .nav-item.active .ic{color:var(--blue)}
 .night-stats b,.night-sounds b{font:700 15px/1 var(--display);color:var(--text)}
 .night-summary{padding:12px 14px;border-radius:var(--r-btn);background:rgba(157,191,232,.06);border:1px solid var(--sleep-stroke);color:#C9D6E8;font-size:14px}
 .night-chart{display:flex;flex-direction:column;gap:14px;padding:20px}
-.night-chart .bars{flex:1}
+.night-chart .bars{flex:1 0 auto}
 .bars{position:relative;display:flex;align-items:flex-end;gap:6px;height:190px;padding-top:6px}
 .bar-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:6px;height:100%;min-width:0;background:none;border:0;padding:0}
 .bar-stack{width:100%;max-width:26px;display:flex;flex-direction:column;border-radius:3px 3px 1px 1px;overflow:hidden;min-height:2px}
@@ -508,6 +510,7 @@ body.night .nav-item.active .ic{color:var(--blue)}
 .ratie-left.over{color:var(--ember)}
 .ratie-chart{display:flex;flex-direction:column;padding:20px}
 .bars.dense{gap:3px;height:200px}
+.bars.roomy{gap:10px;height:200px}
 .bars.dense .bar-col{justify-content:flex-end}
 .bar-fill{display:block;width:100%;max-width:22px;border-radius:2px 2px 1px 1px;background:linear-gradient(180deg,var(--amber),var(--ember-warm));min-height:2px}
 .bar-fill.over{background:linear-gradient(180deg,#ff8a75,var(--ember))}
@@ -670,6 +673,8 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
  .map-slot{position:relative;height:62svh;min-height:380px;border-radius:var(--r-card);overflow:hidden;border:1px solid var(--stroke2);background:#141517}
  .map-panel{position:relative;inset:auto;width:auto;margin-top:12px;box-shadow:none;background:var(--s1)}
  .map-empty{padding-right:0}
+ .gasire-panel{border:0;background:none;border-radius:0}
+ .gasire-panel .panel-pad{padding:0;overflow:visible}
  .map-chips{max-width:calc(100% - 28px)}
  .friends-layout,.cont-grid,.somn-grid,.ratie-grid,.muzica-grid,.paza-grid{grid-template-columns:minmax(0,1fr)}
  .friends-side{position:static;display:grid;grid-template-columns:1fr 1fr}
@@ -717,6 +722,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
  .links{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
  .link-tile{min-height:96px;padding:12px}
  .map-slot{height:56svh;min-height:320px}
+ .gasire .map-slot{height:40svh;min-height:250px}
  .map-ctrls{top:10px;left:10px;right:10px}
  .map-btn span{display:none}
  .map-btn{width:42px;padding:0;justify-content:center}
@@ -728,16 +734,17 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
  .invite-code{font-size:38px}
  .run-card{padding:16px}
  .run-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .run-stats.three{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
  .stat .hero b{font-size:34px}
  .folder-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
  .folder{padding:12px}
  .thumb-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
- .run-scope{margin-left:0;flex-basis:100%}
  .night-dur-hero .hero b,.paza-total .hero b{font-size:56px}
  .night-row{grid-template-columns:64px minmax(0,1fr) 36px 16px;gap:10px}
  .night-row .phase-bar,.night-row .badge,.night-row .badge-space{display:none}
  .bars{height:150px;gap:4px}
  .bars.dense{height:150px;gap:2px}
+ .bars.roomy{height:150px;gap:8px}
  .ratie-main{flex-direction:column;align-items:stretch;gap:18px}
  .ratie-main .ring{align-self:center}
  .meal{grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;padding:12px 14px}
@@ -769,6 +776,8 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
  .login-title{font-size:42px}
  .sec-title{font-size:30px}
  .hero b{font-size:44px}
+ .account{gap:12px}
+ .account .btn .ic{display:none}
 }
 @media (prefers-reduced-motion:reduce){
  *,*::before,*::after{animation:none!important;transition:none!important}

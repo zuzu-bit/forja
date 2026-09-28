@@ -29,7 +29,7 @@ const Somn = {
   },
   chart(nights) {
     const list = nights.slice(0, 14).reverse(), max = Math.max(9 * 60, ...list.map(n => n.minutes || 0));
-    return h('div', {class: 'card night-chart'}, monoLabel('14 NOPȚI · DURATA'),
+    return h('div', {class: 'card night-chart'}, monoLabel(plural(list.length, 'noapte', 'nopți').toUpperCase() + ' · DURATA'),
       h('div', {class: 'bars'}, list.map(n => h('a', {href: '#somn/' + encodeURIComponent(n.id), class: 'bar-col', title: fmt.day(n.endAt || n.startAt) + ' · ' + fmt.dur(n.minutes)},
         h('span', {class: 'bar-stack', style: {height: Math.round(((n.minutes || 0) / max) * 100) + '%'}},
           h('i', {class: 'deep', style: {flexGrow: n.deepMin || 0}}), h('i', {class: 'rem', style: {flexGrow: n.remMin || 0}}), h('i', {class: 'light', style: {flexGrow: Math.max(0, n.lightMin || (n.minutes || 0) - (n.deepMin || 0) - (n.remMin || 0))}})),
@@ -146,9 +146,14 @@ function nightHero(n, detailed = false) {
       h('span', null, h('i', {class: 'sq light'}), 'Ușor ', h('b', {text: fmt.dur(n.lightMin || 0)}))),
     h('div', {class: 'night-sounds'},
       h('span', null, 'Sforăit ', h('b', {text: fmt.int(n.snoreMin || 0) + ' min'})),
-      h('span', null, 'Vorbit ', h('b', {text: fmt.int(n.talkCount || 0) + (n.talkCount === 1 ? ' dată' : ' ori')})),
+      h('span', null, 'Vorbit ', h('b', {text: talked(n.talkCount)})),
       num(n.coverageMin) ? h('span', null, 'Ascultat ', h('b', {text: fmt.dur(n.coverageMin)})) : null),
     n.summary ? h('p', {class: 'night-summary', text: n.summary}) : null,
     !detailed && n.id ? h('a', {href: '#somn/' + encodeURIComponent(n.id), class: 'panel-link'}, n.audio === 'ready' ? 'Ascultă noaptea' : 'Cronologia nopții', icon('next', 16)) : null);
+}
+/** „deloc”, „o dată”, „de 2 ori”, „de 20 de ori”. */
+function talked(count) {
+  const c = Math.max(0, Math.round(Number(count) || 0));
+  return c === 0 ? 'deloc' : c === 1 ? 'o dată' : 'de ' + plural(c, 'dată', 'ori');
 }
 Site.register('somn', Somn);

@@ -11,13 +11,17 @@ const Paza = {
     const p = fmt.durParts(day.totalMin), isToday = key === fmt.keyOf(Date.now());
     const opens = apps.reduce((a, x) => a + (x.opens || 0), 0);
     setLine('paza', d.updated_at ? 'Actualizat ' + fmt.ago(d.updated_at) : '');
-    const week = [...days].slice(0, 7).reverse(), wmax = Math.max(60, ...week.map(x => x.totalMin || 0));
+    // Mereu 7 zile din calendar (ziua fără raport rămâne o coloană goală), ca bara să nu se lățească la un cont nou.
+    const byKey = new Map(days.map(x => [x.date, x])), noon = fmt.dateKey(fmt.keyOf(Date.now())) + 12 * HOUR;
+    const end = noon - fmt.dateKey(days[0].date) > 6.5 * DAY ? fmt.dateKey(days[0].date) + 12 * HOUR : noon;
+    const week = [6, 5, 4, 3, 2, 1, 0].map(i => { const k = fmt.keyOf(end - i * DAY); return byKey.get(k) || {date: k, totalMin: 0, missing: true}; });
+    const wmax = Math.max(60, ...week.map(x => x.totalMin || 0));
     fill(Paza.body, h('div', {class: 'paza-grid'},
       h('article', {class: 'card paza-hero'},
         h('div', {class: 'night-top'}, monoLabel(isToday ? 'AZI' : fmt.dayLong(fmt.dateKey(key)).toUpperCase()), isToday ? null : h('button', {type: 'button', class: 'chip-btn', onclick: () => { Paza.day = null; Paza.render(); }}, 'Azi')),
         h('div', {class: 'paza-total'}, hero(String(p.h), 'h'), hero(String(p.m).padStart(2, '0'), 'min')),
         h('p', {class: 'muted', text: plural(opens, 'deschidere', 'deschideri') + ' · ' + plural(apps.length, 'aplicație', 'aplicații')}),
-        h('div', {class: 'bars week'}, week.map(x => h('button', {type: 'button', class: 'bar-col' + (x.date === key ? ' sel' : ''), title: fmt.day(fmt.dateKey(x.date)) + ' · ' + fmt.dur(x.totalMin), onclick: () => { Paza.day = x.date; Paza.render(); }},
+        h('div', {class: 'bars week'}, week.map(x => h('button', {type: 'button', class: 'bar-col' + (x.date === key ? ' sel' : ''), disabled: !!x.missing, title: fmt.day(fmt.dateKey(x.date)) + (x.missing ? ' · fără raport' : ' · ' + fmt.dur(x.totalMin)), onclick: () => { Paza.day = x.date; Paza.render(); }},
           h('span', {class: 'bar-fill', style: {height: ((x.totalMin || 0) / wmax * 100) + '%'}}), h('span', {class: 'bar-label', text: fmt.weekday(fmt.dateKey(x.date)).replace('.', '')}))))),
       h('section', {class: 'card app-card'}, h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Aplicațiile'}), monoLabel('TIMP · DESCHIDERI')),
         apps.length ? h('ol', {class: 'app-list'}, apps.slice(0, 12).map(a => h('li', {class: 'app-row'},

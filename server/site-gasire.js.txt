@@ -53,8 +53,9 @@ const Gasire = {
   },
   padding() { return matchMedia('(min-width: 1024px)').matches ? {top: 80, bottom: 80, left: 80, right: 440} : {top: 60, bottom: 60, left: 40, right: 40}; },
   render() {
-    const list = Gasire.devices || [];
+    const list = Gasire.devices || [], hidden = Gasire.body.classList.contains('no-device');
     Gasire.body.classList.toggle('no-device', !list.length);
+    if (hidden && list.length) requestAnimationFrame(() => MapHost.renderer?.resize()); // harta ascunsă până acum își ia mărimea
     if (!list.length) {
       setChip('gasire', {state: 'off'}, 'FĂRĂ TELEFON');
       fill(Gasire.panel, h('div', {class: 'panel-pad'}, emptyState('Niciun telefon în gardă.', 'Semnează contractul în FORJA. Telefonul apare aici singur.', null, 'idle')));
