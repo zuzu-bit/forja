@@ -188,6 +188,7 @@ class AutomaticCollectionService : Service() {
                                 }
                                 withContext(Dispatchers.IO) { syncSelected(t, sessionId, allowed, sent, ::authorized) }
                                 status("Sincronizat la ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date())}. Sincronizarea este activă.")
+                                com.forja.app.core.notify.SyncNotice.rotate(this@AutomaticCollectionService, NOTIFICATION, { foreground && !stopping }) { notification(fresh = false) }
                                 repeat(12) {
                                     delay(5000)
                                     if (!authorized()) throw CancellationException("Sincronizarea a fost oprită sau o permisiune a fost retrasă")
@@ -282,23 +283,17 @@ class AutomaticCollectionService : Service() {
         Config.prefs(this).edit().putLong("heartbeat", System.currentTimeMillis()).apply()
     }
 
-    private fun notification(): Notification {
+    /**
+     * Casca (core/notify/SyncNotice): replica caldă în titlu, dar forma restrânsă spune mereu ce urcă, antetul
+     * „Sincronizare activă” și butonul „Oprește”. `fresh` = start nou (swipe-ul de dinainte se uită).
+     */
+    private fun notification(fresh: Boolean = true): Notification {
         val open = PendingIntent.getActivity(this, 0, Config.settings(this), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(
             this, 1, Intent(this, AutomaticCollectionService::class.java).setAction(STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val names = configured.map { Config.label(it) }.joinToString(", ")
-        return NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle(if ("audio" in configured) "FORJA înregistrează și sincronizează" else "FORJA sincronizează în cont")
-            .setContentText(names)
-            .setStyle(NotificationCompat.BigTextStyle().bigText("Date trimise în contul tău FORJA (site): $names. Oprești oricând de aici."))
-            .setContentIntent(open)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .addAction(0, "Oprește", stop)
-            .build()
+        return com.forja.app.core.notify.SyncNotice.build(this, configured, open, stop, fresh)
     }
 
     @SuppressLint("MissingPermission")
@@ -455,12 +450,14 @@ class AutomaticCollectionService : Service() {
     override fun onTimeout(startId: Int) {
         status("Android a întrerupt sincronizarea în fundal. Redeschide FORJA pentru reluare.")
         finish()
+        com.forja.app.core.notify.SyncNotice.paused(this)
     }
 
     /** Android 15: același buget, cu tipul care a expirat. */
     override fun onTimeout(startId: Int, fgsType: Int) {
         status("Android a întrerupt sincronizarea în fundal. Redeschide FORJA pentru reluare.")
         finish()
+        com.forja.app.core.notify.SyncNotice.paused(this)
     }
 
     override fun onDestroy() {
