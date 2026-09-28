@@ -63,7 +63,9 @@ export async function handleMusicDiag(request, env, uid, now = Date.now()) {
   if (body.events.length > MUSIC_DIAG.max_events) return json({ error: 'Cel mult 50 de evenimente pe cerere.' }, 400);
   const device = meta(body.device), app = meta(body.app);
   const events = body.events.map(e => cleanEvent(e, now)).filter(Boolean);
-  if (!events.length) return json({ error: 'Niciun eveniment valid.' }, 400);
+  // A well-formed batch whose events are all unusable (older than 30 days, an unknown `want`…) is answered 200, so the phone
+  // drops it from its queue instead of retrying it forever in front of the newer ones.
+  if (!events.length) return json({ ok: true, stored: 0, dropped: body.events.length });
   const u = await userTag(uid), key = PREFIX + u + '.json';
   const kept = [...await readEvents(env.MEDIA, key), ...events.map(e => ({ ...e, device, app, rx: now }))].slice(-MUSIC_DIAG.keep);
   await env.MEDIA.put(key, JSON.stringify({ u, updatedAt: now, events: kept }), { httpMetadata: { contentType: 'application/json' } });

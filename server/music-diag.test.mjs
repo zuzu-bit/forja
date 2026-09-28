@@ -45,7 +45,13 @@ test('diag/music: device metadata cannot smuggle long text; invalid events are d
   assert.deepEqual(await r.json(), { ok: true, stored: 1, dropped: 7 });
   const doc = await stored(media);
   assert.equal(doc.events[0].device.length, 120); assert.deepEqual(doc.events[0].app, { v: 66 });
-  assert.equal((await call(env, '/v1/diag/music', { body: { events: [event({ result: 'nope' })] } })).status, 400);
+  // Well formed, but nothing usable (too old, P5's empty `want` fallback): 200, so the phone drops the batch from its queue.
+  const before = (await stored(media)).events.length;
+  r = await call(env, '/v1/diag/music', { body: { events: [event({ result: 'nope' }), event({ at: NOW - 31 * 86400000 }), event({ want: '' })] } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { ok: true, stored: 0, dropped: 3 });
+  assert.equal((await stored(media)).events.length, before, 'nothing is written for an empty batch');
+  assert.equal((await call(env, '/v1/diag/music', { body: { events: 'x' } })).status, 400);
   assert.equal((await call(env, '/v1/diag/music', { body: { events: [] } })).status, 400);
   assert.equal((await call(env, '/v1/diag/music', { body: { events: Array.from({ length: 51 }, () => event()) } })).status, 400);
   assert.equal((await call(env, '/v1/diag/music', { body: '{nu e json' })).status, 400);
