@@ -37,6 +37,10 @@ object MusicStarter {
     private val _state = MutableStateFlow<StartState>(StartState.Idle)
     val state: StateFlow<StartState> = _state.asStateFlow()
 
+    private val _origin = MutableStateFlow<MusicSource?>(null)
+    /** Cine a cerut ultima pornire (ecranul Muzică arată doar starea pornirilor lui, discul doar pe ale Antrenamentului). */
+    val origin: StateFlow<MusicSource?> = _origin.asStateFlow()
+
     private val _queue = MutableStateFlow<QueueInfo?>(null)
     val queue: StateFlow<QueueInfo?> = _queue.asStateFlow()
 
@@ -218,6 +222,7 @@ object MusicStarter {
             machine.cancel()
             if (source != MusicSource.WORKOUT || want !is Want.Workout) pendingList = null
             // „Pornește…” se vede din prima clipă (încărcarea istoricului durează milisecunde).
+            _origin.value = source
             _state.value = StartState.Starting(Rung.ALREADY, want)
             startJob = scope.launch {
                 refresh(app)
