@@ -87,7 +87,7 @@ import kotlin.random.Random
  * Fără alocări în desenare: căile sunt precalculate sau refolosite (reset), pensulele sunt create o dată.
  */
 
-enum class MascotState { Idle, Thinking, Happy, Sorry, Talking, Reading, Wink }
+enum class MascotState { Idle, Thinking, Happy, Sorry, Talking, Reading, Wink, Angry }
 enum class MascotHat { None, Chef, Helmet }
 
 // ───────────────────────────── Culori proprii mascotei ─────────────────────────────
@@ -126,6 +126,7 @@ private class Pose {
     var dots = 0f         // punctele de gândire 0..1
     var sheet = 0f        // foaia 0..1
     var glow = 1f         // pulsul aurei 0..1
+    var brow = 0f         // sprâncenele încruntate (Angry) 0..1
 }
 
 /** Țintele fiecărei stări (interpolate cu animateFloatAsState). */
@@ -134,7 +135,8 @@ private class Targets(
     val lidL: Float, val lidR: Float, val arcL: Float, val arcR: Float,
     val mouthOpen: Float, val mouthSmile: Float,
     val armLx: Float, val armLy: Float, val armRx: Float, val armRy: Float,
-    val dots: Float, val sheet: Float
+    val dots: Float, val sheet: Float,
+    val brow: Float = 0f
 )
 
 private val RestArms = floatArrayOf(10f, 76f, 90f, 76f)
@@ -147,6 +149,8 @@ private fun targetsOf(state: MascotState): Targets = when (state) {
     MascotState.Talking -> Targets(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0.5f, 0.55f, 10f, 76f, 88f, 70f, 0f, 0f)
     MascotState.Reading -> Targets(0f, -1f, 3.4f, 0.3f, 0.3f, 0f, 0f, 0f, 0.35f, 37f, 74f, 63f, 74f, 0f, 1f)
     MascotState.Wink -> Targets(-3f, 1.5f, 0f, 1f, 0f, 1f, 0f, 0.45f, 0.9f, 10f, 76f, 92f, 52f, 0f, 0f)
+    // Nervos (4.3, Mascota.dc.html): privirea puțin în jos, sprâncene în V, gura în jos, brațele pe lângă corp.
+    MascotState.Angry -> Targets(0f, 0f, 1.5f, 0f, 0f, 0f, 0f, 0f, -0.75f, 10f, 76f, 90f, 76f, 0f, 0f, brow = 1f)
 }
 
 // ───────────────────────────── Geometria (spațiu 100×100) ─────────────────────────────
@@ -249,6 +253,9 @@ private fun DrawScope.drawFigure(rig: MascotRig, p: Pose, hat: MascotHat) {
     // gură
     drawMouth(rig, p)
 
+    // sprâncene încruntate (Angry): coboară spre nas, în V
+    if (p.brow > 0.01f) drawBrows(p.brow)
+
     // pălăria
     when (hat) {
         MascotHat.None -> Unit
@@ -279,6 +286,13 @@ private fun DrawScope.drawFigure(rig: MascotRig, p: Pose, hat: MascotHat) {
         drawDot(78f, 17f, 3.4f, p.dots)
         drawDot(87f, 7f, 4.4f, p.dots)
     }
+}
+
+/** Sprâncenele în V (Mascota.dc.html, „angry”), scalate la ochii mai mari ai mascotei din aplicație. */
+private fun DrawScope.drawBrows(b: Float) {
+    val slant = 6.7f * b
+    drawLine(Ink, Offset(27.8f, 36.4f - 1f * b), Offset(46.9f, 36.4f + slant), strokeWidth = 4f, cap = StrokeCap.Round, alpha = b)
+    drawLine(Ink, Offset(72.2f, 36.4f - 1f * b), Offset(53.1f, 36.4f + slant), strokeWidth = 4f, cap = StrokeCap.Round, alpha = b)
 }
 
 private fun DrawScope.drawDot(x: Float, y: Float, r: Float, a: Float) {
@@ -406,7 +420,8 @@ private class Anim(
     val mouthOpen: State<Float>, val mouthSmile: State<Float>,
     val armLx: State<Float>, val armLy: State<Float>, val armRx: State<Float>, val armRy: State<Float>,
     val dots: State<Float>, val sheet: State<Float>,
-    val state: State<MascotState>
+    val state: State<MascotState>,
+    val brow: State<Float>? = null
 )
 
 @Composable
@@ -495,7 +510,8 @@ private fun rememberAnim(state: MascotState): Anim {
         armRy = animateFloatAsState(t.armRy, spec, label = "armRy"),
         dots = animateFloatAsState(t.dots, spec, label = "dots"),
         sheet = animateFloatAsState(t.sheet, spec, label = "sheet"),
-        state = stateS
+        state = stateS,
+        brow = animateFloatAsState(t.brow, spec, label = "brow")
     )
 }
 
@@ -517,6 +533,7 @@ private fun Anim.fill(p: Pose) {
     p.mouthSmile = mouthSmile.value
     p.dots = dots.value
     p.sheet = sheet.value
+    p.brow = brow?.value ?: 0f
 
     // gura: vorbire ritmică (două frecvențe, ca un ritm de vorbă)
     p.mouthOpen = if (st == MascotState.Talking && tick != null) {

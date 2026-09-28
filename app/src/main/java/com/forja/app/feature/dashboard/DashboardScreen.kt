@@ -45,7 +45,9 @@ import com.forja.app.navigation.Route
 import kotlinx.coroutines.flow.first
 
 private data class ModuleCard(
-    val title: String, val subtitle: String, val image: String, val route: String
+    val title: String, val subtitle: String, val image: String, val route: String,
+    /** Progresul viu (0..1) desenat ca bară subțire pe placă; null = fără bară. */
+    val progress: Float? = null
 )
 
 /** Ghidajul primei vizite (≤ 90 de caractere pe pas): ce e pe panou, spus o dată; apoi panoul arată doar cifre. */
@@ -80,7 +82,7 @@ fun DashboardScreen(
     val cellCount by app.db.exploreDao().countCells().collectAsState(initial = 0)
     val placesList by app.db.exploreDao().places().collectAsState(initial = emptyList())
     val placeCount = placesList.size
-    val cleanupCursor by app.prefs.cleanupCursor.collectAsState(initial = "")
+    val inventory by com.forja.app.core.inventory.Inventory.progress.collectAsState()
 
     var name by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { name = app.prefs.cachedName.first().ifBlank { "Sportiv" } }
@@ -131,14 +133,8 @@ fun DashboardScreen(
                 ?: "https://t4.ftcdn.net/jpg/04/30/39/81/500_F_430398119_8X2LMR6p3pWYrpsvH3DYgYUz32PfnxXl.jpg",
             Route.MAP
         ),
-        // v4.0 — Curățenia: galerie și documente, cu reluare de unde ai rămas.
-        ModuleCard(
-            "Curățenie",
-            if (cleanupCursor.isNotBlank()) "continuă de unde ai rămas" else "ce curățăm azi?",
-            com.forja.app.core.media.Media.mediaUrl("snd_noise.jpg")
-                ?: "https://t3.ftcdn.net/jpg/05/62/79/66/500_F_562796663_NJKtdLr9EatSHwup53J47QNnYOCr0ZZ8.jpg",
-            Route.CLEANUP
-        )
+        // v4.3 — Inventarul (înlocuiește Curățenia): procentul viu cât analiza merge în fundal.
+        inventoryTile(inventory)
     )
 
     CoachMarks(screen = "panou", steps = PANOU_STEPS) {
@@ -377,6 +373,33 @@ private fun StatCard(icon: ImageVector, value: String, label: String) {
     }
 }
 
+// Culorile barei de progres a Inventarului (prototipul 4.3: amber #F3B952 pe pistă albă la 16 %).
+private val InventoryBarFill = Color(0xFFF3B952)
+private val InventoryBarTrack = Color(0x29FFFFFF)
+
+/** Placa Inventarului: procentul viu cât rularea e activă, „dosarele sunt gata” la final. */
+private fun inventoryTile(p: com.forja.app.core.inventory.InvProgress?): ModuleCard {
+    val stage = p?.stage
+    val running = stage == com.forja.app.core.inventory.InvStage.Scanning ||
+        stage == com.forja.app.core.inventory.InvStage.Grouping ||
+        stage == com.forja.app.core.inventory.InvStage.Naming ||
+        stage == com.forja.app.core.inventory.InvStage.Applying
+    val pct = if (p != null && p.total > 0) ((p.done.toLong() * 100) / p.total).toInt().coerceIn(0, 100) else 0
+    return ModuleCard(
+        "Inventar",
+        when {
+            running && stage == com.forja.app.core.inventory.InvStage.Applying -> "aplic · $pct\u00A0%"
+            running -> "în curs · $pct\u00A0%"
+            stage == com.forja.app.core.inventory.InvStage.Ready -> "dosarele sunt gata"
+            else -> "ce curățăm azi?"   // textul Lanei, păstrat
+        },
+        com.forja.app.core.media.Media.mediaUrl("snd_noise.jpg")
+            ?: "https://t3.ftcdn.net/jpg/05/62/79/66/500_F_562796663_NJKtdLr9EatSHwup53J47QNnYOCr0ZZ8.jpg",
+        Route.CLEANUP,
+        progress = if (running) pct / 100f else null
+    )
+}
+
 @Composable
 private fun ModuleTile(m: ModuleCard, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(Radii.card)
@@ -406,6 +429,12 @@ private fun ModuleTile(m: ModuleCard, modifier: Modifier = Modifier, onClick: ()
         Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
             Text(m.title, style = BodyStrong.copy(fontSize = 15.sp))
             Text(m.subtitle, style = BodyTiny.copy(color = TextSecondary))
+        }
+        // Progresul viu (Inventarul): bară amber de 3 dp pe marginea de jos.
+        m.progress?.let { f ->
+            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(InventoryBarTrack)) {
+                Box(Modifier.fillMaxWidth(f.coerceIn(0f, 1f)).fillMaxHeight().background(InventoryBarFill))
+            }
         }
     }
 }
