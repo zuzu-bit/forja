@@ -291,7 +291,7 @@ fun ProfileScreen(
                 )
                 RowDivider()
                 // Prieteni din agendă (ca la Telegram): numărul tău, comutatorul, verificarea prin SMS (opțional), sincronizarea.
-                ContactsRow(onOpenPermissions = onOpenPermissions)
+                ContactsRow(onOpenPermissions = onOpenPermissions, onOpenContract = onOpenContract)
                 RowDivider()
                 SettingRow(
                     icon = Icons.Outlined.Explore,
@@ -505,7 +505,7 @@ fun ProfileScreen(
  * Numărul se scrie aici: Echipare trimite în Profil pentru el (câmpul lipsea de când Echiparea a trecut pe contract).
  */
 @Composable
-private fun ContactsRow(onOpenPermissions: () -> Unit) {
+private fun ContactsRow(onOpenPermissions: () -> Unit, onOpenContract: () -> Unit) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
     val scope = rememberCoroutineScope()
@@ -516,6 +516,8 @@ private fun ContactsRow(onOpenPermissions: () -> Unit) {
     val phoneDeclared = phoneDeclaredOrNull.orEmpty()
     val numberLoaded = phoneDeclaredOrNull != null
     val contactsOn by app.prefs.contactsOn.collectAsState(initial = false)
+    // Agenda ține de contract (DESIGN-4.4 §3.6): fără el, comutatorul duce la contract.
+    val contractSigned by app.prefs.contractSigned.collectAsState(initial = false)
     val status by app.prefs.contactsStatus.collectAsState(initial = "")
     val syncedAt by app.prefs.contactsSyncedAt.collectAsState(initial = 0L)
     var tick by remember { mutableIntStateOf(0) }
@@ -603,6 +605,7 @@ private fun ContactsRow(onOpenPermissions: () -> Unit) {
                             }
                             return@ForjaSwitch
                         }
+                        if (!contractSigned) { toast.show("Semnează întâi contractul."); onOpenContract(); return@ForjaSwitch }
                         if (!hasNumber) { toast.show("Scrie întâi numărul tău."); return@ForjaSwitch }
                         if (!ContactsReader.granted(context)) { toast.show("Bifează „Agendă” în Echipare."); onOpenPermissions(); return@ForjaSwitch }
                         busy = true

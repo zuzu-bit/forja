@@ -36,6 +36,8 @@ object Discovery {
      * așa că îl reîmprospătăm înainte. Întoarce `until` (expirarea listării, 30 de zile, reînnoită la fiecare sincronizare).
      */
     suspend fun register(app: ForjaApp): Result<Long> = try {
+        // Numărul pleacă doar cu contractul semnat (DESIGN-4.4 §3.6), oricine ar cere înregistrarea.
+        if (!app.prefs.contractSigned.first()) throw InsightsFailure(403, "Semnează întâi contractul.")
         val headers = headers(app)
         if (headers.isEmpty() && verifiedPhone() == null) throw InsightsFailure(400, "Scrie întâi numărul tău.")
         try { FirebaseAuth.getInstance().currentUser?.getIdToken(true)?.await() } catch (_: Exception) { }

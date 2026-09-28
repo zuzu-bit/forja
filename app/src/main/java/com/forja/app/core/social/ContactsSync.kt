@@ -109,9 +109,9 @@ object ContactsSync {
 
     private fun connected(): Constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
-    /** Poate porni: comutator pornit, număr (declarat sau verificat), cont, permisiune. */
+    /** Poate porni: contractul v3 semnat (agenda ține de el, DESIGN-4.4 §3.6), comutator pornit, număr, cont, permisiune. */
     suspend fun ready(app: ForjaApp): Boolean =
-        app.prefs.contactsOn.first() && app.auth.currentUid != null && ContactsReader.granted(app) &&
+        app.prefs.contractSigned.first() && app.prefs.contactsOn.first() && app.auth.currentUid != null && ContactsReader.granted(app) &&
             (PhoneNumbers.isValid(app.prefs.phoneDeclared.first()) || Discovery.verifiedPhone() != null)
 
     /** La fiecare ON_START: programează lucrătorul zilnic dacă e cazul; altfel anulează ce a rămas. Idempotent. */
@@ -218,6 +218,8 @@ object ContactsSync {
      * un prieten vechi regăsit în agendă primește doar eticheta „din agendă”, nu o notificare.
      */
     suspend fun sync(app: ForjaApp): Outcome {
+        // Fără contractul semnat (niciodată sau v2 nere-semnat), nicio amprentă a agendei nu pleacă.
+        if (!app.prefs.contractSigned.first()) return Outcome.SKIPPED
         if (!app.prefs.contactsOn.first()) return Outcome.SKIPPED
         val uid = app.auth.currentUid ?: return Outcome.SKIPPED
         val headers = Discovery.headers(app)
