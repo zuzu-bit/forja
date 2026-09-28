@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.unit.dp
 import com.forja.app.core.designsystem.Accent2
+import com.forja.app.core.designsystem.EmberDeep
 import com.forja.app.core.designsystem.EmberHot
 import com.forja.app.core.designsystem.EmberWarm
 import com.forja.app.core.designsystem.Error
@@ -38,9 +39,12 @@ import com.forja.app.core.games.asalt.AsaltEngine.Companion.WIDE
 import com.forja.app.core.games.asalt.AsaltPhase
 import com.forja.app.feature.games.AnvilBody
 import com.forja.app.feature.games.AnvilFace
+import com.forja.app.feature.games.AnvilFaceShade
+import com.forja.app.feature.games.AnvilFoot
 import com.forja.app.feature.games.AsaltBrickColors
 import com.forja.app.feature.games.CratePlank
 import com.forja.app.feature.games.Rivet
+import com.forja.app.feature.games.Sage
 import com.forja.app.feature.inventory.Amber
 import com.forja.app.feature.inventory.W06
 import com.forja.app.feature.inventory.W09
@@ -74,13 +78,16 @@ internal class AsaltFx {
         private set
     var hurtMs = 0f
         private set
+    /** Fața nicovalei se înroșește o clipă la fiecare lovitură. */
+    var anvilHotMs = 0f
+        private set
     var clockMs = 0L
         private set
     private val rng = Rng(0xA5A17)
 
     val active: Boolean
         get() {
-            if (shakeMs > 0f || hurtMs > 0f) return true
+            if (shakeMs > 0f || hurtMs > 0f || anvilHotMs > 0f) return true
             for (i in 0 until RINGS) if (ringMs[i] > 0f) return true
             for (i in 0 until CHIPS) if (chipMs[i] > 0f) return true
             return false
@@ -135,6 +142,10 @@ internal class AsaltFx {
         shakeMs = SHAKE_MS
     }
 
+    fun anvilHit() {
+        anvilHotMs = ANVIL_HOT_MS
+    }
+
     private fun chip(x: Float, y: Float, kind: Int, power: Float) {
         for (i in 0 until CHIPS) if (chipMs[i] <= 0f) {
             chipX[i] = x
@@ -152,6 +163,7 @@ internal class AsaltFx {
         val dt = dtMs / 1000f
         if (shakeMs > 0f) shakeMs = (shakeMs - dtMs).coerceAtLeast(0f)
         if (hurtMs > 0f) hurtMs = (hurtMs - dtMs).coerceAtLeast(0f)
+        if (anvilHotMs > 0f) anvilHotMs = (anvilHotMs - dtMs).coerceAtLeast(0f)
         for (i in 0 until RINGS) if (ringMs[i] > 0f) ringMs[i] -= dtMs
         for (i in 0 until CHIPS) {
             if (chipMs[i] <= 0f) continue
@@ -165,6 +177,7 @@ internal class AsaltFx {
     fun clear() {
         shakeMs = 0f
         hurtMs = 0f
+        anvilHotMs = 0f
         for (i in 0 until RINGS) ringMs[i] = 0f
         for (i in 0 until CHIPS) chipMs[i] = 0f
         clearTrail()
@@ -177,6 +190,7 @@ internal class AsaltFx {
         const val RING_MS = 320f
         const val SHAKE_MS = 180f
         const val HURT_MS = 420f
+        const val ANVIL_HOT_MS = 180f
     }
 }
 
@@ -197,9 +211,33 @@ private fun arrowGlyph(u: Float): Path = Path().apply {
     moveTo(18.5f * u, 4.5f * u); lineTo(21f * u, 7f * u); lineTo(18.5f * u, 9.5f * u)
 }
 
-private fun hornPath(u: Float): Path = Path().apply {
-    // cornul nicovalei, spre stânga, la nivelul feței
-    moveTo(0f, 0f); lineTo(-12f * u, 1.5f * u); lineTo(-12f * u, 2.6f * u); lineTo(0f, 5f * u); close()
+/** Înălțimea desenată a nicovalei (unități): fața, gâtul și talpa; coliziunea rămâne fața de la y = 552. */
+private const val ANVIL_DRAW_H = 20f
+
+/** Cornul nicovalei, spre stânga, la nivelul feței (înălțimea feței = `face`). */
+internal fun anvilHorn(length: Float, face: Float): Path = Path().apply {
+    moveTo(0f, 0f)
+    quadraticTo(-length * 0.55f, face * 0.05f, -length, face * 0.32f)
+    quadraticTo(-length * 0.5f, face * 0.62f, 0f, face)
+    close()
+}
+
+/**
+ * Nicovala (fața de oțel cu lumină sus, cornul, gâtul îngust, talpa lată), centrată pe `cx`, cu fața la `top`.
+ * `hot` (0..1) = fața înroșită după o lovitură. Culori și căi primite gata făcute: nimic alocat.
+ */
+internal fun DrawScope.drawAnvil(cx: Float, top: Float, halfW: Float, h: Float, horn: Path, hot: Float) {
+    val face = h * 0.38f
+    val waistTop = top + face
+    val footTop = top + h * 0.72f
+    translate(cx - halfW, top) { drawPath(horn, AnvilFace) }
+    drawRoundRect(AnvilFaceShade, topLeft = Offset(cx - halfW, top), size = Size(2 * halfW, face), cornerRadius = CornerRadius(face * 0.25f))
+    drawRoundRect(AnvilFace, topLeft = Offset(cx - halfW, top), size = Size(2 * halfW, face * 0.62f), cornerRadius = CornerRadius(face * 0.25f))
+    drawRect(Color.White.copy(alpha = 0.38f), topLeft = Offset(cx - halfW + face * 0.4f, top), size = Size(2 * halfW - face * 0.8f, maxOf(1f, face * 0.12f)))
+    if (hot > 0f) drawRoundRect(EmberHot.copy(alpha = 0.75f * hot), topLeft = Offset(cx - halfW, top), size = Size(2 * halfW, face * 0.5f), cornerRadius = CornerRadius(face * 0.25f))
+    drawRect(AnvilBody, topLeft = Offset(cx - halfW * 0.36f, waistTop), size = Size(halfW * 0.72f, footTop - waistTop))
+    drawRoundRect(AnvilFoot, topLeft = Offset(cx - halfW * 0.64f, footTop), size = Size(halfW * 1.28f, top + h - footTop), cornerRadius = CornerRadius(face * 0.2f))
+    drawRect(Color.Black.copy(alpha = 0.3f), topLeft = Offset(cx - halfW * 0.36f, waistTop), size = Size(halfW * 0.72f, maxOf(1f, face * 0.14f)))
 }
 
 /**
@@ -225,7 +263,13 @@ internal fun AsaltField(engine: AsaltEngine, fx: AsaltFx, frame: State<Long>, re
             val crack1 = crack(u, 1)
             val crack2 = crack(u, 2)
             val arrow = arrowGlyph(u)
-            val horn = hornPath(u)
+            // la desen nicovala e mai înaltă decât cutia de coliziune (doar fața ei lovește scânteia)
+            val anvilH = ANVIL_DRAW_H * u
+            val horn = anvilHorn(14f * u, anvilH * 0.38f)
+            val forge = Brush.radialGradient(
+                listOf(EmberDeep.copy(alpha = 0.16f), Color.Transparent),
+                center = Offset(size.width / 2f, size.height * 1.02f), radius = size.width * 0.8f
+            )
             val r = AsaltEngine.R.toFloat() * u
             val glow = Brush.radialGradient(
                 listOf(EmberHot.copy(alpha = 0.55f), EmberWarm.copy(alpha = 0.18f), Color.Transparent),
@@ -243,8 +287,10 @@ internal fun AsaltField(engine: AsaltEngine, fx: AsaltFx, frame: State<Long>, re
                     3.dp.toPx() * k * sin(fx.clockMs * 0.09f)
                 } else 0f
                 drawRoundRect(Surface1, cornerRadius = fieldCorner)
+                drawRect(forge)
                 // linia de pericol sub nicovală
-                drawLine(W06, Offset(0f, paddleY + paddleH + 6f * u), Offset(size.width, paddleY + paddleH + 6f * u), guideW)
+                val dangerY = paddleY + anvilH + 5f * u
+                drawLine(W06, Offset(0f, dangerY), Offset(size.width, dangerY), guideW)
                 translate(shake, 0f) {
                     // ── zidul ──
                     val pulse = if (e.assist && !reduced) 0.55f + 0.45f * (0.5f + 0.5f * sin(fx.clockMs / 1000f * 2f * PI.toFloat() * 1.4f)) else 1f
@@ -268,7 +314,7 @@ internal fun AsaltField(engine: AsaltEngine, fx: AsaltFx, frame: State<Long>, re
                         val cy = e.capY[j].toFloat() * u
                         val cw = AsaltEngine.CAP_W.toFloat() * u
                         val ch = AsaltEngine.CAP_H.toFloat() * u
-                        drawRoundRect(Accent2, topLeft = Offset(cx - cw / 2, cy - ch / 2), size = Size(cw, ch), cornerRadius = CornerRadius(ch / 2))
+                        drawRoundRect(Sage, topLeft = Offset(cx - cw / 2, cy - ch / 2), size = Size(cw, ch), cornerRadius = CornerRadius(ch / 2))
                         drawRoundRect(EmberHot, topLeft = Offset(cx - cw / 2, cy - ch / 2), size = Size(cw, ch), cornerRadius = CornerRadius(ch / 2), style = glyphStroke)
                         translate(cx - 15f * u, cy - 7f * u) {
                             capsuleGlyph(type, u, arrow, glyphStroke)
@@ -278,13 +324,10 @@ internal fun AsaltField(engine: AsaltEngine, fx: AsaltFx, frame: State<Long>, re
                     val hw = e.halfWidth.toFloat() * u
                     val px = e.paddleX.toFloat() * u
                     if (e.wideSteps > 0) {
-                        drawRoundRect(Accent2.copy(alpha = 0.22f), topLeft = Offset(px - hw - 3f * u, paddleY - 3f * u), size = Size(2 * hw + 6f * u, paddleH + 6f * u), cornerRadius = CornerRadius(4f * u))
+                        drawRoundRect(Accent2.copy(alpha = 0.22f), topLeft = Offset(px - hw - 3f * u, paddleY - 3f * u), size = Size(2 * hw + 6f * u, anvilH * 0.5f + 6f * u), cornerRadius = CornerRadius(4f * u))
                     }
-                    drawRoundRect(AnvilBody, topLeft = Offset(px - hw * 0.62f, paddleY + 4f * u), size = Size(hw * 1.24f, paddleH - 2f * u), cornerRadius = CornerRadius(1.5f * u))
-                    drawRoundRect(AnvilBody, topLeft = Offset(px - hw * 0.8f, paddleY + paddleH - 3f * u), size = Size(hw * 1.6f, 3f * u), cornerRadius = CornerRadius(1f * u))
-                    drawRoundRect(AnvilFace, topLeft = Offset(px - hw, paddleY), size = Size(2 * hw, 5f * u), cornerRadius = CornerRadius(1.5f * u))
-                    drawRect(Color.White.copy(alpha = 0.16f), topLeft = Offset(px - hw + 2f * u, paddleY), size = Size(2 * hw - 4f * u, 1f * u))
-                    translate(px - hw, paddleY) { drawPath(horn, AnvilFace) }
+                    val hot = if (!reduced) fx.anvilHotMs / AsaltFx.ANVIL_HOT_MS else 0f
+                    drawAnvil(px, paddleY, hw, anvilH, horn, hot)
                     // ── scânteile ──
                     val playing = e.phase == AsaltPhase.Playing || e.phase == AsaltPhase.Ready
                     if (playing) {

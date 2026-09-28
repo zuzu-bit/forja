@@ -1,5 +1,7 @@
 package com.forja.app.core.games
 
+import com.forja.app.core.games.asalt.AsaltPhase
+import com.forja.app.core.games.zid.ZidPhase
 import kotlinx.serialization.Serializable
 
 /**
@@ -59,3 +61,8 @@ data class GameProgress(
     /** Câte niveluri au măcar o stea. */
     val cleared: Int get() = stars.count { it.value > 0 }
 }
+
+/** Partida mai poate continua (Ready inclus: nivelul ales, încă neînceput). */
+val ZidPhase.active: Boolean get() = this == ZidPhase.Ready || this == ZidPhase.Falling || this == ZidPhase.Clearing
+
+val AsaltPhase.active: Boolean get() = this == AsaltPhase.Ready || this == AsaltPhase.Playing || this == AsaltPhase.LifeLost

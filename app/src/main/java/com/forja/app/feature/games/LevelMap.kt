@@ -413,6 +413,7 @@ private fun LevelNode(node: LevelNodeUi, selected: Boolean, onTap: () -> Unit, o
                     .size(d)
                     .pulseRing(pulse != null, { pulse?.value ?: 0f }, color = Amber, radius = d / 2)
                     .clip(shape)
+                    .background(Surface0)
                     .background(bg)
                     .border(bw, border, shape),
                 contentAlignment = Alignment.Center

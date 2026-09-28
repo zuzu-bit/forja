@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameMillis
@@ -25,16 +23,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.forja.app.core.designsystem.Accent2
 import com.forja.app.core.designsystem.EmberHot
 import com.forja.app.core.designsystem.EmberWarm
 import com.forja.app.core.designsystem.LocalReducedMotion
 import com.forja.app.core.designsystem.Surface0
-import com.forja.app.core.games.GameId
-import com.forja.app.core.games.GameProgress
-import com.forja.app.core.games.GameStore
+import com.forja.app.feature.games.asalt.anvilHorn
+import com.forja.app.feature.games.asalt.drawAnvil
 import com.forja.app.feature.inventory.Amber
 import com.forja.app.feature.inventory.MediaBg
 import com.forja.app.feature.inventory.R4
@@ -44,22 +40,6 @@ import com.forja.app.feature.inventory.mono
  * Cardurile ZID și ASALT din S2 (Rulare): o miniatură desenată a fiecărui joc + cipul „NIV. 4” în colț.
  * Mișcarea (piesa care cade, scânteia care sare) merge doar fără mișcare redusă; în capturi e statică.
  */
-
-/** Nivelurile arătate pe carduri (null = încă necitite). */
-data class WaitLevels(val zid: Int?, val asalt: Int?)
-
-/** Nivelul curent al fiecărui joc, pentru cardurile „Cât aștepți”. */
-@Composable
-fun rememberWaitLevels(): WaitLevels {
-    val context = LocalContext.current
-    val zidFlow = remember(context) { GameStore.progress(context, GameId.Zid) }
-    val asaltFlow = remember(context) { GameStore.progress(context, GameId.Asalt) }
-    val z by zidFlow.collectAsState(initial = null)
-    val a by asaltFlow.collectAsState(initial = null)
-    return WaitLevels(z?.let { cardLevel(GameId.Zid, it) }, a?.let { cardLevel(GameId.Asalt, it) })
-}
-
-private fun cardLevel(game: GameId, p: GameProgress): Int = p.current(game)
 
 /** Cipul „NIV. 4” din colțul miniaturii. */
 @Composable
@@ -157,18 +137,20 @@ internal fun AsaltCardArt(level: Int?, modifier: Modifier = Modifier) {
         Box(
             Modifier.fillMaxSize().drawWithCache {
                 val cols = 5
-                val bw = size.width * 0.84f / cols
-                val bh = bw * 0.46f
+                val bw = size.width * 0.86f / cols
+                val bh = bw * 0.5f
                 val ox = (size.width - bw * cols) / 2f
-                val oy = size.height * 0.2f
+                val oy = size.height * 0.24f
                 val g = bw * 0.05f
                 val kinds = arrayOf(
                     intArrayOf(4, 3, 4, 3, 4),
                     intArrayOf(2, 2, 5, 2, 2),
                     intArrayOf(1, 1, 0, 1, 1)
                 )
-                val anvilW = size.width * 0.36f
-                val anvilY = size.height * 0.84f
+                val anvilHalf = size.width * 0.21f
+                val anvilH = anvilHalf * 0.42f
+                val anvilY = size.height * 0.86f - anvilH
+                val horn = anvilHorn(anvilHalf * 0.4f, anvilH * 0.38f)
                 val glow = Brush.radialGradient(listOf(EmberHot.copy(alpha = 0.55f), Color.Transparent), center = Offset.Zero, radius = bw * 0.55f)
                 val r = bw * 0.13f
                 val dash = PathEffect.dashPathEffect(floatArrayOf(r * 0.9f, r * 0.9f))
@@ -187,8 +169,7 @@ internal fun AsaltCardArt(level: Int?, modifier: Modifier = Modifier) {
                     }
                     // nicovala
                     val ax = size.width / 2f
-                    drawRoundRect(AnvilFace, topLeft = Offset(ax - anvilW / 2, anvilY), size = Size(anvilW, bh * 0.4f), cornerRadius = CornerRadius(g))
-                    drawRoundRect(AnvilBody, topLeft = Offset(ax - anvilW * 0.3f, anvilY + bh * 0.4f), size = Size(anvilW * 0.6f, bh * 0.45f), cornerRadius = CornerRadius(g))
+                    drawAnvil(ax, anvilY, anvilHalf, anvilH, horn, hot = 0f)
                     // scânteia: urcă în V de pe nicovală spre golul din zid
                     val t = clock.value
                     val p = if (reduced) 0.55f else ((t % 1_800L) / 1_800f)

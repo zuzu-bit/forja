@@ -82,8 +82,3 @@ object GameSessions {
         asalt = null
     }
 }
-
-/** Partida mai poate continua (Ready inclus: nivelul ales, încă neînceput). */
-val ZidPhase.active: Boolean get() = this == ZidPhase.Ready || this == ZidPhase.Falling || this == ZidPhase.Clearing
-
-val AsaltPhase.active: Boolean get() = this == AsaltPhase.Ready || this == AsaltPhase.Playing || this == AsaltPhase.LifeLost

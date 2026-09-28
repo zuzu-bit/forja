@@ -1,7 +1,7 @@
 package com.forja.app.feature.games
 
 import androidx.compose.ui.graphics.Color
-import com.forja.app.core.designsystem.Accent
+
 import com.forja.app.core.designsystem.Accent2
 import com.forja.app.core.designsystem.EmberWarm
 import com.forja.app.core.designsystem.Surface0
@@ -27,12 +27,14 @@ internal val SteelBlue = Color(0xFF7FA3C7)
 /** Niturile molozului și ale oțelului. */
 internal val Rivet = Color(0xFF5A5D63)
 
-/** Nicovala: corpul și fața. */
-internal val AnvilBody = Color(0xFF2A2B30)
-internal val AnvilFace = Color(0xFF5A5D63)
+/** Nicovala: fața de oțel (lumină sus, umbră jos), gâtul și talpa. */
+internal val AnvilFace = Color(0xFF9CA1A9)
+internal val AnvilFaceShade = Color(0xFF6B7079)
+internal val AnvilBody = Color(0xFF4A4D55)
+internal val AnvilFoot = Color(0xFF3A3D44)
 
 /** Lada din ASALT: olive, cu scânduri mai închise. */
-internal val CratePlank = Color(0xFF3B4A2F)
+internal val CratePlank = Color(0xFF4A5D3A)
 
 /** Voalul de sub cardurile de pauză și final. */
 internal val GameScrim = Surface0.copy(alpha = 0.72f)
@@ -53,14 +55,14 @@ internal val ZidKindColors: Array<Color> = arrayOf(
 /** Culorile cărămizilor ASALT, indexate pe fel (AsaltEngine.CRATE…SLOW). */
 internal val AsaltBrickColors: Array<Color> = arrayOf(
     Color.Transparent,
-    Accent,         // a · ladă
+    Accent2,        // a · ladă
     Amber,          // b · sac de nisip
     TextDim,        // c · beton
     Rule,           // # · oțel
     EmberWarm,      // x · muniție
-    Accent2,        // w · Lat
-    Accent2,        // m · Schije
-    Accent2         // s · Calm
+    Sage,           // w · Lat
+    Sage,           // m · Schije
+    Sage            // s · Calm
 )
 
 /** Coloana laterală a ZID (URM., REZ., contorul, mascota). */

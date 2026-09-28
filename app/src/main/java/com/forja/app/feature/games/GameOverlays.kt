@@ -404,9 +404,12 @@ internal fun ResultCard(ui: ResultUi, actions: ResultActions, modifier: Modifier
     }
 }
 
-/** Placa texturată cu puncte (zona degetului): aceleași gesturi ca pe tablă, fără nimic scris. */
+/**
+ * Placa texturată cu puncte (zona degetului): aceleași gesturi ca pe tablă, fără nimic scris. Două săgeți stinse
+ * (stânga, dreapta) și, la ZID, una în jos arată că e o suprafață de comandă.
+ */
 @Composable
-internal fun ThumbPad(modifier: Modifier = Modifier) {
+internal fun ThumbPad(modifier: Modifier = Modifier, down: Boolean = false) {
     Box(
         modifier
             .clip(R8)
@@ -422,8 +425,22 @@ internal fun ThumbPad(modifier: Modifier = Modifier) {
                 val oy = (size.height - (rows - 1) * step) / 2f
                 val pts = ArrayList<Offset>(cols * rows)
                 for (y in 0 until rows) for (x in 0 until cols) pts += Offset(ox + x * step, oy + y * step)
+                val a = 7.dp.toPx()
+                val m = 18.dp.toPx()
+                val cy = size.height / 2f
+                val hint = Path().apply {
+                    moveTo(m + a * 0.6f, cy - a); lineTo(m, cy); lineTo(m + a * 0.6f, cy + a)
+                    moveTo(size.width - m - a * 0.6f, cy - a); lineTo(size.width - m, cy); lineTo(size.width - m - a * 0.6f, cy + a)
+                    if (down) {
+                        val by = size.height - m
+                        moveTo(size.width / 2f - a, by - a * 0.6f); lineTo(size.width / 2f, by); lineTo(size.width / 2f + a, by - a * 0.6f)
+                    }
+                }
+                val hintStroke = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                val hintColor = Color.White.copy(alpha = 0.13f)
                 onDrawBehind {
                     drawPoints(pts, androidx.compose.ui.graphics.PointMode.Points, c, strokeWidth = 2 * r, cap = StrokeCap.Round)
+                    drawPath(hint, hintColor, style = hintStroke)
                 }
             }
     )
