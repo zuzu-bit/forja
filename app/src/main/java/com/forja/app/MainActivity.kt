@@ -467,6 +467,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                                 app.auth.logout()
                                 // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni. Contractul e al contului: se semnează din nou.
                                 app.prefs.resetFirstRun()
+                                // Alt om pe același telefon: ghidajele de la prima vizită pornesc din nou.
+                                try { com.forja.app.core.designsystem.components.Tutorial.reset(app) } catch (_: Exception) { }
                                 try { app.prefs.clearContract() } catch (_: Exception) { }
                             }
                             try { nav.navigate(Route.ONBOARDING) { popUpTo(Route.DASHBOARD) { inclusive = true } } } catch (_: Exception) { }
