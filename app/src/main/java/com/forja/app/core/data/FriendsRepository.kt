@@ -1,10 +1,13 @@
 package com.forja.app.core.data
 
+import android.os.Handler
+import android.os.Looper
 import com.forja.app.core.data.db.PlaceEntity
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.channels.awaitClose
@@ -210,9 +213,20 @@ class FriendsRepository(
         db.collection("friendships").document(friendshipId(myUid, otherUid)).delete().await()
     }
 
-    /** Flow live cu prietenii + starea lor publicată (+ steagul „familie” din documentul meu). */
+    /**
+     * Flow live cu prietenii + starea lor publicată (+ steagul „familie” din documentul meu).
+     *
+     * Regulile noi deschid profilul unui prieten abia după ce prietenia e pe server (`exists()` acolo): o prietenie
+     * creată chiar acum apare întâi din cache-ul local, cu scriere în așteptare, iar un ascultător de profil pornit atunci
+     * ar fi refuzat și oprit de SDK. De aceea: ascultăm și schimbările de metadate, luăm doar prieteniile confirmate,
+     * păstrăm ascultătorii existenți (doar diferența se schimbă) și refacem o dată, după 3 s și la următorul eveniment al
+     * prieteniilor, un profil refuzat (și unul care nu există încă). Toate se ating pe firul principal, unde Firestore
+     * livrează ascultătorii.
+     */
     fun friendsFlow(myUid: String): Flow<List<Friend>> = callbackFlow {
-        var userRegs: List<ListenerRegistration> = emptyList()
+        val userRegs = HashMap<String, ListenerRegistration>()
+        val denied = HashSet<String>()
+        val main = Handler(Looper.getMainLooper())
         val cache = LinkedHashMap<String, Friend>()
         var myFamily: Set<String> = emptySet()
 
@@ -230,57 +244,82 @@ class FriendsRepository(
             }
         }
 
+        fun listen(uid: String) {
+            userRegs[uid] = db.collection("users").document(uid).addSnapshotListener { u, e ->
+                if (e != null) {
+                    // Refuzat (prietenie încă neconfirmată, profil încă necreat): SDK-ul a oprit ascultătorul.
+                    if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED && userRegs.containsKey(uid) && denied.add(uid)) {
+                        main.postDelayed({
+                            if (uid in denied && userRegs.containsKey(uid)) { userRegs.remove(uid)?.remove(); listen(uid) }
+                        }, 3_000L)
+                    }
+                    return@addSnapshotListener
+                }
+                if (u != null && u.exists()) {
+                    denied.remove(uid)
+                    val ghostUntil = u.getLong("ghostUntil") ?: 0L
+                    val ghost = ghostUntil == -1L || ghostUntil > System.currentTimeMillis()
+                    // Ce ascultă: doar titlul și artistul, doar proaspăt, niciodată în fantomă.
+                    val np = u.get("nowPlaying") as? Map<*, *>
+                    val npTitle = (np?.get("title") as? String)?.trim().orEmpty()
+                    val npArtist = (np?.get("artist") as? String)?.trim().orEmpty()
+                    val npAt = (np?.get("at") as? Number)?.toLong() ?: 0L
+                    val npFresh = !ghost && npTitle.isNotEmpty() &&
+                        System.currentTimeMillis() - npAt < NOW_PLAYING_FRESH_MS
+                    cache[uid] = Friend(
+                        uid = uid,
+                        name = u.getString("name") ?: "Prieten",
+                        state = if (ghost) "ghost" else (u.getString("state") ?: "idle"),
+                        lat = if (ghost) null else u.getDouble("lat"),
+                        lng = if (ghost) null else u.getDouble("lng"),
+                        speedMps = u.getDouble("speedMps") ?: 0.0,
+                        locUpdatedAt = u.getLong("locUpdatedAt") ?: 0L,
+                        weekKm = u.getDouble("weekKm") ?: 0.0,
+                        ghost = ghost,
+                        lastActivityType = u.getString("lastActivityType"),
+                        lastActivityKm = u.getDouble("lastActivityKm") ?: 0.0,
+                        lastActivityAt = u.getLong("lastActivityAt") ?: 0L,
+                        family = uid in myFamily,
+                        exploreCells = (u.getLong("exploreCells") ?: 0L).toInt(),
+                        placesCount = (u.getLong("placesCount") ?: 0L).toInt(),
+                        photoUrl = u.getString("photoUrl")?.takeIf { it.isNotBlank() },
+                        nowPlaying = if (npFresh) (if (npArtist.isNotEmpty()) "$npTitle · $npArtist" else npTitle) else null,
+                        nowPlayingAt = if (npFresh) npAt else 0L
+                    )
+                    trySend(cache.values.toList())
+                }
+            }
+        }
+
         val friendshipsReg = db.collection("friendships")
             .whereArrayContains("members", myUid)
-            .addSnapshotListener { snap, _ ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snap, _ ->
+                // Doar prieteniile ajunse pe server: pentru una încă în așteptare, regulile refuză profilul.
                 val uids = snap?.documents
+                    ?.filter { !it.metadata.hasPendingWrites() }
                     ?.mapNotNull { d -> (d.get("members") as? List<*>)?.mapNotNull { it as? String } }
-                    ?.flatten()?.filter { it != myUid }?.distinct()
-                    ?: emptyList()
-                userRegs.forEach { it.remove() }
-                cache.keys.retainAll(uids.toSet())
-                if (uids.isEmpty()) trySend(emptyList())
-                userRegs = uids.map { uid ->
-                    db.collection("users").document(uid).addSnapshotListener { u, _ ->
-                        if (u != null && u.exists()) {
-                            val ghostUntil = u.getLong("ghostUntil") ?: 0L
-                            val ghost = ghostUntil == -1L || ghostUntil > System.currentTimeMillis()
-                            // Ce ascultă: doar titlul și artistul, doar proaspăt, niciodată în fantomă.
-                            val np = u.get("nowPlaying") as? Map<*, *>
-                            val npTitle = (np?.get("title") as? String)?.trim().orEmpty()
-                            val npArtist = (np?.get("artist") as? String)?.trim().orEmpty()
-                            val npAt = (np?.get("at") as? Number)?.toLong() ?: 0L
-                            val npFresh = !ghost && npTitle.isNotEmpty() &&
-                                System.currentTimeMillis() - npAt < NOW_PLAYING_FRESH_MS
-                            cache[uid] = Friend(
-                                uid = uid,
-                                name = u.getString("name") ?: "Prieten",
-                                state = if (ghost) "ghost" else (u.getString("state") ?: "idle"),
-                                lat = if (ghost) null else u.getDouble("lat"),
-                                lng = if (ghost) null else u.getDouble("lng"),
-                                speedMps = u.getDouble("speedMps") ?: 0.0,
-                                locUpdatedAt = u.getLong("locUpdatedAt") ?: 0L,
-                                weekKm = u.getDouble("weekKm") ?: 0.0,
-                                ghost = ghost,
-                                lastActivityType = u.getString("lastActivityType"),
-                                lastActivityKm = u.getDouble("lastActivityKm") ?: 0.0,
-                                lastActivityAt = u.getLong("lastActivityAt") ?: 0L,
-                                family = uid in myFamily,
-                                exploreCells = (u.getLong("exploreCells") ?: 0L).toInt(),
-                                placesCount = (u.getLong("placesCount") ?: 0L).toInt(),
-                                photoUrl = u.getString("photoUrl")?.takeIf { it.isNotBlank() },
-                                nowPlaying = if (npFresh) (if (npArtist.isNotEmpty()) "$npTitle · $npArtist" else npTitle) else null,
-                                nowPlayingAt = if (npFresh) npAt else 0L
-                            )
-                            trySend(cache.values.toList())
-                        }
+                    ?.flatten()?.filter { it != myUid }?.toSet()
+                    ?: emptySet()
+                for (gone in userRegs.keys - uids) { userRegs.remove(gone)?.remove(); denied.remove(gone) }
+                val before = cache.size
+                cache.keys.retainAll(uids)
+                for (uid in uids) {
+                    when {
+                        uid !in userRegs -> listen(uid)
+                        // Refuzat mai devreme: prietenia s-a confirmat între timp sau profilul a apărut.
+                        uid in denied -> { userRegs.remove(uid)?.remove(); listen(uid) }
                     }
                 }
+                if (uids.isEmpty()) trySend(emptyList())
+                else if (cache.size != before) trySend(cache.values.toList())
             }
         awaitClose {
             meReg.remove()
             friendshipsReg.remove()
-            userRegs.forEach { it.remove() }
+            main.removeCallbacksAndMessages(null)
+            val regs = userRegs.values.toList()
+            userRegs.clear()
+            regs.forEach { it.remove() }
         }
     }
 
