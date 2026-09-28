@@ -11,6 +11,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 
 /** Un prieten, cu starea lui live — onest: doar ce a publicat el. */
@@ -216,12 +217,19 @@ class FriendsRepository(
     suspend fun sendEnergy(fromUid: String, fromName: String, toUid: String): Boolean {
         val day = LocalDate.now().toString()
         val id = "${toUid}_${day}_$fromUid"
-        val doc = db.collection("energy").document(id).get().await()
-        if (doc.exists()) return false
-        db.collection("energy").document(id).set(
-            mapOf("to" to toUid, "from" to fromUid, "fromName" to fromName, "day" to day, "at" to System.currentTimeMillis())
-        ).await()
-        return true
+        // Fără citire înainte: regulile de dinainte de 4.4 refuză citirea documentului lipsă, deci fulgerul nu pleca
+        // niciodată. Scrierea directă merge cu ambele: a doua oară azi e un `update`, refuzat → „deja trimis”.
+        return try {
+            // Fără net scrierea rămâne în coadă și pleacă singură; nu ținem ecranul în așteptare.
+            withTimeoutOrNull(8_000L) {
+                db.collection("energy").document(id).set(
+                    mapOf("to" to toUid, "from" to fromUid, "fromName" to fromName, "day" to day, "at" to System.currentTimeMillis())
+                ).await()
+            }
+            true
+        } catch (e: FirebaseFirestoreException) {
+            if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) false else throw e
+        }
     }
 
     /** Ascultă energia primită azi — pentru toast „X ți-a trimis energie". */
