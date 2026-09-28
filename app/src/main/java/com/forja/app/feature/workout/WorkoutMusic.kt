@@ -53,6 +53,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.role
@@ -119,7 +120,9 @@ data class WorkoutMusicState(
     val lists: Map<Mix, FPlaylist> = emptyMap(),
     val stopAtEnd: Boolean = true,
     /** Numele playerului (pentru „Melodii apreciate · Spotify”). */
-    val player: String? = null
+    val player: String? = null,
+    /** Pachetul lui: „Melodii apreciate” există doar în Spotify. */
+    val playerPkg: String? = null
 ) {
     val list: FPlaylist? get() = lists[mix]
 
@@ -168,8 +171,19 @@ data class DiscUi(
     val action: String? = null
 )
 
-/** Faza discului: starea motorului (doar pornirile Antrenamentului) + piesa care cântă. */
-fun discUi(state: StartState, fromWorkout: Boolean, track: Track?, art: ImageBitmap?, positionMs: Long, queueActive: Boolean): DiscUi {
+/**
+ * Faza discului: starea motorului (doar pornirile Antrenamentului) + piesa care cântă. [audible] = fără acces, se aude
+ * un player media (singurul semn atunci: discul arată „cântă”, fără copertă, iar atingerea trimite pauza).
+ */
+fun discUi(
+    state: StartState,
+    fromWorkout: Boolean,
+    track: Track?,
+    art: ImageBitmap?,
+    positionMs: Long,
+    queueActive: Boolean,
+    audible: Boolean = false
+): DiscUi {
     val s = if (fromWorkout) state else StartState.Idle
     val progress = if (track != null && track.durationMs > 0) (positionMs.toFloat() / track.durationMs).coerceIn(0f, 1f) else 0f
     val badge = when {
@@ -181,6 +195,7 @@ fun discUi(state: StartState, fromWorkout: Boolean, track: Track?, art: ImageBit
     return when {
         s is StartState.Starting -> DiscUi(DiscPhase.STARTING, art, progress, badge, track?.title, track?.artist)
         track != null && track.playing -> DiscUi(DiscPhase.PLAYING, art, progress, badge, track.title, track.artist)
+        track == null && audible -> DiscUi(DiscPhase.PLAYING)
         s is StartState.NeedsTap -> DiscUi(
             DiscPhase.NEEDS_TAP, action = if (s.step.pkg == MusicKind.SPOTIFY) "Deschide Spotify" else "Deschide playerul"
         )
@@ -193,7 +208,8 @@ fun discUi(state: StartState, fromWorkout: Boolean, track: Track?, art: ImageBit
 // ───────────────────────────── Hub: rândul „Muzică” ─────────────────────────────
 
 /**
- * `[ disc ]  Muzică   MIX · 12 PIESE ›   (comutator)` — atingerea pe rând comută, eticheta deschide foaia.
+ * `[ disc ]  Muzică   MIX · 12 PIESE ›   (comutator)` — discul și textul deschid foaia (o țintă mare), comutatorul
+ * (țintă de 48 dp) pornește / oprește muzica. O atingere pe lângă nu mai oprește muzica pe tăcute.
  * Deasupra lui „Începe sesiunea” (singura acțiune principală).
  */
 @Composable
@@ -207,37 +223,49 @@ fun WorkoutMusicRow(
     ForjaCard(modifier.coachTarget("antrenament.muzica"), padding = 0.dp) {
         Row(
             Modifier
-                .pressable({ onToggle(!state.on) }, scaleDown = 0.99f)
                 .fillMaxWidth()
                 .heightIn(min = 64.dp)
-                .semantics(mergeDescendants = true) {
-                    role = Role.Switch
-                    contentDescription = "Muzică"
-                    stateDescription = if (state.on) "pornită, ${state.label.lowercase()}" else "oprită"
-                }
-                .padding(start = 12.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
+                .padding(end = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            MusicDisc(disc, size = 40.dp, dim = !state.on)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Muzică", style = BodyStrong.copy(fontSize = 15.sp))
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .pressable(onOpenSheet, scaleDown = 0.97f)
-                        .semantics(mergeDescendants = true) { role = Role.Button; contentDescription = "Alege muzica: ${state.label.lowercase()}" }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(state.label, style = monoLabel(9, 0.12f).copy(color = if (state.on) Accent2 else TextDim), maxLines = 1)
-                    Spacer(Modifier.width(4.dp))
-                    Icon(MusicIcons.ChevronRight, null, tint = if (state.on) Accent2 else TextDim, modifier = Modifier.size(11.dp))
+            Row(
+                Modifier
+                    .weight(1f)
+                    .heightIn(min = 64.dp)
+                    .pressable(onOpenSheet, scaleDown = 0.99f)
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Button
+                        contentDescription = "Muzica sesiunii: ${state.label.lowercase()}"
+                    }
+                    .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                MusicDisc(disc, size = 40.dp, dim = !state.on)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Muzică", style = BodyStrong.copy(fontSize = 15.sp))
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(state.label, style = monoLabel(9, 0.12f).copy(color = if (state.on) Accent2 else TextDim), maxLines = 1)
+                        Spacer(Modifier.width(4.dp))
+                        Icon(MusicIcons.ChevronRight, null, tint = if (state.on) Accent2 else TextDim, modifier = Modifier.size(11.dp))
+                    }
                 }
             }
-            Spacer(Modifier.width(10.dp))
-            ForjaSwitch(checked = state.on, onCheckedChange = onToggle)
+            Box(
+                Modifier
+                    .size(width = 60.dp, height = 48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .pressable({ onToggle(!state.on) }, scaleDown = 0.97f)
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Switch
+                        contentDescription = "Muzică"
+                        stateDescription = if (state.on) "pornită" else "oprită"
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(Modifier.clearAndSetSemantics { }) { ForjaSwitch(checked = state.on, onCheckedChange = onToggle) }
+            }
         }
     }
 }
@@ -365,7 +393,7 @@ private fun MixSegments(state: WorkoutMusicState, onMix: (Mix) -> Unit) {
 private fun Preview(state: WorkoutMusicState) {
     val list = state.list
     when {
-        state.effective == Mix.LIKED -> LikedRow(state.player, cold = state.mix != Mix.LIKED && state.access)
+        state.effective == Mix.LIKED -> LikedRow(state.player, spotify = state.playerPkg == MusicKind.SPOTIFY, cold = state.mix != Mix.LIKED && state.access)
         list != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             list.items.take(5).forEachIndexed { i, item -> TrackRow(i + 1, item) }
             val more = list.items.size - 5
@@ -400,9 +428,12 @@ private fun TrackRow(n: Int, item: PlayItem) {
     }
 }
 
-/** Melodii apreciate (Spotify): fără listă FORJA — la rece (puține ascultări) sau aleasă. */
+/**
+ * Fără listă FORJA — la rece (puține ascultări) sau aleasă: Melodii apreciate în Spotify; în alt player (unde nu există
+ * „Melodii apreciate”), muzica ta de acolo.
+ */
 @Composable
-private fun LikedRow(player: String?, cold: Boolean) {
+private fun LikedRow(player: String?, spotify: Boolean, cold: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -413,7 +444,7 @@ private fun LikedRow(player: String?, cold: Boolean) {
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("Melodii apreciate", style = BodyStrong.copy(fontSize = 14.sp))
+                Text(if (spotify) "Melodii apreciate" else "Muzica ta", style = BodyStrong.copy(fontSize = 14.sp))
                 Text((player ?: "Playerul tău").uppercase(), style = monoLabel(8, 0.10f).copy(color = TextDim))
             }
         }
@@ -565,7 +596,7 @@ fun VideoMusicDisc(ui: DiscUi, onTap: () -> Unit, onLongPress: () -> Unit, onNex
 }
 
 /**
- * Banda de sub inelul pauzei (mâinile sunt libere): coperta 40 dp, un rând „Titlu · Artist”, ⏮ ⏯ ⏭ de 36 dp.
+ * Banda de sub inelul pauzei (mâinile sunt libere): coperta 40 dp, un rând „Titlu · Artist”, ⏮ ⏯ ⏭ de 48 dp.
  * Cât pornește: „Pornește…”; la o atingere de pornit: „Deschide Spotify”; eșec: „Nu a pornit.” + deschide playerul.
  */
 @Composable
@@ -585,13 +616,13 @@ fun RestMusicStrip(
             .clip(shape)
             .background(Surface1)
             .border(1.dp, StrokeCardStrong, shape)
-            .padding(start = 10.dp, end = 6.dp),
+            .padding(start = 10.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         MusicDisc(ui, 40.dp)
         Spacer(Modifier.width(10.dp))
         val line = when (ui.phase) {
-            DiscPhase.PLAYING, DiscPhase.PAUSED -> listOfNotNull(ui.title, ui.artist?.takeIf { it.isNotBlank() }).joinToString(" · ")
+            DiscPhase.PLAYING, DiscPhase.PAUSED -> listOfNotNull(ui.title, ui.artist?.takeIf { it.isNotBlank() }).joinToString(" · ").ifEmpty { "Muzica ta" }
             DiscPhase.STARTING -> "Pornește…"
             DiscPhase.NEEDS_TAP -> ui.action ?: "Deschide playerul"
             DiscPhase.FAILED -> "Nu a pornit."
@@ -619,7 +650,7 @@ fun RestMusicStrip(
 @Composable
 private fun StripButton(icon: ImageVector, description: String, onClick: () -> Unit) {
     Box(
-        Modifier.size(40.dp).clip(CircleShape).pressable(onClick).semantics { role = Role.Button; contentDescription = description },
+        Modifier.size(48.dp).clip(CircleShape).pressable(onClick).semantics { role = Role.Button; contentDescription = description },
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, null, tint = TextPrimary, modifier = Modifier.size(20.dp))
@@ -658,7 +689,8 @@ object WorkoutMusicSamples {
             Mix.OLD to list(Mix.OLD, items.filter { it.tier == Tier.OLD } + items.filter { it.tier == Tier.STEADY }),
             Mix.LIKED to list(Mix.LIKED, emptyList())
         ),
-        player = "Spotify"
+        player = "Spotify",
+        playerPkg = MusicKind.SPOTIFY
     )
     val musicOff = music.copy(on = false)
     val musicOld = music.copy(mix = Mix.OLD)
@@ -666,7 +698,8 @@ object WorkoutMusicSamples {
     /** Puține ascultări încă: Mix/Noi/Vechi fără piese, pornește Melodii apreciate. */
     val cold = WorkoutMusicState(
         on = true, access = true, mix = Mix.MIX, counts = TierCounts(2, 0, 1),
-        lists = Mix.entries.associateWith { FPlaylist(it, emptyList(), emptyList(), null, TierCounts(2, 0, 1)) }, player = "Spotify"
+        lists = Mix.entries.associateWith { FPlaylist(it, emptyList(), emptyList(), null, TierCounts(2, 0, 1)) }, player = "Spotify",
+        playerPkg = MusicKind.SPOTIFY
     )
     /** Fără acces la muzică: doar Apreciate. */
     val noAccess = WorkoutMusicState(on = true, access = false, player = null)

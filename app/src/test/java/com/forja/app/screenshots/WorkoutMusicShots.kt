@@ -17,12 +17,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.rememberScrollState
 import com.forja.app.core.data.db.ExerciseEntity
+import com.forja.app.core.data.db.PlanEntity
+import com.forja.app.core.designsystem.components.MascotState
+import com.forja.app.core.designsystem.components.CoachMarksHost
+import com.forja.app.core.designsystem.components.CoachStep
 import com.forja.app.core.designsystem.Surface1
 import com.forja.app.core.designsystem.Surface2
 import com.forja.app.core.designsystem.components.PrimaryButton
 import com.forja.app.core.designsystem.components.SectionLabel
 import com.forja.app.feature.workout.DiscUi
+import com.forja.app.feature.workout.HubActions
 import com.forja.app.feature.workout.LiveActions
 import com.forja.app.feature.workout.LiveState
 import com.forja.app.feature.workout.MusicDisc
@@ -32,6 +38,7 @@ import com.forja.app.feature.workout.WorkoutLiveContent
 import com.forja.app.feature.workout.WorkoutMusicRow
 import com.forja.app.feature.workout.WorkoutMusicSamples
 import com.forja.app.feature.workout.WorkoutMusicSheetContent
+import com.forja.app.feature.workout.WorkoutHubContent
 import com.forja.app.feature.workout.WorkoutMusicState
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -72,6 +79,35 @@ abstract class WorkoutMusicShotsBase(private val suffix: String) {
                 Box(Modifier.size(width = 40.dp, height = 4.dp).clip(RoundedCornerShape(2.dp)).background(Surface2))
             }
             WorkoutMusicSheetContent(state, MusicSheetActions())
+        }
+    }
+
+    private val plans = listOf(
+        PlanEntity(1, "Forță", "FORȚĂ · 45 MIN · SALĂ", "", 0),
+        PlanEntity(2, "Cardio", "CARDIO · 30 MIN", "", 1),
+        PlanEntity(3, "Mobilitate", "MOBILITATE · 20 MIN", "", 2)
+    )
+    private val today = exercises + listOf(
+        ExerciseEntity(3, "Ramat cu gantera", 3, 10, "2×14", "KG", "", "", ""),
+        ExerciseEntity(4, "Fandări", 3, 12, "corp", "CORP", "", "", "")
+    )
+
+    // ───────────── Hubul întreg (unde cade rândul „Muzică” față de pliu) ─────────────
+    @Test fun hubFull() = shot("workout_hub$suffix") {
+        WorkoutHubContent(plans, 0, today, WorkoutMusicSamples.music, WorkoutMusicSamples.discIdle, HubActions())
+    }
+
+    /** Prima vizită: hubul derulat până la rând (cum face WorkoutScreen cât ghidajul e nevăzut), cu ghidajul pe el. */
+    @Test fun hubGuide() = shot("workout_hub_guide$suffix") {
+        CoachMarksHost(
+            steps = listOf(CoachStep("antrenament.muzica", "Muzica ta pornește odată cu sesiunea.", MascotState.Happy)),
+            active = true,
+            onFinish = {}
+        ) {
+            WorkoutHubContent(
+                plans, 0, today, WorkoutMusicSamples.music, WorkoutMusicSamples.discIdle, HubActions(),
+                scroll = rememberScrollState(Int.MAX_VALUE)
+            )
         }
     }
 

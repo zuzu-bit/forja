@@ -59,6 +59,14 @@ class WorkoutMusicStateTest {
         assertEquals(DiscPhase.IDLE, discUi(StartState.Starting(Rung.S_TOP, Want.MyMusic), fromWorkout = false, null, null, 0, false).phase)
     }
 
+    @Test fun withoutAccessAnAudiblePlayerShowsPlaying() {
+        // Fără acces nu există piesă arătată: singurul semn e playerul care se aude — discul arată „cântă” (atingerea = pauză).
+        val d = discUi(StartState.Playing(Rung.K_PLAY), true, null, null, 0, false, audible = true)
+        assertEquals(DiscPhase.PLAYING, d.phase)
+        assertEquals(null, d.art)
+        assertEquals(DiscPhase.IDLE, discUi(StartState.Playing(Rung.K_PLAY), true, null, null, 0, false, audible = false).phase)
+    }
+
     @Test fun likedBadgeOnlyWithoutTheForjaQueue() {
         val d = discUi(StartState.Playing(Rung.S_LIKED, Badge.LIKED), true, track(true), null, 0, queueActive = false)
         assertEquals(Badge.LIKED, d.badge)

@@ -1,6 +1,7 @@
 package com.forja.app.feature.workout
 
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -54,6 +55,11 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
             onExit()
         }
     }
+    // Înapoi = „Încheie”: hubul nu are „continuă sesiunea”, deci muzica FORJA (coada, împrumutul) se încheie odată cu ea.
+    BackHandler {
+        if (!live.finished) vm.endEarly()
+        onExit()
+    }
 
     // Cronometru sesiune
     var elapsed by remember { mutableStateOf(0L) }
@@ -74,8 +80,14 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
 
     // Muzica: discul de pe video (cât faci seria) și banda de sub inelul pauzei.
     val context = LocalContext.current
+    // Demonstrația (mută) nu trebuie luată drept muzică de verificarea fără acces.
+    DisposableEffect(Unit) {
+        Music.ownVideo(context, true)
+        onDispose { Music.ownVideo(context, false) }
+    }
     val music by vm.music.collectAsState()
     val track by Music.nowPlaying.collectAsState()
+    val audible by Music.audible.collectAsState()
     val start by MusicStarter.state.collectAsState()
     val origin by MusicStarter.origin.collectAsState()
     val queue by MusicStarter.queue.collectAsState()
@@ -90,7 +102,7 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
     val art = track?.art
     val artBitmap = remember(art) { art?.asImageBitmap() }
     val position = track?.let { it.positionMs + if (it.playing) (clock - anchor).coerceAtLeast(0L) else 0L } ?: 0L
-    val disc = discUi(start, origin == MusicSource.WORKOUT, track, artBitmap, position, queue != null)
+    val disc = discUi(start, origin == MusicSource.WORKOUT, track, artBitmap, position, queue != null, audible = !music.access && audible)
     val showMusic = music.on || track != null || disc.phase != DiscPhase.IDLE
     val onDisc: () -> Unit = {
         when (disc.phase) {
@@ -180,7 +192,7 @@ fun WorkoutLiveContent(live: LiveState, elapsedSec: Long, disc: DiscUi, showMusi
             Column(
                 Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = if (showMusic) 84.dp else 16.dp)
+                    .padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = if (showMusic && !live.resting) 84.dp else 16.dp)
             ) {
                 Text(
                     "EXERCIȚIUL ${live.exPos + 1} / ${live.exercises.size}",
@@ -195,7 +207,8 @@ fun WorkoutLiveContent(live: LiveState, elapsedSec: Long, disc: DiscUi, showMusi
                 )
             }
 
-            if (showMusic) {
+            // Discul doar cât faci seria; în pauză, comenzile sunt în banda de sub inel.
+            if (showMusic && !live.resting) {
                 VideoMusicDisc(
                     ui = disc,
                     onTap = actions.onDisc,

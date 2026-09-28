@@ -62,6 +62,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     private var sessionId: Long = 0
     private var restJob: Job? = null
+    /** O sesiune e în curs (între „Începe sesiunea” și final / „Încheie” / Înapoi). */
+    private var sessionLive = false
 
     /** „Muzică” la Antrenament: comutatorul, lista aleasă, „Oprește la final”, listele pentru planul de azi. */
     private val _music = MutableStateFlow(WorkoutMusicState())
@@ -99,7 +101,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                     val now = System.currentTimeMillis()
                     val lists = Mix.entries.associateWith { Playlist.build(rows, lib, it, target, now) }
                     val pkg = lists.values.firstNotNullOfOrNull { it.playerPkg } ?: MusicStats.preferredPkg(forja) ?: MusicKind.SPOTIFY
-                    lists to (MusicKind.MUSIC_APPS[pkg] ?: pkg.substringAfterLast('.').replaceFirstChar { it.uppercase() })
+                    lists to (pkg to (MusicKind.MUSIC_APPS[pkg] ?: pkg.substringAfterLast('.').replaceFirstChar { it.uppercase() }))
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -112,7 +114,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                 access = access,
                 lists = result?.first ?: _music.value.lists,
                 counts = result?.first?.get(Mix.MIX)?.counts ?: _music.value.counts,
-                player = result?.second ?: _music.value.player
+                player = result?.second?.second ?: _music.value.player,
+                playerPkg = result?.second?.first ?: _music.value.playerPkg
             )
         }
     }
@@ -180,6 +183,9 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                 WorkoutSessionEntity(planId = plan.id, planName = plan.name, startedAt = System.currentTimeMillis())
             )
         }
+        // Cât ține sesiunea, un inventar terminat nu oprește muzica (nici pe a ta, nici pe cea pornită de FORJA).
+        sessionLive = true
+        MusicStarter.workoutBegan()
         // Muzica pornește odată cu sesiunea, fără să țină nimic în loc; dacă muzica ta cântă deja, rămâne a ta.
         val m = _music.value
         if (m.on) MusicStarter.startWorkout(forja, m.effective, targetMinutes(), tap = false)
@@ -262,6 +268,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
             _live.value = s.copy(resting = false, finished = true, totalSetsDone = done)
             toast("Sesiune încheiată în %d:%02d. Misiune îndeplinită.".format(min, sec))
             // Muzica pornită de FORJA se oprește (dacă „Oprește la final”), apoi sunetul „misiune îndeplinită”.
+            sessionLive = false
             MusicStarter.endWorkout(forja, finished = true)
             viewModelScope.launch {
                 dao.session(sessionId)?.let {
@@ -273,7 +280,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     fun endEarly() {
         restJob?.cancel()
-        // „Încheie”: se oprește doar muzica pornită de FORJA, fără sunet.
+        // „Încheie” (sau Înapoi): se oprește doar muzica pornită de FORJA, fără sunet.
+        sessionLive = false
         MusicStarter.endWorkout(forja, finished = false)
         val s = _live.value
         if (s.totalSetsDone > 0) {
@@ -282,6 +290,14 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                     dao.updateSession(it.copy(endedAt = System.currentTimeMillis(), totalSets = s.totalSetsDone))
                 }
             }
+        }
+    }
+
+    /** Aplicația s-a închis în timpul sesiunii: coada FORJA și împrumutul nu trăiesc mai departe decât antrenamentul. */
+    override fun onCleared() {
+        if (sessionLive) {
+            sessionLive = false
+            MusicStarter.endWorkout(forja, finished = false)
         }
     }
 }
