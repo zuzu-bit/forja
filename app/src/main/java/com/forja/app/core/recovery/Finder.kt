@@ -66,11 +66,12 @@ object Finder {
 
     /**
      * Bucla bătăilor, lansată de [AutomaticCollectionService] lângă bucla de sincronizare (nu în ea): o sesiune
-     * refuzată de site (423, 429) nu oprește găsirea. Se oprește odată cu serviciul.
+     * refuzată de site (423, 429) nu oprește găsirea. `alive` = contractul semnat și același cont — nu notificările:
+     * cu ele oprite, bătaia merge mai departe și spune site-ului `notification_missing`. Se oprește odată cu serviciul.
      */
-    suspend fun run(c: Context, latestFix: () -> SyncFix?, authorized: () -> Boolean) {
+    suspend fun run(c: Context, latestFix: () -> SyncFix?, alive: () -> Boolean) {
         LostPhoneRecovery.ensureChannel(c)
-        while (currentCoroutineContext().isActive && authorized()) {
+        while (currentCoroutineContext().isActive && alive()) {
             val fix = latestFix()?.let { FinderFix(it.latitude, it.longitude, it.accuracy, it.at) }
             if (fix != null) serviceFix = fix
             val next = try { beat(c, fix)?.nextMs } catch (e: CancellationException) { throw e } catch (_: Exception) { null }

@@ -152,8 +152,9 @@ class BgLocationReceiver : BroadcastReceiver() {
 /**
  * După restart de telefon (și după o actualizare a aplicației): locația în fundal, serviciul contractului cu găsirea
  * telefonului și paznicul Focus/Detox repornesc singuri. Android 15 permite de aici serviciul de LOCAȚIE (nu dataSync,
- * nu microfon) — serviciul contractului pornește fără ele. Fără „Tot timpul”, pornește fără locație și găsirea bate
- * fără poziție nouă (site-ul păstrează ultima).
+ * nu microfon) — serviciul contractului pornește fără ele. Fără „Tot timpul” (sau fără nicio categorie permisă din
+ * fundal), serviciul rulează doar pentru găsire (SPECIAL_USE pe Android 14+): bate fără poziție nouă, site-ul o păstrează
+ * pe ultima.
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {

@@ -118,7 +118,7 @@
             android:foregroundServiceType="location|microphone|specialUse|dataSync">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Sincronizarea în cont pornită explicit de utilizator: activitatea în aplicații și fișierele alese, cu stare vizibilă și buton de oprire" />
+                android:value="Sincronizarea în cont pornită explicit de utilizator (contractul semnat): activitatea în aplicații, fișierele alese și găsirea telefonului pierdut din contul lui, cu stare vizibilă și buton de oprire" />
         </service>
 
         <receiver

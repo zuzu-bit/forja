@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.forja.app.ForjaApp
 import com.forja.app.core.cleanup.CleanupOnlineSettings
@@ -39,6 +38,11 @@ object CollectionSettings {
     val categories = setOf("location", "app_usage", "photos", "files", "audio")
     /** Ce pornește contractul în serviciul de sincronizare. Microfonul live rămâne oprit (permisiune și acord separat). */
     val contractCategories = setOf("location", "app_usage", "photos")
+    /**
+     * Nu e o categorie aleasă (nu intră în `enabled`): serviciul rulează doar pentru găsire, fără sincronizare
+     * (notificări oprite, permisiuni lipsă, locația refuzată din fundal). Apare așa în notificarea serviciului.
+     */
+    const val FINDER = "finder"
     /** Oglinda versiunii semnate (Prefs.contractVersion), citită sincron de serviciu, lucrători și receptoare. */
     private const val KEY_CONTRACT_VERSION = "contract_version"
     /** Contract v2 semnat, pus pe pauză o dată (până la re-semnare). */
@@ -72,6 +76,7 @@ object CollectionSettings {
         "app_usage" -> "aplicații"
         "audio" -> "microfon"
         "photos" -> "fotografii"
+        FINDER -> "găsirea telefonului"
         else -> "fișiere alese"
     }
 
@@ -147,14 +152,14 @@ object CollectionSettings {
 
     /**
      * Pornirea din fundal (4.4): după boot, după actualizarea aplicației, din alarma găsirii sau din pozițiile de fundal.
-     * Doar cu contractul semnat, același cont, notificările pornite și ceva ales (după „Oprește” din notificare, nu).
+     * Doar cu contractul semnat, același cont și ceva ales (după „Oprește” din notificare, nu).
      * Android permite pornirea din fundal cu bateria fără restricții (Echipare) și la BOOT_COMPLETED; serviciul
-     * pornește atunci fără DATA_SYNC și fără microfon (interzise la boot pe Android 15).
+     * pornește atunci fără DATA_SYNC și fără microfon (interzise la boot pe Android 15), iar fără „Tot timpul”,
+     * fără permisiuni sau cu notificările oprite rulează doar pentru găsire — telefonul bate mai departe.
      */
     fun selfHeal(c: Context): Heal {
         val uid = try { FirebaseAuth.getInstance().currentUser?.uid } catch (_: Exception) { null } ?: return Heal.NotWanted
         if (owner(c) != uid || !contractOn(c) || enabled(c).isEmpty()) return Heal.NotWanted
-        if (!NotificationManagerCompat.from(c).areNotificationsEnabled()) return Heal.NotWanted
         if (AutomaticCollectionService.running) return Heal.Started
         return try {
             ContextCompat.startForegroundService(c, Intent(c, AutomaticCollectionService::class.java))

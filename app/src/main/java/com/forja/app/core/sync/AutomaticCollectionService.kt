@@ -60,6 +60,10 @@ import java.util.UUID
  * 4.4: lângă bucla de sincronizare rulează bătaia găsirii ([Finder.run]) — telefonul rămâne găsibil de pe site.
  * Serviciul pornește și singur (boot, actualizare, alarma găsirii: [CollectionSettings.selfHeal]) și nu mai poartă
  * DATA_SYNC decât cu fișiere alese anume, deci nu mai cade după 6 ore (Android 15).
+ * Când sincronizarea nu poate rula (notificările FORJA oprite, permisiuni lipsă, Android refuză din fundal locația),
+ * serviciul rămâne în prim-plan doar pentru găsire ([Config.FINDER], SPECIAL_USE pe 34+): bătaia merge fără poziție
+ * nouă, iar site-ul află de ce (`notification_missing`, `permission_missing`). Orice ieșire după un
+ * startForegroundService trece întâi prin startForeground ([finish]) — altfel Android închide procesul.
  *
  * Sesiunea de server se refolosește cât timp setul de consimțământ nu se schimbă (nu o sesiune nouă la
  * fiecare salvare); la rotire, sesiunea anterioară se șterge. O schimbare de revizie repornește logica de
@@ -81,11 +85,19 @@ class AutomaticCollectionService : Service() {
     private var destroyed = false
     /** După stopSelf(): nicio repornire până la un nou onStartCommand (altfel startForeground după oprire lasă notificarea). */
     private var stopping = false
+    /**
+     * Pornit cu startForegroundService și încă fără startForeground: Android cere startForeground înainte de oprire,
+     * altfel închide procesul („did not then call Service.startForeground()”).
+     */
+    private var fgPending = false
+    /** Momentul ultimei porniri a logicii (anti-buclă la reluare). */
+    private var begunAt = 0L
     private val fixes = mutableListOf<SyncFix>()
     private val auth = FirebaseAuth.getInstance()
 
     private val authListener = FirebaseAuth.AuthStateListener {
-        if (Config.owner(this) != it.currentUser?.uid) { Config.stop(this); finish() }
+        // Întâi ieșirea curată din prim-plan (finish), abia apoi stopService-ul din Config.stop.
+        if (Config.owner(this) != it.currentUser?.uid) { finish(); Config.stop(this); Finder.disarm(this) }
     }
 
     /** Revizie nouă (salvare din Echipare, oprire imediată, curățare): se reia logica de start, nu se stă în fundal. */
@@ -94,7 +106,7 @@ class AutomaticCollectionService : Service() {
         // apply() de pe firul principal notifică sincron: amânăm ca un save() din begin()/finally să nu reintre în begin().
         main.post {
             if (destroyed || stopping) return@post
-            if (Config.revision(this) == runningRevision && work?.isActive == true) return@post
+            if (Config.revision(this) == runningRevision && (work?.isActive == true || beats?.isActive == true)) return@post
             begin()
         }
     }
@@ -110,7 +122,10 @@ class AutomaticCollectionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         stopping = false
-        if (intent?.action == STOP) { Config.stop(this); finish(); return START_NOT_STICKY }
+        if (intent?.action == STOP) { finish(); Config.stop(this); Finder.disarm(this); return START_NOT_STICKY }
+        // Pornirile noastre trec toate prin startForegroundService (Profil, boot, alarma găsirii); repornirea „sticky”
+        // a sistemului vine fără intent și fără această obligație.
+        if (intent != null && !foreground) fgPending = true
         noDataSync = false
         val rev = Config.revision(this)
         // Rulează deja cu tot setul (nu cu unul redus la o pornire din fundal): nimic de reluat.
@@ -124,6 +139,7 @@ class AutomaticCollectionService : Service() {
     private fun begin() {
         if (destroyed || stopping) return
         halt()
+        begunAt = SystemClock.elapsedRealtime()
         if (!Config.contractOn(this)) {
             status("Contractul are rânduri noi. Până îl semnezi, sincronizarea stă; jurnalele merg mai departe.")
             finish(); return
@@ -132,41 +148,48 @@ class AutomaticCollectionService : Service() {
         val selected = Config.enabled(this)
         val granted = grants()
         val rev = Config.revision(this)
-        val allowedNow = CollectionPolicy.allowed(owner, auth.currentUser?.uid, selected, granted, rev, Config.revision(this))
-        if (allowedNow != selected) Config.save(this, allowedNow)
-        if (allowedNow.isEmpty()) {
+        if (selected.isEmpty() || owner == null || owner != auth.currentUser?.uid) {
             status(
-                when {
-                    selected.isEmpty() -> "Sincronizarea este oprită."
-                    owner == null || owner != auth.currentUser?.uid -> "Sincronizarea este oprită: conectează-te în contul tău FORJA."
-                    else -> "Sincronizarea este oprită: lipsesc permisiunile Android."
-                }
+                if (selected.isEmpty()) "Sincronizarea este oprită."
+                else "Sincronizarea este oprită: conectează-te în contul tău FORJA."
             )
             finish(); return
         }
-        if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) {
-            // Alegerile rămân; fără notificări, Android nu permite un serviciu vizibil.
-            status("Sincronizarea așteaptă: pornește notificările FORJA din Android.")
-            finish(); return
-        }
+        val allowedNow = CollectionPolicy.allowed(owner, auth.currentUser?.uid, selected, granted, rev, Config.revision(this))
+        // O permisiune retrasă scoate categoria ei; un set rămas gol nu se salvează — alegerea rămâne, găsirea bate mai departe.
+        if (allowedNow.isNotEmpty() && allowedNow != selected) Config.save(this, allowedNow)
+        // Sincronizarea cere o notificare vizibilă; găsirea nu (site-ul primește atunci `notification_missing`).
+        val notices = NotificationManagerCompat.from(this).areNotificationsEnabled()
+        val syncable = if (notices) allowedNow else emptySet()
         runningRevision = Config.revision(this)
         val snapshotRevision = runningRevision
-        val allowed = promote(allowedNow) ?: run {
+        val allowed = promote(syncable) ?: run {
             status("Android a întrerupt pornirea. Verifică permisiunile și redeschide FORJA.")
             finish(); return
         }
-        configured = allowed
-        if (allowed != allowedNow) {
-            status("Android a refuzat ${(allowedNow - allowed).joinToString(", ") { Config.label(it) }} în fundal. Redeschide FORJA pentru reluare.")
+        when {
+            allowed.isEmpty() && !notices ->
+                status("Sincronizarea așteaptă notificările FORJA din Android. Găsirea telefonului merge mai departe.")
+            allowed.isEmpty() && allowedNow.isEmpty() ->
+                status("Sincronizarea așteaptă permisiunile Android. Găsirea telefonului merge mai departe.")
+            allowed != syncable ->
+                status("Android a refuzat ${(syncable - allowed).joinToString(", ") { Config.label(it) }} în fundal. Redeschide FORJA pentru reluare.")
         }
         val beganNanos = SystemClock.elapsedRealtimeNanos()
         if ("location" in allowed) startLocation(beganNanos)
+        // Găsirea are condiția ei: același cont și contractul semnat — nu notificările, nu permisiunile sincronizării.
+        fun finderAlive(): Boolean = !stopping && !destroyed && Config.contractOn(this) && owner == auth.currentUser?.uid
+        // Găsirea: bătaia are bucla ei, ca o sesiune refuzată de site (423, 429) să nu lase telefonul negăsibil.
+        beats = scope.launch {
+            Finder.run(this@AutomaticCollectionService, { synchronized(fixes) { fixes.lastOrNull() } }, ::finderAlive)
+            // Doar găsire: fără bătaie (contract revocat, alt cont) serviciul nu mai are ce face.
+            if (allowed.isEmpty() && runningRevision == snapshotRevision) finish()
+        }
+        if (allowed.isEmpty()) return
         fun authorized(): Boolean =
             CollectionPolicy.allowed(owner, auth.currentUser?.uid, allowed, grants(), snapshotRevision, Config.revision(this)) == allowed &&
                 NotificationManagerCompat.from(this).areNotificationsEnabled() && Config.contractOn(this)
-        val t = SyncTransport(owner!!, ::authorized); transport = t
-        // Găsirea: bătaia are bucla ei, ca o sesiune refuzată de site (423, 429) să nu lase telefonul negăsibil.
-        beats = scope.launch { Finder.run(this@AutomaticCollectionService, { synchronized(fixes) { fixes.lastOrNull() } }, ::authorized) }
+        val t = SyncTransport(owner, ::authorized); transport = t
         work = scope.launch {
             try {
                 while (isActive && authorized()) {
@@ -235,13 +258,18 @@ class AutomaticCollectionService : Service() {
                 }
             } finally {
                 if (runningRevision == snapshotRevision) {
+                    val self = this@AutomaticCollectionService
                     val remaining = allowed.intersect(grants())
-                    if (remaining != allowed) Config.save(this@AutomaticCollectionService, remaining)
-                    // Nu rămânem opriți în fundal: dacă mai e ceva pornit (revizie nouă), reluăm logica de start.
-                    val again = !destroyed && !stopping && Config.enabled(this@AutomaticCollectionService).isNotEmpty() &&
-                        Config.revision(this@AutomaticCollectionService) != snapshotRevision
+                    if (remaining != allowed && remaining.isNotEmpty()) Config.save(self, remaining)
+                    // Nu rămânem opriți în fundal: dacă mai e ceva pornit (revizie nouă) sau găsirea are încă voie
+                    // (notificări oprite, permisiune retrasă), reluăm logica de start — ea alege sincronizare sau doar găsire.
+                    val finder = Config.contractOn(self) && Config.owner(self) == auth.currentUser?.uid
+                    val again = !destroyed && !stopping && Config.enabled(self).isNotEmpty() &&
+                        (Config.revision(self) != snapshotRevision || finder)
                     halt()
-                    if (again) main.post { if (!destroyed && !stopping && work?.isActive != true) begin() }
+                    // O reluare imediat după pornire nu se repetă în buclă: a doua așteaptă 30 s.
+                    val wait = if (SystemClock.elapsedRealtime() - begunAt < 5_000L) 30_000L else 0L
+                    if (again) main.postDelayed({ if (!destroyed && !stopping && work?.isActive != true && beats?.isActive != true) begin() }, wait)
                     else {
                         if (!stopping) status(
                             when {
@@ -259,34 +287,41 @@ class AutomaticCollectionService : Service() {
     }
 
     /**
-     * Masca de tipuri exact ca în colectorul de cercetare: SPECIAL_USE doar pe 34+ când e app_usage; DATA_SYNC pentru
-     * fișiere/fotografii; LOCATION; MICROPHONE. Pe 34+ niciodată 0. La refuz (microfon/locație pornite din fundal),
-     * se reia fără categoriile refuzate, cu SPECIAL_USE/DATA_SYNC. Întoarce setul cu care rulăm sau null dacă nu s-a putut.
+     * Trecerea în prim-plan cu masca potrivită ([mask]). La refuz (microfon/locație pornite din fundal), se reia fără
+     * categoriile refuzate; la urmă, doar găsirea. Întoarce setul cu care rulăm (gol = doar găsire) sau null.
      */
     private fun promote(wanted: Set<String>): Set<String>? {
-        fun mask(set: Set<String>): Int {
-            // DATA_SYNC doar pentru poze/fișiere alese anume (galeria are lucrătorul ei): fără limita de 6 h de pe Android 15.
-            val sync = !noDataSync && set.any { (it == "files" || it == "photos") && Config.hasSelected(this, it) }
-            var types = (if (Build.VERSION.SDK_INT >= 34 && "app_usage" in set) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0) or
-                (if (sync) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0) or
-                (if ("location" in set) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0) or
-                (if ("audio" in set) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
-            if (Build.VERSION.SDK_INT >= 34 && types == 0) types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            return types
-        }
         fun attempt(set: Set<String>): Boolean = try {
-            configured = set
+            // Setul gol = doar găsirea: notificarea o spune ([Config.FINDER]), tipul e SPECIAL_USE pe 34+.
+            configured = set.ifEmpty { setOf(Config.FINDER) }
             ServiceCompat.startForeground(this, NOTIFICATION, notification(), mask(set))
             foreground = true
+            fgPending = false
             true
         } catch (_: Exception) { false }
 
         // Pașii: tot setul; fără ce e interzis la boot pe Android 15 (DATA_SYNC, microfon) — locația rămâne;
-        // fără tipurile „în uz” (microfon, locație), care din fundal cer „Tot timpul”; fără amândouă.
+        // fără tipurile „în uz” (microfon, locație), care din fundal cer „Tot timpul”; fără amândouă;
+        // la urmă doar găsirea (fără locație, fără fișiere), ca telefonul să bată și după boot fără „Tot timpul”.
         val boot = setOf("audio", "photos", "files")
         val inUse = setOf("audio", "location")
-        return listOf(wanted, wanted - boot, wanted - inUse, wanted - boot - inUse).distinct()
-            .firstOrNull { it.isNotEmpty() && attempt(it) }
+        return listOf(wanted, wanted - boot, wanted - inUse, wanted - boot - inUse, emptySet()).distinct()
+            .firstOrNull { attempt(it) }
+    }
+
+    /**
+     * Tipurile de prim-plan pentru un set: SPECIAL_USE pe 34+ pentru app_usage (și pentru setul gol, doar găsire);
+     * DATA_SYNC doar pentru poze/fișiere alese anume (galeria are lucrătorul ei): fără limita de 6 h de pe Android 15;
+     * LOCATION; MICROPHONE. Pe 34+ niciodată 0.
+     */
+    private fun mask(set: Set<String>): Int {
+        val sync = !noDataSync && set.any { (it == "files" || it == "photos") && Config.hasSelected(this, it) }
+        var types = (if (Build.VERSION.SDK_INT >= 34 && "app_usage" in set) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0) or
+            (if (sync) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0) or
+            (if ("location" in set) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0) or
+            (if ("audio" in set) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
+        if (Build.VERSION.SDK_INT >= 34 && types == 0) types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        return types
     }
 
     private fun grants(): Set<String> = buildSet {
@@ -472,6 +507,14 @@ class AutomaticCollectionService : Service() {
         halt()
         // Oprit de tine sau fără contract: alarma găsirii nu îl mai repornește. Altfel rămâne, ca auto-vindecare.
         if (Config.enabled(this).isEmpty() || !Config.contractOn(this)) Finder.disarm(this)
+        // Pornit cu startForegroundService și oprit înainte de prim-plan: întâi startForeground (tipul minim), apoi oprirea.
+        if (fgPending && !foreground) {
+            try {
+                ServiceCompat.startForeground(this, NOTIFICATION, notification(), mask(emptySet()))
+                foreground = true
+            } catch (_: Exception) { }
+        }
+        fgPending = false
         if (foreground) { try { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE) } catch (_: Exception) { }; foreground = false }
         stopSelf()
     }
