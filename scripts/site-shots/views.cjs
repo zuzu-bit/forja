@@ -31,7 +31,7 @@ module.exports = [
   {id: '04-restored', title: 'Sesiune salvată: deschide direct Camarazi', auth: 'stored', hash: 'camarazi'},
 
   {id: '10-azi', title: 'Azi', hash: 'azi'},
-  {id: '11-more', title: 'Mai mult (telefon)', hash: 'azi', only: ['phone', 's23'], steps: [{click: '#tab-more'}, {waitFor: '#more-sheet:not([hidden])'}], shot: 'viewport'},
+  {id: '11-more', title: 'Mai mult (telefon)', hash: 'azi', only: ['phone', 's23', 'chrome'], steps: [{click: '#tab-more'}, {waitFor: '#more-sheet:not([hidden])'}], shot: 'viewport'},
   {id: '12-info', title: 'Punctul „i” pe Azi', hash: 'azi', steps: [{click: '#s-azi .infodot'}, {waitFor: '#info-dialog[open]'}], shot: 'viewport'},
   {id: '13-error', title: 'Eroare de server pe Azi', hash: 'azi', fail: ['/insights/api/azi']},
 

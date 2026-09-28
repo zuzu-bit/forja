@@ -9,12 +9,13 @@
 //     (fake idToken), every §3.2 / §3.4 endpoint (mock-api.cjs + fixture.cjs), OpenFreeMap style/tiles/glyphs (assets.cjs,
 //     a local style with liberty's layer ids). Everything else is blocked and reported.
 //  3. Opens the deep link of each view (/insights#<section>), logs in through the real form (or restores a saved session)
-//     and captures every view in views.cjs at desktop 1440×900, phone 390×844 and Galaxy S23 360×780, writing PNGs,
+//     and captures every view in views.cjs at desktop 1440×900, tablet 820×1180, phone 390×844, Galaxy S23 360×696 (§1.13) and
+//     the S23 inside Chrome 360×650, writing PNGs,
 //     report.json (errors, unmocked calls, density metrics, horizontal overflow) and index.html.
 //
 // Usage
 //   node scripts/site-shots/shots.cjs --out=/tmp/shots [--only=teren,gasire] [--profile=rich,lana,empty]
-//        [--viewports=desktop,phone,s23] [--jobs=3] [--scale=1] [--clock=fixed|real] [--list]
+//        [--viewports=desktop,tablet,phone,s23,chrome] [--jobs=3] [--scale=1] [--clock=fixed|real] [--list]
 // Requirements: Playwright at /opt/node22/lib/node_modules/playwright (or FORJA_PLAYWRIGHT), browsers in /opt/pw-browsers.
 'use strict';
 const fs = require('node:fs');
@@ -29,10 +30,13 @@ const {createAssets} = require('./assets.cjs');
 let VIEWS = require('./views.cjs');
 
 const SERVER = path.resolve(__dirname, '../../server');
-const VIEWPORTS = {desktop: {width: 1440, height: 900, isMobile: false}, phone: {width: 390, height: 844, isMobile: true}, s23: {width: 360, height: 780, isMobile: true}};
+// s23 = the Galaxy S23 budget of DESIGN-4.4 §1.13 (360×696 dp: the screen minus the system bars); chrome = the same phone with
+// Chrome's address bar (≈ 360×650, what the site really gets); tablet = the narrow 78 px rail (701–1023 px).
+const VIEWPORTS = {desktop: {width: 1440, height: 900, isMobile: false}, tablet: {width: 820, height: 1180, isMobile: true}, phone: {width: 390, height: 844, isMobile: true},
+  s23: {width: 360, height: 696, isMobile: true}, chrome: {width: 360, height: 650, isMobile: true}};
 
 function args(argv) {
-  const o = {out: path.join(__dirname, 'out'), only: [], profile: ['rich'], viewports: ['desktop', 'phone', 's23'], jobs: 3, scale: 1, clock: 'fixed', list: false};
+  const o = {out: path.join(__dirname, 'out'), only: [], profile: ['rich'], viewports: ['desktop', 'tablet', 'phone', 's23', 'chrome'], jobs: 3, scale: 1, clock: 'fixed', list: false};
   for (const a of argv) {
     const [k, v = ''] = a.replace(/^--/, '').split(/=(.*)/s);
     if (k === 'out') o.out = path.resolve(v);

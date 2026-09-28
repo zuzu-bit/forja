@@ -362,6 +362,22 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     clean(p);
   });
 
+  await check('Găsire: leaving while “Sună” is in flight does not restart the poll or move the map', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'teren');
+    await until(() => p.renderers[0]?.ready, 'map');
+    await open(p, 'gasire');
+    await until(() => p.$('gasire-panel').querySelector('.device'), 'device');
+    const fetch = p.w.fetch;
+    p.w.fetch = async (url, o = {}) => { if (/\/command$/.test(String(url)) && o.method === 'POST') await tick(80); return fetch(url, o); };
+    [...p.$('gasire-panel').querySelectorAll('button')].find(b => /^Sună$/.test(b.textContent)).click();
+    await open(p, 'teren'); await tick(160);
+    assert(p.call('/command', 'POST'), 'the ring was sent');
+    assert(!p.ux.Poll.jobs.has('gasire:devices'), 'no Găsire poll outside Găsire');
+    assert.equal(p.ux.MapHost.slot, p.$('teren-map'), 'the shared map stays in Teren');
+    clean(p);
+  });
+
   await check('Inventar: last run with folders, De aruncat, destination; older runs; gallery copies with preview and delete', async () => {
     const p = page();
     await tick(20); await login(p); await open(p, 'inventar');

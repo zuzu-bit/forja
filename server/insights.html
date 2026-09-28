@@ -722,7 +722,14 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
  .links{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
  .link-tile{min-height:96px;padding:12px}
  .map-slot{height:56svh;min-height:320px}
- .gasire .map-slot{height:40svh;min-height:250px}
+ /* Găsire pe S23 în Chrome (360×650): cipul urcă pe rândul ștampilei, harta se scurtează, coordonatele și „Navighează”
+    stau pe un rând, ca „Sună” și „Urmărește 10 min” să fie deasupra barei de jos fără derulare. */
+ #s-gasire .sec-head{position:relative}
+ #s-gasire .sec-tools{position:absolute;top:0;right:0;width:auto}
+ .gasire .map-slot{height:30svh;min-height:190px;max-height:300px}
+ .device-nav .mono{flex:1 1 auto;flex-basis:auto}
+ .icon-btn{width:44px;height:44px}
+ .star{width:44px;height:44px}
  .map-ctrls{top:10px;left:10px;right:10px}
  .map-btn span{display:none}
  .map-btn{width:42px;padding:0;justify-content:center}

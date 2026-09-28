@@ -16,8 +16,9 @@ const Gasire = {
     Gasire.schedule(true);
   },
   leave() { Gasire.off?.(); Gasire.off = null; },
-  /** 5 s cât o cerere e activă, 30 s altfel; doar cât secțiunea e vizibilă. */
+  /** 5 s cât o cerere e activă, 30 s altfel; doar cât secțiunea e vizibilă (o cerere întoarsă după plecare nu o repornește). */
   schedule(immediate = false) {
+    if (Site.current !== 'gasire') return;
     const active = (Gasire.devices || []).some(d => d.command);
     Poll.every('gasire:devices', active ? 5000 : 30000, () => Gasire.load(), immediate);
   },
@@ -27,6 +28,7 @@ const Gasire = {
     return Gasire.devices;
   },
   async load() {
+    if (Site.current !== 'gasire') return;
     const first = !Gasire.panel.dataset.loaded;
     if (first) fill(Gasire.panel, h('div', {class: 'panel-pad'}, h('div', {class: 'sk sk-line'}), h('div', {class: 'sk sk-card'})));
     try { await Gasire.fetch(); Gasire.panel.dataset.loaded = '1'; }
@@ -36,6 +38,8 @@ const Gasire = {
       else toast(e?.message || 'Actualizarea nu a reușit.');
       return;
     }
+    // A plecat între timp: lista rămâne pentru Teren (⌖), dar harta comună și sondarea nu se ating.
+    if (Site.current !== 'gasire') return;
     const wasActive = Gasire.lastActive, active = Gasire.devices.some(d => d.command);
     Gasire.lastActive = active;
     Gasire.render();
@@ -69,6 +73,7 @@ const Gasire = {
   async command(d, body) {
     await api('/v2/recovery/devices/' + encodeURIComponent(d.id) + '/command', {method: 'POST', body: {id: crypto.randomUUID(), ...body}});
     Gasire.fitted = false;
+    if (Site.current !== 'gasire') return;
     await Gasire.load(); Gasire.schedule(false);
   },
   reset() { Gasire.devices = null; Gasire.fitted = false; Gasire.lastActive = false; Gasire.lastSig = ''; if (Gasire.panel) delete Gasire.panel.dataset.loaded; Gasire.off = null; }
