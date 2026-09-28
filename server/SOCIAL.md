@@ -9,9 +9,10 @@ Native Android map uses the already bundled osmdroid 6.1.20 SDK and OSM standard
 raster tiles. Own artwork consists of circular initial markers and FORJA colors;
 Compose sheets/chips use animated size/visibility, camera uses native animation,
 and updated nearby markers interpolate over 750 ms when system animations are
-allowed. Web uses vendored Leaflet 1.9.4 (official SHA-256 verified, BSD license
-included), CSS transitions and camera animation. No proprietary Bump/Plimb
-assets, branding or implementation were copied. This is not complete parity.
+allowed. Web (4.4): one MapLibre map (`server/map-renderer.js.txt`, the app's
+ForjaStyle palette ported to JS); Leaflet and `/insights/map-frame` were removed
+from the site in 4.4. No proprietary Bump/Plimb assets, branding or
+implementation were copied. This is not complete parity.
 
 ## Model and access
 
@@ -99,4 +100,3 @@ Public references checked 2026-09-17:
 - https://developer.android.com/develop/sensors-and-location/location/permissions
 - https://developer.android.com/develop/background-work/services/fgs/service-types
 - https://operations.osmfoundation.org/policies/tiles/
-- https://leafletjs.com/download.html

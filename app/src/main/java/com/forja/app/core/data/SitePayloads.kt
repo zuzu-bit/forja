@@ -51,7 +51,10 @@ object SitePayloads {
         "source" to source(w)
     )
 
-    /** Antrenamentele „Cât aștepți” sunt salvate cu planId negativ (SportWait: -1 - starea aleasă). */
+    /**
+     * planId negativ = intervalele Sport din „Cât aștepți” (4.3, -1 - starea aleasă). 4.4 a scos Sport din Inventar, deci
+     * `asteptare` / `intervale` apar doar în completarea de 60 de zile a sesiunilor vechi.
+     */
     fun source(w: WorkoutRecord): String = if (w.planId < 0) SOURCE_WAITING else SOURCE_TRAINING
 
     fun kind(w: WorkoutRecord): String {

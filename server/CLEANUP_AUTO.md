@@ -1,5 +1,8 @@
 # Curățenie automată — actualizarea v17
 
+> **Retras din site în FORJA 4.4** (DESIGN-4.4 §1.15): programul de curățenie nu mai are ecran pe site. Rutele
+> serverului rămân, iar documentul descrie comportamentul de până la 4.3.
+
 ## Activare
 
 1. Publică acest server în Worker-ul existent `forja-insights`. Pachetul Windows
