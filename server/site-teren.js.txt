@@ -219,9 +219,22 @@ const Teren = {
     const tabs = h('div', {class: 'tabs', role: 'tablist', 'aria-label': 'Teren'}, ...[['teritoriu', 'Teritoriu'], ['locuri', 'Locuri'], ['camarazi', 'Camarazi']].map(([id, label]) =>
       h('button', {type: 'button', role: 'tab', class: 'tab' + (Teren.tab === id ? ' active' : ''), id: 'teren-tab-' + id, 'aria-selected': String(Teren.tab === id), tabindex: Teren.tab === id ? '0' : '-1', onclick: () => { Teren.tab = id; Teren.renderPanel(); }, onkeydown: tabKeys}, label)));
     const view = Teren.tab === 'locuri' ? Teren.places() : Teren.tab === 'camarazi' ? Teren.friends() : Teren.territory();
-    const sel = Teren.selected?.kind === 'place' ? Teren.placeCard(Teren.selected.id) : Teren.selected?.kind === 'rec' ? Teren.recCard(Teren.selected.id) : null;
     const warn = Teren.exploreError && e.failed ? h('p', {class: 'panel-warn', text: 'Zonele nu au venit. Reîncerc singur.'}) : null;
-    fill(p, ...(sel ? [sel] : []), tabs, h('div', {class: 'panel-pad', role: 'tabpanel', 'aria-labelledby': 'teren-tab-' + Teren.tab}, warn, view));
+    const pad = h('div', {class: 'panel-pad', role: 'tabpanel', 'aria-labelledby': 'teren-tab-' + Teren.tab}, warn, view);
+    // Sondările (cerc 30 s, zone 60 s) redesenează panoul; fișa unui loc în lucru rămâne neatinsă: textul scris, stelele
+    // alese și cursorul (tastatura telefonului nu se închide). Se reface abia după „Salvează” sau la alt loc.
+    const kept = Teren.editing();
+    if (kept) { for (const n of [...p.childNodes]) if (n !== kept) n.remove(); p.append(tabs, pad); return; }
+    const sel = Teren.selected?.kind === 'place' ? Teren.placeCard(Teren.selected.id) : Teren.selected?.kind === 'rec' ? Teren.recCard(Teren.selected.id) : null;
+    fill(p, ...(sel ? [sel] : []), tabs, pad);
+  },
+  /** Fișa locului selectat, dacă e în lucru (schimbată și nesalvată, sau cu un câmp în focus). */
+  editing() {
+    const s = Teren.selected, card = Teren.panel?.querySelector(':scope > .place-card[data-id]');
+    if (!card || s?.kind !== 'place' || card.dataset.id !== s.id) return null;
+    if (!(Explore.data?.places || []).some(x => String(x.id) === s.id)) return null;
+    const a = document.activeElement, focused = !!a && card.contains(a) && a.matches('input, textarea');
+    return card.dataset.dirty === '1' || focused ? card : null;
   },
   territory() {
     const cells = Explore.data.cells.features, c = Circle.data, modes = {walk: 0, run: 0, ride: 0};
@@ -254,10 +267,14 @@ const Teren = {
         icon('next', 16, 'dimmed'))));
   },
   friends() {
-    const c = Circle.data, list = [...(c.friends || []).map(f => ({...f, family: false})), ...(c.family || []).filter(f => !(c.friends || []).some(x => x.uid === f.uid)).map(f => ({...f, family: true}))];
+    // Un camarad-fantomă care te are în familie vine de două ori (friends cu ghost:true + family cu poziția din familyLoc):
+    // rândul lui folosește poziția familiei, ca pe hartă, și se poate alege.
+    const c = Circle.data, friends = c.friends || [], fam = new Map((c.family || []).map(f => [f.uid, f]));
+    const list = [...friends.map(f => fam.has(f.uid) ? {...f, lat: fam.get(f.uid).lat, lng: fam.get(f.uid).lng, at: fam.get(f.uid).at, family: true} : {...f, family: false}),
+      ...(c.family || []).filter(f => !friends.some(x => x.uid === f.uid)).map(f => ({...f, family: true}))];
     if (!list.length) return h('p', {class: 'panel-empty', text: 'Niciun camarad încă.'});
     return h('div', {class: 'place-list'}, ...list.map(f => {
-      const has = typeof f.lat === 'number' && !f.ghost;
+      const has = typeof f.lat === 'number' && (f.family || !f.ghost);
       return h('button', {type: 'button', class: 'place-row', disabled: !has, onclick: () => { Teren.selected = {kind: 'friend', id: f.uid}; MapHost.renderer?.focus({lat: f.lat, lng: f.lng}, 15.5, Teren.padding()); Teren.push(); }},
         avatar(f.name, {size: 34, cls: friendRing(f)}),
         h('span', {class: 'place-text'}, h('span', {class: 'place-name', text: f.name}), h('span', {class: 'place-meta', text: friendLine(f, c.me)})),
@@ -282,9 +299,11 @@ const Teren = {
     const note = h('textarea', {class: 'field', id: 'place-note', maxlength: 300, rows: 2, placeholder: 'O notă doar pentru tine'}); note.value = p.note || '';
     const starRow = h('div', {class: 'stars', role: 'radiogroup', 'aria-label': 'Stele'});
     const paintStars = () => { [...starRow.children].forEach((b, i) => { b.classList.toggle('on', i < stars); b.setAttribute('aria-checked', String(i + 1 === stars)); }); };
-    for (let i = 1; i <= 5; i++) starRow.append(h('button', {type: 'button', role: 'radio', class: 'star', 'aria-label': plural(i, 'stea', 'stele'), onclick: () => { stars = stars === i ? 0 : i; paintStars(); }}, icon('star', 22)));
+    const dirty = () => { card.dataset.dirty = '1'; };
+    name.addEventListener('input', dirty); note.addEventListener('input', dirty);
+    for (let i = 1; i <= 5; i++) starRow.append(h('button', {type: 'button', role: 'radio', class: 'star', 'aria-label': plural(i, 'stea', 'stele'), onclick: () => { stars = stars === i ? 0 : i; paintStars(); dirty(); }}, icon('star', 22)));
     paintStars();
-    return h('div', {class: 'place-card'},
+    const card = h('div', {class: 'place-card', dataset: {id: String(p.id)}},
       h('div', {class: 'place-card-head'}, stamp('LOC'), h('button', {type: 'button', class: 'icon-btn', 'aria-label': 'Închide', onclick: () => { Teren.selected = null; Teren.push(); }}, icon('close', 18))),
       h('label', {class: 'field-label', for: 'place-name', text: 'Nume'}), name,
       starRow,
@@ -295,8 +314,10 @@ const Teren = {
         const updated = await api('/v2/social/explore/places/' + encodeURIComponent(p.id), {method: 'PATCH', body});
         Object.assign(p, body, updated && typeof updated === 'object' ? {updated_at: updated.updated_at} : {});
         toast('Salvat. Ajunge și în telefon.', true);
+        delete card.dataset.dirty; // salvat: la următoarea redesenare fișa se reface din datele noi
         Teren.push();
       }, 'btn btn-block'));
+    return card;
   },
   recCard(id) {
     const p = (Circle.data?.recommended || []).find(x => String(x.id) === id); if (!p) return null;
@@ -326,7 +347,7 @@ function friendState(f) {
   return 'văzut ' + fmt.ago(f.at);
 }
 function friendLine(f, me) {
-  const d = me && typeof me.lat === 'number' && typeof f.lat === 'number' && !f.ghost ? distanceM(me, f) : null;
+  const d = me && typeof me.lat === 'number' && typeof f.lat === 'number' && (f.family || !f.ghost) ? distanceM(me, f) : null;
   return [friendState(f), d !== null ? fmt.km(d) : null].filter(Boolean).join(' · ');
 }
 function friendRing(f) { return f.ghost ? 'ring-ghost' : f.state === 'sleep' ? 'ring-sleep' : ['run', 'walk', 'ride'].includes(f.state) ? 'ring-live' : typeof f.lat === 'number' ? 'ring-on' : 'ring-off'; }

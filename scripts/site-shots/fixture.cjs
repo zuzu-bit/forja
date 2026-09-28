@@ -150,7 +150,9 @@ function rich(now = NOW) {
       friends: [
         {uid: 'f-ana', name: 'Ana Ionescu', initials: 'AI', lat: 44.4462, lng: 26.0985, at: now - 2 * MIN, state: 'run', ghost: false, viaFamily: false, nowPlaying: {title: 'Fetele care ard', artist: 'Carla’s Dreams', app: 'Spotify', at: now - 4 * MIN}, exploreCells: 268},
         {uid: 'f-mihai', name: 'Mihai Dobre', initials: 'MD', lat: 44.4291, lng: 26.1102, at: now - 6 * MIN, state: 'ride', ghost: false, viaFamily: false, nowPlaying: null, exploreCells: 190},
-        {uid: 'f-radu', name: 'Radu Stan', initials: 'RS', lat: 44.4195, lng: 26.0820, at: now - 40 * MIN, state: 'sleep', ghost: false, viaFamily: false, nowPlaying: null, exploreCells: 102},
+        // Radu e fantomă pentru toți, dar te are în familie: P1 îl trimite și în friends (ghost, fără poziție), și în family
+        // (poziția din familyLoc) — exact cazul pe care site-ul trebuie să-l arate „fantomă · te vede familia”.
+        {uid: 'f-radu', name: 'Radu Stan', initials: 'RS', lat: null, lng: null, at: null, state: 'ghost', ghost: true, viaFamily: false, nowPlaying: null, exploreCells: 102},
         {uid: 'f-ioana', name: 'Ioana Matei', initials: 'IM', lat: null, lng: null, at: null, state: null, ghost: true, viaFamily: false, nowPlaying: null, exploreCells: 77},
         {uid: 'f-vlad', name: 'Vlad Georgescu', initials: 'VG', lat: 44.4520, lng: 26.1280, at: now - 3 * HOUR, state: 'idle', ghost: false, viaFamily: false, nowPlaying: null, exploreCells: 45}],
       family: [{uid: 'fam-mama', name: 'Mama', initials: 'M', lat: 44.4222, lng: 26.1330, at: now - 9 * MIN}, {uid: 'f-radu', name: 'Radu Stan', initials: 'RS', lat: 44.4195, lng: 26.0820, at: now - 40 * MIN}],

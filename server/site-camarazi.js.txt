@@ -31,7 +31,7 @@ const Camarazi = {
     } else {
       fill(Camarazi.grid, 
         family.length ? h('div', {class: 'block-head'}, h('span', {class: 'head-ic'}, icon('heart', 15, 'blue'), monoLabel('FAMILIA · ' + family.length))) : null,
-        family.length ? h('div', {class: 'friend-grid'}, family.map(f => friendCard({...f, ...(friends.find(x => x.uid === f.uid) || {}), lat: f.lat, lng: f.lng, at: f.at}, me, true))) : null,
+        family.length ? h('div', {class: 'friend-grid'}, family.map(f => friendCard({...f, ...(friends.find(x => x.uid === f.uid) || {}), lat: f.lat, lng: f.lng, at: f.at, family: true}, me, true))) : null,
         plain.length ? h('div', {class: 'block-head'}, monoLabel('CAMARAZI · ' + plain.length)) : null,
         plain.length ? h('div', {class: 'friend-grid'}, plain.map(f => friendCard(f, me, false))) : null);
     }

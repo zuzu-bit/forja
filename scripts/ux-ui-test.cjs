@@ -256,6 +256,35 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     clean(p);
   });
 
+  await check('Teren: a place being edited survives the 30 s / 60 s polls (text, stars, focus)', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'teren');
+    await until(() => p.$('teren-panel').querySelector('.tabs'), 'panel');
+    p.$('teren-tab-locuri').click();
+    p.$('teren-panel').querySelector('.place-row').click(); await tick(20);
+    const name = p.$('place-name'), note = p.$('place-note');
+    name.focus(); name.value = 'Debarcaderul nou'; name.dispatchEvent(new p.w.Event('input', {bubbles: true}));
+    p.$('teren-panel').querySelectorAll('.stars .star')[3].click();
+    name.focus();
+    await p.ux.Circle.load(); await tick(20);
+    await p.ux.Teren.refreshExplore(); await tick(20);
+    assert.equal(p.$('place-name'), name, 'the same input: not rebuilt by the poll');
+    assert.equal(p.$('place-name').value, 'Debarcaderul nou');
+    assert.equal(p.w.document.activeElement, name, 'focus (and the phone keyboard) stays');
+    assert.equal(p.$('teren-panel').querySelectorAll('.stars .star.on').length, 4);
+    assert.equal(p.$('teren-panel').querySelectorAll('.place-card').length, 1);
+    assert(p.$('teren-panel').querySelector('.tabs') && p.$('teren-panel').querySelector('.place-list'), 'tabs and list are still redrawn');
+    name.blur(); note.value = 'Joi.'; note.dispatchEvent(new p.w.Event('input', {bubbles: true}));
+    await p.ux.Circle.load(); await tick(20);
+    assert.equal(p.$('place-note').value, 'Joi.', 'an unsaved change survives even without focus');
+    [...p.$('teren-panel').querySelectorAll('button')].find(b => b.textContent === 'Salvează').click(); await tick(40);
+    assert.deepEqual(JSON.parse(p.call('/v2/social/explore/places/p1', 'PATCH').body), {name: 'Debarcaderul nou', stars: 4, note: 'Joi.'});
+    await p.ux.Circle.load(); await tick(20);
+    assert.notEqual(p.$('place-name'), name, 'after Salvează the card is rebuilt from the saved place');
+    assert.equal(p.$('place-name').value, 'Debarcaderul nou');
+    clean(p);
+  });
+
   await check('Teren deep link #teren/<lat>,<lng> drops a pin and focuses once', async () => {
     const p = page();
     await tick(20); await login(p); await open(p, 'teren/44.43550,26.10160');
@@ -276,6 +305,16 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     assert.equal(cards.length, 6, '2 family + 4 friends (Radu is family and friend: shown once)');
     const ghost = cards.find(c => /Ioana/.test(c.textContent));
     assert.equal(ghost.tagName, 'DIV'); assert.match(ghost.textContent, /mod fantomă/); assert(!ghost.querySelector('.friend-music'));
+    const radu = cards.find(c => /Radu/.test(c.textContent));
+    assert.match(radu.textContent, /fantomă · te vede familia/, 'a ghost friend who has you in his family');
+    assert.equal(radu.getAttribute('href'), '#teren/44.41950,26.08200', 'his family position opens on Teren');
+    await open(p, 'teren'); await until(() => p.$('teren-panel').querySelector('.tabs'), 'teren panel');
+    p.$('teren-tab-camarazi').click();
+    const rows = [...p.$('teren-panel').querySelectorAll('.place-row')], raduRow = rows.find(r => /Radu/.test(r.textContent));
+    assert.equal(rows.filter(r => /Radu/.test(r.textContent)).length, 1, 'Radu once in the Teren list');
+    assert(!raduRow.disabled, 'the family position makes him selectable on Teren'); assert.match(raduRow.textContent, /fantomă · te vede familia/);
+    raduRow.click(); assert.deepEqual({...p.renderers[0].focused.at(-1)}, {lat: 44.4195, lng: 26.082});
+    await open(p, 'camarazi'); await until(() => p.$('camarazi-list').querySelector('.friend'), 'back to camarazi');
     const ana = cards.find(c => /Ana Ionescu/.test(c.textContent));
     assert.equal(ana.getAttribute('href'), '#teren/44.44620,26.09850'); assert.match(ana.textContent, /Fetele care ard/);
     assert.equal(p.w.document.querySelector('.invite-code').textContent, 'K7Q2XM');
