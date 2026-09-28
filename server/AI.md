@@ -12,7 +12,7 @@ OpenAI se folosesc DOAR dacă cineva le pune cheia (probabil nu); Workers AI e m
 | Secret (GitHub) | De unde | Ce aduce | Limite / cost |
 |---|---|---|---|
 | `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → „Create API key” (cont Google, fără card) | Poze (mese, curățenie), **PDF nativ** și **singura cale pentru AUDIO integral**: clipurile de 5 s și chunk-urile de 30 min sunt ascultate întregi (vorbit cu transcriere exactă, sforăit cu intensitate, tuse). Modelele NU mai sunt fixate în cod: lista se descoperă din `GET /v1beta/models` (vezi „Lista dinamică de modele Gemini”). | Gratuit, cu cote SEPARATE per model (limitele exacte se schimbă des, nu le mai presupunem: în diag `limita: null`); un 429 la un model trece la modelul următor, nu la alt furnizor; contorul e per model. O noapte de 8 h în chunk-uri de 30 min = 16 cereri. |
-| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) (cont, fără card). **Formatul cheii: începe cu `gsk_`** (≈ 56 de caractere). O valoare fără `gsk_` (de exemplu un id de organizație sau un token copiat pe jumătate) dă 401 la orice cerere. | A doua opinie gratuită: viziune cu Llama 4 Scout/Maverick (poze), text cu Llama 3.3 70B (rezumate, curățenie fără PDF), **Whisper large v3 cu timpi pe segmente** (transcriere pentru clipuri și chunk-uri când Gemini lipsește sau pică). Nu citește PDF (primește doar textul extras). | Gratuit, orientativ: `llama-3.3-70b` ≈ 14 400 cereri/zi; viziune Llama 4 ≈ 1 000/zi; Whisper ≈ 7 200 s audio/oră (≈ 4 chunk-uri de 30 min pe oră), 28 800 s/zi — o noapte întreagă prin Groq Whisper se întinde pe mai multe ore. |
+| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) (cont, fără card). **Formatul cheii: începe cu `gsk_`** (≈ 56 de caractere). O valoare fără `gsk_` (de exemplu un id de organizație sau un token copiat pe jumătate) dă 401 la orice cerere. | A doua opinie gratuită: text cu Llama 3.3 70B (rezumate, curățenie fără PDF), **Whisper large v3 cu timpi pe segmente** (transcriere pentru clipuri și chunk-uri când Gemini lipsește sau pică) și viziune DOAR dacă lista `/models` a cheii are un model de viziune (Llama 4 Scout/Maverick au fost retrase: 404 în 28.09) — altfel Groq e sărit la poze și următorul furnizor preia. Modelele se descoperă dinamic (vezi „Lista dinamică de modele Groq”). Nu citește PDF (primește doar textul extras). | Gratuit, orientativ: `llama-3.3-70b` ≈ 14 400 cereri/zi; viziune Llama 4 ≈ 1 000/zi; Whisper ≈ 7 200 s audio/oră (≈ 4 chunk-uri de 30 min pe oră), 28 800 s/zi — o noapte întreagă prin Groq Whisper se întinde pe mai multe ore. |
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) (plătit) | Cea mai bună analiză foto/PDF/text (`claude-fable-5-1`, apoi `claude-opus-5-5`, `claude-sonnet-5`). Fără audio. | ≈ 0,10–0,30 $ per masă cu `claude-fable-5-1` (două treceri de ~2,5k tokeni intrare + ~1k ieșire, la 10 $/50 $ per MTok, gândirea mereu pornită; trimitem `output_config.effort: "low"` ca un apel să încapă în bugetele de 45–60 s); ≈ 0,05 $ cu `claude-opus-5-5` / `claude-sonnet-5` (pune `ANTHROPIC_MODEL`). Se folosește doar dacă cheia există. |
 | `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com) (plătit) | Opțional: poze + text (`gpt-5`, apoi `gpt-4.1`). Fără PDF nativ, fără audio. | După plată. |
 | *(fără nicio cheie)* | — | **Workers AI** (Cloudflare, inclus): Llama 3.2 Vision descrie poza, Llama 3.3 70B pune cifrele/JSON-ul și face a doua trecere de verificare; Whisper large v3 turbo transcrie; clasificarea sforăit/zgomot/liniște se face în Worker, pe energie și periodicitatea respirației (0,5–2 Hz). **Mai slab** decât Gemini/Groq: `/v1/diag` o spune clar („fără chei — doar modelele Cloudflare”). | 10 000 neuroni/zi pe planul gratuit — neuronii se văd doar în dash.cloudflare.com; `/v1/diag` numără apelurile de model (`unitate: "apeluri model"`) și nu pretinde o poartă zilnică pe care n-o poate măsura. |
@@ -62,6 +62,22 @@ pentru generare pe cheile gratuite, iar cheia Lanei avea deja `gemini-3.x` (3.5 
 Ordinea așteptată cu cheia Lanei (28.09): 3.8-flash, 3.7-flash, 3.6-flash, 3.5-flash, (2.5-flash → 404, retras), omni-1.1-flash,
 3.5-flash-lite, 3.1-flash-lite, (2.5-flash-lite → retras), 3.1-pro-preview, (2.5-pro → retras), 3-flash-preview, omni-flash-preview,
 flash-latest, flash-lite-latest, pro-latest.
+
+## Lista dinamică de modele Groq (Llama 4 retras)
+
+Testul cap-coadă din 28.09, cu o cheie `gsk_` validă: `meta-llama/llama-4-scout-17b-16e-instruct` și `meta-llama/llama-4-maverick-17b-128e-instruct`
+răspundeau **404** — retrase de pe Groq. `ai-groq.mjs` descoperă lista la fel ca la Gemini:
+
+- `GET https://api.groq.com/openai/v1/models` (Bearer), cache 24 h în R2 `ai-models/groq.json` (sau KV `AI_BUDGET`), memorie per izolat.
+- Capacitatea se deduce din id (euristici, în ordinea preferinței): **viziune** `llama-4` (Maverick, Scout) → `vision` → `gemma-3` →
+  `qwen…(vl|omni)` → `pixtral` → `mistral…(small|medium)…(3|4)`; **text** `llama-3.3-70b` → `llama-4` → `qwen3` → `gpt-oss` → `kimi` →
+  `deepseek` → `compound`; **whisper** `whisper-large-v3` → `whisper-large-v3-turbo` → restul `whisper`. Id-urile necunoscute sunt
+  tratate ca text necunoscut (nu intră în nicio listă); `tts`, `guard`, `embed`, `moderation` sunt excluse. `GROQ_VISION_MODEL` /
+  `GROQ_TEXT_MODEL` din env trec primele.
+- **404** pe un model → retras 24 h (persistat în cache) și routerul trece la următorul. **Dacă lista nu are niciun model de viziune**,
+  Groq e sărit la poze fără eroare (`attempts`: „groq: fără model pentru poze (sărit)”), următorul furnizor preia; la text și Whisper
+  Groq rămâne. `/v1/diag` → `models.groq`: `sursa`, `viziune`, `text`, `whisper`, `retrase` și `nota` când nu există viziune.
+- Dacă descoperirea pică: listele statice de azi (`GROQ_VISION_MODELS`, `GROQ_TEXT_MODEL`, `GROQ_WHISPER_MODEL`), reîncercată după 10 min.
 
 ## Ce face fiecare rută cu routerul
 
@@ -139,4 +155,4 @@ flash-latest, flash-lite-latest, pro-latest.
 2. Îl pui în `ALL_PROVIDERS` din `ai-router.mjs`, la locul lui în ordine, și în `KNOWN_LIMITS`.
 3. Secretul: în tabelul de mai sus, în lista `for K in …` din `.github/workflows/build-apk.yml` (jobul `deploy-api`) și în `env:`.
 4. Teste: `server/ai-router.test.mjs` (ordine, fallback, reparare JSON), `server/ai-gemini.test.mjs` (descoperire, 404 retras, chei,
-   diag, Workers JSON forțat, buget de timp) — `cd server && node --check worker.js && npm test`.
+   diag, Workers JSON forțat, buget de timp), `server/ai-groq.test.mjs` (euristici pe id, cache, Llama 4 → 404, fără viziune → sărit) — `cd server && node --check worker.js && npm test`.

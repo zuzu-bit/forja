@@ -5,7 +5,7 @@
 import { AiError, errorText, bytesToB64, readCached, writeCached } from "./ai-common.mjs";
 import { extractJsonStrict, validate, TRANSCRIPT_SCHEMA } from "./ai-schemas.mjs";
 import { gemini, resetGeminiCache } from "./ai-gemini.mjs";
-import { groq } from "./ai-groq.mjs";
+import { groq, resetGroqCache } from "./ai-groq.mjs";
 import { anthropic } from "./ai-anthropic.mjs";
 import { openai } from "./ai-openai.mjs";
 import { workers } from "./ai-workers.mjs";
@@ -14,7 +14,7 @@ export const ALL_PROVIDERS = [gemini, groq, anthropic, openai, workers];
 // Orientativ, după paginile furnizorilor din septembrie 2026; cotele se schimbă, /v1/diag arată consumul real de azi.
 export const KNOWN_LIMITS = {
   gemini: "nivel gratuit, per model (cote separate, se schimbă des — nu le presupunem): un 429 la un model trece la următorul; lista de modele e descoperită din GET /models (cache 24 h)",
-  groq: "nivel gratuit: llama-3.3-70b ≈ 14 400 cereri/zi; viziune Llama 4 ≈ 1 000/zi; Whisper ≈ 7 200 s audio/oră (≈ 4 chunk-uri de 30 min pe oră), 28 800 s/zi — o noapte întreagă se întinde pe mai multe ore",
+  groq: "nivel gratuit: llama-3.3-70b ≈ 14 400 cereri/zi; viziune (dacă lista /models are un model de viziune — Llama 4 a fost retras în 28.09) ≈ 1 000/zi; Whisper ≈ 7 200 s audio/oră (≈ 4 chunk-uri de 30 min pe oră), 28 800 s/zi — o noapte întreagă se întinde pe mai multe ore",
   workers: "10 000 neuroni/zi (plan gratuit) — neuronii se văd doar în dash.cloudflare.com; aici se numără apelurile de model",
   anthropic: "după plată",
   openai: "după plată",
@@ -97,7 +97,7 @@ export async function budgetSnapshot(env) {
   }
   return out;
 }
-export function resetBudgetCache() { budgetCache.clear(); lastUsedByTask.clear(); keyCache.clear(); resetGeminiCache(); }
+export function resetBudgetCache() { budgetCache.clear(); lastUsedByTask.clear(); keyCache.clear(); resetGeminiCache(); resetGroqCache(); }
 
 const REPAIR_NOTE = "\n\nATENȚIE: răspunsul anterior NU a fost JSON valid conform schemei. Probleme: ";
 const VERIFY_RULES =
@@ -154,6 +154,8 @@ async function runJson(env, opts, need) {
     const providerDeadline = (opts.timeoutMs || totalDeadline) ? Date.now() + budgetMs : 0;
     // Poarta zilnică: la furnizorii cu cotă per model (Gemini) se sar doar modelele epuizate; furnizorul întreg abia când toate sunt.
     const models = await p.models(env, { images: imgs, audio: !!need.audio, task: opts.task || "" });
+    // Fără niciun model pentru sarcina asta (Groq fără model de viziune la poze): furnizorul e sărit, fără eroare, următorul preia.
+    if (!models.length) { attempts.push(`${p.name}: fără model pentru ${imgs.length ? "poze" : need.audio ? "audio" : "text"} (sărit)`); continue; }
     const open = [];
     for (const model of models) if (!(await limitReached(env, p, model))) open.push(model);
     if (!open.length) { attempts.push(`${p.name}: limita zilnică atinsă`); continue; }
@@ -294,7 +296,7 @@ export async function diagProviders(env) {
   const order = providers(env).map((p) => p.name);
   const keyed = order.filter((n) => n !== "workers");
   const models = {};
-  if (gemini.available(env)) { try { models.gemini = await gemini.catalogInfo(env); } catch (e) { models.gemini = { eroare: errorText(e) }; } }
+  for (const p of [gemini, groq]) if (p.available(env)) { try { models[p.name] = await p.catalogInfo(env); } catch (e) { models[p.name] = { eroare: errorText(e) }; } }
   return {
     providers: configured,
     keys,
