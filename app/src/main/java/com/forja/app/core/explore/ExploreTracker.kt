@@ -250,6 +250,7 @@ class ExploreTracker(private val app: ForjaApp) {
                 val upd = near.copy(lastAt = atMs, stayMs = near.stayMs + c.stayMs, visits = near.visits + if (again) 1 else 0)
                 dao.updatePlace(upd)
                 mirrorPlace(upd)
+                if (again) notifyNewPlace(upd, revisit = true)
                 return c.copy(placeId = near.id, syncedMs = c.stayMs, placeSyncAt = atMs)
             }
             val place = PlaceEntity(
@@ -328,26 +329,9 @@ class ExploreTracker(private val app: ForjaApp) {
 
     // ── Notificare ──
 
-    private fun notifyNewPlace(p: PlaceEntity) {
-        try {
-            if (Build.VERSION.SDK_INT >= 33 &&
-                ContextCompat.checkSelfPermission(app, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-            ) return
-            val pi = PendingIntent.getActivity(
-                app, 0, Intent(app, MainActivity::class.java),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-            val h = p.stayMs / 3_600_000L
-            val stayText = if (h >= 1) "$h h" else "${(p.stayMs / 60_000L).coerceAtLeast(1)} min"
-            val n = NotificationCompat.Builder(app, "explore")
-                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                .setContentTitle("Un loc nou pe harta ta")
-                .setContentText("Ai stat aici $stayText. Dă-i un nume și o notă.")
-                .setContentIntent(pi)
-                .setAutoCancel(true)
-                .build()
-            NotificationManagerCompat.from(app).notify(NOTIF_BASE + (p.id % 1000).toInt(), n)
-        } catch (_: Exception) { }
+    /** Casca (core/notify, contextul NewPlace): „Un loc nou pe hartă. / Ai stat aici 5 h. Dă-i un nume…”; revenirea doar la praguri. */
+    private fun notifyNewPlace(p: PlaceEntity, revisit: Boolean = false) {
+        try { com.forja.app.core.notify.Nudges.newPlace(app, p, revisit) } catch (_: Exception) { }
     }
 
     private fun distanceM(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {

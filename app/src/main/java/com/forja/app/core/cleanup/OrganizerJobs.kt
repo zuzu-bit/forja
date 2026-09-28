@@ -1451,10 +1451,12 @@ object OrganizerJobs {
                 .putExtra(ROUTE_EXTRA, "cleanup")
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             val pi = PendingIntent.getActivity(ctx, NOTIF_ID, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-            val text = "$count ${if (count == 1) "poză aprobată" else "poze aprobate"} din panoul online. Deschide Curățenie și permite mutarea."
+            val copy = com.forja.app.core.notify.ServiceCopy
+            val text = copy.LAPTOP_TEXT
             val n = NotificationCompat.Builder(ctx, "cleanup")
                 .setSmallIcon(android.R.drawable.ic_menu_gallery)
-                .setContentTitle("Organizarea din laptop așteaptă o atingere")
+                .setGroup(com.forja.app.core.notify.Groups.CLEANUP)
+                .setContentTitle(copy.laptopTitle(count))
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
                 .setContentIntent(pi)

@@ -32,6 +32,9 @@ class FocusMonitorService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var lastBlockShown = 0L
     private var focusAccumMs = 0L
+    /** Începutul sesiunii și copacii de azi de la început — pentru „Postul de pază s-a încheiat” (Casca). */
+    private var sessionStart = 0L
+    private var grownAtStart = -1
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -41,6 +44,7 @@ class FocusMonitorService : Service() {
             return START_NOT_STICKY
         }
         startForeground(NOTIF_ID, buildNotification())
+        if (sessionStart == 0L) sessionStart = System.currentTimeMillis()
         monitor()
         return START_STICKY
     }
@@ -71,6 +75,7 @@ class FocusMonitorService : Service() {
         val app = ForjaApp.from(this)
         val essentials = essentialPackages()
         scope.launch {
+            if (grownAtStart < 0) grownAtStart = try { app.prefs.focusForest.first().first } catch (_: Exception) { 0 }
             while (true) {
                 delay(1200)
                 try {
@@ -84,7 +89,7 @@ class FocusMonitorService : Service() {
                     val minNow = calNow.get(Calendar.HOUR_OF_DAY) * 60 + calNow.get(Calendar.MINUTE)
                     val anyRuleActive = rules.any { minNow < it.untilHour * 60 + it.untilMinute }
                     // Nimic activ (focus terminat, fără detox) → oprim serviciul; notificarea dispare.
-                    if (!detoxOn && !anyRuleActive) { stopSelf(); return@launch }
+                    if (!detoxOn && !anyRuleActive) { sessionDone(app); stopSelf(); return@launch }
 
                     // Pădurea: copacul crește cât timp focus-ul e activ.
                     focusAccumMs += 1200
@@ -140,15 +145,33 @@ class FocusMonitorService : Service() {
         return last
     }
 
+    /** Focus s-a încheiat singur (regulile au expirat): minutele rămase se scriu, apoi Casca anunță pădurea. */
+    private suspend fun sessionDone(app: ForjaApp) {
+        try {
+            if (focusAccumMs >= 1000) { app.prefs.addFocusProgress((focusAccumMs / 1000).toInt()); focusAccumMs = 0 }
+            val minutes = ((System.currentTimeMillis() - sessionStart) / 60_000L).toInt()
+            if (sessionStart == 0L || minutes < 1) return
+            val grownNow = app.prefs.focusForest.first().first
+            val newTrees = (grownNow - grownAtStart.coerceAtLeast(0)).coerceAtLeast(0)
+            com.forja.app.core.notify.Nudges.focusDone(app, minutes, newTrees)
+        } catch (_: Exception) { }
+    }
+
+    /** Casca, sec: ce face paznicul; forma extinsă păstrează linia onestă „FORJA vede doar ce aplicație e deschisă.” */
     private fun buildNotification(): Notification {
         val pi = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
+        val copy = com.forja.app.core.notify.ServiceCopy
         return NotificationCompat.Builder(this, "focus")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
-            .setContentTitle("Focus · paznicul e în post")
-            .setContentText("Aplicațiile care te distrag stau în pauză. FORJA vede doar ce aplicație e deschisă.")
+            .setSmallIcon(com.forja.app.R.drawable.ic_notify)
+            .setContentTitle(copy.FOCUS_TITLE)
+            .setContentText(copy.FOCUS_TEXT)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(copy.FOCUS_BIG))
             .setOngoing(true)
+            .setSilent(true)
+            .setShowWhen(false)
+            .setGroup(com.forja.app.core.notify.Groups.FOCUS)
             .setContentIntent(pi)
             .build()
     }

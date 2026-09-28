@@ -228,11 +228,16 @@ internal class RunCtl(val app: ForjaApp, meta: RunMeta) {
     }
 }
 
-/** Notificările inventarului (canalul „inventory”, creat și în ForjaApp): progres, „Dosarele sunt gata”, eroare. */
+/**
+ * Notificările inventarului (canalul „inventory”, creat și în ForjaApp): progres, „Dosarele sunt gata”, eroare.
+ * Textele vin din core/notify (InventoryCopy): titlul cu procent e informație, rândul de sub el se schimbă după etapă;
+ * „Originalele rămân pe telefon” doar la galerie. Grupul propriu, ca Samsung să nu-l amestece cu alte notificări.
+ */
 internal object InventoryNotify {
     const val CHANNEL = "inventory"
-    const val ID_PROGRESS = 4301
-    const val ID_RESULT = 4302
+    const val ID_PROGRESS = com.forja.app.core.notify.NotifIds.INVENTORY_PROGRESS
+    const val ID_RESULT = com.forja.app.core.notify.NotifIds.INVENTORY_RESULT
+    private val Copy = com.forja.app.core.notify.InventoryCopy
 
     fun ensureChannel(ctx: Context) {
         try {
@@ -255,30 +260,39 @@ internal object InventoryNotify {
         return PendingIntent.getActivity(ctx, ID_PROGRESS, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
-    private fun stageLine(p: InvProgress?): String = when (p?.stage) {
-        InvStage.Grouping -> if (p.kind == InvKind.Photos) "Grupez pe evenimente" else "Grupez fișierele"
-        InvStage.Naming -> "Dau nume dosarelor"
-        InvStage.Applying -> "Aplic dosarele"
-        else -> if (p?.kind == InvKind.Documents) "Citesc folderul" else "Scanez galeria"
-    }
+    private fun stageLine(p: InvProgress?): String = Copy.stageLine(
+        when (p?.stage) {
+            InvStage.Grouping -> "grouping"
+            InvStage.Naming -> "naming"
+            InvStage.Applying -> "applying"
+            else -> "scanning"
+        },
+        photos = p?.kind != InvKind.Documents
+    )
 
     fun progress(ctx: Context, p: InvProgress?, detail: String?): Notification {
         val total = p?.total?.coerceAtLeast(1) ?: 1
         val done = p?.done?.coerceIn(0, total) ?: 0
         val open = openIntent(ctx)
-        return NotificationCompat.Builder(ctx, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_menu_gallery)
-            .setContentTitle(if (p == null) "Inventar" else "Inventar · ${done * 100 / total} %")
-            .setContentText(detail ?: stageLine(p))
+        // Rândul cald al etapei sub titlul cu procent; contorul exact al etapei („Dau nume · 12 din 40”) în antet.
+        val line = stageLine(p)
+        val b = NotificationCompat.Builder(ctx, CHANNEL)
+            .setSmallIcon(com.forja.app.R.drawable.ic_notify)
+            .setContentTitle(if (p == null) Copy.TITLE else Copy.progressTitle(done * 100 / total))
+            .setContentText(line)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(line))
             .setProgress(total, done, p == null)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
+            .setShowWhen(false)
+            .setGroup(com.forja.app.core.notify.Groups.INVENTORY)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setContentIntent(open)
-            .addAction(0, "Deschide", open)
-            .build()
+            .addAction(0, Copy.OPEN, open)
+        detail?.takeIf { it.isNotBlank() }?.let { b.setSubText(it) }
+        return b.build()
     }
 
     /** Prim-planul lucrătorului: tip dataSync (constructorul cu tip există de la API 29; obligatoriu de la 34). */
@@ -294,36 +308,34 @@ internal object InventoryNotify {
         try { NotificationManagerCompat.from(ctx).notify(ID_PROGRESS, progress(ctx, p, detail)) } catch (_: Exception) { }
     }
 
-    /** „Dosarele sunt gata · 14 dosare” — „3 214 poze · 212 la gunoi. Verifică și aplică.” */
+    /** „Dosarele sunt gata · 14 dosare” — „3 214 poze · 212 la gunoi. Tu decizi ce pleacă.” */
     fun ready(ctx: Context, kind: InvKind, folders: Int, items: Int, trash: Int) {
         cancelProgress(ctx)
         if (!canPost(ctx)) return
-        val title = "Dosarele sunt gata · ${InvText.count(folders, "dosar", "dosare")}"
-        val what = if (kind == InvKind.Photos) InvText.count(items, "poză", "poze") else InvText.count(items, "fișier", "fișiere")
-        val text = "$what · ${InvText.thousands(trash)} la gunoi. Verifică și aplică."
-        post(ctx, title, text, android.R.drawable.ic_menu_gallery)
+        post(ctx, Copy.readyTitle(folders), Copy.readyText(kind == InvKind.Photos, items, trash), com.forja.app.core.notify.NudgePose.Happy)
     }
 
     fun failed(ctx: Context, message: String) {
         cancelProgress(ctx)
         if (!canPost(ctx)) return
-        post(ctx, "Inventarul s-a oprit", message, android.R.drawable.stat_notify_error)
+        post(ctx, Copy.FAILED_TITLE, message, com.forja.app.core.notify.NudgePose.Sorry)
     }
 
-    private fun post(ctx: Context, title: String, text: String, icon: Int) {
+    private fun post(ctx: Context, title: String, text: String, pose: com.forja.app.core.notify.NudgePose) {
         try {
             ensureChannel(ctx)
             val open = openIntent(ctx)
             val n = NotificationCompat.Builder(ctx, CHANNEL)
-                .setSmallIcon(icon)
+                .setSmallIcon(com.forja.app.R.drawable.ic_notify)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
                 .setAutoCancel(true)
+                .setGroup(com.forja.app.core.notify.Groups.INVENTORY)
                 .setContentIntent(open)
-                .addAction(0, "Deschide", open)
-                .build()
-            NotificationManagerCompat.from(ctx).notify(ID_RESULT, n)
+                .addAction(0, Copy.OPEN, open)
+            com.forja.app.core.notify.MascotIcons.bitmap(ctx, pose)?.let { n.setLargeIcon(it) }
+            NotificationManagerCompat.from(ctx).notify(ID_RESULT, n.build())
         } catch (_: Exception) { }
     }
 

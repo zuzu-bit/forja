@@ -1,14 +1,6 @@
 package com.forja.app.core.social
 
-import android.Manifest
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -20,7 +12,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.forja.app.ForjaApp
-import com.forja.app.MainActivity
 import com.forja.app.core.network.InsightsApi
 import com.forja.app.core.network.InsightsFailure
 import kotlinx.coroutines.async
@@ -107,7 +98,6 @@ object ContactsSync {
     private const val PATH_MATCH = "/v2/social/contacts/match"
     private const val BATCH = 200
     private const val PERIOD_H = 24L
-    private const val NOTIF_BASE = 4200
 
     private val json = InsightsApi.json
     private val listSerializer = ListSerializer(ContactMatch.serializer())
@@ -319,24 +309,14 @@ object ContactsSync {
         return InsightsApi.json(PATH_MATCH, body, headers = headers)
     }
 
-    /** „Ana din agenda ta e pe FORJA” — canalul „social”, o dată pe prieten. Fără număr în text. */
+    /**
+     * „Camarad nou: Ana. / E în agenda ta și pe FORJA. Sunteți prieteni și vă vedeți pe hartă.” — Casca (core/notify,
+     * contextul NewFriend): canalul „social”, o dată pe prieten, fără număr în text, privat pe ecranul de blocare;
+     * dezvăluirea „vă vedeți pe hartă” rămâne în fiecare variantă. Noaptea se păstrează până la 08:00.
+     */
     private fun notifyNewFriend(context: Context, m: ContactMatch) {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) return
-        val first = m.name.trim().split(' ').firstOrNull { it.isNotBlank() } ?: "Un contact"
-        val text = "$first din agenda ta e pe FORJA. Sunteți prieteni și vă vedeți pe hartă."
-        val pi = PendingIntent.getActivity(
-            context, 21, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val n = NotificationCompat.Builder(context, "social")
-            .setSmallIcon(android.R.drawable.ic_menu_myplaces)
-            .setContentTitle("Camarad nou")
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setAutoCancel(true)
-            .setContentIntent(pi)
-            .build()
-        try { NotificationManagerCompat.from(context).notify(NOTIF_BASE + (m.uid.hashCode() and 0x3FF), n) } catch (_: Exception) { }
+        val app = context.applicationContext as? com.forja.app.ForjaApp ?: return
+        val first = m.name.trim().split(' ').firstOrNull { it.isNotBlank() }.orEmpty()
+        com.forja.app.core.notify.Nudges.newFriend(app, m.uid, first)
     }
 }
