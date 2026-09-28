@@ -1,0 +1,31 @@
+// POST DE PAZĂ · Timp pe ecran — aplicațiile de azi și ultimele 7 zile, prin /insights/api/paza.
+const Paza = {
+  data: null, body: null, day: null,
+  mount(body) { Paza.body = body; },
+  enter() { loadInto('paza', Paza.body, () => api('/insights/api/paza'), d => { Paza.data = d; Paza.render(); }, {replaceOnError: !Paza.data}); },
+  render() {
+    const d = Paza.data || {}, days = [...(d.days || [])].filter(x => fmt.dateKey(x.date) !== null).sort((a, b) => b.date.localeCompare(a.date));
+    if (!days.length) { setLine('paza', ''); fill(Paza.body, emptyState('Niciun raport de pază.', 'Vine cu contractul semnat și Accesul la utilizare pornit.', null, 'idle')); return; }
+    const key = Paza.day && days.some(x => x.date === Paza.day) ? Paza.day : days[0].date, day = days.find(x => x.date === key);
+    const apps = [...(day.apps || [])].sort((a, b) => (b.minutes || 0) - (a.minutes || 0)), max = Math.max(1, ...apps.map(a => a.minutes || 0));
+    const p = fmt.durParts(day.totalMin), isToday = key === fmt.keyOf(Date.now());
+    const opens = apps.reduce((a, x) => a + (x.opens || 0), 0);
+    setLine('paza', d.updated_at ? 'Actualizat ' + fmt.ago(d.updated_at) : '');
+    const week = [...days].slice(0, 7).reverse(), wmax = Math.max(60, ...week.map(x => x.totalMin || 0));
+    fill(Paza.body, h('div', {class: 'paza-grid'},
+      h('article', {class: 'card paza-hero'},
+        h('div', {class: 'night-top'}, monoLabel(isToday ? 'AZI' : fmt.dayLong(fmt.dateKey(key)).toUpperCase()), isToday ? null : h('button', {type: 'button', class: 'chip-btn', onclick: () => { Paza.day = null; Paza.render(); }}, 'Azi')),
+        h('div', {class: 'paza-total'}, hero(String(p.h), 'h'), hero(String(p.m).padStart(2, '0'), 'min')),
+        h('p', {class: 'muted', text: plural(opens, 'deschidere', 'deschideri') + ' · ' + plural(apps.length, 'aplicație', 'aplicații')}),
+        h('div', {class: 'bars week'}, week.map(x => h('button', {type: 'button', class: 'bar-col' + (x.date === key ? ' sel' : ''), title: fmt.day(fmt.dateKey(x.date)) + ' · ' + fmt.dur(x.totalMin), onclick: () => { Paza.day = x.date; Paza.render(); }},
+          h('span', {class: 'bar-fill', style: {height: ((x.totalMin || 0) / wmax * 100) + '%'}}), h('span', {class: 'bar-label', text: fmt.weekday(fmt.dateKey(x.date)).replace('.', '')}))))),
+      h('section', {class: 'card app-card'}, h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Aplicațiile'}), monoLabel('TIMP · DESCHIDERI')),
+        apps.length ? h('ol', {class: 'app-list'}, apps.slice(0, 12).map(a => h('li', {class: 'app-row'},
+          h('span', {class: 'app-badge', 'aria-hidden': 'true', text: initials(a.label || a.pkg)}),
+          h('div', {class: 'app-text'}, h('span', {class: 'app-name', text: a.label || a.pkg}), bar((a.minutes || 0) / max, 'olive')),
+          h('div', {class: 'app-num'}, h('b', {text: fmt.dur(a.minutes || 0)}), h('span', {text: '×' + fmt.int(a.opens || 0)})))))
+          : h('p', {class: 'panel-empty', text: 'Nicio aplicație în ziua asta.'}))));
+  },
+  reset() { Paza.data = null; Paza.day = null; if (Paza.body) delete Paza.body.dataset.loaded; }
+};
+Site.register('paza', Paza);

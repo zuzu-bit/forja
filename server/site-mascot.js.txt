@@ -1,0 +1,107 @@
+// Mascota FORJA („spiritul de jar”) — portată din core/designsystem/components/Mascot.kt în SVG, în același spațiu 100×100:
+// corp măsliniu cu miez de jar, contur gros, ochi uriași, brațe scurte, tălpi, casca (Helmet). Respirația, legănarea și clipitul
+// sunt animații CSS care se opresc sub prefers-reduced-motion. Plus vocea: citatele calde din Tone.kt.
+const MASCOT_INK = '#0A0A0B', MASCOT_OLIVE = '#4A5D3A', MASCOT_OLIVE2 = '#6F855A', MASCOT_AMBER = '#F3B952';
+let mascotSerial = 0;
+/** Ținte pe stări, exact ca `targetsOf` din Mascot.kt: privire, pleoape, ochi-arc, gură, brațe, puncte de gândire, înclinare. */
+const MASCOT_POSES = {
+  idle: {tilt: 0, lookX: 0, lookY: 0, lid: 0, arc: 0, open: 0.12, smile: 0.6, arms: [10, 76, 90, 76], dots: 0},
+  thinking: {tilt: 2, lookX: 3, lookY: -3.2, lid: 0.18, arc: 0, open: 0, smile: 0.15, arms: [8, 78, 72, 27], dots: 1},
+  happy: {tilt: 0, lookX: 0, lookY: 0, lid: 1, arc: 1, open: 0.75, smile: 1, arms: [6, 62, 94, 62], dots: 0},
+  sorry: {tilt: -7, lookX: 0, lookY: 3.2, lid: 0.45, arc: 0, open: 0, smile: -0.45, arms: [14, 80, 86, 80], dots: 0},
+  wink: {tilt: -3, lookX: 1.5, lookY: 0, lid: 0, arc: 0, open: 0.45, smile: 0.9, arms: [10, 76, 92, 52], dots: 0, wink: true}
+};
+function mascotMouth(o, sm) {
+  const cy = 69, hw = 7 + 3 * o + 1.5 * Math.abs(sm), cornerY = cy - sm * 2.2, bottomY = cy + sm * 3.5 + o * 10, topY = cy - o * 2.5 - (sm < 0 ? sm * 2.5 : 0);
+  const lower = `M${50 - hw} ${cornerY} C${50 - hw * 0.5} ${bottomY} ${50 + hw * 0.5} ${bottomY} ${50 + hw} ${cornerY}`;
+  return {open: o > 0.04, d: o > 0.04 ? lower + ` C${50 + hw * 0.5} ${topY} ${50 - hw * 0.5} ${topY} ${50 - hw} ${cornerY} Z` : lower, tongue: {x: 50 - hw * 0.7, y: cy + o * 4 + 1, w: hw * 1.4, h: 6 + o * 6}};
+}
+function mascotArm(rx, ry, ex, ey, outward) {
+  const mx = (rx + ex) / 2, my = (ry + ey) / 2, dx = ex - rx, dy = ey - ry;
+  const cx = mx + outward * Math.max(-dy * 0.35, 0) + outward * 3, cy = my + Math.abs(dx) * 0.15;
+  return `M${rx} ${ry} C${cx} ${cy} ${cx} ${cy} ${ex} ${ey}`;
+}
+/** mascot({size, state:'idle'|'thinking'|'happy'|'sorry'|'wink', hat:'helmet'|null, bubble}) → element. */
+function mascot(opts = {}) {
+  const size = opts.size || 120, p = MASCOT_POSES[opts.state] || MASCOT_POSES.idle, id = 'm' + (++mascotSerial);
+  const eye = (cx, closed) => {
+    const g = s('g', {class: closed ? '' : 'm-eye'});
+    if (closed) { g.append(s('path', {d: `M${cx - 7.6} 51 Q${cx} 41.5 ${cx + 7.6} 51`, fill: 'none', stroke: MASCOT_INK, 'stroke-width': 3.4, 'stroke-linecap': 'round'})); return g; }
+    const px = cx + p.lookX, py = 50 + p.lookY;
+    g.append(s('circle', {cx, cy: 50, r: 13.2, fill: MASCOT_INK}),
+      s('circle', {cx, cy: 50, r: 10.5, fill: '#FCFBF7'}),
+      s('g', {'clip-path': `url(#${id}-e${cx})`},
+        s('circle', {cx: px, cy: py, r: 5.4, fill: MASCOT_INK}),
+        s('circle', {cx: px - 1.9, cy: py - 1.9, r: 2.1, fill: '#FCFBF7'}),
+        s('circle', {cx: px + 1.7, cy: py + 1.6, r: 1, fill: '#FCFBF7'}),
+        p.lid > 0.005 ? s('circle', {cx, cy: 50 - 2.3 * 10.5 + p.lid * 2.6 * 10.5, r: 13.65, fill: MASCOT_OLIVE, stroke: MASCOT_INK, 'stroke-width': 3}) : null));
+    return g;
+  };
+  const mouth = mascotMouth(p.open, p.smile);
+  const [alx, aly, arx, ary] = p.arms;
+  const helmet = opts.hat === 'helmet';
+  const svg = s('svg', {viewBox: '-4 -4 108 108', width: size, height: size, class: 'mascot-svg', 'aria-hidden': 'true'},
+    s('defs', null,
+      s('linearGradient', {id: id + '-body', x1: 0, y1: 8, x2: 0, y2: 90, gradientUnits: 'userSpaceOnUse'}, s('stop', {offset: 0, 'stop-color': MASCOT_OLIVE2}), s('stop', {offset: 0.45, 'stop-color': MASCOT_OLIVE}), s('stop', {offset: 1, 'stop-color': MASCOT_OLIVE})),
+      s('radialGradient', {id: id + '-core', cx: 50, cy: 72, r: 34, gradientUnits: 'userSpaceOnUse'}, s('stop', {offset: 0, 'stop-color': '#FFE39A'}), s('stop', {offset: 0.5, 'stop-color': MASCOT_AMBER}), s('stop', {offset: 1, 'stop-color': '#E0762E'})),
+      s('radialGradient', {id: id + '-glow', cx: 50, cy: 60, r: 46, gradientUnits: 'userSpaceOnUse'}, s('stop', {offset: 0, 'stop-color': MASCOT_AMBER, 'stop-opacity': 0.45}), s('stop', {offset: 0.55, 'stop-color': MASCOT_AMBER, 'stop-opacity': 0.12}), s('stop', {offset: 1, 'stop-color': MASCOT_AMBER, 'stop-opacity': 0})),
+      s('clipPath', {id: `${id}-e39`}, s('circle', {cx: 39, cy: 50, r: 10.5})),
+      s('clipPath', {id: `${id}-e61`}, s('circle', {cx: 61, cy: 50, r: 10.5})),
+      mouth.open ? s('clipPath', {id: id + '-mouth'}, s('path', {d: mouth.d})) : null),
+    s('ellipse', {cx: 50, cy: 97, rx: 22, ry: 3.2, fill: '#000', opacity: 0.35}),
+    s('g', {class: 'm-sway'}, s('g', {class: 'm-breath', transform: p.tilt ? `rotate(${p.tilt} 50 90)` : null},
+      s('circle', {cx: 50, cy: 60, r: 46, fill: `url(#${id}-glow)`, class: 'm-glow'}),
+      s('ellipse', {cx: 40, cy: 89.5, rx: 10, ry: 6, fill: MASCOT_INK}), s('ellipse', {cx: 60, cy: 89.5, rx: 10, ry: 6, fill: MASCOT_INK}),
+      s('ellipse', {cx: 40, cy: 89.5, rx: 7, ry: 3, fill: MASCOT_OLIVE}), s('ellipse', {cx: 60, cy: 89.5, rx: 7, ry: 3, fill: MASCOT_OLIVE}),
+      s('path', {d: 'M50 90C28 90 14 76 16 56C18 40 30 28 42 24C44 18 44 12 50 8C58 12 60 20 58 24C70 28 82 40 84 56C86 76 72 90 50 90Z', fill: `url(#${id}-body)`}),
+      s('path', {d: 'M50 82C36 82 28 72 30 60C32 50 42 44 46 36C48 30 49 26 50 22C51 26 52 30 54 36C58 44 68 50 70 60C72 72 64 82 50 82Z', fill: `url(#${id}-core)`}),
+      s('path', {d: 'M50 90C28 90 14 76 16 56C18 40 30 28 42 24C44 18 44 12 50 8C58 12 60 20 58 24C70 28 82 40 84 56C86 76 72 90 50 90Z', fill: 'none', stroke: MASCOT_INK, 'stroke-width': 3, 'stroke-linejoin': 'round'}),
+      s('ellipse', {cx: 29, cy: 60.5, rx: 5, ry: 2.5, fill: 'rgba(243,185,82,.35)'}), s('ellipse', {cx: 71, cy: 60.5, rx: 5, ry: 2.5, fill: 'rgba(243,185,82,.35)'}),
+      s('g', {class: 'm-eyes'}, eye(39, p.arc > 0.5 || !!p.wink), eye(61, p.arc > 0.5)),
+      mouth.open
+        ? s('g', null, s('path', {d: mouth.d, fill: MASCOT_INK}), s('ellipse', {cx: mouth.tongue.x + mouth.tongue.w / 2, cy: mouth.tongue.y + mouth.tongue.h / 2, rx: mouth.tongue.w / 2, ry: mouth.tongue.h / 2, fill: '#E0762E', 'clip-path': `url(#${id}-mouth)`}), s('path', {d: mouth.d, fill: 'none', stroke: MASCOT_INK, 'stroke-width': 3, 'stroke-linejoin': 'round'}))
+        : s('path', {d: mouth.d, fill: 'none', stroke: MASCOT_INK, 'stroke-width': 3, 'stroke-linecap': 'round'}),
+      helmet ? s('g', null,
+        s('path', {d: 'M71.6 57.7 A23 37 0 0 1 28.4 57.7', fill: 'none', stroke: '#3B4A2F', 'stroke-width': 2.6, 'stroke-linecap': 'round'}),
+        s('path', {d: 'M19 26 A31 25 0 0 1 81 26 Z', fill: MASCOT_INK}),
+        s('rect', {x: 15, y: 20, width: 70, height: 13, rx: 6.5, fill: MASCOT_INK}),
+        s('path', {d: 'M22 26 A28 22 0 0 1 78 26 Z', fill: '#3B4A2F'}),
+        s('path', {d: 'M29.3 20.2 A22 17 0 0 1 46.2 9.3', fill: 'none', stroke: '#55673F', 'stroke-width': 1.8, 'stroke-linecap': 'round'}),
+        s('rect', {x: 18, y: 23, width: 64, height: 7, rx: 3.5, fill: '#3B4A2F'}),
+        s('path', {d: 'M22 23.5H78', stroke: MASCOT_INK, 'stroke-width': 1.4, 'stroke-linecap': 'round'}),
+        s('rect', {x: 46.5, y: 74, width: 7, height: 5, rx: 1.5, fill: MASCOT_INK}), s('rect', {x: 47.5, y: 75, width: 5, height: 3, rx: 1, fill: MASCOT_AMBER})) : null,
+      s('path', {d: mascotArm(20, 64, alx, aly, -1), fill: 'none', stroke: MASCOT_INK, 'stroke-width': 13, 'stroke-linecap': 'round'}),
+      s('path', {d: mascotArm(20, 64, alx, aly, -1), fill: 'none', stroke: MASCOT_OLIVE, 'stroke-width': 7, 'stroke-linecap': 'round'}),
+      s('path', {d: mascotArm(80, 64, arx, ary, 1), fill: 'none', stroke: MASCOT_INK, 'stroke-width': 13, 'stroke-linecap': 'round'}),
+      s('path', {d: mascotArm(80, 64, arx, ary, 1), fill: 'none', stroke: MASCOT_OLIVE, 'stroke-width': 7, 'stroke-linecap': 'round'}),
+      p.dots ? s('g', {class: 'm-dots'}, ...[[70, 26, 2.4], [78, 17, 3.4], [87, 7, 4.4]].map(([x, y, r]) => s('g', null, s('circle', {cx: x, cy: y, r: r + 2.4, fill: MASCOT_INK}), s('circle', {cx: x, cy: y, r, fill: MASCOT_AMBER})))) : null)));
+  const wrap = h('div', {class: 'mascot' + (opts.cls ? ' ' + opts.cls : ''), style: {width: size + 'px'}});
+  if (opts.bubble) wrap.append(h('div', {class: 'bubble', text: opts.bubble}));
+  wrap.append(svg);
+  return wrap;
+}
+
+// ───────────────────────── Vocea: citatele din Tone.kt (același citat toată ziua, altul mâine) ─────────────────────────
+const TONE_FRONT = '— jurnal de front, FORJA', TONE_MARCH = '— jurnal de marș, FORJA', TONE_DAY = '— gândul zilei', TONE_LIVE = '— FORJA · LIVE IT';
+const TONE = {
+  general: [['Disciplina cântărește kilograme; regretul cântărește tone.', TONE_DAY], ['Un pas mic azi bate un plan mare mâine.', TONE_FRONT], ['Corpul realizează ce mintea crede.', TONE_DAY], ['Nu trebuie să fii extraordinar ca să începi. Trebuie să începi ca să fii extraordinar.', TONE_LIVE], ['Un om singur ajunge departe. Împreună ajungeți acasă.', TONE_LIVE]],
+  map: [['Un om singur ajunge departe. Împreună ajungeți acasă.', TONE_LIVE], ['Orașul nu se vede din casă.', TONE_MARCH], ['Terenul se cunoaște cu pasul, nu cu degetul.', TONE_DAY]],
+  sleep: [['Odihna nu e slăbiciune. E muniția de mâine.', '— regula nr. 3'], ['Stingerea e un ordin, nu o sugestie.', TONE_FRONT], ['Somnul repară ce ziua a cerut.', TONE_DAY], ['Nimeni nu câștigă un război cu ochii roșii.', TONE_FRONT]],
+  login: [['Disciplina e libertate câștigată dimineață.', TONE_FRONT], ['Un pas mic azi bate un plan mare mâine.', TONE_FRONT], ['Terenul se cunoaște cu pasul, nu cu degetul.', TONE_DAY]]
+};
+function toneOfDay(pool, salt = 0, now = Date.now()) {
+  const list = TONE[pool] || TONE.general, d = new Date(now);
+  const start = new Date(d.getFullYear(), 0, 0), day = d.getFullYear() * 366 + Math.floor((d - start) / DAY);
+  const [text, by] = list[((day + salt) % list.length + list.length) % list.length];
+  return {text, by};
+}
+function warmQuote(pool, salt = 0) {
+  const q = toneOfDay(pool, salt);
+  return h('figure', {class: 'quote'}, h('blockquote', {text: '„' + q.text + '”'}), h('figcaption', {class: 'mono', text: q.by}));
+}
+/** „Raport de seară, Lana.” — Tone.report. */
+function toneReport(name, hour = new Date().getHours()) {
+  const moment = hour >= 5 && hour <= 11 ? 'dimineață' : hour >= 12 && hour <= 17 ? 'amiază' : 'seară';
+  const n = firstName(name);
+  return n ? `Raport de ${moment}, ${n}.` : `Raport de ${moment}.`;
+}

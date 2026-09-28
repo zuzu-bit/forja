@@ -1,0 +1,58 @@
+// Pornirea: navigarea, formularul de logare („Ai uitat parola?”), sesiunea salvată (forja.auth.v1) și legătura adâncă
+// (/insights#gasire → logare → Găsire): hash-ul rămâne în adresă cât timp se face logarea.
+buildNav();
+fill($('login-quote'), warmQuote('login', 1));
+fill($('login-mascot'), mascot({size: 180, state: 'idle', hat: 'helmet'}));
+fill($('boot-mascot'), mascot({size: 120, state: 'thinking', hat: 'helmet'}));
+fill($('rail-brand-mascot'), mascot({size: 34, state: 'idle', hat: 'helmet'}));
+
+/** Unde duce logarea: secțiunea din hash (dacă există), altfel Azi. */
+function loginTarget() { const {id} = parseHash(); return SECTION[id] ? SECTION[id] : null; }
+function paintLoginTarget() {
+  const x = loginTarget(), n = $('login-target');
+  if (!n) return;
+  n.hidden = !x || x.id === 'azi';
+  if (x) fill(n, icon(x.icon, 16), h('span', {text: 'Apoi deschid ' + x.nav}));
+}
+window.addEventListener('hashchange', () => { if (!Auth.session) paintLoginTarget(); });
+
+$('login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const email = $('login-email').value.trim(), password = $('login-password').value, b = $('login-submit');
+  if (!email || !password) { setLoginMessage(!email ? 'Scrie adresa de email.' : 'Scrie parola.'); (!email ? $('login-email') : $('login-password')).focus(); return; }
+  b.disabled = true; b.classList.add('busy'); setLoginMessage('');
+  try {
+    await Auth.signIn(email, password);
+    $('login-password').value = '';
+    enterApp();
+  } catch (err) {
+    setLoginMessage(err?.message || 'Conectarea nu a reușit. Încearcă din nou.');
+    $('login-password').select();
+  } finally { b.disabled = false; b.classList.remove('busy'); }
+});
+$('login-forgot').addEventListener('click', async () => {
+  const email = $('login-email').value.trim(), b = $('login-forgot');
+  if (!email) { setLoginMessage('Scrie întâi adresa de email a contului.'); $('login-email').focus(); return; }
+  b.disabled = true;
+  try { await Auth.reset(email); setLoginMessage('Verifică emailul. Linkul de resetare vine în câteva minute.', false); }
+  catch (err) { setLoginMessage(err?.message || 'Nu a mers. Încearcă din nou.'); }
+  finally { b.disabled = false; }
+});
+$('login-info')?.addEventListener('click', () => info('Ce vede site-ul', 'Site-ul FORJA arată doar ce trimite telefonul tău, doar pentru tine: ziua, harta, camarazii, telefonul, Inventarul, nopțile, mesele, turele, muzica și timpul pe ecran. Contul se creează în aplicație. Rămâi conectat în acest browser până apeși „Ieși”.'));
+
+/** Sesiunea salvată: reîmprospătăm tokenul; dacă nu mai e valid, cerem logarea (cu legătura adâncă păstrată). */
+async function boot() {
+  paintLoginTarget();
+  const saved = Auth.stored();
+  if (!saved) { showScreen('login'); return; }
+  showScreen('boot');
+  Auth.start({token: '', refresh: saved.refresh, expires: 0, uid: saved.uid, email: saved.email});
+  try { await Auth.renew(); enterApp(); }
+  catch (e) {
+    const offline = e instanceof ApiError && e.status !== 401;
+    if (offline) { enterApp(); toast(e.message); return; }
+    Auth.session = null; Auth.forget(); showScreen('login');
+    setLoginMessage(e?.name === 'AbortError' ? '' : 'Sesiunea a expirat. Intră din nou.');
+  }
+}
+boot();

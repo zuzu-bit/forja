@@ -1,0 +1,56 @@
+// RAȚIE · Nutriție — inelele zilei față de țintă, mesele cu eticheta sursei (EXACT · COD DE BARE / ESTIMAT / MANUAL,
+// exact ca în aplicație) și ultimele 30 de zile, prin /insights/api/ratie?days=30.
+const MEAL_TYPES = ['MIC DEJUN', 'PRÂNZ', 'CINĂ', 'GUSTARE'];
+const Ratie = {
+  data: null, body: null, day: null,
+  mount(body) { Ratie.body = body; },
+  enter() { loadInto('ratie', Ratie.body, () => api('/insights/api/ratie?days=30'), d => { Ratie.data = d; Ratie.render(); }, {replaceOnError: !Ratie.data}); },
+  days() { return [...(Ratie.data?.days || [])].filter(d => fmt.dateKey(d.date) !== null).sort((a, b) => b.date.localeCompare(a.date)); },
+  render() {
+    const days = Ratie.days(), targets = Ratie.data?.targets || null, todayKey = fmt.keyOf(Date.now());
+    if (!days.some(d => (d.meals || []).length || d.kcal)) { setLine('ratie', ''); fill(Ratie.body, emptyState('Prima masă apare aici.', 'Adaug-o în FORJA, la Nutriție.', null, 'idle')); return; }
+    const key = Ratie.day && days.some(d => d.date === Ratie.day) ? Ratie.day : todayKey;
+    const day = days.find(d => d.date === key) || {date: key, kcal: 0, protein: 0, carbs: 0, fat: 0, meals: []};
+    const isToday = key === todayKey;
+    setLine('ratie', targets ? 'Ținta: ' + fmt.int(targets.kcal) + ' kcal pe zi' : '');
+    const kcalP = targets?.kcal ? (day.kcal || 0) / targets.kcal : 0;
+    const left = targets?.kcal ? targets.kcal - (day.kcal || 0) : null;
+    const heroCard = h('article', {class: 'card ratie-hero'},
+      h('div', {class: 'night-top'}, monoLabel(isToday ? 'AZI' : fmt.dayLong(fmt.dateKey(key)).toUpperCase()), isToday ? null : h('button', {type: 'button', class: 'chip-btn', onclick: () => { Ratie.day = null; Ratie.render(); }}, 'Azi')),
+      h('div', {class: 'ratie-main'},
+        ring(kcalP, 168, 14, kcalP > 1.05 ? 'url(#g-ember)' : 'url(#g-amber)', h('div', null, h('b', {class: 'ring-big', text: fmt.int(day.kcal || 0)}), h('small', {text: targets?.kcal ? 'din ' + fmt.int(targets.kcal) + ' kcal' : 'kcal'}))),
+        h('div', {class: 'macros'},
+          macroBar('Proteine', day.protein, targets?.protein, 'p'), macroBar('Carbohidrați', day.carbs, targets?.carbs, 'c'), macroBar('Grăsimi', day.fat, targets?.fat, 'f'),
+          left !== null ? h('p', {class: 'ratie-left ' + (left < 0 ? 'over' : ''), text: left >= 0 ? 'Mai ai ' + fmt.int(left) + ' kcal' : 'Peste țintă cu ' + fmt.int(-left) + ' kcal'}) : h('p', {class: 'ratie-left', text: 'Ținta se setează în FORJA.'}))));
+    const meals = [...(day.meals || [])].sort((a, b) => (a.at || 0) - (b.at || 0));
+    const list = meals.length ? h('div', {class: 'meal-list'}, meals.map(m => h('div', {class: 'meal'},
+      h('div', {class: 'meal-when'}, monoLabel(MEAL_TYPES[m.mealType] || 'MASĂ'), h('span', {class: 'meal-time', text: fmt.time(m.at)})),
+      h('div', {class: 'meal-what'}, h('span', {class: 'meal-name', text: m.name || 'Masă'}),
+        h('span', {class: 'meal-macros'}, `P ${fmt.int(m.protein)} · C ${fmt.int(m.carbs)} · G ${fmt.int(m.fat)}` + (num(m.grams) ? ` · ${fmt.int(m.grams)} g` : ''))),
+      h('div', {class: 'meal-side'}, h('b', {class: 'meal-kcal', text: fmt.int(m.kcal)}), h('span', {class: 'meal-unit', text: 'kcal'})),
+      m.source ? badge(m.source, String(m.source).toUpperCase().startsWith('EXACT') ? 'pos' : '') : null)))
+      : h('p', {class: 'panel-empty', text: isToday ? 'Nicio masă azi.' : 'Nicio masă în ziua asta.'});
+    fill(Ratie.body, 
+      h('div', {class: 'ratie-grid'}, heroCard, Ratie.chart(days, targets, key)),
+      h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: isToday ? 'Mesele de azi' : 'Mesele zilei'}), monoLabel(plural(meals.length, 'masă', 'mese'))),
+      list);
+  },
+  chart(days, targets, selected) {
+    const byKey = new Map(days.map(d => [d.date, d])), cols = [];
+    for (let i = 29; i >= 0; i--) { const t = Date.now() - i * DAY, key = fmt.keyOf(t); cols.push({key, t, d: byKey.get(key)}); }
+    const max = Math.max(targets?.kcal || 0, ...cols.map(c => c.d?.kcal || 0), 1) * 1.1;
+    const chart = h('div', {class: 'card ratie-chart'}, h('div', {class: 'block-head tight'}, monoLabel('30 DE ZILE · KCAL'), targets?.kcal ? monoLabel('ȚINTA ' + fmt.int(targets.kcal), 'accent') : null),
+      h('div', {class: 'bars dense'},
+        targets?.kcal ? h('span', {class: 'target-line', style: {bottom: (targets.kcal / max * 100) + '%'}}) : null,
+        cols.map(c => h('button', {type: 'button', class: 'bar-col' + (c.key === selected ? ' sel' : ''), disabled: !c.d, title: fmt.day(c.t) + (c.d ? ' · ' + fmt.int(c.d.kcal) + ' kcal' : ''), 'aria-label': fmt.day(c.t) + (c.d ? ' ' + fmt.int(c.d.kcal) + ' kcal' : ''), onclick: () => { Ratie.day = c.key; Ratie.render(); }},
+          h('span', {class: 'bar-fill' + (targets?.kcal && (c.d?.kcal || 0) > targets.kcal * 1.05 ? ' over' : ''), style: {height: ((c.d?.kcal || 0) / max * 100) + '%'}})))),
+      h('div', {class: 'tl-axis'}, h('span', {text: fmt.day(cols[0].t)}), h('span', {text: 'azi'})));
+    return chart;
+  },
+  reset() { Ratie.data = null; Ratie.day = null; if (Ratie.body) delete Ratie.body.dataset.loaded; }
+};
+function macroBar(label, value, target, cls) {
+  const v = num(value) || 0, t = num(target);
+  return h('div', {class: 'macro-line'}, h('div', {class: 'macro-top'}, h('span', {text: label}), h('span', {class: 'macro-val'}, h('b', {text: fmt.int(v)}), t ? ' / ' + fmt.int(t) + ' g' : ' g')), bar(t ? v / t : 0, 'm-' + cls));
+}
+Site.register('ratie', Ratie);

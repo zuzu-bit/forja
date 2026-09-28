@@ -1,0 +1,138 @@
+// GĂSIRE · Telefonul tău — telefonul e ținta, site-ul caută (DESIGN-4.4 §1.7, §3.4): harta cu ultima poziție (7 zile),
+// „Sună” (60 s), „Urmărește 10 min” (+10, maximum 60), „Oprește” (păstrează ultima poziție), redenumire, scoatere.
+const Gasire = {
+  devices: null, body: null, slot: null, panel: null, fitted: false, off: null, lastSig: '',
+  mount(body) {
+    Gasire.slot = h('div', {class: 'map-slot', id: 'gasire-map'});
+    Gasire.panel = h('aside', {class: 'map-panel gasire-panel', id: 'gasire-panel', 'aria-label': 'Telefonul tău'});
+    Gasire.body = body;
+    body.append(h('div', {class: 'map-layout gasire'}, Gasire.slot, Gasire.panel));
+  },
+  ownChip: true,
+  enter() {
+    Gasire.off?.(); Gasire.off = MapHost.on(kind => { if (Site.current === 'gasire' && kind === 'ready') Gasire.push(); });
+    MapHost.attach(Gasire.slot, 'gasire');
+    Teren.fitted = false; // harta e comună: la întoarcere, Teren se potrivește din nou pe datele tale
+    Gasire.schedule(true);
+  },
+  leave() { Gasire.off?.(); Gasire.off = null; },
+  /** 5 s cât o cerere e activă, 30 s altfel; doar cât secțiunea e vizibilă. */
+  schedule(immediate = false) {
+    const active = (Gasire.devices || []).some(d => d.command);
+    Poll.every('gasire:devices', active ? 5000 : 30000, () => Gasire.load(), immediate);
+  },
+  async fetch() {
+    const d = await api('/v2/recovery/devices');
+    Gasire.devices = Array.isArray(d?.devices) ? d.devices : [];
+    return Gasire.devices;
+  },
+  async load() {
+    const first = !Gasire.panel.dataset.loaded;
+    if (first) fill(Gasire.panel, h('div', {class: 'panel-pad'}, h('div', {class: 'sk sk-line'}), h('div', {class: 'sk sk-card'})));
+    try { await Gasire.fetch(); Gasire.panel.dataset.loaded = '1'; }
+    catch (e) {
+      if (e?.name === 'AbortError') return;
+      if (first) fill(Gasire.panel, h('div', {class: 'panel-pad'}, errorState(e?.message, () => Gasire.load())));
+      else toast(e?.message || 'Actualizarea nu a reușit.');
+      return;
+    }
+    const wasActive = Gasire.lastActive, active = Gasire.devices.some(d => d.command);
+    Gasire.lastActive = active;
+    Gasire.render();
+    if (!Gasire.devices.length) { MapHost.attach(Gasire.slot, 'gasire'); } else MapHost.ensure().then(() => Gasire.push()).catch(() => {});
+    if (wasActive !== active) Gasire.schedule(false);
+  },
+  push() {
+    const r = MapHost.renderer; if (!r?.ready || Site.current !== 'gasire') return;
+    r.setMode('gasire');
+    r.setData({devices: Gasire.devices || [], me: Circle.data?.me || null});
+    const d = (Gasire.devices || [])[0], p = d && (d.position || d.last);
+    const sig = p ? [p.lat, p.lon, p.at].join('|') : '';
+    if (p && (!Gasire.fitted || (d.command && sig !== Gasire.lastSig))) { r.fitDevices(Gasire.padding()); Gasire.fitted = true; }
+    Gasire.lastSig = sig;
+  },
+  padding() { return matchMedia('(min-width: 1024px)').matches ? {top: 80, bottom: 80, left: 80, right: 440} : {top: 60, bottom: 60, left: 40, right: 40}; },
+  render() {
+    const list = Gasire.devices || [];
+    Gasire.body.classList.toggle('no-device', !list.length);
+    if (!list.length) {
+      setChip('gasire', {state: 'off'}, 'FĂRĂ TELEFON');
+      fill(Gasire.panel, h('div', {class: 'panel-pad'}, emptyState('Niciun telefon în gardă.', 'Semnează contractul în FORJA. Telefonul apare aici singur.', null, 'idle')));
+      return;
+    }
+    const main = deviceView(list[0]);
+    setChip('gasire', {state: main.tone === 'off' ? 'off' : main.tone === 'warn' ? 'stale' : 'on', lastAt: list[0].seen_at}, main.chip);
+    fill(Gasire.panel, h('div', {class: 'panel-pad'}, ...list.map(d => deviceCard(d)),
+      h('a', {class: 'find-hub', href: 'https://www.google.com/android/find', target: '_blank', rel: 'noopener noreferrer'}, icon('external', 16), h('span', {text: 'Închis sau fără internet? Încearcă și Google Find Hub'}))));
+  },
+  async command(d, body) {
+    await api('/v2/recovery/devices/' + encodeURIComponent(d.id) + '/command', {method: 'POST', body: {id: crypto.randomUUID(), ...body}});
+    Gasire.fitted = false;
+    await Gasire.load(); Gasire.schedule(false);
+  },
+  reset() { Gasire.devices = null; Gasire.fitted = false; Gasire.lastActive = false; Gasire.lastSig = ''; if (Gasire.panel) delete Gasire.panel.dataset.loaded; Gasire.off = null; }
+};
+/** Starea în cuvinte (lost-phone §5.3): o linie mono, un ton, un text de cip. */
+function deviceView(d, now = Date.now()) {
+  const c = d.command, online = !!d.online;
+  const left = c ? Math.max(0, (c.until || 0) - now) : 0;
+  if (c && c.phase === 'queued') return {tone: 'warn', line: 'CERERE TRIMISĂ', chip: 'CERERE TRIMISĂ', sub: 'Răspunde la următoarea trezire, de obicei sub 10 minute.'};
+  if (c && c.kind === 'ring') return {tone: 'ember', line: 'SUNĂ · ' + Math.ceil(left / 1000) + ' S', chip: 'SUNĂ'};
+  if (c) return {tone: 'live', line: 'URMĂRIRE · ' + Math.max(1, Math.ceil(left / MIN)) + ' MIN', chip: 'URMĂRIRE'};
+  if (d.status === 'found') return {tone: 'on', line: 'GĂSIT · ' + fmt.time(d.seen_at), chip: 'GĂSIT'};
+  if (d.status === 'location_off') return {tone: 'ember', line: 'LOCAȚIA ANDROID E OPRITĂ', chip: 'LOCAȚIA E OPRITĂ'};
+  if (d.status === 'permission_missing') return {tone: 'ember', line: 'FĂRĂ PERMISIUNEA DE LOCAȚIE', chip: 'FĂRĂ PERMISIUNE'};
+  if (d.status === 'notification_missing') return {tone: 'ember', line: 'NOTIFICĂRILE FORJA SUNT OPRITE', chip: 'NOTIFICĂRI OPRITE'};
+  if (online) return {tone: 'on', line: 'ÎN GARDĂ · ' + (fmt.agoShort(d.seen_at, now) || 'acum').toUpperCase(), chip: 'ÎN GARDĂ'};
+  return {tone: 'off', line: d.seen_at ? 'TĂCUT DIN ' + (now - d.seen_at < DAY ? fmt.time(d.seen_at) : fmt.day(d.seen_at).toUpperCase()) : 'ÎNCĂ NU S-A CONECTAT', chip: 'TĂCUT', sub: 'Descărcat, închis sau fără internet. Ultima poziție rămâne pe hartă.'};
+}
+function deviceCard(d) {
+  const v = deviceView(d), c = d.command, p = d.position || d.last;
+  const used = c && c.kind !== 'ring' && c.created_at ? (c.until - c.created_at) / MIN : 0;
+  const meta = [];
+  if (p) meta.push(h('span', null, icon('locate', 14), '±' + fmt.int(p.accuracy) + ' m'));
+  if (num(d.battery) !== null || num(p?.battery) !== null) meta.push(h('span', {class: (d.battery ?? p.battery) <= 15 ? 'low' : ''}, icon('battery', 14), fmt.int(d.battery ?? p.battery) + '%' + (d.charging ? ' · se încarcă' : '')));
+  if (p) meta.push(h('span', null, (d.position?.fresh ? 'acum' : fmt.ago(p.at))));
+  const actions = c
+    ? [btn('Oprește', async () => {
+        await api('/v2/recovery/devices/' + encodeURIComponent(d.id) + '/command?id=' + encodeURIComponent(c.id), {method: 'DELETE'});
+        toast('Oprit. Ultima poziție rămâne.', true); await Gasire.load(); Gasire.schedule(false);
+      }, 'btn btn-danger', 'stop'),
+      c.kind !== 'ring' && c.phase !== 'queued' ? (() => { const b = btn('+10 min', async () => {
+        await api('/v2/recovery/devices/' + encodeURIComponent(d.id) + '/extend', {method: 'POST', body: {command: c.id, minutes: 10}});
+        toast('Încă 10 minute.', true); await Gasire.load();
+      }, 'btn btn-secondary', 'plus'); if (used >= 60) { b.disabled = true; b.title = 'Maximum 60 de minute'; } return b; })() : null]
+    : [btn('Sună', () => Gasire.command(d, {kind: 'ring', seconds: 60}).then(() => toast('Cererea a plecat. Telefonul sună la următoarea trezire.', true)), 'btn', 'bell'),
+      btn('Urmărește 10 min', () => Gasire.command(d, {kind: 'locate', minutes: 10}).then(() => toast('Cererea a plecat.', true)), 'btn btn-secondary', 'radar')];
+  return h('article', {class: 'card device tone-' + v.tone},
+    h('div', {class: 'device-head'}, h('span', {class: 'device-ic'}, icon('phone', 22)), h('span', {class: 'device-name', text: d.name || 'Telefonul meu'}),
+      h('button', {type: 'button', class: 'icon-btn', 'aria-label': 'Opțiuni pentru ' + (d.name || 'telefon'), onclick: () => deviceMenu(d)}, icon('more', 20))),
+    h('p', {class: 'device-state'}, h('i', {class: 'dot ' + (v.tone === 'off' ? 'off' : v.tone === 'warn' ? 'stale' : v.tone === 'ember' ? 'ember' : 'on') + (v.tone === 'live' || v.tone === 'ember' && c ? ' pulse' : '')}), h('span', {text: v.line})),
+    v.sub ? h('p', {class: 'device-sub', text: v.sub}) : null,
+    meta.length ? h('div', {class: 'device-meta'}, meta) : null,
+    p ? h('a', {class: 'device-nav', href: `https://www.google.com/maps/search/?api=1&query=${p.lat.toFixed(6)},${(p.lon ?? p.lng).toFixed(6)}`, target: '_blank', rel: 'noopener noreferrer'}, monoLabel(p.lat.toFixed(5) + ', ' + (p.lon ?? p.lng).toFixed(5)), h('span', {text: 'Navighează'}), icon('external', 14)) : h('p', {class: 'device-sub', text: 'Nicio poziție încă. Apare la prima trezire a telefonului.'}),
+    h('div', {class: 'device-actions'}, actions));
+}
+function deviceMenu(d) {
+  const ref = sheet(d.name || 'Telefonul meu', h('div', {class: 'menu-list'},
+    h('button', {type: 'button', class: 'menu-row', onclick: () => { ref.close(); renameDevice(d); }}, icon('edit', 18), h('span', {text: 'Redenumește'})),
+    h('button', {type: 'button', class: 'menu-row', onclick: () => { ref.close(); info('Ce vede site-ul', INFO.gasire); }}, icon('eye', 18), h('span', {text: 'Ce vede site-ul'})),
+    h('button', {type: 'button', class: 'menu-row danger', onclick: async () => {
+      ref.close();
+      if (!await confirmSheet('Scoți telefonul?', 'Site-ul uită ultima poziție. Revine singur cât contractul e semnat.', 'Scoate telefonul', true)) return;
+      try { await api('/v2/recovery/devices/' + encodeURIComponent(d.id) + '/grant', {method: 'DELETE'}); toast('Telefonul a fost scos.'); await Gasire.load(); }
+      catch (e) { if (e?.name !== 'AbortError') toast(e.message); }
+    }}, icon('trash', 18), h('span', {text: 'Scoate telefonul'}))), {stamp: 'GĂSIRE'});
+}
+function renameDevice(d) {
+  const input = h('input', {class: 'field', id: 'device-name', maxlength: 40, value: d.name || '', autocomplete: 'off'});
+  const ref = sheet('Redenumește', h('form', {class: 'sheet-form', onsubmit: async e => {
+    e.preventDefault();
+    const name = input.value.trim(); if (!name) { input.focus(); return; }
+    try { await api('/v2/recovery/devices/' + encodeURIComponent(d.id), {method: 'PATCH', body: {name}}); ref.close(); toast('Nume schimbat.', true); await Gasire.load(); }
+    catch (err) { if (err?.name !== 'AbortError') toast(err.message); }
+  }}, h('label', {class: 'field-label', for: 'device-name', text: 'Numele telefonului'}), input,
+    h('div', {class: 'sheet-actions'}, h('button', {type: 'button', class: 'btn btn-secondary', onclick: () => ref.close()}, 'Renunță'), h('button', {type: 'submit', class: 'btn'}, 'Salvează'))), {stamp: 'GĂSIRE'});
+  requestAnimationFrame(() => input.focus());
+}
+Site.register('gasire', Gasire);

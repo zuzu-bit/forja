@@ -1,0 +1,65 @@
+// RAPORT DE ZI · Azi — cifrele zilei (rație, marș, noaptea trecută), mascota și banda „Legături” (un post pe secțiune).
+const Azi = {
+  data: null, body: null, ownChip: true,
+  mount(body) { Azi.body = body; },
+  enter() {
+    Poll.every('azi:data', 60000, () => Azi.load(false), true);
+  },
+  /** O dată la intrare, pentru punctele de stare din navigare. */
+  prefetch() { if (!Azi.data) Azi.fetch().then(d => { if (d) Site.setLinks(d.links); }).catch(() => {}); },
+  async fetch() { const d = await api('/insights/api/azi'); Azi.data = d; if (d?.me) Site.me = d.me; return d; },
+  load(first) {
+    return loadInto('azi', Azi.body, () => Azi.fetch(), d => { Site.setLinks(d.links); Azi.render(d); }, {replaceOnError: first});
+  },
+  render(d) {
+    const t = d.today || {}, night = d.night;
+    setLine('azi', toneReport(d.me?.name));
+    const onCount = (d.links || []).filter(l => l.state === 'on').length, total = (d.links || []).length;
+    const share = total ? onCount / total : 0;
+    const bubble = !onCount ? 'Te aștept pe teren.' : share === 1 ? 'Toți la post.' : share >= 0.7 ? 'Aproape toți la post.' : share >= 0.4 ? 'Câteva posturi tac.' : 'Multe posturi tac.';
+    setChip('azi', {state: onCount ? 'on' : 'off', lastAt: d.updated_at}, onCount ? `${onCount} DIN ${total} LA POST` : 'FĂRĂ SEMNAL');
+
+    const kcalTarget = num(t.kcalTarget);
+    const ratie = h('a', {href: '#ratie', class: 'card tile-hero'},
+      h('div', {class: 'tile-top'}, monoLabel('RAȚIE'), icon('ratie', 18, 'dimmed')),
+      h('div', {class: 'tile-ring'},
+        ring(kcalTarget ? (t.kcal || 0) / kcalTarget : 0, 112, 10, 'url(#g-amber)', h('div', null, h('b', {text: fmt.int(t.kcal || 0)}), h('small', {text: kcalTarget ? 'din ' + fmt.int(kcalTarget) : 'kcal'})))),
+      h('div', {class: 'macro-row'}, macro('P', t.protein), macro('C', t.carbs), macro('G', t.fat)),
+      h('span', {class: 'tile-foot', text: t.meals ? plural(t.meals, 'masă', 'mese') + ' azi' : 'Nicio masă azi'}));
+    const mars = h('a', {href: '#mars', class: 'card tile-hero'},
+      h('div', {class: 'tile-top'}, monoLabel('MARȘ'), icon('mars', 18, 'dimmed')),
+      h('div', {class: 'tile-big'}, hero(fmt.int(t.moveMin || 0), 'min')),
+      h('div', {class: 'tile-pair'}, h('span', null, h('b', {text: fmt.dec(t.km || 0, 1)}), ' km'), h('span', null, h('b', {text: fmt.int(t.workouts || 0)}), ' ', (t.workouts === 1 ? 'antrenament' : 'antrenamente'))),
+      h('span', {class: 'tile-foot', text: t.moveMin ? 'Mișcarea de azi' : 'Încă nicio tură azi'}));
+    let somn;
+    if (night) {
+      const p = fmt.durParts(night.minutes);
+      somn = h('a', {href: '#somn/' + encodeURIComponent(night.id), class: 'card tile-hero tile-night'},
+        h('div', {class: 'tile-top'}, monoLabel('STINGEREA'), icon('moon', 18, 'dimmed')),
+        h('div', {class: 'tile-big'}, hero(String(p.h), 'h'), hero(String(p.m).padStart(2, '0'), 'min')),
+        h('div', {class: 'tile-pair'}, h('span', null, 'scor ', h('b', {text: fmt.int(night.score)})), h('span', {text: fmt.time(night.startAt) + ' → ' + fmt.time(night.endAt)})),
+        h('span', {class: 'tile-foot', text: 'Noaptea trecută'}));
+    } else {
+      somn = h('a', {href: '#somn', class: 'card tile-hero tile-night'}, h('div', {class: 'tile-top'}, monoLabel('STINGEREA'), icon('moon', 18, 'dimmed')),
+        h('div', {class: 'tile-big'}, hero('—')), h('span', {class: 'tile-foot', text: 'Nicio noapte înregistrată'}));
+    }
+    const side = h('div', {class: 'azi-side'}, mascot({size: 150, state: share === 1 ? 'happy' : !onCount ? 'thinking' : 'idle', hat: 'helmet', bubble}), warmQuote('general', 3));
+    const links = h('div', {class: 'links'}, (d.links || []).map(l => linkTile(l)));
+    fill(Azi.body, 
+      h('div', {class: 'azi-grid'}, h('div', {class: 'azi-tiles'}, ratie, mars, somn), side),
+      h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Legături'}), monoLabel(fmt.day(Date.now()).toUpperCase())),
+      links);
+  },
+  reset() { Azi.data = null; if (Azi.body) delete Azi.body.dataset.loaded; }
+};
+function macro(letter, grams) { return h('span', {class: 'macro'}, h('i', {text: letter}), h('b', {text: fmt.int(grams || 0)}), 'g'); }
+function linkTile(l) {
+  const x = SECTION[l.key] || SECTION.cont, label = LINK_LABELS[l.key] || x.nav;
+  const when = l.state === 'off' || !l.lastAt ? (l.state === 'on' ? 'la post' : 'fără semnal') : (l.state === 'on' ? 'la post · ' : 'tăcut · ') + fmt.agoShort(l.lastAt);
+  return h('a', {href: '#' + (SECTION[l.key] ? l.key : 'cont'), class: 'link-tile ' + (l.state || 'off')},
+    h('span', {class: 'link-ic'}, icon(x.icon, 20)),
+    h('span', {class: 'link-name', text: label}),
+    h('span', {class: 'link-state'}, h('i', {class: 'dot ' + (l.state || 'off')}), h('span', {text: when})),
+    num(l.count) !== null && l.count > 0 ? h('span', {class: 'link-count', text: fmt.int(l.count)}) : null);
+}
+Site.register('azi', Azi);
