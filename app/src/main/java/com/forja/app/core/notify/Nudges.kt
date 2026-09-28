@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Process
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
@@ -14,11 +15,14 @@ import androidx.work.WorkerParameters
 import com.forja.app.ForjaApp
 import com.forja.app.core.data.db.PlaceEntity
 import com.forja.app.navigation.Route
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeUnit
 
 /**
@@ -44,6 +48,15 @@ object Nudges {
                 }.distinctUntilChanged().collect { Bedtime.sync(app) }
             } catch (_: Exception) { }
         }
+        app.appScope.launch {
+            // „Zero după Revocă” (§D.15): orice semnătură văzută cât trăiește procesul (și una revocată între două ture
+            // ale lucrătorului) rămâne ținută minte; contractul nu mai e cerut niciodată pe acest telefon.
+            try { app.prefs.contractSignedAt.collect { at -> if (at > 0L) markSigned(app) } } catch (_: Exception) { }
+        }
+    }
+
+    private fun markSigned(c: Context) {
+        if (!NudgeStore.read(c).everSigned) NudgeStore.update(c) { it.copy(everSigned = true) }
     }
 
     /** Lucrătorul orar: unic, KEEP (nu se reprogramează la fiecare pornire, cum făcea 4.3 cu REPLACE). */
@@ -80,7 +93,7 @@ object Nudges {
             if (r.lastOpen == 0L) r.copy(lastOpen = now) else r
         }
         if (NudgeRules.isQuiet(clock.hour, clock.minute)) return
-        deliverHeld(app, now)
+        deliverHeld(app, now, post = notifOn(app))
         if (!togglesOn(app) || appInForeground(app)) return
         if (now - state.lastOpen < NudgeRules.OPEN_QUIET_MS) return
 
@@ -166,20 +179,34 @@ object Nudges {
             if (signedAt == 0L && !s.everSigned) add("contract")
             if (signedAt > 0L) {
                 val loc = has(Manifest.permission.ACCESS_FINE_LOCATION) || has(Manifest.permission.ACCESS_COARSE_LOCATION)
-                if (loc && !has(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) add("bg_location")
+                // „Tot timpul” există doar de la Android 10 (API 29); pe 8/9 locația dată e deja și în fundal.
+                if (Build.VERSION.SDK_INT >= 29 && loc && !has(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) add("bg_location")
                 if (wantsContacts) add("contacts")
             }
         }
-        return subjects.firstOrNull { NudgeRules.permissionDue(s, it, now) }
+        val due = subjects.filter { NudgeRules.permissionDue(s, it, now) }
+        // Contractul se cere doar unui cont care nu l-a semnat niciodată (nici revocat înainte de 4.4, nici pe alt
+        // telefon): users/{uid}.contract lipsește. La îndoială (fără rețea), tăcem.
+        return due.firstOrNull { it != "contract" || neverSignedOnAccount(app) }
+    }
+
+    private suspend fun neverSignedOnAccount(app: ForjaApp): Boolean {
+        val uid = app.auth.currentUid ?: return false
+        val doc = try {
+            withTimeoutOrNull(5_000L) { FirebaseFirestore.getInstance().collection("users").document(uid).get().await() }
+        } catch (_: Exception) { null } ?: return false
+        if (doc.contains("contract")) { markSigned(app); return false }
+        return true
     }
 
     private suspend fun contactsWanted(app: ForjaApp): Boolean =
         try { app.prefs.contactsOn.first() } catch (_: Exception) { false }
 
-    /** Mesajele reținute în orele de liniște (camarad nou) pleacă după 08:00, dacă nu s-au învechit. */
-    private fun deliverHeld(app: ForjaApp, now: Long) {
+    /** Mesajele reținute în orele de liniște (camarad nou) pleacă după 08:00, dacă nu s-au învechit și „Notificări” e pornit. */
+    private fun deliverHeld(app: ForjaApp, now: Long, post: Boolean) {
         var held: List<HeldRec> = emptyList()
         NudgeStore.update(app) { held = it.held; if (it.held.isEmpty()) it else it.copy(held = emptyList()) }
+        if (!post) return
         for (h in held) {
             if (now - h.at > NudgeRules.HELD_TTL_MS) continue
             val ctx = NudgeContext.entries.firstOrNull { it.name == h.ctx } ?: continue
@@ -193,6 +220,12 @@ object Nudges {
     private suspend fun togglesOn(app: ForjaApp): Boolean = try {
         app.prefs.notifOn.first() && app.prefs.nudgesOn.first()
     } catch (_: Exception) { true }
+
+    /**
+     * „Notificări” din Profil e comutatorul general al Cascăi: oprit, nu pleacă nimic de aici — nici camarad nou, nici
+     * raportul nopții, nici culcarea. Rămân doar notificările serviciilor pornite de tine (sincronizare, GO, Stingerea).
+     */
+    private suspend fun notifOn(app: ForjaApp): Boolean = try { app.prefs.notifOn.first() } catch (_: Exception) { true }
 
     /** Cu FORJA pe ecran, Casca tace. (Serviciul de sincronizare nu contează ca „pe ecran”.) */
     private fun appInForeground(c: Context): Boolean = try {
@@ -239,6 +272,7 @@ object Nudges {
 
     /** Raportul nopții e gata (SleepUpload). Mereu „estimat”; pe ecranul de blocare doar „Raportul nopții e gata.” */
     suspend fun sleepReport(app: ForjaApp, view: SleepView) {
+        if (!notifOn(app)) return
         val now = System.currentTimeMillis()
         val best = try {
             val nights = app.db.sleepDao().finishedSince(now - 7 * 24 * 3600_000L).first()
@@ -272,6 +306,7 @@ object Nudges {
     fun newFriend(app: ForjaApp, uid: String, name: String) {
         app.appScope.launch {
             try {
+                if (!notifOn(app)) return@launch
                 val d = NudgeSnapshot.clock().copy(friend = FriendView(uid, name, null, null))
                 postEvent(app, NudgeContext.NewFriend, d, specFor(NudgeContext.NewFriend, NotifIds.newFriend(uid)), Channels.SOCIAL)
             } catch (_: Exception) { }
@@ -282,7 +317,7 @@ object Nudges {
     fun focusDone(app: ForjaApp, sessionMin: Int, newTrees: Int) {
         app.appScope.launch {
             try {
-                if (!app.prefs.notifOn.first()) return@launch
+                if (!notifOn(app)) return@launch
                 val forest = try { app.prefs.focusForest.first() } catch (_: Exception) { Triple(0, 0, 0) }
                 val d = NudgeSnapshot.basics(app).copy(
                     focusSessionMin = sessionMin, focusSessionTrees = newTrees, treesToday = forest.first
@@ -294,13 +329,14 @@ object Nudges {
 
     /** Mese găsite în pozele de azi (GalleryScan, strict la cerere). */
     suspend fun mealsFound(app: ForjaApp, count: Int) {
+        if (!notifOn(app)) return
         val d = NudgeSnapshot.basics(app).copy(mealsFound = count)
         postEvent(app, NudgeContext.MealLog, d, specFor(NudgeContext.MealLog, NotifIds.MEALS_FOUND), Channels.COACH)
     }
 
-    /** Culcarea (Bedtime, din alarmă): trece prin orele de liniște, doar cu „Amintește-mi de somn” pornit. */
+    /** Culcarea (Bedtime, din alarmă): trece prin orele de liniște, doar cu „Amintește-mi de somn” și „Notificări” pornite. */
     suspend fun bedtime(app: ForjaApp, minutesToBedtime: Int) {
-        if (!Notifier.canPost(app, Channels.COACH)) return
+        if (!notifOn(app) || !Notifier.canPost(app, Channels.COACH)) return
         val now = System.currentTimeMillis()
         val state = NudgeStore.read(app)
         val data = NudgeSnapshot.read(app, now).copy(minutesToBedtime = minutesToBedtime)
