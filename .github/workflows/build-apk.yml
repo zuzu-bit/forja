@@ -7,6 +7,10 @@ on:
         description: "Publică APK-ul la Releases (apk-latest). false = doar build de verificare (artifact)."
         type: boolean
         default: true
+      diag_only:
+        description: "Doar diagnostic: jurnalul serverului + furnizorii AI (fără deploy, fără build)."
+        type: boolean
+        default: false
   push:
     branches: [ main ]
     paths:
@@ -43,7 +47,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Diagnostic server (jurnal + furnizori AI)
+        if: ${{ inputs.diag_only }}
+        env:
+          ACC: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          URL="https://forja-api.forja-22e7ea2d.workers.dev"
+          echo "== /v1/diag =="
+          curl -s --max-time 120 "$URL/v1/diag?models=0" | jq . || true
+          echo "== jurnal (ultimele cereri) =="
+          curl -s --max-time 60 -H "X-Admin: $ACC" "$URL/admin/api/overview" | jq '.log // .' || true
       - name: Deploy serverul central FORJA (dacă secretele există)
+        if: ${{ !inputs.diag_only }}
         id: deploy
         run: |
           report_problem() {
@@ -211,7 +226,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: deploy-api
-    if: always()
+    if: always() && !inputs.diag_only
     steps:
       - name: Checkout
         uses: actions/checkout@v4
