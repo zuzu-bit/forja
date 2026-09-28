@@ -1,18 +1,34 @@
 # BRIEF FORJA — de dat lui Claude într-o sesiune nouă („continuă FORJA după brief”)
 
-## Stare (27 septembrie 2026, seara) — FORJA 4.1 (cod 62)
+## Stare (28 septembrie 2026) — FORJA 4.3 (cod 65)
 
-- Sursa reală, completă și construibilă e pe branch-ul `claude/quirky-hamilton-7nbpi8` (GitHub `zuzu-bit/forja`). `main` a rămas la v3.7;
-  merge-ul în `main` e opțional (după merge, orice push pe `main` construiește și publică singur).
-- **APK-ul** e publicat la Releases → „FORJA — ultimul APK” (Actions `build-apk.yml`, rulat manual pe branch cu `publish=true`).
-  Pachet `com.forja.app.research`, semnat cu `app/debug.keystore` (același semnatar ca 3.7-online.xx) → se instalează PESTE aplicația de pe
-  telefon; Room migrează 5→6→7→8 fără pierderi. Versiuni: 4.0 (cod 60) → 4.0.1 (61, hartă OSM provizorie) → 4.1 (62, tot ce e mai jos).
-- **Serverul aplicației** (`server/worker.js`, forja-api pe Cloudflare, gratuit): routerul de AI `server/ai-router.mjs` cu ordinea
-  Gemini (cheie gratuită) → Groq (cheie gratuită) → Claude/OpenAI (doar dacă ar exista chei plătite) → Cloudflare Workers AI; contoare de
-  limită zilnică pe model, trecere automată la următorul furnizor; `/v1/diag` arată furnizorii configurați (fără chei). Secretele GitHub:
-  `GEMINI_API_TOKEN` (CI acceptă și `GEMINI_API_KEY`), `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN`. Decizia Lanei: FĂRĂ bani, FĂRĂ server local.
-- **Site-ul** (`https://forja-insights.forja-22e7ea2d.workers.dev`) se publică din CI la orice push pe `main`/`claude/**` care atinge `server/**`;
-  `/health` versiunea 17 (`contacts:2`, `explore_sync:1`, `content_ai:2`).
+- Sursa: branch-ul `claude/quirky-hamilton-7nbpi8` (GitHub `zuzu-bit/forja`); `main` a rămas la v3.7 (merge opțional).
+- **APK**: Releases → „FORJA — ultimul APK” (`apk-latest`), din Actions `build-apk.yml` rulat pe branch cu `publish=true`.
+  Versiuni: 4.1 (62) → 4.2 (63, contract de securitate, nutriție BitePal, mascotă animată) → 4.2.1 (64, Nutriție fără „Setări”,
+  poză la „Scanează cod”) → **4.3 (65, Inventarul)**. Pachet `com.forja.app.research`, semnat cu `app/debug.keystore`.
+- **`build-apk.yml` are moduri** (intrări la Run workflow, fiecare cu coada lui): `publish` (build + release), `diag_only` (jurnalul
+  serverului + test cap-coadă /v1/meal și /v1/organize/clusters), `shorts` (construiește FORJA Shorts în R2), `ui_shots` (capturi
+  Roborazzi → release `ui-shots-latest`, `ui-shots.zip`). `shorts.yml` și `ui-shots.yml` se pot porni direct abia după merge în `main`.
+- **Serverul** (forja-api): Gemini acordat pe familii (3.x flash → gândire „low”, flash-lite → „minimal”), 503 → o reîncercare,
+  429 → răcire 65 s pe model; la mese ordinea e 3.8-flash → 3.5-flash-lite (rapid) → restul flash-urilor; `/v1/organize/clusters`
+  (numele dosarelor, ~3 s); `/media/*` cu Range real. Site-ul (forja-insights) folosește Gemini viu (3.5-flash-lite + aliasuri).
+- **Design**: prototipul clicabil al Inventarului (Design canvas, privat, al Lanei) https://claude.ai/artifact/WwJAXGoqu3ub28Brjj9MUP ;
+  specificația `DESIGN-4.3.md` stă în scratchpad (nu persistă) — regulile ei: după prima folosire cel mult un rând ajutător pe ecran,
+  explicațiile trăiesc în ghidajul de la prima vizită (`CoachMarks`) și în punctul „i”.
+
+## Ce s-a livrat în 4.3 (peste 4.2.1)
+
+1. **Inventarul** (ruta CLEANUP, `feature/inventory/*`, motorul `core/inventory/*`): pozele se grupează pe EVENIMENTE (pauză > 4 h sau
+   salt > 25 km), AI-ul botează dosarele („Munte · Bucegi”, „Nuntă · aug 2023”), dosarul editabil „De aruncat” (motive: duplicat,
+   neclară, captură veche, mică, AI; „Păstrează” / „Mută în…”), aplicarea mută în `Pictures/FORJA/<dosar>` și trimite la gunoi
+   (recuperabil 30 de zile). Analiza merge în fundal (WorkManager, notificare), pastila de progres apare pe tot ecranul.
+2. **Cât aștepți**: Scroll (FORJA Shorts: FRONT + RECRUȚI, `core/media/Shorts.kt`, `feature/shorts/*`, pipeline `scripts/shorts/`),
+   Sport după stare (4 stări, antrenament pe intervale cu figuri animate, salvat ca sesiune), Muzică („Când tace muzica, inventarul e
+   gata”: `core/music/*`, acces prin „Acces la notificări”, fără citirea notificărilor, „Oprește la final”, „Pe hartă” pentru prieteni).
+3. **Dieta de text** pe Profil, Panou, Somn, Focus, Nutriție, Locuri, Telefonul meu, Cont, Contract; ghidaj la prima vizită pe fiecare
+   ecran; Profil → „Reia ghidajul”; Profil are câmpul pentru numărul de telefon.
+4. **Contract v2** („Cine vede” include ce asculți, cu „Pe hartă” pornit) → se semnează din nou; **Echipare v3** cu rândul „Muzică”.
+5. **Verificare vizuală**: `app/src/test/java/com/forja/app/screenshots/*` (Inventar S1–S6, Sport, Muzică, ghidaj, Nutriție).
 
 ## Ce s-a livrat în 4.1 (peste 4.0 + pasul 2)
 
@@ -38,9 +54,10 @@
 ## Pași manuali pentru Lana (o singură dată)
 
 1. Firebase → Firestore → Rules: lipește `firestore.rules` → Publish (v4.1 adaugă `places.visits`; v4.0 a adăugat `places`, `familyLoc`).
-2. (Opțional) Phone Auth în consolă, după `server/PARTNERS_CONTACTS.md`, dacă vrei numere verificate prin SMS; fără el merge „declarat”.
-3. (Opțional) Merge `claude/quirky-hamilton-7nbpi8` → `main`.
-4. Clipurile originale în bucketul `forja-media` (`MEDIA.md`).
+2. (Opțional, recomandat) Cheia gratuită Pexels pentru clipuri video reale în Scroll (pisici incluse): pexels.com/api → GitHub → Settings →
+   Secrets and variables → Actions → secretul `PEXELS_API_KEY`, apoi `build-apk.yml` cu `shorts=true`. Fără ea: 12 clipuri FRONT din pozele FLUX.
+3. (Opțional) Phone Auth în consolă, după `server/PARTNERS_CONTACTS.md`, dacă vrei numere verificate prin SMS; fără el merge „declarat”.
+4. (Opțional) Merge `claude/quirky-hamilton-7nbpi8` → `main`.
 
 ## Cum se lucrează (sesiunea următoare)
 
@@ -53,8 +70,7 @@
 
 ## Ce urmează
 
-1. Test real pe telefon (Lana): harta 3D (dale, teritorii, prieteni, GO), agenda (număr + potrivire cu un al doilea telefon), nutriția v2,
-   o noapte de somn cu urcare și raport, curățenia cu PDF — și lista de bug-uri. Lucruri de verificat pe dispozitiv sunt listate în
-   rapoartele pachetelor (SurfaceView în tranziții, atribuirea OpenFreeMap, cadența MapLibre pe telefonul ei).
-2. Contul de conversație/chat și muzica din Bump — în afara scopului; colectabile/„dopamină” pe hartă — de decis.
+1. Test real pe telefon (Lana) al lui 4.3: Inventarul pe galeria ei (timp, nume de dosare, „De aruncat”, aplicarea cu dialogurile
+   sistemului, > 500 de poze), cele trei moduri de așteptare, muzica pe hartă cu un al doilea telefon, ghidajele.
+2. Site: vederea „ca în The Sims” (persoana a treia) și dosarele Inventarului pe site — cerute de Lana, încă nefăcute.
 3. Curățare: branch-urile GPT (`research/*`, `ux/*`, `delivery/*`, PR #17–#20) pot fi închise.
