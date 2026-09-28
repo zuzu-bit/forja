@@ -36,6 +36,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,6 +54,9 @@ import com.forja.app.core.music.Music
 import com.forja.app.core.music.MusicSource
 import com.forja.app.core.music.MusicStarter
 import kotlinx.coroutines.delay
+
+/** Spațiul neîntrerupt: „62,5 KG”, „4 SERII” nu se despart la capăt de rând. */
+private const val NBSP = '\u00A0'
 
 /** Ghidajul primei vizite: rândul „Muzică”, spus o singură dată. */
 private val ANTRENAMENT_STEPS = listOf(
@@ -99,16 +103,25 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
         }
     }
 
-    // Ghidajul primei vizite arată rândul „Muzică”, care stă sub pliu (pe S23 mereu): cât ghidajul e nevăzut, hubul
-    // derulează o dată până la rând, ca ținta să apară în primele 3 s (altfel ghidajul nu pornește deloc).
+    // Ghidajul primei vizite arată rândul „Muzică”. Rândul stă deasupra pliului (sub citat; pe S23 se termină la ~470 dp
+    // din 696, iar bara de file acoperă doar de la 576 în jos): hubul derulează o dată până la el numai dacă un font
+    // mărit îi împinge marginea de jos sub bara de file (cei 120 dp de jos), ca ținta să apară întreagă în primele 3 s.
     val scroll = rememberScrollState()
     val guideSeen by remember { Tutorial.seen(context, "antrenament") }.collectAsState(initial = true)
-    var musicRowCenter by remember { mutableFloatStateOf(-1f) }
+    var musicRowTop by remember { mutableFloatStateOf(-1f) }
+    var musicRowBottom by remember { mutableFloatStateOf(-1f) }
     var viewport by remember { mutableIntStateOf(0) }
-    LaunchedEffect(guideSeen, exercises.size, musicRowCenter > 0f && viewport > 0) {
-        if (guideSeen || musicRowCenter <= 0f || viewport <= 0) return@LaunchedEffect
+    val density = LocalDensity.current
+    // Pozițiile rândului sunt în conținut, sub bara de stare: pe ecran (nederulat) rândul stă mai jos cu înălțimea ei.
+    val statusTop = WindowInsets.statusBars.getTop(density)
+    val tabBarReserve = with(density) { 120.dp.toPx() }
+    LaunchedEffect(guideSeen, plans.size, exercises.size, musicRowBottom > 0f && viewport > 0) {
+        if (guideSeen || musicRowBottom <= 0f || viewport <= 0) return@LaunchedEffect
         delay(250)
-        val target = (musicRowCenter - viewport * 0.45f).toInt().coerceIn(0, scroll.maxValue)
+        // Citite după pauză: planurile și exercițiile venite între timp au așezat deja rândul.
+        if (statusTop + musicRowBottom <= viewport - tabBarReserve) return@LaunchedEffect
+        val center = statusTop + (musicRowTop + musicRowBottom) / 2f
+        val target = (center - viewport * 0.45f).toInt().coerceIn(0, scroll.maxValue)
         if (target > scroll.value) scroll.animateScrollTo(target)
     }
 
@@ -128,7 +141,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
                 onOpenSheet = { sheetOpen = true }
             ),
             scroll = scroll,
-            onMusicRow = { musicRowCenter = it },
+            onMusicRow = { top, bottom -> musicRowTop = top; musicRowBottom = bottom },
             onViewport = { viewport = it }
         )
     }
@@ -165,8 +178,9 @@ data class HubActions(
 )
 
 /**
- * Hubul Antrenament, fără ViewModel (și pentru capturi): antetul, planurile, citatul, exercițiile de azi, rândul
- * „Muzică” și „Începe sesiunea”. [onMusicRow] = mijlocul rândului „Muzică” în conținut (pentru ghidaj).
+ * Hubul Antrenament, fără ViewModel (și pentru capturi): antetul, planurile, citatul, rândul „Muzică” (deasupra
+ * pliului și pe S23: muzica pornește odată cu sesiunea, deci se vede de la intrare), exercițiile de azi și „Începe
+ * sesiunea”. [onMusicRow] = marginea de sus și cea de jos ale rândului „Muzică” în conținut, în px (pentru ghidaj).
  */
 @Composable
 fun WorkoutHubContent(
@@ -178,7 +192,7 @@ fun WorkoutHubContent(
     actions: HubActions,
     modifier: Modifier = Modifier,
     scroll: ScrollState = rememberScrollState(),
-    onMusicRow: (Float) -> Unit = {},
+    onMusicRow: (top: Float, bottom: Float) -> Unit = { _, _ -> },
     onViewport: (Int) -> Unit = {}
 ) {
     Column(
@@ -257,6 +271,22 @@ fun WorkoutHubContent(
         Spacer(Modifier.height(18.dp))
         WarmQuote(Tone.ofDay(Tone.workout), Modifier.padding(horizontal = 20.dp))
 
+        // Muzica sesiunii: sub citat, ca să nu cadă sub pliu (sub cele 4 exerciții nu se vedea pe S23).
+        Spacer(Modifier.height(18.dp))
+        WorkoutMusicRow(
+            state = music,
+            disc = disc,
+            onToggle = actions.onMusicSwitch,
+            onOpenSheet = actions.onOpenSheet,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .onGloballyPositioned {
+                    val y = it.positionInParent().y
+                    onMusicRow(y, y + it.size.height)
+                }
+        )
+
         Spacer(Modifier.height(22.dp))
         val plan = plans.getOrNull(planIdx)
         Row(
@@ -295,9 +325,13 @@ fun WorkoutHubContent(
                         Column(Modifier.weight(1f)) {
                             Text(e.name, style = BodyStrong.copy(fontSize = 14.sp))
                             Spacer(Modifier.height(3.dp))
+                            // Spații neîntrerupte în fiecare grup („2×14 KG” nu se mai rupe): dacă nu încape, rândul se
+                            // frânge doar la „·”. Spațierea 0,06 em îl ține pe un rând la 158 dp (S23, 26 de semne).
                             Text(
-                                "${e.sets} ${if (e.sets == 1) "SERIE" else "SERII"} × ${e.reps} REP · ${e.load}${if (e.loadLabel == "KG") " KG" else ""}",
-                                style = monoLabel(9, 0.10f).copy(color = TextSecondary)
+                                "${e.sets}$NBSP${if (e.sets == 1) "SERIE" else "SERII"}$NBSP×$NBSP${e.reps}${NBSP}REP · " +
+                                    e.load.replace(' ', NBSP) + (if (e.loadLabel == "KG") "${NBSP}KG" else ""),
+                                style = monoLabel(9, 0.06f).copy(color = TextSecondary),
+                                maxLines = 2
                             )
                             Spacer(Modifier.height(3.dp))
                             Text("AJUSTEAZĂ CU CREIONUL", style = monoLabel(8, 0.12f).copy(color = Accent2))
@@ -330,17 +364,6 @@ fun WorkoutHubContent(
         }
 
         Spacer(Modifier.height(8.dp))
-        WorkoutMusicRow(
-            state = music,
-            disc = disc,
-            onToggle = actions.onMusicSwitch,
-            onOpenSheet = actions.onOpenSheet,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .onGloballyPositioned { onMusicRow(it.positionInParent().y + it.size.height / 2f) }
-        )
-        Spacer(Modifier.height(14.dp))
         PrimaryButton(
             text = "Începe sesiunea",
             onClick = actions.onStart,

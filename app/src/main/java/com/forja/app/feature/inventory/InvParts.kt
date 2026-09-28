@@ -415,7 +415,7 @@ internal fun TopoLines(modifier: Modifier = Modifier) {
 
 /**
  * Coloană cu conținut sus și acțiunea jos: pe ecrane înalte butonul stă lipit de marginea de jos (zona degetului),
- * pe cele mici totul derulează (nimic nu se taie).
+ * pe cele mici totul derulează (nimic nu se taie). Cu [bottom] null, partea de jos lipsește cu tot cu spațiul ei.
  */
 @Composable
 internal fun TopBottomColumn(
@@ -423,7 +423,7 @@ internal fun TopBottomColumn(
     padding: PaddingValues = PaddingValues(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 28.dp),
     gap: Dp = 14.dp,
     top: @Composable ColumnScope.() -> Unit,
-    bottom: @Composable ColumnScope.() -> Unit
+    bottom: (@Composable ColumnScope.() -> Unit)?
 ) {
     BoxWithConstraints(modifier) {
         val minH = maxHeight
@@ -436,7 +436,7 @@ internal fun TopBottomColumn(
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(gap), content = top)
-            Column(Modifier.padding(top = gap), verticalArrangement = Arrangement.spacedBy(gap), content = bottom)
+            if (bottom != null) Column(Modifier.padding(top = gap), verticalArrangement = Arrangement.spacedBy(gap), content = bottom)
         }
     }
 }

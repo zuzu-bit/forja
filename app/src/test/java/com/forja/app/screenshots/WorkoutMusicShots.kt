@@ -25,7 +25,6 @@ import com.forja.app.core.designsystem.components.CoachMarksHost
 import com.forja.app.core.designsystem.components.CoachStep
 import com.forja.app.core.designsystem.Surface1
 import com.forja.app.core.designsystem.Surface2
-import com.forja.app.core.designsystem.components.PrimaryButton
 import com.forja.app.core.designsystem.components.SectionLabel
 import com.forja.app.feature.workout.DiscUi
 import com.forja.app.feature.workout.HubActions
@@ -47,7 +46,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Muzica la Antrenament (4.4): rândul „Muzică” din hub (deasupra lui „Începe sesiunea”), foaia Mix/Noi/Vechi/Apreciate,
+ * Muzica la Antrenament (4.4): rândul „Muzică” din hub (sub citat, deasupra listei de azi), foaia Mix/Noi/Vechi/Apreciate,
  * sesiunea live cu discul pe video și banda de sub inelul pauzei — pe telefonul de referință și pe S23.
  */
 abstract class WorkoutMusicShotsBase(private val suffix: String) {
@@ -59,16 +58,15 @@ abstract class WorkoutMusicShotsBase(private val suffix: String) {
     private val live = LiveState(exercises = exercises, planName = "Forță", exPos = 0, setNo = 2, startedAt = 1L, totalSetsDone = 1)
     private val rest = live.copy(resting = true, restLeft = 62)
 
+    /** Rândul „Muzică” cum stă în hub: sub citat, deasupra lui „Azi · Forță” și a primului exercițiu. */
     @Composable
     private fun Hub(state: WorkoutMusicState, disc: DiscUi = WorkoutMusicSamples.discIdle) {
         Column(Modifier.fillMaxWidth().padding(20.dp)) {
+            WorkoutMusicRow(state, disc, onToggle = {}, onOpenSheet = {}, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(22.dp))
             SectionLabel("Azi · Forță")
             Spacer(Modifier.height(10.dp))
             Box(Modifier.fillMaxWidth().height(86.dp).clip(RoundedCornerShape(5.dp)).background(Surface1))
-            Spacer(Modifier.height(18.dp))
-            WorkoutMusicRow(state, disc, onToggle = {}, onOpenSheet = {}, modifier = Modifier.fillMaxWidth())
-            Spacer(Modifier.height(14.dp))
-            PrimaryButton("Începe sesiunea", onClick = {}, modifier = Modifier.fillMaxWidth())
         }
     }
 
@@ -92,23 +90,28 @@ abstract class WorkoutMusicShotsBase(private val suffix: String) {
         ExerciseEntity(4, "Fandări", 3, 12, "corp", "CORP", "", "", "")
     )
 
-    // ───────────── Hubul întreg (unde cade rândul „Muzică” față de pliu) ─────────────
+    // ───────────── Hubul întreg (rândul „Muzică” trebuie să fie deasupra pliului, și pe S23) ─────────────
     @Test fun hubFull() = shot("workout_hub$suffix") {
         WorkoutHubContent(plans, 0, today, WorkoutMusicSamples.music, WorkoutMusicSamples.discIdle, HubActions())
     }
 
-    /** Prima vizită: hubul derulat până la rând (cum face WorkoutScreen cât ghidajul e nevăzut), cu ghidajul pe el. */
+    /** Prima vizită: ghidajul pe rând, fără derulare (rândul e deja în primul ecran; se derulează doar la font mărit). */
     @Test fun hubGuide() = shot("workout_hub_guide$suffix") {
         CoachMarksHost(
             steps = listOf(CoachStep("antrenament.muzica", "Muzica ta pornește odată cu sesiunea.", MascotState.Happy)),
             active = true,
             onFinish = {}
         ) {
-            WorkoutHubContent(
-                plans, 0, today, WorkoutMusicSamples.music, WorkoutMusicSamples.discIdle, HubActions(),
-                scroll = rememberScrollState(Int.MAX_VALUE)
-            )
+            WorkoutHubContent(plans, 0, today, WorkoutMusicSamples.music, WorkoutMusicSamples.discIdle, HubActions())
         }
+    }
+
+    /** Hubul derulat până jos: ultimul exercițiu și „Începe sesiunea”. */
+    @Test fun hubBottom() = shot("workout_hub_bottom$suffix") {
+        WorkoutHubContent(
+            plans, 0, today, WorkoutMusicSamples.music, WorkoutMusicSamples.discIdle, HubActions(),
+            scroll = rememberScrollState(Int.MAX_VALUE)
+        )
     }
 
     // ───────────── Hub: rândul „Muzică” ─────────────
@@ -142,8 +145,11 @@ abstract class WorkoutMusicShotsBase(private val suffix: String) {
             WorkoutMusicSamples.discIdle, WorkoutMusicSamples.discStarting, WorkoutMusicSamples.discPlaying,
             WorkoutMusicSamples.discPaused, WorkoutMusicSamples.discLiked, WorkoutMusicSamples.discNeedsTap, WorkoutMusicSamples.discFailed
         )
+        // 7 discuri de 48 dp nu încap pe un rând (408 dp > 353 / 320): două rânduri, fiecare fază întreagă.
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { all.forEach { MusicDisc(it, 48.dp, overVideo = true) } }
+            all.chunked(4).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { row.forEach { MusicDisc(it, 48.dp, overVideo = true) } }
+            }
             all.forEach { RestMusicStrip(it, {}, {}, {}, {}) }
         }
     }

@@ -26,6 +26,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -222,37 +225,33 @@ fun WorkoutLiveContent(live: LiveState, elapsedSec: Long, disc: DiscUi, showMusi
         Spacer(Modifier.height(18.dp))
 
         if (!live.resting) {
-            // Numerale mari: SERIA n/total · REPETĂRI · SARCINĂ — pe un singur rând, fără rupere.
-            Row(
+            // Numerale mari: SERIA n/total · REPETĂRI · SARCINĂ — pe un singur rând, fără rupere. Etichetele stau pe un
+            // rând, cifrele pe aceeași linie de bază: sarcina lungă („62,5”, 26 sp) nu mai coboară eticheta KG.
+            val spokenLoad = if (ex.load.equals(ex.loadLabel, ignoreCase = true)) ex.load else "${ex.load} ${ex.loadLabel.lowercase()}"
+            Column(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
-                verticalAlignment = Alignment.Bottom
+                    .padding(horizontal = 20.dp)
+                    .clearAndSetSemantics { contentDescription = "Seria ${live.setNo} din ${ex.sets}, ${ex.reps} repetări, $spokenLoad" }
             ) {
-                Column(Modifier.weight(1f)) {
-                    SectionLabel("Seria")
-                    Row(verticalAlignment = Alignment.Bottom) {
-                        Text("${live.setNo}", style = heroNumeral(42), maxLines = 1, softWrap = false)
-                        Text(
-                            "/${ex.sets}",
-                            style = heroNumeral(20).copy(color = TextDim),
-                            maxLines = 1,
-                            modifier = Modifier.padding(bottom = 5.dp)
-                        )
+                Row(Modifier.fillMaxWidth()) {
+                    SectionLabel("Seria", Modifier.weight(1f))
+                    SectionLabel("Repetări", Modifier.weight(1f))
+                    SectionLabel(ex.loadLabel, Modifier.weight(1.15f))
+                }
+                Row(Modifier.fillMaxWidth()) {
+                    Row(Modifier.weight(1f).alignByBaseline()) {
+                        Text("${live.setNo}", style = heroNumeral(42), maxLines = 1, softWrap = false, modifier = Modifier.alignByBaseline())
+                        Text("/${ex.sets}", style = heroNumeral(20).copy(color = TextDim), maxLines = 1, modifier = Modifier.alignByBaseline())
                     }
-                }
-                Column(Modifier.weight(1f)) {
-                    SectionLabel("Repetări")
-                    Text("${ex.reps}", style = heroNumeral(42), maxLines = 1, softWrap = false)
-                }
-                Column(Modifier.weight(1.15f)) {
-                    SectionLabel(ex.loadLabel)
+                    Text("${ex.reps}", style = heroNumeral(42), maxLines = 1, softWrap = false, modifier = Modifier.weight(1f).alignByBaseline())
                     Text(
                         ex.load,
                         style = heroNumeral(if (ex.load.length > 3) 26 else 42),
                         maxLines = 1,
                         softWrap = false,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Clip
+                        overflow = TextOverflow.Clip,
+                        modifier = Modifier.weight(1.15f).alignByBaseline()
                     )
                 }
             }

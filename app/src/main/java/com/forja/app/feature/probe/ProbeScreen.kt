@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -41,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -259,7 +261,7 @@ internal fun ProbeContent(ui: ProbeUi, actions: ProbeActions, modifier: Modifier
             ui.sessions.forEachIndexed { i, s -> InfoLine(if (i == 0) "SESIUNI" else "", s) }
             if (!ui.access) {
                 Spacer(Modifier.height(10.dp))
-                MonoButton("Dă acces", onClick = actions.onAccess, color = Accent2)
+                ActionChip("Dă acces", onClick = actions.onAccess)
             }
         }
 
@@ -325,18 +327,25 @@ internal fun ProbeContent(ui: ProbeUi, actions: ProbeActions, modifier: Modifier
     }
 }
 
+/**
+ * O singură coloană de valori pentru ambele carduri: cardul de sus (padding 14) și rândurile treptelor (4 + 10) au
+ * aceeași margine, iar eticheta are aceeași lățime (încape „V_LIKED_PLAY” și la font mărit).
+ */
+private val LabelColumn = 108.dp
+
 @Composable
 private fun InfoLine(label: String, value: String, tint: Color = TextPrimary) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
-        Text(label, style = monoLabel(9, 0.12f).copy(color = TextDim), modifier = Modifier.width(96.dp).padding(top = 2.dp))
+        Text(label, style = monoLabel(9, 0.12f).copy(color = TextDim), modifier = Modifier.width(LabelColumn).padding(top = 2.dp))
         Text(value, style = BodyStrong.copy(fontSize = 13.sp, color = tint), maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 private fun RungRow(row: MusicProbe.Row, onRun: (() -> Unit)?, running: Boolean) {
-    Row(Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(row.rung.id, style = monoLabel(10, 0.06f).copy(color = TextPrimary), modifier = Modifier.width(118.dp))
+    // Rândul crește la două rânduri de rezultat („sărit · keyTarget:…” nu se mai taie în identificator).
+    Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(row.rung.id, style = monoLabel(10, 0.06f).copy(color = TextPrimary), modifier = Modifier.width(LabelColumn))
         val (text, color) = when (row.status) {
             MusicProbe.Status.WAITING -> "—" to TextDim
             MusicProbe.Status.RUNNING -> "rulează…" to Accent2
@@ -346,11 +355,35 @@ private fun RungRow(row: MusicProbe.Row, onRun: (() -> Unit)?, running: Boolean)
                 else -> Error
             }
         }
-        Text(text, style = BodySmall.copy(color = color), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Text(text, style = BodySmall.copy(color = color), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         if (onRun != null) {
             Spacer(Modifier.width(8.dp))
-            MonoButton("Probează", onClick = { if (!running) onRun() }, color = if (running) TextDim else Accent2)
+            ActionChip("Probează", onClick = onRun, enabled = !running)
         }
+    }
+}
+
+/**
+ * Butonul mic de acțiune al probei („Dă acces”, „Probează”): margine olive și fond olive stins, ca să se vadă că se
+ * apasă lângă „Pornește proba”; cât rulează proba, gri și fără atingere.
+ */
+@Composable
+private fun ActionChip(text: String, onClick: () -> Unit, enabled: Boolean = true) {
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        Modifier
+            .clip(shape)
+            .background(if (enabled) Accent.copy(alpha = 0.28f) else Surface2)
+            .border(1.dp, if (enabled) Accent2 else StrokeCardStrong, shape)
+            .then(if (enabled) Modifier.pressable(onClick) else Modifier)
+            .semantics {
+                role = Role.Button
+                if (!enabled) disabled()
+            }
+            .padding(vertical = 10.dp, horizontal = 14.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text, style = monoLabel(11, 0.10f).copy(color = if (enabled) OnAccent else TextDim), maxLines = 1)
     }
 }
 

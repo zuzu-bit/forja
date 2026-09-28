@@ -14,7 +14,8 @@ import org.robolectric.annotation.GraphicsMode
 /**
  * Ecranul Muzică din Inventar (S3c, 4.4): fiecare stare a pornirii, pe telefonul de referință și pe S23-ul Lanei.
  * Cântă · pe pauză · nimic arătat cu o carte audio alături (nu eroul) · Pornește… · Deschide Spotify · Nu a pornit ·
- * Play fără efect · cartea cântă · fără acces (liniște / se aude / Deschide Spotify).
+ * Play fără efect · cartea cântă · fără acces (liniște / se aude / Deschide Spotify) · cele mai pline stări (TOP +
+ * „Nu a pornit.”, „Deschide Spotify” + cartea care cântă).
  */
 abstract class MusicShotsBase(private val suffix: String) {
     private fun s3c(name: String, state: MusicUiState) = shot("music_s3c_$name$suffix") { MusicWaitContent(state, MusicActions()) }
@@ -29,6 +30,11 @@ abstract class MusicShotsBase(private val suffix: String) {
     @Test fun resumeStarting() = s3c("resume_starting", MusicWaitSamples.resumeStarting)
     @Test fun resumeFailed() = s3c("resume_failed", MusicWaitSamples.resumeFailed)
     @Test fun pausedNeedsTap() = s3c("paused_needs_tap", MusicWaitSamples.pausedNeedsTap)
+    @Test fun failedUnknown() = s3c("failed_unknown", MusicWaitSamples.failedUnknown)
+
+    /** Cazurile cele mai pline (rânduri în plus sub comenzi): pe S23 coloana trebuie să încapă fără derulare. */
+    @Test fun resumeFailedTop() = s3c("resume_failed_top", MusicWaitSamples.resumeFailedTop)
+    @Test fun pausedNeedsTapBook() = s3c("paused_needs_tap_book", MusicWaitSamples.pausedNeedsTapBook)
     @Test fun bookPlaying() = s3c("book_playing", MusicWaitSamples.bookPlaying)
     @Test fun noAccess() = s3c("noaccess", MusicWaitSamples.noAccess)
     @Test fun noAccessPlaying() = s3c("noaccess_playing", MusicWaitSamples.noAccessPlaying)
