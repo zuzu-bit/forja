@@ -62,6 +62,8 @@ data class FinderCommand(
 object FinderLogic {
     /** Fără o bătaie reușită în atâta timp, rândul spune „fără legătură”. */
     const val LINK_WINDOW_MS = 10 * 60_000L
+    /** Site-ul uită un telefon care nu a bătut atâta timp (30 de zile, §3.4 `expires_at`). */
+    const val ENROLLMENT_MS = 30 * 24 * 3_600_000L
     /** Soneria implicită și limitele ei (secunde). */
     const val RING_DEFAULT_S = 60
     const val RING_MIN_S = 10
@@ -125,6 +127,12 @@ object FinderLogic {
         if (!command.startable(now)) return if (activeId != null) Decision.StopActive else Decision.Keep
         return Decision.Start(command)
     }
+
+    /**
+     * Un 404 la bătaie poate fi o înregistrare expirată, nu o scoatere de pe site: nicio bătaie reușită (înrolare 4.3,
+     * care doar întreba) sau ultima mai veche de 30 de zile (o oră marjă pentru ceasuri). Altfel l-ai scos tu.
+     */
+    fun mayHaveExpired(lastOkAt: Long, now: Long): Boolean = lastOkAt <= 0L || now - lastOkAt > ENROLLMENT_MS - 3_600_000L
 
     /** Cât sună: `seconds` din comandă (implicit 60), între 10 și 120 s, dar nu dincolo de termenul comenzii. */
     fun ringMillis(command: FinderCommand, now: Long): Long {

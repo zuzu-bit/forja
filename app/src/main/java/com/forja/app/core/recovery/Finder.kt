@@ -93,7 +93,9 @@ object Finder {
      * Întoarce null dacă telefonul nu e (încă) înrolat.
      */
     suspend fun beat(c: Context, fix: FinderFix?): Beat? = beating.withLock {
-        val d = LostPhoneRecovery.device(c) ?: LostPhoneRecovery.ensureEnrolled(c) ?: return@withLock null
+        // După o semnătură nouă, înrolarea existentă se confirmă întâi pe site (fără să oprească bătaia dacă nu merge).
+        val d = (if (LostPhoneRecovery.regrantPending(c)) LostPhoneRecovery.ensureEnrolled(c) else null)
+            ?: LostPhoneRecovery.device(c) ?: LostPhoneRecovery.ensureEnrolled(c) ?: return@withLock null
         val p = LostPhoneRecovery.prefs(c)
         val wake = hold(c, BEAT_WAKE_MS)
         try {
@@ -103,7 +105,7 @@ object Finder {
             // Serverul ține `last` doar dacă e mai nou; nu retrimitem același punct.
             val send = fix?.takeIf { it.at > p.getLong("sent_fix_at", 0L) && it.at <= now + 60_000L }
             val v2 = LostPhoneRecovery.serverVersion(c) >= 2
-            val result = withTimeout(20_000) {
+            suspend fun post(): JsonObject = withTimeout(20_000) {
                 if (v2) LostPhoneRecovery.call(c, d, "beat", buildJsonObject {
                     put("secret", d.secret)
                     put("status", status)
@@ -120,6 +122,19 @@ object Finder {
                     // Serverul vechi nu știe „ringing” / „permission_missing”.
                     put("status", if (status in setOf("ready", "locating", "location_off", "notification_missing")) status else "ready")
                 })
+            }
+            val result = try {
+                post()
+            } catch (e: InsightsFailure) {
+                // 404 fără semn că l-ai scos tu (nicio bătaie reușită de 30 de zile: pauză lungă, serviciul 4.3 mort):
+                // înregistrarea a expirat. O trimitem din nou cu aceeași identitate, o dată, apoi bătaia.
+                val expired = e.code == 404 && v2 && FinderLogic.mayHaveExpired(p.getLong("beat_ok_at", 0L), now)
+                if (!expired) throw e
+                when (LostPhoneRecovery.regrant(c, d)) {
+                    true -> post()
+                    null -> return@withLock failed(p, "Fără internet.")
+                    false -> throw e
+                }
             }
             val at = System.currentTimeMillis()
             val edit = p.edit().putLong("beat_ok_at", at).putLong("beat_at", at).remove("error")

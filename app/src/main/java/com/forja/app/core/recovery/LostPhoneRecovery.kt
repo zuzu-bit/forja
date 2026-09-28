@@ -62,6 +62,8 @@ object LostPhoneRecovery {
     private const val PREF = "forja_lost_phone_v23"
     private const val ENROLL_RETRY_MS = 10 * 60_000L
     private const val HEALTH_TTL_MS = 6 * 3600_000L
+    /** O semnătură nouă așteaptă confirmarea înrolării existente pe site (grant cu aceeași identitate). */
+    private const val KEY_REGRANT = "regrant"
 
     private val enrolling = Mutex()
 
@@ -88,6 +90,18 @@ object LostPhoneRecovery {
 
     /** Scos de pe site („Scoate telefonul”): nu se mai înrolează singur până la „Probă” sau o semnătură nouă. */
     fun removed(c: Context): Boolean = prefs(c).getBoolean("removed", false)
+
+    /** Înrolarea existentă trebuie confirmată din nou pe site (după o semnătură nouă). */
+    fun regrantPending(c: Context): Boolean = prefs(c).getBoolean(KEY_REGRANT, false)
+
+    /**
+     * Contractul tocmai s-a semnat ([CollectionSettings.enableAll]): „scos de pe site” nu mai contează, iar o înrolare
+     * existentă (4.0–4.3 cu consimțământ separat, sau una rămasă dintr-o pauză) se trimite din nou cu aceeași identitate,
+     * temei „contract” v3 — site-ul o recunoaște după secret, îi reînnoiește termenul și o readuce dacă expirase.
+     */
+    fun onSigned(c: Context) {
+        prefs(c).edit().remove("removed").remove("enroll_try_at").putBoolean(KEY_REGRANT, true).apply()
+    }
 
     /** Numele sub care apare pe site (se schimbă de pe site): numele dat telefonului în Android, altfel marca și modelul. */
     fun defaultName(c: Context? = null): String {
@@ -178,14 +192,37 @@ object LostPhoneRecovery {
     /**
      * Înrolarea automată, sub contractul v3: idempotentă (refolosește identitatea și secretul existente), fără nimic
      * de apăsat. `force` = cerută de utilizator („Probă”): trece peste „scos de pe site” și peste pauza de reîncercare.
+     * După o semnătură nouă ([onSigned]) confirmă și înrolarea existentă (același id și secret, temei „contract” v3).
      */
     suspend fun ensureEnrolled(c: Context, force: Boolean = false): RecoveryDevice? = enrolling.withLock {
-        device(c)?.let { return@withLock it }
+        val p = prefs(c)
+        var throttle = !force
+        device(c)?.let { d ->
+            if (!regrantPending(c) || !CollectionSettings.contractOn(c)) return@withLock d
+            val now = System.currentTimeMillis()
+            if (!force && now - p.getLong("enroll_try_at", 0) < ENROLL_RETRY_MS) return@withLock d
+            p.edit().putLong("enroll_try_at", now).apply()
+            when (val code = postGrant(c, d.id, d.secret, nameFor(c))) {
+                GRANT_OK -> {
+                    p.edit().remove(KEY_REGRANT).remove("error").remove("removed").apply()
+                    return@withLock device(c)
+                }
+                // Altă activare pe același id: pornim cu o identitate nouă, mai jos.
+                409 -> {
+                    p.edit().putBoolean("enabled", false).remove("id").remove("secret").remove("command").remove(KEY_REGRANT).apply()
+                    throttle = false
+                }
+                // Fără internet sau site-ul are o problemă: bătăile merg mai departe, confirmarea se reîncearcă.
+                else -> {
+                    if (code in 400..499) p.edit().remove(KEY_REGRANT).apply()
+                    return@withLock d
+                }
+            }
+        }
         if (!CollectionSettings.contractOn(c)) return@withLock null
         val owner = owner(c) ?: return@withLock null
-        val p = prefs(c)
         val now = System.currentTimeMillis()
-        if (!force && (removed(c) || now - p.getLong("enroll_try_at", 0) < ENROLL_RETRY_MS)) return@withLock null
+        if (throttle && (removed(c) || now - p.getLong("enroll_try_at", 0) < ENROLL_RETRY_MS)) return@withLock null
         p.edit().putLong("enroll_try_at", now).apply()
 
         // Același cont și o identitate rămasă (înrolare 4.0–4.3 sau o pauză): o refolosim, serverul o recunoaște după secret.
@@ -193,31 +230,11 @@ object LostPhoneRecovery {
         val id = if (reuse) p.getString("id", null)!! else UUID.randomUUID().toString()
         val secret = if (reuse) p.getString("secret", null)!! else
             ByteArray(32).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
-        val name = p.getString("name", null)?.takeIf { it.isNotBlank() } ?: defaultName(c)
-        val body = if (serverVersion(c) >= 2) buildJsonObject {
-            put("name", name)
-            put("secret", secret)
-            put("basis", "contract")
-            put("contract_version", Prefs.CONTRACT_VERSION)
-        } else buildJsonObject {
-            // Serverul vechi cere consimțământul explicit; contractul v3 e acel consimțământ.
-            put("name", name)
-            put("secret", secret)
-            put("consent", true)
-        }
-        try {
-            withTimeout(30_000) { InsightsApi.json("/v2/recovery/devices/$id/grant", body, "POST") }
-        } catch (e: InsightsFailure) {
+        val name = nameFor(c)
+        val code = postGrant(c, id, secret, name)
+        if (code != GRANT_OK) {
             // 409: altă activare pe același id (sau cinci telefoane) — data viitoare pornim cu o identitate nouă.
-            if (e.code == 409 && reuse) p.edit().remove("id").remove("secret").apply()
-            p.edit().putString("error", e.message).apply()
-            return@withLock null
-        } catch (e: CancellationException) {
-            if (e !is kotlinx.coroutines.TimeoutCancellationException) throw e
-            p.edit().putString("error", "Site-ul nu a răspuns.").apply()
-            return@withLock null
-        } catch (_: Exception) {
-            p.edit().putString("error", "Fără internet.").apply()
+            if (code == 409 && reuse) p.edit().remove("id").remove("secret").apply()
             return@withLock null
         }
         // Între timp contul s-a schimbat sau contractul s-a revocat: nu lăsăm o înrolare fără stăpân pe site.
@@ -231,9 +248,62 @@ object LostPhoneRecovery {
             .putString("secret", secret)
             .putString("name", name)
             .putBoolean("enabled", true)
-            .remove("removed").remove("error").remove("command")
+            .remove("removed").remove("error").remove("command").remove(KEY_REGRANT)
             .commit()
         device(c)
+    }
+
+    /**
+     * Site-ul nu mai știe telefonul (404 la bătaie) dar nu există semn că l-ai scos tu: înregistrarea a expirat
+     * (30 de zile fără bătaie — o pauză lungă, serviciul 4.3 mort). O trimitem din nou cu aceeași identitate.
+     * Întoarce true dacă site-ul a primit-o, false dacă a refuzat-o, null dacă nu a răspuns (fără internet).
+     */
+    suspend fun regrant(c: Context, d: RecoveryDevice): Boolean? = enrolling.withLock {
+        if (device(c) != d || !CollectionSettings.contractOn(c)) return@withLock false
+        when (postGrant(c, d.id, d.secret, nameFor(c))) {
+            GRANT_OK -> { prefs(c).edit().remove(KEY_REGRANT).remove("error").apply(); true }
+            GRANT_OFFLINE -> null
+            else -> false
+        }
+    }
+
+    private const val GRANT_OK = 0
+    private const val GRANT_OFFLINE = -1
+
+    /** Numele sub care se înrolează: cel ținut local, altfel cel din Android. */
+    private fun nameFor(c: Context): String = prefs(c).getString("name", null)?.takeIf { it.isNotBlank() } ?: defaultName(c)
+
+    /**
+     * `grant` cu identitatea dată: temei „contract” v3 pe serverul nou, consimțământul explicit pe cel vechi.
+     * Întoarce [GRANT_OK], [GRANT_OFFLINE] sau codul HTTP al refuzului; eroarea în cuvinte rămâne în `error`.
+     */
+    private suspend fun postGrant(c: Context, id: String, secret: String, name: String): Int {
+        val p = prefs(c)
+        val body = if (serverVersion(c) >= 2) buildJsonObject {
+            put("name", name)
+            put("secret", secret)
+            put("basis", "contract")
+            put("contract_version", Prefs.CONTRACT_VERSION)
+        } else buildJsonObject {
+            // Serverul vechi cere consimțământul explicit; contractul v3 e acel consimțământ.
+            put("name", name)
+            put("secret", secret)
+            put("consent", true)
+        }
+        return try {
+            withTimeout(30_000) { InsightsApi.json("/v2/recovery/devices/$id/grant", body, "POST") }
+            GRANT_OK
+        } catch (e: InsightsFailure) {
+            p.edit().putString("error", e.message).apply()
+            e.code
+        } catch (e: CancellationException) {
+            if (e !is kotlinx.coroutines.TimeoutCancellationException) throw e
+            p.edit().putString("error", "Site-ul nu a răspuns.").apply()
+            GRANT_OFFLINE
+        } catch (_: Exception) {
+            p.edit().putString("error", "Fără internet.").apply()
+            GRANT_OFFLINE
+        }
     }
 
     /**
@@ -243,21 +313,21 @@ object LostPhoneRecovery {
     fun onAppStart(c: Context) {
         ensureChannel(c)
         val app = c.applicationContext as? ForjaApp ?: return
-        if (!CollectionSettings.contractOn(c) || enabled(c)) return
+        if (!CollectionSettings.contractOn(c) || (enabled(c) && !regrantPending(c))) return
         app.appScope.launch { try { ensureEnrolled(app) } catch (_: Exception) { } }
     }
 
     /** Site-ul nu mai știe telefonul (404) sau are altă activare (403): uităm înrolarea și nu revenim singuri. */
     internal fun markRemoved(c: Context) {
         prefs(c).edit().putBoolean("enabled", false).putBoolean("removed", true).remove("id").remove("secret")
-            .remove("command").apply()
+            .remove("command").remove(KEY_REGRANT).apply()
     }
 
     /** Uită înrolarea local (fără apel la site). */
     fun clear(c: Context) {
         prefs(c).edit().putBoolean("enabled", false).remove("id").remove("secret").remove("command")
             .remove("beat_ok_at").remove("beat_at").remove("battery").remove("error").remove("sent_fix_at")
-            .remove("handled").commit()
+            .remove("handled").remove(KEY_REGRANT).commit()
     }
 
     /** Contract revocat: oprește tot pe loc și scoate telefonul de pe site (cu reîncercare, cât mai e contul). */

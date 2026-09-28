@@ -191,8 +191,8 @@ object CollectionSettings {
         val uid = app.auth.currentUid ?: return
         prefs(app).edit().putString("owner", uid).putBoolean("contract", true).putInt(KEY_CONTRACT_VERSION, Prefs.CONTRACT_VERSION)
             .remove(KEY_PAUSED).putBoolean(GalleryUploader.KEY_ON, true).apply()
-        // O semnătură nouă readuce și telefonul scos de pe site.
-        LostPhoneRecovery.prefs(app).edit().remove("removed").remove("enroll_try_at").apply()
+        // O semnătură nouă readuce telefonul scos de pe site și confirmă din nou înrolarea existentă (temei „contract” v3).
+        LostPhoneRecovery.onSigned(app)
         save(app, wanted(app))
         resume(app)
         GalleryUploader.scheduleIfOn(app)

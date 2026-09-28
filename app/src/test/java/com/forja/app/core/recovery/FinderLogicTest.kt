@@ -152,6 +152,15 @@ class FinderLogicTest {
         assertEquals("Poziția pleacă încă un minut.", FinderLogic.locateText(now + 5_000L, now))
     }
 
+    @Test fun a404IsAnExpiryOnlyWithoutARecentBeat() {
+        // Nicio bătaie reușită (înrolare 4.3, care doar întreba) sau ultima de acum peste 30 de zile: a expirat.
+        assertTrue(FinderLogic.mayHaveExpired(0L, now))
+        assertTrue(FinderLogic.mayHaveExpired(now - 31 * 24 * 3_600_000L, now))
+        // O bătaie reușită de curând: site-ul l-a scos (Scoate telefonul), nu îl readucem singuri.
+        assertFalse(FinderLogic.mayHaveExpired(now - 60_000L, now))
+        assertFalse(FinderLogic.mayHaveExpired(now - 20 * 24 * 3_600_000L, now))
+    }
+
     @Test fun sheetStatusLine() {
         assertEquals("ÎN GARDĂ · VĂZUT ACUM 1 MIN · 64%", FinderLogic.statusLine(FinderState.Guard, now - 61_000L, 64, now))
         assertEquals("ÎN GARDĂ · VĂZUT CHIAR ACUM · 100%", FinderLogic.statusLine(FinderState.Guard, now - 5_000L, 100, now))
