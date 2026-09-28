@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -63,6 +64,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.forja.app.core.designsystem.Accent
 import com.forja.app.core.designsystem.Accent2
 import com.forja.app.core.designsystem.LocalReducedMotion
@@ -310,13 +312,14 @@ private const val LINE_Y = 52f
 private const val THUMB = 56f
 private const val BIN_ICON_W = 58f
 private const val BIN_ICON_H = 44f
-private const val BIN_NAME_H = 30f
+/** Cutia numelui: două rânduri cond(14, 15) întregi (≈ 32 sp cu ascendentul și descendentul), nu unul și „…”. */
+private const val BIN_NAME_H = 34f
 private const val BIN_COUNT_H = 12f
 private const val BIN_PAD = 10f
 private const val BIN_GAP = 8f
 private const val BIN_BOTTOM = 12f
-private const val BIN_COL_H = BIN_ICON_H + 4f + BIN_NAME_H + 4f + BIN_COUNT_H
-private const val ICON_CENTER_Y = BELT_H - BIN_BOTTOM - BIN_COL_H + BIN_ICON_H / 2f
+/** Mișcare redusă: unde stau pe bandă cele trei miniaturi ale cadrului oprit (fracții din lățime). */
+private val PARKED = floatArrayOf(0.2f, 0.5f, 0.8f)
 
 private const val FOLDER_PATH = "M2 8a3 3 0 0 1 3-3h14l4 4h30a3 3 0 0 1 3 3v27a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z"
 
@@ -346,6 +349,11 @@ internal fun SortingBelt(
         val t0 = withFrameMillis { it } - clock.longValue
         while (true) withFrameMillis { clock.longValue = it - t0 }
     }
+    // numele și contorul cresc cu fontul din sistem; cutiile stau jos, deci ținta căderii urcă odată cu ele
+    val density = LocalDensity.current
+    val nameH = with(density) { maxOf(BIN_NAME_H.dp, 17.sp.toDp() * 2) }
+    val countH = with(density) { maxOf(BIN_COUNT_H.dp, 12.sp.toDp()) }
+    val iconCenterY = BELT_H - BIN_BOTTOM - (BIN_ICON_H + 4f + nameH.value + 4f + countH.value) + BIN_ICON_H / 2f
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
@@ -395,21 +403,24 @@ internal fun SortingBelt(
                             val f = beltFrame(p)
                             val startX = -60f
                             translationX = (startX + (endX - startX) * f.x).dp.toPx()
-                            translationY = (24f + (ICON_CENTER_Y - LINE_Y) * f.fall + 8f * f.sink).dp.toPx()
+                            translationY = (24f + (iconCenterY - LINE_Y) * f.fall + 8f * f.sink).dp.toPx()
                             scaleX = f.scale
                             scaleY = f.scale
                             alpha = f.alpha
                         }
                         .clip(R4)
-                ) {
-                    if (uri != null) {
-                        InvThumb(uri, "image/*", Modifier.fillMaxSize(), px = 160)
-                    } else {
-                        Box(Modifier.fillMaxSize().background(Surface2), contentAlignment = Alignment.Center) {
-                            Icon(InvIcons.Image, null, tint = TextDim2, modifier = Modifier.size(20.dp))
-                        }
-                    }
-                }
+                ) { BeltThumb(uri) }
+            }
+        } else if (animate) {
+            // mișcare redusă: cadrul oprit al benzii (trei miniaturi pe bandă, nimic în zbor), nu o bandă goală
+            PARKED.forEachIndexed { i, f ->
+                Box(
+                    Modifier
+                        .offset(x = (w * f - THUMB / 2f).dp, y = 24.dp)
+                        .size(THUMB.dp)
+                        .graphicsLayer { alpha = if (i == 0) 0.55f else 1f }
+                        .clip(R4)
+                ) { BeltThumb(if (recent.isEmpty()) null else recent[i % recent.size]) }
             }
         }
         // cutiile
@@ -423,11 +434,25 @@ internal fun SortingBelt(
                 Bin(
                     bin = bin,
                     width = binW.dp,
+                    nameH = nameH,
+                    countH = countH,
                     sealed = sealed,
                     sealDelay = b * 90,
                     bump = { if (moving) binBump(clock.longValue, b, binCount) else 0f }
                 )
             }
+        }
+    }
+}
+
+/** O miniatură de pe bandă: poza reală sau locul ei (pictograma de imagine). */
+@Composable
+private fun BeltThumb(uri: Uri?) {
+    if (uri != null) {
+        InvThumb(uri, "image/*", Modifier.fillMaxSize(), px = 160)
+    } else {
+        Box(Modifier.fillMaxSize().background(Surface2), contentAlignment = Alignment.Center) {
+            Icon(InvIcons.Image, null, tint = TextDim2, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -468,7 +493,7 @@ private fun binBump(clock: Long, b: Int, binCount: Int): Float {
 }
 
 @Composable
-private fun Bin(bin: BinTick, width: Dp, sealed: Boolean, sealDelay: Int, bump: () -> Float) {
+private fun Bin(bin: BinTick, width: Dp, nameH: Dp, countH: Dp, sealed: Boolean, sealDelay: Int, bump: () -> Float) {
     val named = bin.name != null
     val reduced = LocalReducedMotion.current
     val count by animateIntAsState(bin.count.coerceAtLeast(0), if (reduced) snap() else tween(600), label = "binCount")
@@ -502,9 +527,10 @@ private fun Bin(bin: BinTick, width: Dp, sealed: Boolean, sealDelay: Int, bump: 
             SealBadge(sealed, sealDelay)
         }
         Spacer(Modifier.height(4.dp))
-        Box(Modifier.fillMaxWidth().height(BIN_NAME_H.dp), contentAlignment = Alignment.Center) {
+        // sus, ca etichetele din lansator: primul rând al fiecărui nume pe aceeași linie
+        Box(Modifier.fillMaxWidth().height(nameH), contentAlignment = Alignment.TopCenter) {
             Text(
-                bin.name ?: "…",
+                bin.name?.let(::binLabel) ?: "…",
                 style = cond(14, 15),
                 textAlign = TextAlign.Center,
                 maxLines = 2,
@@ -512,10 +538,16 @@ private fun Bin(bin: BinTick, width: Dp, sealed: Boolean, sealDelay: Int, bump: 
             )
         }
         Spacer(Modifier.height(4.dp))
-        Box(Modifier.height(BIN_COUNT_H.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.height(countH), contentAlignment = Alignment.Center) {
             if (bin.count >= 0) Text(fmtCount(count), style = mono(10), maxLines = 1)
         }
     }
+}
+
+/** „Munte · Bucegi” → „Munte” / „Bucegi”: partea de după punct pe rândul 2, nu „Munte · Buc…”. */
+internal fun binLabel(name: String): String {
+    val i = name.indexOf(" · ")
+    return if (i <= 0 || i + 3 >= name.length) name else name.substring(0, i) + "\n" + name.substring(i + 3)
 }
 
 /** Bifa care „închide” cutia (pop cu arc, decalat pe cutii). */
