@@ -1,7 +1,9 @@
 name: FORJA Shorts
 
-# Feed-ul vertical din aplicație (FRONT + RECRUȚI): clipuri construite aici și urcate în R2 (forja-media),
+# Feed-ul vertical (FRONT + RECRUȚI): clipuri construite aici și urcate în R2 (forja-media),
 # servite de forja-api la /media/short_<id>.mp4 · .jpg + /media/shorts_manifest.json. Detalii: scripts/shorts/build.sh.
+# 4.4: aplicația nu mai are feed-ul (în locul lui sunt jocurile ZID și ASALT; codul rămâne în git, 2d70ac9).
+# Doar pornire manuală: fără rularea lunară și fără apelul din build-apk.yml.
 on:
   workflow_dispatch:
     inputs:
@@ -17,21 +19,6 @@ on:
         description: "Probă: construiește fără să urce în R2; clipurile rămân ca artifact 7 zile."
         type: boolean
         default: false
-  # Pornit și din build-apk.yml (intrarea „shorts”), cât timp fișierul ăsta nu e pe ramura implicită.
-  workflow_call:
-    inputs:
-      rotate_pct:
-        type: number
-        default: 0
-      burn_captions:
-        type: boolean
-        default: false
-      dry_run:
-        type: boolean
-        default: false
-  schedule:
-    # Lunar, pe 1, la 04:23 UTC: o treime din clipuri se înlocuiește cu altele noi.
-    - cron: "23 4 1 * *"
 
 permissions:
   contents: read
@@ -48,7 +35,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-      ROTATE_PCT: ${{ github.event_name == 'schedule' && '33' || inputs.rotate_pct }}
+      ROTATE_PCT: ${{ inputs.rotate_pct }}
       BURN_CAPTIONS: ${{ inputs.burn_captions && '1' || '0' }}
       DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
       MAX_MINUTES: "22"

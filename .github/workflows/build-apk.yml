@@ -11,10 +11,6 @@ on:
         description: "Doar diagnostic: jurnalul serverului + furnizorii AI (fără deploy, fără build)."
         type: boolean
         default: false
-      shorts:
-        description: "Doar FORJA Shorts: construiește clipurile și le urcă în R2 (fără deploy, fără build)."
-        type: boolean
-        default: false
       ui_shots:
         description: "Doar capturile de ecran (Roborazzi) → release ui-shots-latest (fără deploy, fără build)."
         type: boolean
@@ -34,20 +30,11 @@ permissions:
   issues: write
 
 concurrency:
-  # Fiecare mod are coada lui: Shorts / capturile / diagnosticul nu mai anulează un build sau un deploy în curs.
-  group: build-apk-${{ inputs.shorts && 'shorts' || inputs.ui_shots && 'ui' || inputs.diag_only && 'diag' || 'build' }}
+  # Fiecare mod are coada lui: capturile / diagnosticul nu mai anulează un build sau un deploy în curs.
+  group: build-apk-${{ inputs.ui_shots && 'ui' || inputs.diag_only && 'diag' || 'build' }}
   cancel-in-progress: true
 
 jobs:
-  shorts:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.shorts }}
-    uses: ./.github/workflows/shorts.yml
-    with:
-      rotate_pct: 0
-      burn_captions: false
-      dry_run: false
-    secrets: inherit
-
   ui-shots:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.ui_shots }}
     uses: ./.github/workflows/ui-shots.yml
@@ -56,7 +43,7 @@ jobs:
     secrets: inherit
 
   deploy-api:
-    if: ${{ !inputs.shorts && !inputs.ui_shots }}
+    if: ${{ !inputs.ui_shots }}
     runs-on: ubuntu-latest
     outputs:
       url: ${{ steps.deploy.outputs.url }}
@@ -305,7 +292,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: deploy-api
-    if: always() && !inputs.diag_only && !inputs.shorts && !inputs.ui_shots
+    if: always() && !inputs.diag_only && !inputs.ui_shots
     steps:
       - name: Checkout
         uses: actions/checkout@v4
