@@ -17,17 +17,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -44,11 +33,10 @@ internal object MusicLog {
     private const val RING = 200
     private const val KEEP = 100
     private const val PENDING_MAX = 150
-    private const val BATCH = 50
+    private const val BATCH = DiagCodec.MAX_EVENTS
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, _ -> })
     private val lock = Mutex()
-    private val json = Json { ignoreUnknownKeys = true }
 
     private val _events = MutableStateFlow<List<AttemptEvent>>(emptyList())
     /** Cele mai noi la final. */
@@ -106,51 +94,18 @@ internal object MusicLog {
         }
     }
 
-    /** Corpul cererii: { device, app, events:[{ at, want, rung, pkg, ver, kind, result, ms, err }] }. */
-    fun body(events: List<AttemptEvent>): String = buildJsonObject {
-        put("device", device())
-        put("app", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-        put("events", JsonArray(events.map { encode(it) }))
-    }.toString()
-
-    private fun encode(e: AttemptEvent): JsonObject = buildJsonObject {
-        put("at", e.at)
-        put("want", e.want)
-        put("rung", e.rung)
-        put("pkg", e.pkg?.let { JsonPrimitive(it.take(100)) } ?: JsonNull)
-        put("ver", e.ver?.let { JsonPrimitive(it.take(40)) } ?: JsonNull)
-        put("kind", e.kind?.let { JsonPrimitive(it.wire) } ?: JsonNull)
-        put("result", e.result.wire)
-        put("ms", e.ms)
-        put("err", e.err?.let { JsonPrimitive(it.take(120)) } ?: JsonNull)
-    }
-
-    private fun decode(line: String): AttemptEvent? = try {
-        val o = json.parseToJsonElement(line).jsonObject
-        fun str(k: String) = o[k]?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull }
-        AttemptEvent(
-            at = o["at"]?.jsonPrimitive?.longOrNull ?: 0L,
-            want = str("want") ?: "",
-            rung = str("rung") ?: "",
-            pkg = str("pkg"),
-            ver = str("ver"),
-            kind = MediaKind.entries.firstOrNull { it.wire == str("kind") },
-            result = DiagResult.entries.firstOrNull { it.wire == str("result") } ?: DiagResult.ERROR,
-            ms = o["ms"]?.jsonPrimitive?.longOrNull ?: 0L,
-            err = str("err")
-        )
-    } catch (_: Exception) {
-        null
-    }
+    /** Corpul cererii (DiagCodec): { device, app, events:[…] }. */
+    fun body(events: List<AttemptEvent>): String =
+        DiagCodec.body(device(), "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", events)
 
     private suspend fun load(app: Context) {
         if (loaded) return
         loaded = true
         val (recent, waiting) = try { MusicStats.diag(app) } catch (e: CancellationException) { throw e } catch (_: Exception) { null to null }
-        val saved = recent?.lineSequence()?.mapNotNull { decode(it) }?.toList().orEmpty()
+        val saved = recent?.lineSequence()?.mapNotNull { DiagCodec.parse(it) }?.toList().orEmpty()
         val mem = _events.value
         _events.value = (saved + mem).distinct().sortedBy { it.at }.takeLast(RING)
-        val old = waiting?.lineSequence()?.mapNotNull { decode(it) }?.toList().orEmpty()
+        val old = waiting?.lineSequence()?.mapNotNull { DiagCodec.parse(it) }?.toList().orEmpty()
         pending.addAll(0, old)
         while (pending.size > PENDING_MAX) pending.removeAt(0)
     }
@@ -159,8 +114,8 @@ internal object MusicLog {
         try {
             MusicStats.setDiag(
                 app,
-                _events.value.takeLast(KEEP).joinToString("\n") { encode(it).toString() },
-                pending.joinToString("\n") { encode(it).toString() }
+                _events.value.takeLast(KEEP).joinToString("\n") { DiagCodec.line(it) },
+                pending.joinToString("\n") { DiagCodec.line(it) }
             )
         } catch (e: CancellationException) {
             throw e

@@ -12,7 +12,7 @@ class TrackKeyTest {
     @Test fun diacriticsCaseAndSpacingDoNotMatter() {
         assertEquals(TrackKey.of("Marș de dimineață", "Fanfara FORJA"), TrackKey.of("MARS  de   dimineata", "fanfara forja"))
         // Sedila și virgula dau aceeași literă.
-        assertEquals(TrackKey.norm("ştefan ţara"), TrackKey.norm("ștefan țara"))
+        assertEquals(TrackKey.norm("\u015Ftefan \u0163ara"), TrackKey.norm("ștefan țara"))
     }
 
     @Test fun versionSuffixesAreDropped() {

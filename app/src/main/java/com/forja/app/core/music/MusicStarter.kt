@@ -215,16 +215,25 @@ object MusicStarter {
 
     /** Pornește o intenție. `tap` = o atingere acum (un salt vizibil în player e permis în 1,5 s). */
     fun start(context: Context, want: Want, source: MusicSource, tap: Boolean) {
-        val app = context.applicationContext
+        launchStart(context.applicationContext, source, tap, want) { want }
+    }
+
+    /**
+     * O pornire nouă, o singură încercare odată: anulează ce era, arată „Pornește…” din prima clipă, pregătește
+     * intenția ([prepare]: istoricul, lista) și abia apoi pornește mașina. O pauză sau ieșirea din ecran o pot opri
+     * și în timpul pregătirii.
+     */
+    private fun launchStart(app: Context, source: MusicSource, tap: Boolean, shown: Want, prepare: suspend () -> Want) {
         Music.ensureStarted(app)
         Music.onMain {
             startJob?.cancel()
+            startJob = null
             machine.cancel()
-            if (source != MusicSource.WORKOUT || want !is Want.Workout) pendingList = null
-            // „Pornește…” se vede din prima clipă (încărcarea istoricului durează milisecunde).
+            pendingList = null
             _origin.value = source
-            _state.value = StartState.Starting(Rung.ALREADY, want)
+            _state.value = StartState.Starting(Rung.ALREADY, shown)
             startJob = scope.launch {
+                val want = prepare()
                 refresh(app)
                 machine.start(want, source, tap)
             }
@@ -263,7 +272,7 @@ object MusicStarter {
         val app = context.applicationContext
         Music.ensureStarted(app)
         Music.onMain {
-            startJob?.cancel()
+            abortPending()
             if (machine.active) machine.cancel()
             val playing = Music.sessions.value.let { list ->
                 list.firstOrNull { it.id == Music.nowPlaying.value?.id && it.state.activeish } ?: list.firstOrNull { it.state.activeish }
@@ -327,10 +336,21 @@ object MusicStarter {
     /** Ecranul care a pornit încercarea s-a închis: încercarea lui se oprește (nu și muzica). */
     fun cancel(source: MusicSource) {
         Music.onMain {
-            if (machine.source == source) {
-                startJob?.cancel()
+            val pending = startJob?.isActive == true && _origin.value == source
+            if (machine.source == source || pending) {
+                abortPending()
                 machine.cancel()
             }
+        }
+    }
+
+    /** O pornire încă în pregătire (istoricul se citește) se oprește, iar „Pornește…” dispare. */
+    private fun abortPending() {
+        val job = startJob ?: return
+        startJob = null
+        if (job.isActive) {
+            job.cancel()
+            if (!machine.active) _state.value = StartState.Idle
         }
     }
 
@@ -345,8 +365,7 @@ object MusicStarter {
      */
     fun startWorkout(context: Context, mix: Mix, targetMin: Int, tap: Boolean = false) {
         val app = context.applicationContext
-        Music.ensureStarted(app)
-        scope.launch {
+        launchStart(app, MusicSource.WORKOUT, tap, Want.Workout(null)) {
             val list = try {
                 withContext(Dispatchers.IO) {
                     Playlist.build(MusicStats.rows(app), MusicStats.library(app), mix, targetMin, System.currentTimeMillis())
@@ -356,12 +375,9 @@ object MusicStarter {
             } catch (_: Exception) {
                 null
             }
-            val first = list?.items?.firstOrNull()?.ref()
-            Music.onMain {
-                pendingList = list
-                queueMix = mix
-                start(app, Want.Workout(first), MusicSource.WORKOUT, tap)
-            }
+            pendingList = list
+            queueMix = mix
+            Want.Workout(list?.items?.firstOrNull()?.ref())
         }
     }
 
@@ -372,8 +388,8 @@ object MusicStarter {
     fun endWorkout(context: Context, finished: Boolean) {
         val app = context.applicationContext
         Music.onMain {
-            if (machine.source == MusicSource.WORKOUT) {
-                startJob?.cancel()
+            if (machine.source == MusicSource.WORKOUT || _origin.value == MusicSource.WORKOUT && startJob?.isActive == true) {
+                abortPending()
                 machine.cancel()
             }
             stopQueue()
