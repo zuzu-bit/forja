@@ -74,6 +74,8 @@ jobs:
           echo "== cheia Groq (doar codul HTTP; 200 = validă) =="
           curl -s -o /dev/null -w '%{http_code}\n' --max-time 30 -H "Authorization: Bearer $GROQ_API_KEY" "https://api.groq.com/openai/v1/models" || true
           echo "lungime cheie Groq: ${#GROQ_API_KEY} · începe cu gsk_: $([ "${GROQ_API_KEY#gsk_}" != "$GROQ_API_KEY" ] && echo da || echo nu)"
+          echo "== modelele Groq disponibile (doar id-uri) =="
+          curl -s --max-time 30 -H "Authorization: Bearer $GROQ_API_KEY" "https://api.groq.com/openai/v1/models" | jq -r '(.data // [])[] | .id' | sort | head -60 || true
           curl -sL --max-time 60 -o /tmp/meal.jpg "$URL/media/meal_dinner.jpg" || true
           ls -la /tmp/meal.jpg || true
           B64=$(base64 -w0 /tmp/meal.jpg)
