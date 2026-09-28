@@ -5,6 +5,9 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.google.services)
+    // Capturile de ecran pe JVM (./gradlew :app:recordRoborazziDebug → app/build/outputs/roborazzi/*.png).
+    // Adaugă doar sarcini de test; assembleDebug nu le atinge.
+    alias(libs.plugins.roborazzi)
 }
 
 android {
@@ -63,6 +66,16 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    testOptions {
+        unitTests {
+            // Robolectric vede resursele aplicației (fonturile FORJA) — doar pentru testele JVM.
+            isIncludeAndroidResources = true
+            all {
+                // Randare „hardware” la PixelCopy: umbre, straturi și decupaje ca pe telefon.
+                it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
+            }
+        }
+    }
 }
 
 dependencies {
@@ -111,4 +124,13 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.play.services)
+
+    // Verificarea vizuală (app/src/test/.../screenshots, workflow ui-shots.yml) — doar teste, nimic în APK.
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
 }
