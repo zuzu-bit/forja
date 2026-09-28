@@ -23,12 +23,9 @@ import com.forja.app.R
  */
 internal object Notifier {
     const val EXTRA_ROUTE = "forja_route"          // = OrganizerJobs.ROUTE_EXTRA, citit de MainNav
-    const val EXTRA_ID = "forja_nudge_id"
-    const val EXTRA_CTX = "forja_nudge_ctx"
-    const val EXTRA_POSE = "forja_nudge_pose"
-    const val EXTRA_TITLE = "forja_nudge_title"
-    const val EXTRA_BODY = "forja_nudge_body"
-    const val EXTRA_AT = "forja_nudge_at"
+    /** Singurul extra al ecoului: o cheie aleatoare; replica stă pe telefon (NudgeStore.EchoRec), nu în Intent. */
+    const val EXTRA_ECHO = "forja_nudge_echo"
+    private val random = java.security.SecureRandom()
 
     data class Spec(
         val id: Int,
@@ -64,14 +61,19 @@ internal object Notifier {
     @SuppressLint("MissingPermission")   // canPost() verifică POST_NOTIFICATIONS
     fun post(c: Context, r: Rendered, spec: Spec): Boolean {
         if (!canPost(c, spec.channel)) return false
+        val echo = if (spec.echo && spec.content == null) newEchoKey() else null
         return try {
-            NotificationManagerCompat.from(c).notify(spec.id, build(c, r, spec))
+            // Replica ecoului se scrie înainte de notify: o atingere foarte rapidă o găsește deja.
+            echo?.let { NudgeStore.addEcho(c, NudgeStore.EchoRec(it, r.id, r.context.name, r.title, r.body, r.pose.name, System.currentTimeMillis())) }
+            NotificationManagerCompat.from(c).notify(spec.id, build(c, r, spec, echo))
             true
         } catch (_: SecurityException) { false } catch (_: Exception) { false }
     }
 
-    fun build(c: Context, r: Rendered, spec: Spec): Notification {
-        val content = spec.content ?: openIntent(c, r, spec)
+    private fun newEchoKey(): String = java.lang.Long.toHexString(random.nextLong()) + java.lang.Long.toHexString(random.nextLong())
+
+    fun build(c: Context, r: Rendered, spec: Spec, echoKey: String? = null): Notification {
+        val content = spec.content ?: openIntent(c, spec, echoKey)
         val b = NotificationCompat.Builder(c, spec.channel)
             .setSmallIcon(spec.smallIcon)
             .setContentTitle(r.title)
@@ -98,19 +100,12 @@ internal object Notifier {
         return b.build()
     }
 
-    /** MainActivity pe fila cerută; pentru mesajele „coach”, cu replica și poza pentru ecoul de pe Panou. */
-    fun openIntent(c: Context, r: Rendered?, spec: Spec): PendingIntent {
+    /** MainActivity pe fila cerută; pentru mesajele „coach”, cu cheia ecoului de pe Panou (replica rămâne pe telefon). */
+    fun openIntent(c: Context, spec: Spec, echoKey: String? = null): PendingIntent {
         val intent = Intent(c, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         spec.route?.let { intent.putExtra(EXTRA_ROUTE, it) }
-        if (spec.echo && r != null) {
-            intent.putExtra(EXTRA_ID, r.id)
-                .putExtra(EXTRA_CTX, r.context.name)
-                .putExtra(EXTRA_POSE, r.pose.name)
-                .putExtra(EXTRA_TITLE, r.title)
-                .putExtra(EXTRA_BODY, r.body)
-                .putExtra(EXTRA_AT, System.currentTimeMillis())
-        }
+        echoKey?.let { intent.putExtra(EXTRA_ECHO, it) }
         return PendingIntent.getActivity(c, spec.id, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 

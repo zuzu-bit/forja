@@ -30,18 +30,37 @@ object Bedtime {
     /** Fereastra lăsată sistemului (grupează trezirile, fără permisiuni speciale). */
     private const val WINDOW_MS = 10 * 60_000L
     private const val LATE_LIMIT_MIN = -15
+    /** Cât mai are sens o amintire întârziată (Doze): până la 15 min după stingere. */
+    private const val GRACE_MS = (LEAD_MIN - LATE_LIMIT_MIN) * 60_000L
 
     /** Minutul din zi al stingerii. */
     fun bedtimeMinute(alarmOn: Boolean, hour: Int, minute: Int): Int =
         if (alarmOn) Math.floorMod(hour * 60 + minute - SLEEP_TARGET_MIN, 24 * 60) else DEFAULT_BED_MIN
 
-    /** Următoarea amintire (ms): stingerea − 30 min, azi sau mâine. */
-    fun nextTrigger(now: Long, bedMinute: Int, zone: ZoneId = ZoneId.systemDefault()): Long {
+    private fun triggerOn(date: LocalDate, triggerMin: Int, zone: ZoneId): Long =
+        date.atStartOfDay(zone).plusMinutes(triggerMin.toLong()).toInstant().toEpochMilli()
+
+    /**
+     * Următoarea amintire (ms): stingerea − 30 min, azi sau mâine. Excepție: amintirea deja armată (`armed`) care n-a
+     * sunat încă (`fired`) — Doze o poate întârzia peste ora ei — rămâne cât mai are sens (până la 15 min după
+     * stingere). Altfel re-armarea din tura orară, de la deschidere sau de la pornirea procesului ar muta-o pe mâine
+     * și ar anula-o pe cea de diseară. setWindow cu un moment trecut o declanșează imediat.
+     */
+    fun nextTrigger(
+        now: Long,
+        bedMinute: Int,
+        zone: ZoneId = ZoneId.systemDefault(),
+        armed: Long = 0L,
+        fired: Long = 0L
+    ): Long {
         val triggerMin = Math.floorMod(bedMinute - LEAD_MIN, 24 * 60)
         val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
-        var t = today.atStartOfDay(zone).plusMinutes(triggerMin.toLong()).toInstant().toEpochMilli()
-        if (t <= now) t = today.plusDays(1).atStartOfDay(zone).plusMinutes(triggerMin.toLong()).toInstant().toEpochMilli()
-        return t
+        for (off in -1L..1L) {
+            val t = triggerOn(today.plusDays(off), triggerMin, zone)
+            if (t > now) return t
+            if (armed > 0L && t == armed && armed != fired && now - t < GRACE_MS) return t
+        }
+        return triggerOn(today.plusDays(2), triggerMin, zone)
     }
 
     /** Minute până la stingere (negativ = a trecut), stingerea fiind cea mai apropiată de acum. */
@@ -67,14 +86,22 @@ object Bedtime {
     suspend fun sync(app: ForjaApp) {
         val am = app.getSystemService(AlarmManager::class.java) ?: return
         val pi = pending(app)
-        if (!app.prefs.sleepReminder.first()) { am.cancel(pi); return }
-        val t = nextTrigger(System.currentTimeMillis(), bedMinute(app))
-        try { am.setWindow(AlarmManager.RTC_WAKEUP, t, WINDOW_MS, pi) } catch (_: Exception) { }
+        if (!app.prefs.sleepReminder.first()) { am.cancel(pi); NudgeStore.setBedtimeArmed(app, 0L); return }
+        val t = nextTrigger(
+            System.currentTimeMillis(), bedMinute(app),
+            armed = NudgeStore.bedtimeArmed(app), fired = NudgeStore.bedtimeFired(app)
+        )
+        try {
+            am.setWindow(AlarmManager.RTC_WAKEUP, t, WINDOW_MS, pi)
+            NudgeStore.setBedtimeArmed(app, t)
+        } catch (_: Exception) { }
     }
 
     /** Alarma a sunat: mesajul (dacă nu e prea târziu), apoi armarea pentru mâine. */
     suspend fun fire(app: ForjaApp) {
         try {
+            // Amintirea armată a sunat: re-armarea de mai jos trece la următoarea.
+            NudgeStore.setBedtimeFired(app, NudgeStore.bedtimeArmed(app))
             if (app.prefs.sleepReminder.first()) {
                 val left = minutesToBedtime(System.currentTimeMillis(), bedMinute(app))
                 if (left >= LATE_LIMIT_MIN) Nudges.bedtime(app, left)

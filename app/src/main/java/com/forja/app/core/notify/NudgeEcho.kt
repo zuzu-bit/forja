@@ -35,7 +35,7 @@ import com.forja.app.core.designsystem.components.MascotSays
 import com.forja.app.core.designsystem.components.MascotState
 import com.forja.app.core.designsystem.components.pressable
 
-/** Replica cu care Casca te-a chemat (din extra-urile notificării atinse). */
+/** Replica cu care Casca te-a chemat (păstrată pe telefon la trimitere, găsită după cheia din notificarea atinsă). */
 data class Echo(val id: String, val context: String, val pose: NudgePose, val title: String, val body: String)
 
 /**
@@ -50,7 +50,7 @@ fun NudgeEcho(modifier: Modifier = Modifier) {
     var echo by remember { mutableStateOf<Echo?>(null) }
     var shown by remember { mutableStateOf<Echo?>(null) }
     LaunchedEffect(tick) {
-        val e = consume(activity?.intent) ?: return@LaunchedEffect
+        val e = consume(context, activity?.intent) ?: return@LaunchedEffect
         echo = e; shown = e
         Nudges.onTapped(context, e.context)
     }
@@ -77,18 +77,19 @@ fun NudgeEchoCard(echo: Echo, modifier: Modifier = Modifier, onDismiss: () -> Un
     }
 }
 
-/** Citește și șterge extra-urile mesajului atins (o singură afișare, și după rotirea ecranului). */
-private fun consume(intent: Intent?): Echo? {
+/**
+ * Citește și șterge cheia mesajului atins (o singură afișare, și după rotirea ecranului). Textul nu vine din Intent:
+ * MainActivity e exportată (lansatorul), deci orice aplicație i-ar putea trimite extra-uri. Doar o cheie pe care am
+ * pus-o noi într-o notificare trimisă găsește o replică; restul se ignoră.
+ */
+private fun consume(c: Context, intent: Intent?): Echo? {
     intent ?: return null
-    val id = intent.getStringExtra(Notifier.EXTRA_ID) ?: return null
-    val title = intent.getStringExtra(Notifier.EXTRA_TITLE).orEmpty()
-    val body = intent.getStringExtra(Notifier.EXTRA_BODY).orEmpty()
-    val ctx = intent.getStringExtra(Notifier.EXTRA_CTX).orEmpty()
-    val pose = NudgePose.entries.firstOrNull { it.name == intent.getStringExtra(Notifier.EXTRA_POSE) } ?: NudgePose.Talking
-    listOf(Notifier.EXTRA_ID, Notifier.EXTRA_TITLE, Notifier.EXTRA_BODY, Notifier.EXTRA_CTX, Notifier.EXTRA_POSE, Notifier.EXTRA_AT)
-        .forEach { intent.removeExtra(it) }
-    if (title.isBlank()) return null
-    return Echo(id, ctx, pose, title, body)
+    val key = intent.getStringExtra(Notifier.EXTRA_ECHO) ?: return null
+    intent.removeExtra(Notifier.EXTRA_ECHO)
+    val rec = NudgeStore.takeEcho(c, key) ?: return null
+    if (rec.title.isBlank()) return null
+    val pose = NudgePose.entries.firstOrNull { it.name == rec.pose } ?: NudgePose.Talking
+    return Echo(rec.id, rec.ctx, pose, rec.title, rec.body)
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
