@@ -23,7 +23,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.forja.app.core.designsystem.Accent2
 import com.forja.app.core.designsystem.EmberHot
 import com.forja.app.core.designsystem.EmberWarm
@@ -57,6 +59,12 @@ internal fun BoxScope.LevelChip(level: Int?) {
     }
 }
 
+/**
+ * Banda de sus ocupată de cip (px): marginea 6 + 3 + rândul mono 9 (≈ 12 sp) + 3, plus 2 dp de aer. Desenul începe sub ea,
+ * ca „NIV. 4” să nu stea pe piesă sau pe cărămizi (pe S23 miniatura are doar ≈ 98 dp înălțime). Fără cip: nimic rezervat.
+ */
+private fun Density.chipBand(level: Int?): Float = if (level == null) 0f else 14.dp.toPx() + 12.sp.toPx()
+
 /** Ceasul miniaturilor (ms), doar cu mișcare. */
 @Composable
 private fun rememberArtClock(moving: Boolean): androidx.compose.runtime.State<Long> {
@@ -87,7 +95,7 @@ private fun DrawScope.miniBrick(l: Float, t: Float, c: Float, color: Color) {
     drawRect(Color.Black.copy(alpha = 0.22f), topLeft = Offset(l + g, t + c - g - c * 0.08f), size = Size(c - 2 * g, c * 0.08f))
 }
 
-/** Miniatura ZID: un zid început, un T care coboară spre locul lui (conturul punctat). */
+/** Miniatura ZID: un zid început, un T care coboară spre locul lui (conturul punctat), totul sub cip. */
 @Composable
 internal fun ZidCardArt(level: Int?, modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
@@ -97,9 +105,11 @@ internal fun ZidCardArt(level: Int?, modifier: Modifier = Modifier) {
             Modifier.fillMaxSize().drawWithCache {
                 val cols = 6
                 val rows = ZidArt.size
-                val c = minOf(size.width * 0.8f / cols, size.height * 0.84f / rows)
+                // rândul 0 rămâne gol mereu (T-ul pornește de pe rândul 1): rândurile 1–7 încap sub cip
+                val band = chipBand(level)
+                val c = minOf(size.width * 0.8f / cols, size.height * 0.84f / rows, (size.height - band - 4.dp.toPx()) / (rows - 1))
                 val ox = (size.width - c * cols) / 2f
-                val oy = (size.height - c * rows) / 2f + c * 0.2f
+                val oy = maxOf((size.height - c * rows) / 2f + c * 0.2f, band - c)
                 val dash = PathEffect.dashPathEffect(floatArrayOf(c * 0.2f, c * 0.14f))
                 val sw = maxOf(1f, c * 0.07f)
                 onDrawBehind {
@@ -111,7 +121,7 @@ internal fun ZidCardArt(level: Int?, modifier: Modifier = Modifier) {
                     // un T cu vârful în jos coboară pe rânduri spre locul lui (rândurile 4–5, conturul punctat)
                     val land = 4f
                     val t = clock.value
-                    val top = if (reduced) 1f else ((t % 2_400L) / 480L).toFloat().coerceAtMost(land)
+                    val top = if (reduced) 1f else 1f + ((t % 2_400L) / 600L).toFloat().coerceAtMost(land - 1f)
                     val ghostC = Accent2.copy(alpha = 0.5f)
                     for ((gx, gy) in arrayOf(2 to 0, 3 to 0, 4 to 0, 3 to 1)) {
                         val l = ox + gx * c
@@ -140,7 +150,7 @@ internal fun AsaltCardArt(level: Int?, modifier: Modifier = Modifier) {
                 val bw = size.width * 0.86f / cols
                 val bh = bw * 0.5f
                 val ox = (size.width - bw * cols) / 2f
-                val oy = size.height * 0.24f
+                val oy = maxOf(size.height * 0.24f, chipBand(level))
                 val g = bw * 0.05f
                 val kinds = arrayOf(
                     intArrayOf(4, 3, 4, 3, 4),

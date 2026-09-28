@@ -44,7 +44,9 @@ import com.forja.app.core.designsystem.components.coachTarget
 import com.forja.app.core.games.active
 import com.forja.app.core.games.asalt.AsaltEngine
 import com.forja.app.core.games.asalt.AsaltPhase
+import com.forja.app.feature.games.ASALT_INSET_DP
 import com.forja.app.feature.games.CountdownDigit
+import com.forja.app.feature.games.GAME_COVER_TOP_DP
 import com.forja.app.feature.games.GameHeader
 import com.forja.app.feature.games.GameOverlay
 import com.forja.app.feature.games.PauseActions
@@ -106,9 +108,17 @@ internal class AsaltPlayActions(
     val result: ResultActions = ResultActions()
 )
 
-/** Scara terenului (dp pe unitate), după games.md §4.11: S23 → 0,841 (terenul 328 × 505 dp). */
-internal fun asaltUnitDp(widthDp: Float, heightDp: Float): Float =
-    minOf((widthDp - 32f) / AsaltEngine.W.toFloat(), (heightDp - 12f - 44f - 8f - 40f - 64f - 12f) / AsaltEngine.H.toFloat()).coerceAtLeast(0.3f)
+/**
+ * Scara terenului (dp pe unitate), după games.md §4.11, cu marginea dinăuntru ([ASALT_INSET_DP] pe fiecare latură):
+ * S23 → 0,821 (lumea 320 × 492 dp, cardul 328 × 500 dp).
+ */
+internal fun asaltUnitDp(widthDp: Float, heightDp: Float): Float {
+    val inset = 2f * ASALT_INSET_DP
+    return minOf(
+        (widthDp - 32f - inset) / AsaltEngine.W.toFloat(),
+        (heightDp - 12f - 44f - 8f - 40f - 64f - 12f - inset) / AsaltEngine.H.toFloat()
+    ).coerceAtLeast(0.3f)
+}
 
 internal fun livesWords(n: Int): String = when (n) {
     0 -> "nicio viață"
@@ -136,8 +146,8 @@ internal fun AsaltPlayContent(
     val reduced = LocalReducedMotion.current
     BoxWithConstraints(modifier.fillMaxSize().background(Surface0)) {
         val u = asaltUnitDp(maxWidth.value, maxHeight.value)
-        val fieldW = floor(AsaltEngine.W.toFloat() * u).dp
-        val fieldH = floor(AsaltEngine.H.toFloat() * u).dp
+        val fieldW = (floor(AsaltEngine.W.toFloat() * u) + 2f * ASALT_INSET_DP).dp
+        val fieldH = (floor(AsaltEngine.H.toFloat() * u) + 2f * ASALT_INSET_DP).dp
         val unitPx = with(LocalDensity.current) { u.dp.toPx() }
         Column(Modifier.fillMaxSize().padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 12.dp)) {
             GameHeader(
@@ -165,6 +175,7 @@ internal fun AsaltPlayContent(
                             description = "Atinge ca să lansezi"
                         )
                     }
+                    if (overlay is GameOverlay.Countdown) CountdownDigit(overlay.n)
                 }
                 Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
                     Mascot(state = mascot, hat = MascotHat.Helmet, size = 40.dp)
@@ -185,11 +196,11 @@ internal fun AsaltPlayContent(
                 )
             }
         }
-        val cover = Modifier.fillMaxSize().padding(top = 60.dp)
+        // voalul acoperă tot ce e sub antet, de la o margine la alta; cardul își pune singur marginile
+        val cover = Modifier.fillMaxSize().padding(top = GAME_COVER_TOP_DP.dp)
         when (overlay) {
-            is GameOverlay.Pause -> PauseCard(overlay.ui, actions.pause, cover.padding(horizontal = 12.dp, vertical = 8.dp))
-            is GameOverlay.Result -> ResultCard(overlay.ui, actions.result, cover.padding(horizontal = 12.dp, vertical = 8.dp))
-            is GameOverlay.Countdown -> CountdownDigit(overlay.n, cover)
+            is GameOverlay.Pause -> PauseCard(overlay.ui, actions.pause, cover)
+            is GameOverlay.Result -> ResultCard(overlay.ui, actions.result, cover)
             else -> Unit
         }
     }

@@ -5,11 +5,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.forja.app.core.designsystem.components.MascotState
 import com.forja.app.core.games.asalt.AsaltEngine
 import com.forja.app.core.games.asalt.AsaltLevels
+import com.forja.app.core.games.zid.ZidEngine
+import com.forja.app.core.inventory.BinTick
 import com.forja.app.feature.games.GameOverlay
 import com.forja.app.feature.games.GameSamples
 import com.forja.app.feature.games.InventoryReadyRow
@@ -44,20 +49,43 @@ class GameShots {
     // ───────────────────────────── ecranele ─────────────────────────────
 
     @Composable
-    private fun RunCards() = InventoryRunContent(InventorySamples.run.copy(zidLevel = 4, asaltLevel = 2), RunActions())
+    private fun RunCards(bins: List<BinTick> = InventorySamples.run.bins) =
+        InventoryRunContent(InventorySamples.run.copy(zidLevel = 4, asaltLevel = 2, bins = bins), RunActions())
+
+    /** Cele mai lungi nume de dosar din probe (două părți cu „ · ”), ca pe banda aplicării. */
+    private val longBins = InventorySamples.photoFolderNames.take(4).map { BinTick(it.first, it.second) }
+
+    /**
+     * Fontul din sistem mărit (Setări → Afișaj → Mărime font), peste densitatea profilului. `Density(d, scale)` din
+     * Compose 1.7 convertește sp-ul neliniar peste 1,03 (tabelele din Android 14), deci captura crește ca pe S23.
+     */
+    @Composable
+    private fun FontScale(scale: Float, content: @Composable () -> Unit) {
+        val d = LocalDensity.current
+        CompositionLocalProvider(LocalDensity provides Density(d.density, scale), content = content)
+    }
 
     @Composable
     private fun ZidMap() = LevelMapContent(GameSamples.zidMap, LevelMapActions())
 
     @Composable
-    private fun ZidPlay(overlay: GameOverlay, mascot: MascotState, pill: PillState? = GameSamples.pill) = ZidPlayContent(
-        play = ZidPlayState(GameSamples.zidPlay()),
+    private fun ZidPlay(
+        overlay: GameOverlay,
+        mascot: MascotState,
+        pill: PillState? = GameSamples.pill,
+        engine: ZidEngine = GameSamples.zidPlay()
+    ) = ZidPlayContent(
+        play = ZidPlayState(engine),
         overlay = overlay,
         pill = pill,
         mascot = mascot,
-        levelLabel = "NIV. 6",
+        // ca în ZidScreen: „RANG n” în „Fără sfârșit”, altfel „NIV. n”
+        levelLabel = if (engine.isEndless) "RANG ${engine.rank}" else "NIV. ${engine.level.id}",
         actions = ZidPlayActions()
     )
+
+    @Composable
+    private fun ZidEndless() = ZidPlay(GameOverlay.Result(GameSamples.zidEndless), MascotState.Happy, engine = GameSamples.zidEndlessPlay())
 
     @Composable
     private fun AsaltPlay(overlay: GameOverlay, mascot: MascotState, pill: PillState? = GameSamples.pill) = AsaltPlayContent(
@@ -85,7 +113,7 @@ class GameShots {
         overlay = GameOverlay.Ready,
         pill = null,
         mascot = MascotState.Idle,
-        levelLabel = "NIV. 1 · PRIMUL ZID",
+        levelLabel = "NIV. 1 · ${AsaltLevels.byId(1).name.uppercase()}",
         actions = AsaltPlayActions()
     )
 
@@ -109,6 +137,14 @@ class GameShots {
 
     @Config(qualifiers = PHONE_S23)
     @Test fun runCardsS23() = shot("games_run_cards_s23") { RunCards() }
+
+    /** Cazul cel mai greu al benzii: patru nume lungi („Plajă · Vama Veche”) pe cutiile de 69 dp ale S23. */
+    @Config(qualifiers = PHONE_S23)
+    @Test fun runCardsLongS23() = shot("games_run_cards_long_s23") { RunCards(longBins) }
+
+    /** Aceleași nume cu fontul la 130 %: cutia numelui crește cu fontul, nimic nu se taie la un rând. */
+    @Config(qualifiers = PHONE_S23)
+    @Test fun runCardsFont130S23() = shot("games_run_cards_font130_s23") { FontScale(1.3f) { RunCards(longBins) } }
 
     @Config(qualifiers = PHONE_S23)
     @Test fun zidMapS23() = shot("games_zid_map_s23") { ZidMap() }
@@ -143,7 +179,7 @@ class GameShots {
     }
 
     @Config(qualifiers = PHONE_S23)
-    @Test fun zidEndlessS23() = shot("games_zid_endless_s23") { ZidPlay(GameOverlay.Result(GameSamples.zidEndless), MascotState.Happy) }
+    @Test fun zidEndlessS23() = shot("games_zid_endless_s23") { ZidEndless() }
 
     @Config(qualifiers = PHONE_S23)
     @Test fun asaltMapS23() = shot("games_asalt_map_s23") { AsaltMap() }
@@ -160,7 +196,7 @@ class GameShots {
 
     @Test fun zidReady() = shot("games_zid_ready") { ZidReady() }
     @Test fun zidLost() = shot("games_zid_lost") { ZidPlay(GameOverlay.Result(GameSamples.zidLost), MascotState.Sorry) }
-    @Test fun zidEndless() = shot("games_zid_endless") { ZidPlay(GameOverlay.Result(GameSamples.zidEndless), MascotState.Happy) }
+    @Test fun zidEndless() = shot("games_zid_endless") { ZidEndless() }
     @Test fun zidCountdown() = shot("games_zid_countdown") { ZidPlay(GameOverlay.Countdown(2), MascotState.Idle) }
     @Test fun asaltMap() = shot("games_asalt_map") { AsaltMap() }
     @Test fun asaltReady() = shot("games_asalt_ready") { AsaltReady() }
