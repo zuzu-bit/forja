@@ -185,16 +185,18 @@ test('diag: verificarea cheilor prin GET /models, o dată pe oră (cache R2) —
   assert.equal(d.models.gemini.sursa, 'discovery');
   assert.equal(calls.find((c) => c.url.includes('groq.com/openai/v1/models')).headers.authorization, 'Bearer q-secret-wrong');
   assert.ok(!JSON.stringify(d).includes('secret'), 'nicio cheie în diag');
+  // GET /models la Groq e folosit de două lucruri: verificarea cheii și descoperirea listei de modele (picată pe 401 → listă statică).
   const groqChecks = () => calls.filter((c) => c.url.includes('groq.com/openai/v1/models')).length;
-  assert.equal(groqChecks(), 1);
+  assert.equal(groqChecks(), 2, 'verificarea cheii + descoperirea listei');
+  assert.equal(d.models.groq.sursa, 'static');
   await diagProviders(env);
-  assert.equal(groqChecks(), 1, 'a doua verificare vine din memorie');
+  assert.equal(groqChecks(), 2, 'a doua verificare vine din memorie (și lista statică nu se mai cere 10 min)');
   resetBudgetCache();
   const saved = bucket.files.get('ai-keycheck/groq.json');
   assert.ok(saved && saved.customMetadata.ttl === String(3600_000), 'verificarea e salvată în R2 cu ttl 1 h');
   assert.ok(!saved.text.includes('secret'));
   const d2 = await diagProviders(env);
-  assert.equal(groqChecks(), 1, 'alt izolat citește verificarea din R2');
+  assert.equal(groqChecks(), 3, 'alt izolat: doar descoperirea listei mai bate la /models; verificarea cheii vine din R2');
   assert.equal(d2.providers.groq, 'configured but rejected (401)');
   // Rețea picată la verificare: rămâne „configured” (nu știm), fără cache fals.
   resetBudgetCache();

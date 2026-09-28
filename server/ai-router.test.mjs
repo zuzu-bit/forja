@@ -23,11 +23,14 @@ const GEMINI_LIST = { models: [
   { name: 'models/gemini-3.5-transcribe', supportedGenerationMethods: ['generateContent'] },
 ] };
 /** Înlocuiește fetch-ul global pentru un test; întoarce jurnalul apelurilor (url + corp parsat). */
+// Lista Groq (GET /openai/v1/models) e servită la fel: un model de viziune, textul Llama 3.3 și Whisper.
+const GROQ_LIST = { data: ['llama-3.3-70b-versatile', 'meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'whisper-large-v3'].map((id) => ({ id })) };
 function mockFetch(handler) {
   const calls = [];
   calls.discovery = 0;
   globalThis.fetch = async (url, init = {}) => {
     if (String(url).includes('/v1beta/models?')) { calls.discovery++; return ok(GEMINI_LIST); }
+    if (String(url) === 'https://api.groq.com/openai/v1/models') return ok(GROQ_LIST);
     const body = init.body && typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
     calls.push({ url: String(url), body, headers: init.headers || {} });
     return handler(String(url), body, calls.length);
