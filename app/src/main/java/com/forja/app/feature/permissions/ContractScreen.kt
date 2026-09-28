@@ -4,10 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -87,10 +89,16 @@ private val CLAUSES = listOf(
     )
 )
 
+/** Nota despre permisiuni — parte din textul integral al contractului. */
+private const val PERMISSIONS_NOTE =
+    "Permisiunile Android (locație, poze, microfon, agendă) se dau separat, în Echipare. Contractul spune ce facem cu ele; " +
+        "fără o permisiune, categoria ei rămâne pe telefon. Ce nu e limitat la Wi-Fi poate consuma internet mobil."
+
 /**
  * Contractul de securitate — un singur acord în locul comutatoarelor. Se citește întreg, se bifează, se semnează.
  * Semnătura = versiunea + momentul, pe telefon (Prefs) și în users/{uid}.contract. Semnat: pornește tot ([CollectionSettings.enableAll]).
  * Revocat: oprește tot și cere ștergerea ([CollectionSettings.disableAll]).
+ * Semnat, ecranul e scurt: sigiliul, data, starea; textul integral se recitește la cerere („Recitește”).
  */
 @Composable
 fun ContractScreen(onBack: () -> Unit) {
@@ -100,11 +108,16 @@ fun ContractScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     val signedAt by app.prefs.contractSignedAt.collectAsState(initial = -1L)
-    val signed by app.prefs.contractSigned.collectAsState(initial = false)
+    // null = DataStore încă necitit: nu arătăm nici contractul întreg, nici sigiliul, ca să nu clipească unul în altul.
+    val signedOrNull by app.prefs.contractSigned.collectAsState(initial = null)
+    val signed = signedOrNull == true
+    val loading = signedOrNull == null || signedAt < 0L
+    val syncStatus by app.prefs.syncStatus.collectAsState(initial = "")
     val loggedIn = app.auth.currentUid != null
     var accepted by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var confirmRevoke by remember { mutableStateOf(false) }
+    var reread by remember { mutableStateOf(false) }
 
     fun sign() {
         val uid = app.auth.currentUid ?: run { toast.show("Intră în cont ca să semnezi."); return }
@@ -167,57 +180,57 @@ fun ContractScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(10.dp))
             Reveal(index = 0) { StampLabel("CONTRACT DE SECURITATE") }
             Spacer(Modifier.height(12.dp))
-            Reveal(index = 1) {
-                Text("Citești. Semnezi. Știi.", style = TitleModule.copy(fontSize = 26.sp, lineHeight = 29.sp))
-            }
-            Spacer(Modifier.height(6.dp))
-            Reveal(index = 2) {
-                Text(
-                    "Un singur acord, în locul comutatoarelor. Tot ce pleacă de pe telefon e scris aici, fără ocolișuri.",
-                    style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp)
-                )
-            }
 
-            Spacer(Modifier.height(18.dp))
-            CLAUSES.forEachIndexed { i, c ->
-                Reveal(index = 3 + i) {
-                    ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), stroke = StrokeCard) {
-                        SectionLabel(c.label.uppercase())
-                        Spacer(Modifier.height(8.dp))
-                        c.lines.forEachIndexed { j, line ->
-                            if (j > 0) Spacer(Modifier.height(6.dp))
-                            Row {
-                                Text("—", style = BodySmall.copy(color = Accent2))
-                                Spacer(Modifier.width(8.dp))
-                                Text(line, style = BodySmall.copy(color = TextSecondary, lineHeight = 17.sp))
-                            }
+            if (loading) {
+                // Doar antetul, o clipă, cât se citește semnătura.
+            } else if (signed && signedAt > 0) {
+                // ── Semnat: sigiliul, data, versiunea; starea sincronizării doar când spune ceva ──
+                Reveal(index = 1) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(Positive.copy(alpha = 0.14f))
+                                .border(1.dp, Positive.copy(alpha = 0.45f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Outlined.VerifiedUser, contentDescription = null, tint = Positive, modifier = Modifier.size(28.dp))
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column {
+                            Text("Semnat.", style = TitleModule.copy(fontSize = 26.sp, lineHeight = 29.sp))
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "${fmtSigned(signedAt)} · v${Prefs.CONTRACT_VERSION}".uppercase(),
+                                style = monoLabel(9, 0.12f).copy(color = Positive)
+                            )
                         }
                     }
                 }
-            }
+                val galleryStatus = remember(signedAt, busy) { GalleryUploader.status(context) }
+                listOf(syncStatus, galleryStatus).filter { it.isNotBlank() }.forEach { line ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(line, style = BodyTiny.copy(color = TextSecondary))
+                }
 
-            Text(
-                "Permisiunile Android (locație, poze, microfon, agendă) se dau separat, în Echipare. Contractul spune ce facem cu ele; fără o permisiune, categoria ei rămâne pe telefon. Ce nu e limitat la Wi-Fi poate consuma internet mobil.",
-                style = BodyTiny.copy(color = TextDim)
-            )
-            Spacer(Modifier.height(18.dp))
-
-            if (signed && signedAt > 0) {
-                ForjaCard(Modifier.fillMaxWidth(), fill = Surface2) {
-                    Text("Semnat pe ${fmtSigned(signedAt)} · versiunea ${Prefs.CONTRACT_VERSION}", style = BodyStrong.copy(fontSize = 14.sp, color = Positive))
-                    val galleryStatus = remember(signedAt, busy) { GalleryUploader.status(context) }
-                    if (galleryStatus.isNotBlank()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(galleryStatus, style = BodyTiny.copy(color = TextSecondary))
-                    }
+                Spacer(Modifier.height(18.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SecondaryButton(
+                        if (reread) "Ascunde" else "Recitește", onClick = { reread = !reread },
+                        modifier = Modifier.weight(1f), padV = 10.dp
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    SecondaryButton(
+                        "Revocă", onClick = { confirmRevoke = true }, textColor = LogoutText,
+                        modifier = Modifier.weight(1f), padV = 10.dp
+                    )
+                }
+                if (confirmRevoke) {
+                    // Singurul text care trebuie citit aici: ce face revocarea, chiar înainte s-o faci.
                     Spacer(Modifier.height(12.dp))
-                    if (!confirmRevoke) {
-                        SecondaryButton("Revocă contractul", onClick = { confirmRevoke = true }, modifier = Modifier.fillMaxWidth(), padV = 10.dp)
-                    } else {
-                        Text(
-                            "Revocarea oprește tot pe loc și cere ștergerea de pe site. Semnătura dispare de pe telefon.",
-                            style = BodyTiny.copy(color = EmberHot)
-                        )
+                    ForjaCard(Modifier.fillMaxWidth(), fill = Surface2) {
+                        Text("Oprește tot pe loc și cere ștergerea de pe site.", style = BodySmall.copy(color = EmberHot))
                         Spacer(Modifier.height(10.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             PrimaryButton(if (busy) "Se revocă" else "Da, revoc", onClick = ::revoke, small = true, enabled = !busy, modifier = Modifier.weight(1f))
@@ -226,7 +239,27 @@ fun ContractScreen(onBack: () -> Unit) {
                         }
                     }
                 }
+                if (reread) {
+                    Spacer(Modifier.height(18.dp))
+                    ContractText(reveal = false)
+                }
             } else {
+                // ── Nesemnat (sau versiune nouă): textul integral, la semnare ──
+                Reveal(index = 1) {
+                    Text("Citești. Semnezi. Știi.", style = TitleModule.copy(fontSize = 26.sp, lineHeight = 29.sp))
+                }
+                Spacer(Modifier.height(6.dp))
+                Reveal(index = 2) {
+                    Text(
+                        "Un singur acord, în locul comutatoarelor. Tot ce pleacă de pe telefon e scris aici, fără ocolișuri.",
+                        style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp)
+                    )
+                }
+
+                Spacer(Modifier.height(18.dp))
+                ContractText(reveal = true)
+                Spacer(Modifier.height(18.dp))
+
                 Row(
                     Modifier.fillMaxWidth().pressable({ accepted = !accepted }, scaleDown = 0.99f, haptic = false),
                     verticalAlignment = Alignment.CenterVertically
@@ -244,12 +277,35 @@ fun ContractScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     Text("Intră în cont ca să semnezi. Contractul e legat de contul tău.", style = BodyTiny.copy(color = EmberHot))
                 }
-            }
 
-            Spacer(Modifier.height(16.dp))
-            Text("Nimeni nu te grăbește. Citește tot.", style = BodyTiny.copy(color = TextDim))
+                Spacer(Modifier.height(16.dp))
+                Text("Nimeni nu te grăbește. Citește tot.", style = BodyTiny.copy(color = TextDim))
+            }
         }
     }
+}
+
+/** Textul integral: clauzele, fiecare rând o propoziție sau două, plus nota despre permisiuni. */
+@Composable
+private fun ContractText(reveal: Boolean) {
+    CLAUSES.forEachIndexed { i, c ->
+        val card = @Composable {
+            ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), stroke = StrokeCard) {
+                SectionLabel(c.label.uppercase())
+                Spacer(Modifier.height(8.dp))
+                c.lines.forEachIndexed { j, line ->
+                    if (j > 0) Spacer(Modifier.height(6.dp))
+                    Row {
+                        Text("—", style = BodySmall.copy(color = Accent2))
+                        Spacer(Modifier.width(8.dp))
+                        Text(line, style = BodySmall.copy(color = TextSecondary, lineHeight = 17.sp))
+                    }
+                }
+            }
+        }
+        if (reveal) Reveal(index = 3 + i) { card() } else card()
+    }
+    Text(PERMISSIONS_NOTE, style = BodyTiny.copy(color = TextDim))
 }
 
 /** Căsuța de bifat: pătrat 22dp, colțuri 4dp; plină cu bifă când e gata. */

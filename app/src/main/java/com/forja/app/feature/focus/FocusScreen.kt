@@ -44,6 +44,14 @@ import kotlinx.coroutines.launch
 private val FocusCardFill = Color(0xE60E130B)
 private val FocusCardStroke = Color(0x2E90A873)
 
+/** Ghidajul primei vizite (≤ 90 de caractere pe pas): ordinul de sub titlu și subtitlurile stau aici, nu pe ecran. */
+private val FOCUS_STEPS = listOf(
+    CoachStep("focus.copac", "Copacul crește cât ții Focus pornit. Dacă renunți, se ofilește."),
+    CoachStep("focus.detox", "Detox digital: totul în pauză, în afară de telefon, mesaje și FORJA."),
+    CoachStep("focus.porneste", "Aici pornești paza. Prima dată, Android îți cere două accese.", MascotState.Thinking),
+    CoachStep("focus.consemnate", "Consemnezi o aplicație până la o oră. Paznicul o oprește până atunci.", MascotState.Happy)
+)
+
 /** Focus: respirație 4,6s, blocare onestă cu UsageStats, timp de ecran real. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -147,308 +155,307 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Surface0)) {
-        VideoSurface(
-            url = "",
-            posterUrl = com.forja.app.core.media.Media.mediaUrl("snd_stream.jpg")
-                ?: "https://t3.ftcdn.net/jpg/10/16/02/48/500_F_1016024842_sVPfKb4a4gZkZ7XjEjnGtdkeYz1eF2Gz.jpg",
-            modifier = Modifier.fillMaxSize()
-        )
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color(0x8C0A0A0B))
-        )
-
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .statusBarsPadding()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 130.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(Modifier.height(8.dp))
-            // Antetul postului: ștampilă, numele filei, ordinul — vocea „armată serioasă”.
-            ModuleHeader(
-                stamp = "POST DE PAZĂ",
-                title = "Focus",
-                order = "Timpul tău, apărat. Paznicul e la post, tu ții frontul.",
-                modifier = Modifier.fillMaxWidth()
+    CoachMarks(screen = "focus", steps = FOCUS_STEPS) {
+        Box(Modifier.fillMaxSize().background(Surface0)) {
+            VideoSurface(
+                url = "",
+                posterUrl = com.forja.app.core.media.Media.mediaUrl("snd_stream.jpg")
+                    ?: "https://t3.ftcdn.net/jpg/10/16/02/48/500_F_1016024842_sVPfKb4a4gZkZ7XjEjnGtdkeYz1eF2Gz.jpg",
+                modifier = Modifier.fillMaxSize()
             )
-            Spacer(Modifier.height(24.dp))
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color(0x8C0A0A0B))
+            )
 
-            // Pădurea de azi — copaci care cresc cât te ții de focus, se ofilesc la renunțare
-            val forest by app.prefs.focusForest.collectAsState(initial = Triple(0, 0, 0))
-            FocusForest(grown = forest.first, withered = forest.second, partialSecs = forest.third)
-
-            Spacer(Modifier.height(22.dp))
-            val activeRule = rules.firstOrNull { it.enabled }
-            if (activeRule != null) {
-                Text(
-                    "${activeRule.label} e consemnat până la ${"%02d:%02d".format(activeRule.untilHour, activeRule.untilMinute)}.",
-                    style = Body.copy(fontSize = 15.sp, color = TextPrimary),
-                    textAlign = TextAlign.Center
-                )
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .statusBarsPadding()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 130.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Spacer(Modifier.height(8.dp))
-            }
-            Text(
-                if (screenTimeMin >= 0)
-                    "Ecran azi · ${Fmt.durationHm(screenTimeMin)}" +
-                        (if (opensToday >= 0) " · $opensToday deschideri" else "")
-                else "Timpul de ecran apare după ce dai accesul la utilizare.",
-                style = monoLabel(9, 0.12f).copy(color = Accent2)
-            )
+                // Antetul postului: ștampila și numele filei; ordinul de odinioară stă acum în ghidaj.
+                ModuleHeader(
+                    stamp = "POST DE PAZĂ",
+                    title = "Focus",
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(24.dp))
 
-            // Un singur citat cald pe ecran — același toată ziua, altul mâine.
-            Spacer(Modifier.height(18.dp))
-            WarmQuote(Tone.ofDay(Tone.focus), Modifier.fillMaxWidth())
-
-            Spacer(Modifier.height(20.dp))
-
-            // Detox digital: totul în pauză, în afară de esențiale (telefon, mesaje, FORJA).
-            val detoxOn = detoxUntil > System.currentTimeMillis()
-            ForjaCard(Modifier.fillMaxWidth(), fill = FocusCardFill, stroke = FocusCardStroke) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Detox digital", style = BodyStrong.copy(fontSize = 15.sp))
-                        Text(
-                            if (detoxOn) {
-                                val left = ((detoxUntil - System.currentTimeMillis()) / 60000).toInt() + tick.toInt() * 0
-                                "în post · mai sunt ${Fmt.durationHm(left.coerceAtLeast(1))} · doar telefon, mesaje și FORJA"
-                            } else "un schimb de pază: totul în pauză, în afară de telefon, mesaje și FORJA",
-                            style = BodyTiny.copy(color = if (detoxOn) Accent2 else TextSecondary)
-                        )
-                    }
+                // Pădurea de azi — copaci care cresc cât te ții de focus, se ofilesc la renunțare
+                val forest by app.prefs.focusForest.collectAsState(initial = Triple(0, 0, 0))
+                Box(Modifier.coachTarget("focus.copac")) {
+                    FocusForest(grown = forest.first, withered = forest.second, partialSecs = forest.third)
                 }
-                Spacer(Modifier.height(10.dp))
-                if (detoxOn) {
-                    SecondaryButton("Oprește detoxul", onClick = {
-                        scope.launch {
-                            app.prefs.setDetoxUntil(0L)
-                            app.prefs.witherFocusTree()
-                            toast.show("Detox oprit. Cât ai rezistat, contează.")
-                        }
-                    }, modifier = Modifier.fillMaxWidth())
-                } else {
-                    Row {
-                        listOf(30, 60, 120).forEach { min ->
-                            SecondaryButton(
-                                if (min < 120) "$min min" else "2 ore",
-                                onClick = {
-                                    ensureBlockingPermissions {
-                                        scope.launch {
-                                            app.prefs.setDetoxUntil(System.currentTimeMillis() + min * 60_000L)
-                                            FocusMonitorService.start(context)
-                                            toast.show("Detox pornit. Schimbul a început. Ne vedem peste ${Fmt.durationHm(min)}.")
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.weight(1f).padding(end = if (min < 120) 8.dp else 0.dp)
+
+                Spacer(Modifier.height(22.dp))
+                val activeRule = rules.firstOrNull { it.enabled }
+                if (activeRule != null) {
+                    Text(
+                        "${activeRule.label} e consemnat până la ${"%02d:%02d".format(activeRule.untilHour, activeRule.untilMinute)}.",
+                        style = Body.copy(fontSize = 15.sp, color = TextPrimary),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                Text(
+                    if (screenTimeMin >= 0)
+                        "Ecran azi · ${Fmt.durationHm(screenTimeMin)}" +
+                            (if (opensToday >= 0) " · $opensToday deschideri" else "")
+                    else "Ecran azi · fără acces",
+                    style = monoLabel(9, 0.12f).copy(color = Accent2)
+                )
+
+                // Un singur citat cald pe ecran — același toată ziua, altul mâine.
+                Spacer(Modifier.height(18.dp))
+                WarmQuote(Tone.ofDay(Tone.focus), Modifier.fillMaxWidth())
+
+                Spacer(Modifier.height(20.dp))
+
+                // Detox digital: totul în pauză, în afară de esențiale (telefon, mesaje, FORJA).
+                val detoxOn = detoxUntil > System.currentTimeMillis()
+                ForjaCard(Modifier.coachTarget("focus.detox").fillMaxWidth(), fill = FocusCardFill, stroke = FocusCardStroke) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Detox digital", style = BodyStrong.copy(fontSize = 15.sp), modifier = Modifier.weight(1f))
+                        if (detoxOn) {
+                            val left = ((detoxUntil - System.currentTimeMillis()) / 60000).toInt() + tick.toInt() * 0
+                            Text(
+                                "mai sunt ${Fmt.durationHm(left.coerceAtLeast(1))}".uppercase(),
+                                style = monoLabel(9, 0.12f).copy(color = Accent2)
                             )
                         }
                     }
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // Raportul de azi — pe aplicații
-            if (hasUsage && topApps.isNotEmpty()) {
-                NatureSectionHeader("Raportul de azi")
-                Spacer(Modifier.height(8.dp))
-                ForjaCard(Modifier.fillMaxWidth(), fill = FocusCardFill, stroke = FocusCardStroke) {
-                    topApps.forEachIndexed { i, (label, min, frac) ->
-                        Column(Modifier.padding(bottom = if (i < topApps.size - 1) 10.dp else 0.dp)) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(label, style = BodyStrong.copy(fontSize = 13.sp), maxLines = 1, modifier = Modifier.weight(1f))
-                                Text(Fmt.durationHm(min), style = BodySmall.copy(color = TextSecondary))
+                    Spacer(Modifier.height(10.dp))
+                    if (detoxOn) {
+                        SecondaryButton("Oprește detoxul", onClick = {
+                            scope.launch {
+                                app.prefs.setDetoxUntil(0L)
+                                app.prefs.witherFocusTree()
+                                toast.show("Detox oprit. Cât ai rezistat, contează.")
                             }
-                            Spacer(Modifier.height(4.dp))
-                            Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(5.dp)
-                                    .clip(CircleShape)
-                                    .background(SwitchOff)
-                            ) {
-                                Box(
-                                    Modifier
-                                        .fillMaxWidth(frac.coerceIn(0.03f, 1f))
-                                        .fillMaxHeight()
-                                        .clip(CircleShape)
-                                        .background(AccentGradient)
+                        }, modifier = Modifier.fillMaxWidth())
+                    } else {
+                        Row {
+                            listOf(30, 60, 120).forEach { min ->
+                                SecondaryButton(
+                                    if (min < 120) "$min min" else "2 ore",
+                                    onClick = {
+                                        ensureBlockingPermissions {
+                                            scope.launch {
+                                                app.prefs.setDetoxUntil(System.currentTimeMillis() + min * 60_000L)
+                                                FocusMonitorService.start(context)
+                                                toast.show("Detox pornit. Schimbul a început. Ne vedem peste ${Fmt.durationHm(min)}.")
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f).padding(end = if (min < 120) 8.dp else 0.dp)
                                 )
                             }
                         }
                     }
                 }
+
                 Spacer(Modifier.height(20.dp))
-                // Săptămâna ta de ecran
-                if (weekMinutes.size == 7) {
-                    NatureSectionHeader("Raportul săptămânii")
+
+                // Raportul de azi — pe aplicații
+                if (hasUsage && topApps.isNotEmpty()) {
+                    NatureSectionHeader("Raportul de azi")
                     Spacer(Modifier.height(8.dp))
                     ForjaCard(Modifier.fillMaxWidth(), fill = FocusCardFill, stroke = FocusCardStroke) {
-                        val maxW = (weekMinutes.maxOrNull() ?: 0).coerceAtLeast(60)
-                        Row(
-                            Modifier.fillMaxWidth().height(70.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Bottom
-                        ) {
-                            weekMinutes.forEachIndexed { i, min ->
-                                val isToday = i == 6
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        topApps.forEachIndexed { i, (label, min, frac) ->
+                            Column(Modifier.padding(bottom = if (i < topApps.size - 1) 10.dp else 0.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(label, style = BodyStrong.copy(fontSize = 13.sp), maxLines = 1, modifier = Modifier.weight(1f))
+                                    Text(Fmt.durationHm(min), style = BodySmall.copy(color = TextSecondary))
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(5.dp)
+                                        .clip(CircleShape)
+                                        .background(SwitchOff)
+                                ) {
                                     Box(
                                         Modifier
-                                            .width(20.dp)
-                                            .fillMaxHeight((min.toFloat() / maxW).coerceIn(0.05f, 1f))
+                                            .fillMaxWidth(frac.coerceIn(0.03f, 1f))
+                                            .fillMaxHeight()
                                             .clip(CircleShape)
-                                            .background(if (isToday) AccentGradient else androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFF34343C), Color(0xFF23232A))))
-                                    )
-                                    Spacer(Modifier.height(5.dp))
-                                    val dayIdx = (java.time.LocalDate.now().dayOfWeek.value - 1 - (6 - i) + 7) % 7
-                                    Text(
-                                        if (isToday) "azi" else Fmt.dayLetters[dayIdx],
-                                        style = monoLabel(8, 0.08f).copy(color = if (isToday) Accent2 else TextDim)
+                                            .background(AccentGradient)
                                     )
                                 }
                             }
                         }
-                        Spacer(Modifier.height(6.dp))
-                        val avg = weekMinutes.filter { it > 0 }.let { if (it.isEmpty()) 0 else it.sum() / it.size }
-                        Text(
-                            if (avg > 0) "media ${Fmt.durationHm(avg)} pe zi" else "datele se adună zi de zi",
-                            style = monoLabel(8, 0.10f).copy(color = TextDim)
-                        )
                     }
-                }
-            }
-
-            Spacer(Modifier.height(4.dp))
-
-            if (!hasUsage) {
-                PrimaryButton("Permite accesul", onClick = { permOpen = true }, modifier = Modifier.fillMaxWidth())
-            } else if (!hasOverlay) {
-                PrimaryButton("Permite blocarea", onClick = { overlayOpen = true }, modifier = Modifier.fillMaxWidth())
-            } else if (!focusActive) {
-                PrimaryButton(
-                    "Pornește Focus",
-                    onClick = {
-                        if (rules.none { it.enabled }) {
-                            pickerOpen = true
-                        } else {
-                            ensureBlockingPermissions {
-                                FocusMonitorService.start(context)
-                                focusActive = true
-                                scope.launch { app.prefs.setFocusActive(true) }
-                                toast.show("Focus pornit. Respiră.")
+                    Spacer(Modifier.height(20.dp))
+                    // Săptămâna ta de ecran
+                    if (weekMinutes.size == 7) {
+                        NatureSectionHeader("Raportul săptămânii")
+                        Spacer(Modifier.height(8.dp))
+                        ForjaCard(Modifier.fillMaxWidth(), fill = FocusCardFill, stroke = FocusCardStroke) {
+                            val maxW = (weekMinutes.maxOrNull() ?: 0).coerceAtLeast(60)
+                            Row(
+                                Modifier.fillMaxWidth().height(70.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Bottom
+                            ) {
+                                weekMinutes.forEachIndexed { i, min ->
+                                    val isToday = i == 6
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Box(
+                                            Modifier
+                                                .width(20.dp)
+                                                .fillMaxHeight((min.toFloat() / maxW).coerceIn(0.05f, 1f))
+                                                .clip(CircleShape)
+                                                .background(if (isToday) AccentGradient else androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFF34343C), Color(0xFF23232A))))
+                                        )
+                                        Spacer(Modifier.height(5.dp))
+                                        val dayIdx = (java.time.LocalDate.now().dayOfWeek.value - 1 - (6 - i) + 7) % 7
+                                        Text(
+                                            if (isToday) "azi" else Fmt.dayLetters[dayIdx],
+                                            style = monoLabel(8, 0.08f).copy(color = if (isToday) Accent2 else TextDim)
+                                        )
+                                    }
+                                }
                             }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            } else {
-                SecondaryButton(
-                    "Oprește Focus",
-                    onClick = {
-                        FocusMonitorService.stop(context)
-                        focusActive = false
-                        scope.launch {
-                            app.prefs.setFocusActive(false)
-                            app.prefs.witherFocusTree()
-                        }
-                        toast.show("Focus oprit. Copacul început s-a ofilit. Data viitoare pornești de la zero.")
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // Lista de aplicații blocate
-            NatureSectionHeader("Aplicații consemnate")
-            Spacer(Modifier.height(8.dp))
-            if (rules.isEmpty()) {
-                Text(
-                    "Niciuna încă. Adaugă aplicațiile care îți mănâncă serile.",
-                    style = BodySmall.copy(color = TextSecondary),
-                    modifier = Modifier.align(Alignment.Start)
-                )
-            }
-            rules.forEach { r ->
-                ForjaCard(
-                    Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    fill = FocusCardFill, stroke = FocusCardStroke, padding = 12.dp
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(r.label, style = BodyStrong.copy(fontSize = 14.sp))
+                            Spacer(Modifier.height(6.dp))
+                            val avg = weekMinutes.filter { it > 0 }.let { if (it.isEmpty()) 0 else it.sum() / it.size }
                             Text(
-                                "consemnat până la ${"%02d:%02d".format(r.untilHour, r.untilMinute)}",
-                                style = BodyTiny.copy(color = TextSecondary)
+                                if (avg > 0) "media ${Fmt.durationHm(avg)} pe zi" else "încă fără date",
+                                style = monoLabel(8, 0.10f).copy(color = TextDim)
                             )
                         }
-                        ForjaSwitch(checked = r.enabled, onCheckedChange = { on ->
-                            scope.launch { app.db.focusDao().upsert(r.copy(enabled = on)) }
-                        })
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            "șterge",
-                            style = BodyTiny.copy(color = TextDim),
-                            modifier = Modifier.pressable({
-                                scope.launch { app.db.focusDao().delete(r.packageName) }
-                            })
-                        )
                     }
                 }
-            }
-            Spacer(Modifier.height(6.dp))
-            SecondaryButton("+ Adaugă o aplicație", onClick = { pickerOpen = true }, modifier = Modifier.fillMaxWidth())
 
-            Spacer(Modifier.height(14.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Confidențialitate Focus", style = BodyTiny.copy(color = TextDim))
-                Spacer(Modifier.width(8.dp))
-                InfoDot(
-                    title = "Confidențialitate",
-                    text = "FORJA vede doar ce aplicație e deschisă — nu citește mesajele, parolele sau conținutul ecranului."
-                )
-            }
+                Spacer(Modifier.height(4.dp))
 
-            Spacer(Modifier.height(24.dp))
-
-            // Curățenie de azi — detox digital
-            NatureSectionHeader("Curățenie de azi")
-            Spacer(Modifier.height(8.dp))
-            ForjaCard(
-                Modifier.fillMaxWidth().pressable(onOpenCleanup),
-                fill = FocusCardFill, stroke = FocusCardStroke
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Telefon ușor. Minte limpede.",
-                        style = BodyStrong.copy(fontSize = 15.sp),
-                        modifier = Modifier.weight(1f)
+                if (!hasUsage) {
+                    PrimaryButton("Permite accesul", onClick = { permOpen = true }, modifier = Modifier.coachTarget("focus.porneste").fillMaxWidth())
+                } else if (!hasOverlay) {
+                    PrimaryButton("Permite blocarea", onClick = { overlayOpen = true }, modifier = Modifier.coachTarget("focus.porneste").fillMaxWidth())
+                } else if (!focusActive) {
+                    PrimaryButton(
+                        "Pornește Focus",
+                        onClick = {
+                            if (rules.none { it.enabled }) {
+                                pickerOpen = true
+                            } else {
+                                ensureBlockingPermissions {
+                                    FocusMonitorService.start(context)
+                                    focusActive = true
+                                    scope.launch { app.prefs.setFocusActive(true) }
+                                    toast.show("Focus pornit. Respiră.")
+                                }
+                            }
+                        },
+                        modifier = Modifier.coachTarget("focus.porneste").fillMaxWidth()
                     )
-                    InfoDot(
-                        title = "Curățenie de azi",
-                        text = "Treci prin pozele și fișierele adunate. FORJA îți arată ce pare de aruncat, tu decizi. Nimic nu se șterge singur, nimic nu pleacă de pe telefon."
+                } else {
+                    SecondaryButton(
+                        "Oprește Focus",
+                        onClick = {
+                            FocusMonitorService.stop(context)
+                            focusActive = false
+                            scope.launch {
+                                app.prefs.setFocusActive(false)
+                                app.prefs.witherFocusTree()
+                            }
+                            toast.show("Focus oprit. Copacul început s-a ofilit. Data viitoare pornești de la zero.")
+                        },
+                        modifier = Modifier.coachTarget("focus.porneste").fillMaxWidth()
                     )
                 }
-                Spacer(Modifier.height(2.dp))
-                Text("Inventarul de azi. Tu hotărăști ce pleacă.", style = BodyTiny.copy(color = TextSecondary))
-                Spacer(Modifier.height(10.dp))
-                Text("Fă curat →", style = BodySmall.copy(color = Accent2))
-            }
 
-            Spacer(Modifier.height(24.dp))
-            DetoxAddictionSection()
-            Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(20.dp))
+
+                // Lista de aplicații blocate
+                NatureSectionHeader("Aplicații consemnate")
+                Spacer(Modifier.height(8.dp))
+                if (rules.isEmpty()) {
+                    Text(
+                        "Niciuna încă.",
+                        style = BodySmall.copy(color = TextSecondary),
+                        modifier = Modifier.align(Alignment.Start)
+                    )
+                }
+                rules.forEach { r ->
+                    ForjaCard(
+                        Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        fill = FocusCardFill, stroke = FocusCardStroke, padding = 12.dp
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(r.label, style = BodyStrong.copy(fontSize = 14.sp))
+                                Text(
+                                    "până la ${"%02d:%02d".format(r.untilHour, r.untilMinute)}",
+                                    style = BodyTiny.copy(color = TextSecondary)
+                                )
+                            }
+                            ForjaSwitch(checked = r.enabled, onCheckedChange = { on ->
+                                scope.launch { app.db.focusDao().upsert(r.copy(enabled = on)) }
+                            })
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "șterge",
+                                style = BodyTiny.copy(color = TextDim),
+                                modifier = Modifier.pressable({
+                                    scope.launch { app.db.focusDao().delete(r.packageName) }
+                                })
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                SecondaryButton("+ Adaugă aplicație", onClick = { pickerOpen = true }, modifier = Modifier.coachTarget("focus.consemnate").fillMaxWidth())
+
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Confidențialitate", style = BodyTiny.copy(color = TextDim))
+                    Spacer(Modifier.width(8.dp))
+                    InfoDot(
+                        title = "Confidențialitate",
+                        text = "FORJA vede doar ce aplicație e deschisă — nu citește mesajele, parolele sau conținutul ecranului."
+                    )
+                }
+
+                Spacer(Modifier.height(24.dp))
+
+                // Inventarul — telefon ușor, minte limpede (ecranul Curățenie a devenit Inventar în 4.3)
+                NatureSectionHeader("Inventar")
+                Spacer(Modifier.height(8.dp))
+                ForjaCard(
+                    Modifier.fillMaxWidth().pressable(onOpenCleanup),
+                    fill = FocusCardFill, stroke = FocusCardStroke
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Telefon ușor. Minte limpede.",
+                            style = BodyStrong.copy(fontSize = 15.sp),
+                            modifier = Modifier.weight(1f)
+                        )
+                        InfoDot(
+                            title = "Inventar",
+                            text = "Inventarul pune pozele și documentele în dosare, după ce conțin. Analiza merge în fundal. Nimic nu se șterge fără tine."
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("Fă ordine ›", style = BodySmall.copy(color = Accent2))
+                }
+
+                Spacer(Modifier.height(24.dp))
+                DetoxAddictionSection()
+                Spacer(Modifier.height(8.dp))
+            }
         }
     }
 
@@ -463,13 +470,8 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                 Text("Afișare peste alte aplicații", style = TitleModule.copy(fontSize = 20.sp))
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Ca să apară ecranul de blocare peste aplicația consemnată, Android cere permisiunea „Afișare peste alte aplicații”.",
+                    "Ca ecranul de blocare să apară peste aplicația consemnată. Nimic altceva.",
                     style = Body
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "FORJA o folosește doar pentru ecranul de blocare — nimic altceva nu se desenează peste telefonul tău.",
-                    style = BodySmall.copy(color = TextSecondary)
                 )
                 Spacer(Modifier.height(18.dp))
                 Row {
@@ -508,13 +510,8 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                 Text("Acces la utilizare", style = TitleModule.copy(fontSize = 20.sp))
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Ca să oprească aplicațiile consemnate, FORJA are nevoie de permisiunea „Usage Access” din Android.",
+                    "Ca să oprească aplicațiile consemnate. Vede doar ce aplicație e deschisă, nu ce scrii.",
                     style = Body
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "FORJA vede doar ce aplicație e deschisă — nu citește mesajele, parolele sau conținutul ecranului.",
-                    style = BodySmall.copy(color = TextSecondary)
                 )
                 Spacer(Modifier.height(18.dp))
                 Row {
@@ -593,7 +590,7 @@ private fun DetoxAddictionSection() {
         NatureSectionHeader("Detox de adicție", trailing = {
             InfoDot(
                 title = "Paznicul tău",
-                text = "Un paznic care stă în post pentru tine, nu împotriva ta. Totul rămâne pe telefonul tău — nimic nu pleacă la vreun server. E instrumentul tău, nu al nostru."
+                text = "Un paznic care stă în post pentru tine, nu împotriva ta. Totul rămâne pe telefonul tău — nimic nu pleacă la vreun server. E instrumentul tău, nu al nostru.\n\nAtinge-l pentru o vorbă bună. Scrisoarea ți-o arată fix în momentul greu."
             )
         })
         Spacer(Modifier.height(12.dp))
@@ -618,13 +615,12 @@ private fun DetoxAddictionSection() {
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("Paznicul e cu tine", style = BodyStrong.copy(fontSize = 15.sp))
+                        Text("Paznicul", style = BodyStrong.copy(fontSize = 15.sp))
+                        Spacer(Modifier.height(2.dp))
                         Text(
-                            if (guardOn) "în post — te oprește la tentația aleasă de tine"
-                            else "mai e un pas ca să te poată opri",
-                            style = BodyTiny.copy(color = if (guardOn) Positive else Accent2)
+                            if (guardOn) "ÎN POST" else "UN PAS LIPSĂ",
+                            style = monoLabel(9, 0.12f).copy(color = if (guardOn) Positive else Accent2)
                         )
-                        Text("atinge-l pentru o vorbă bună", style = BodyTiny.copy(color = TextDim))
                     }
                     ForjaSwitch(checked = detoxOn, onCheckedChange = { on ->
                         scope.launch {
@@ -639,7 +635,7 @@ private fun DetoxAddictionSection() {
                         Text("„$mascotLine”", style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp))
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            if (letter.isBlank()) "→ scrie-ți scrisoarea" else "→ recitește / schimbă scrisoarea",
+                            "Scrisoarea ›",
                             style = BodySmall.copy(color = Accent2),
                             modifier = Modifier.pressable({ letterOpen = true })
                         )
@@ -649,12 +645,10 @@ private fun DetoxAddictionSection() {
 
             if (!guardOn) {
                 ForjaCard(Modifier.fillMaxWidth().padding(bottom = 10.dp), fill = FocusCardFill, stroke = Color(0x666F855A)) {
-                    Text("Mai e un pas", style = BodyStrong.copy(fontSize = 14.sp))
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "Paznicul intră în post în 3 pași. Te conduc eu, ecran cu ecran.",
-                        style = BodyTiny.copy(color = TextSecondary)
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Mai e un pas", style = BodyStrong.copy(fontSize = 14.sp), modifier = Modifier.weight(1f))
+                        Text("3 PAȘI", style = monoLabel(9, 0.12f).copy(color = Accent2))
+                    }
                     Spacer(Modifier.height(10.dp))
                     PrimaryButton("Pornește paznicul", small = true, onClick = { guardStep = 1 }, modifier = Modifier.fillMaxWidth())
                 }
@@ -673,7 +667,7 @@ private fun DetoxAddictionSection() {
             )
         } else {
             PrimaryButton(
-                "Pornește Detox de adicție",
+                "Începe detoxul",
                 onClick = {
                     scope.launch {
                         app.prefs.setDetoxOn(true)
@@ -732,8 +726,8 @@ private fun DetoxAddictionSection() {
     if (letterOpen) {
         DetoxTextSheet(
             title = "Scrisoarea către tine",
-            hint = "De ce vreau să scap. Cine vreau să devin. Ce pierd dacă alunec. Scrie din inimă — o citești fix în momentul greu.",
-            placeholder = "Vreau să scap pentru că…",
+            hint = "Scrie din inimă. O citești în momentul greu.",
+            placeholder = "De ce vreau să scap. Cine vreau să devin. Ce pierd dacă alunec…",
             initial = letter,
             singleLine = false,
             onSave = { scope.launch { app.prefs.setDetoxLetter(it); letterOpen = false; toast.show("Salvat. Cuvintele tale te așteaptă acolo.") } },
@@ -1005,11 +999,11 @@ private fun DetoxWordsSheet(initial: String, onSave: (String) -> Unit, onClose: 
             Text("Cuvinte de blocat", style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(6.dp))
             Text(
-                "Alege un pachet sau scrie-ți cuvintele tale. Când le tastezi oriunde pe telefon, paznicul te oprește. Rămân doar pe telefonul tău.",
+                "Le tastezi oriunde, paznicul te oprește. Rămân pe telefon.",
                 style = BodySmall.copy(color = TextSecondary)
             )
             Spacer(Modifier.height(14.dp))
-            SectionLabel("Pachete după tipul de adicție")
+            SectionLabel("Pachete")
             Spacer(Modifier.height(8.dp))
             packs.forEach { (tag, name, pack) ->
                 ForjaCard(Modifier.fillMaxWidth().padding(bottom = 8.dp), fill = Surface2, padding = 12.dp) {
@@ -1018,7 +1012,7 @@ private fun DetoxWordsSheet(initial: String, onSave: (String) -> Unit, onClose: 
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(name, style = BodyStrong.copy(fontSize = 14.sp))
-                            Text("${pack.size} cuvinte · le poți edita după", style = BodyTiny.copy(color = TextDim))
+                            Text("${pack.size} cuvinte", style = BodyTiny.copy(color = TextDim))
                         }
                         SecondaryButton("Adaugă", padV = 8.dp, onClick = { addPack(pack) })
                     }
@@ -1070,40 +1064,40 @@ private fun GuardWizardSheet(
                     Text("Încearcă să pornești paznicul", style = TitleModule.copy(fontSize = 20.sp))
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "Intră în Accesibilitate, apasă pe „FORJA · Detox de adicție” și încearcă să-l pornești. Android îl va bloca cu un mesaj „Setare restricționată / Restricted setting”.",
+                        "În Accesibilitate, atinge „FORJA · Detox de adicție” și pornește-l. Android îl blochează: „Setare restricționată”.",
                         style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "E normal. Chiar acest blocaj deblochează opțiunea de la pasul 2.",
+                        "E normal. Blocajul deschide pasul 2.",
                         style = BodySmall.copy(color = Accent2, lineHeight = 19.sp)
                     )
                     Spacer(Modifier.height(16.dp))
                     PrimaryButton("Deschide Accesibilitatea", onClick = onOpenAccess, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
-                    SecondaryButton("Am încercat → pasul 2", onClick = onNext, modifier = Modifier.fillMaxWidth())
+                    SecondaryButton("Am încercat", onClick = onNext, modifier = Modifier.fillMaxWidth())
                 }
                 2 -> {
                     Text("Deblochează setările", style = TitleModule.copy(fontSize = 20.sp))
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "Acum, în Setări → Aplicații, caută FORJA și deschide-l.",
+                        "Setări → Aplicații → FORJA.",
                         style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
                     )
                     Spacer(Modifier.height(10.dp))
-                    Text("1.  Sus în dreapta, apasă cele trei puncte  ⋮", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
+                    Text("1.  Sus-dreapta: ⋮", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
                     Spacer(Modifier.height(6.dp))
-                    Text("2.  Alege „Allow restricted settings” (Permite setările restricționate). Dacă cere codul telefonului, introdu-l.", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
+                    Text("2.  „Permite setările restricționate” (Allow restricted settings). Dacă cere codul, introdu-l.", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
                     Spacer(Modifier.height(16.dp))
                     PrimaryButton("Deschide Aplicații", onClick = onOpenApps, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
-                    SecondaryButton("Am făcut → pasul 3", onClick = onNext, modifier = Modifier.fillMaxWidth())
+                    SecondaryButton("Am făcut", onClick = onNext, modifier = Modifier.fillMaxWidth())
                 }
                 else -> {
                     Text("Pornește paznicul", style = TitleModule.copy(fontSize = 20.sp))
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "Revino în Accesibilitate și pornește „FORJA · Detox de adicție”. Acum comutatorul merge. Paznicul intră în post și te oprește la tentația aleasă de tine.",
+                        "Înapoi în Accesibilitate: pornește „FORJA · Detox de adicție”. Acum merge.",
                         style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
                     )
                     Spacer(Modifier.height(16.dp))
@@ -1189,7 +1183,7 @@ private fun AppPickerSheet(onClose: () -> Unit, onPick: (pkg: String, label: Str
         ) {
             Text("Ce aplicație oprești?", style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(12.dp))
-            SectionLabel("Consemnată până la ora")
+            SectionLabel("Până la ora")
             Spacer(Modifier.height(8.dp))
             Row {
                 listOf(12, 15, 18, 20, 22).forEach { h ->

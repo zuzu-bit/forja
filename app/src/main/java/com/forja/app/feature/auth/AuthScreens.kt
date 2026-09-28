@@ -96,12 +96,12 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
     fun forgot() {
         if (loading) return
         error = null; notice = null
-        if (email.isBlank()) { error = "Scrie emailul contului, apoi apasă din nou „Am uitat parola”."; return }
+        if (email.isBlank()) { error = "Scrie emailul, apoi „Am uitat parola”."; return }
         loading = true
         scope.launch {
             try {
                 app.auth.sendPasswordReset(email)
-                notice = "Ți-am trimis un email cu linkul de resetare. Verifică și dosarul Spam."
+                notice = "Link trimis pe email. Verifică și Spam."
             } catch (e: Exception) {
                 error = app.auth.humanError(e)
             } finally {
@@ -114,7 +114,7 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
         if (loading) return
         error = null
         if (email.isBlank() || password.isBlank() || (!isLogin && name.isBlank())) {
-            error = "Completează toate câmpurile — apoi mergem mai departe."
+            error = "Completează toate câmpurile."
             return
         }
         loading = true
@@ -168,18 +168,10 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
             }
             Spacer(Modifier.height(30.dp))
             Reveal(index = 2, key = isLogin) {
-                Column {
-                    Text(
-                        if (isLogin) "Bine ai revenit." else "Înrolarea durează un minut.",
-                        style = TitleOnboarding.copy(fontSize = 32.sp, lineHeight = 35.sp)
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        if (isLogin) "Intră în cont — progresul și prietenii tăi te așteaptă."
-                        else "Contul tău ține progresul, prietenii și harta voastră comună.",
-                        style = Body.copy(fontSize = 15.sp, lineHeight = 20.sp)
-                    )
-                }
+                Text(
+                    if (isLogin) "Bine ai revenit." else "Înrolarea durează un minut.",
+                    style = TitleOnboarding.copy(fontSize = 32.sp, lineHeight = 35.sp)
+                )
             }
             Spacer(Modifier.height(28.dp))
 
@@ -189,7 +181,7 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
             }
             ForjaField(email, { email = it }, "Email", keyboard = KeyboardType.Email)
             Spacer(Modifier.height(14.dp))
-            ForjaField(password, { password = it }, "Parolă (minim 6 caractere)", keyboard = KeyboardType.Password, password = true)
+            ForjaField(password, { password = it }, "Parolă · min. 6", keyboard = KeyboardType.Password, password = true)
 
             error?.let { msg ->
                 Spacer(Modifier.height(14.dp))
@@ -221,7 +213,7 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
                     CircularProgressIndicator(color = Accent2, modifier = Modifier.size(28.dp))
                 } else {
                     PrimaryButton(
-                        text = if (isLogin) "Intră în cont" else "Creează contul",
+                        text = if (isLogin) "Intră" else "Creează contul",
                         onClick = ::submit,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -229,7 +221,7 @@ fun AuthScreens(startInLogin: Boolean, onAuthed: () -> Unit) {
             }
             Spacer(Modifier.height(18.dp))
             Text(
-                if (isLogin) "Nu ai cont? Creează unul" else "Ai deja cont? Intră",
+                if (isLogin) "Cont nou ›" else "Am cont ›",
                 style = BodyStrong.copy(color = Accent2, fontSize = 14.sp),
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)

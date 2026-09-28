@@ -40,6 +40,20 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
+/** Ghidajul primei vizite (≤ 90 de caractere pe pas): paragraful de sub titlu și condițiile stau aici și la „i”. */
+private val GASIRE_STEPS = listOf(
+    CoachStep("gasire.stare", "Dacă îl pierzi, îl cauți din panoul online. Răspunde 5, 15 sau 30 de minute, apoi tace."),
+    CoachStep("gasire.inrolare", "Dă-i un nume, pune bifa și activează. Rămâne înrolat până oprești găsirea.", MascotState.Thinking),
+    CoachStep("gasire.teren", "Pe teren îi trebuie internet și locația Android pornită.", MascotState.Happy)
+)
+
+/** Condițiile de teren și ce pleacă de pe telefon, la punctul „i”. */
+private const val GASIRE_DETAILS =
+    "Telefonul trebuie să aibă internet și locația Android pornită. Pentru reconectare după restart: locația „Tot timpul” " +
+        "din setările Android.\n\n" +
+        "Pleacă de pe telefon doar poziția GPS, precizia și bateria — și doar cât durează o căutare pornită de tine din panou.\n\n" +
+        "Serverul păstrează doar amprenta secretului (SHA-256); poziția dispare după 24 h."
+
 /**
  * „Telefonul meu” — găsirea telefonului pierdut din panoul online.
  * Opt-in explicit (bifă + buton), implicit OPRIT. Cât e activată, un serviciu vizibil întreabă panoul
@@ -132,181 +146,172 @@ fun LostPhoneScreen(onBack: () -> Unit) {
 
     val bgMissing = remember(refresh, enabled) { !LostPhoneRecovery.backgroundPermission(context) }
 
-    Box(Modifier.fillMaxSize().topoBackground(decor = false)) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .statusBarsPadding()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 40.dp)
-        ) {
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Reveal(index = 0) { StampLabel("GĂSIRE") }
-                SecondaryButton("Înapoi", onClick = onBack, padV = 8.dp)
-            }
-            Spacer(Modifier.height(14.dp))
-            Reveal(index = 1) { Text("Telefonul meu", style = TitleModule) }
-            Spacer(Modifier.height(8.dp))
-            Reveal(index = 2) {
-                Text(
-                    "Dacă îl pierzi, îl cauți din panoul online: telefonul răspunde 5, 15 sau 30 de minute, apoi tace.",
-                    style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp)
-                )
-            }
-            Spacer(Modifier.height(18.dp))
+    CoachMarks(screen = "gasire", steps = GASIRE_STEPS) {
+        Box(Modifier.fillMaxSize().topoBackground(decor = false)) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .statusBarsPadding()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 40.dp)
+            ) {
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Reveal(index = 0) { StampLabel("GĂSIRE") }
+                    SecondaryButton("Înapoi", onClick = onBack, padV = 8.dp)
+                }
+                Spacer(Modifier.height(14.dp))
+                Reveal(index = 1) { Text("Telefonul meu", style = TitleModule) }
+                Spacer(Modifier.height(18.dp))
 
-            // Starea — un rând, ca pe o listă de efectiv.
-            ForjaCard(Modifier.fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(10.dp)
-                            .clip(RoundedCornerShape(5.dp))
-                            .background(if (!enabled) TextDim2 else if (searching) EmberHot else if (serviceUp) Positive else Accent2)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(if (enabled) LostPhoneRecovery.name(context) else name.ifBlank { LostPhoneRecovery.defaultName() }, style = BodyStrong.copy(fontSize = 15.sp))
-                        Text(
-                            when {
-                                !enabled -> "Găsirea e oprită."
-                                searching -> "Căutare în curs — poziția pleacă spre panou."
-                                serviceUp -> "Găsirea e activată. GPS oprit."
-                                else -> "Găsirea e activată, serviciul nu rulează."
-                            },
-                            style = BodyTiny.copy(color = if (enabled) Accent2 else TextDim)
+                // Starea — un rând, ca pe o listă de efectiv.
+                ForjaCard(Modifier.coachTarget("gasire.stare").fillMaxWidth()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(10.dp)
+                                .clip(RoundedCornerShape(5.dp))
+                                .background(if (!enabled) TextDim2 else if (searching) EmberHot else if (serviceUp) Positive else Accent2)
                         )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(if (enabled) LostPhoneRecovery.name(context) else name.ifBlank { LostPhoneRecovery.defaultName() }, style = BodyStrong.copy(fontSize = 15.sp))
+                            Text(
+                                when {
+                                    !enabled -> "OPRITĂ"
+                                    searching -> "CĂUTARE · POZIȚIA PLEACĂ"
+                                    serviceUp -> "ACTIVATĂ · GPS OPRIT"
+                                    else -> "ACTIVATĂ · SERVICIU OPRIT"
+                                },
+                                style = monoLabel(9, 0.12f).copy(color = if (!enabled) TextDim else if (searching) EmberHot else Accent2)
+                            )
+                        }
+                    }
+                    // Starea serviciului, doar când spune ceva în plus față de rândul de mai sus (erori, precizie, conexiune).
+                    val idle = serviceUp && !searching && status.endsWith("GPS oprit")
+                    if (enabled && status.isNotBlank() && !idle) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(status, style = BodySmall.copy(color = TextSecondary))
                     }
                 }
-                if (enabled && status.isNotBlank()) {
+
+                Spacer(Modifier.height(14.dp))
+
+                if (!enabled) {
+                    SectionLabel("Înrolare")
                     Spacer(Modifier.height(8.dp))
-                    Text(status, style = BodySmall.copy(color = TextSecondary))
-                }
-            }
-
-            Spacer(Modifier.height(14.dp))
-
-            if (!enabled) {
-                SectionLabel("Înrolare")
-                Spacer(Modifier.height(8.dp))
-                ForjaCard(Modifier.fillMaxWidth()) {
-                    NameField(name, { name = it.take(60) }, "Numele telefonului")
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        Modifier.fillMaxWidth().pressable({ consent = !consent }, scaleDown = 0.99f),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        ConsentBox(on = consent)
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            "Permit contului meu localizarea din panoul online, cu serviciu în fundal și notificare, până dezactivez găsirea.",
-                            style = BodySmall.copy(color = TextSecondary), modifier = Modifier.weight(1f)
+                    ForjaCard(Modifier.coachTarget("gasire.inrolare").fillMaxWidth()) {
+                        NameField(name, { name = it.take(60) }, "Numele telefonului")
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            Modifier.fillMaxWidth().pressable({ consent = !consent }, scaleDown = 0.99f),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            ConsentBox(on = consent)
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "Permit contului meu să-l localizeze din panou, cu serviciu în fundal, până opresc.",
+                                style = BodySmall.copy(color = TextSecondary), modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        // Onestitatea, scurtă: ce pleacă și când (detaliile la „i”).
+                        Text("Pleacă doar GPS-ul și bateria, doar la o căutare.", style = BodyTiny.copy(color = TextDim))
+                        Spacer(Modifier.height(14.dp))
+                        PrimaryButton(
+                            if (busy) "Se activează…" else "Activează găsirea",
+                            enabled = !busy && consent && owner != null && name.isNotBlank(),
+                            onClick = {
+                                info = ""
+                                permissions.launch(
+                                    arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION) +
+                                        if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.POST_NOTIFICATIONS) else emptyArray()
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
                         )
+                        if (owner == null) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("Intră în cont întâi.", style = BodyTiny.copy(color = EmberHot))
+                        }
+                    }
+                } else {
+                    SectionLabel("Comenzi")
+                    Spacer(Modifier.height(8.dp))
+                    PrimaryButton("Deschide panoul", onClick = { openPanel() }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    if (!serviceUp) {
+                        SecondaryButton(
+                            "Reconectează telefonul",
+                            onClick = {
+                                LostPhoneRecovery.resume(context)
+                                refresh++
+                                toast.show("Serviciul găsirii repornește.")
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    SecondaryButton(
+                        "Oprește căutarea",
+                        onClick = {
+                            if (searching) {
+                                LostPhoneRecovery.stopSearch(context)
+                                searching = false
+                                toast.show("Căutarea s-a oprit. Găsirea rămâne activată.")
+                            } else {
+                                toast.show("Nicio căutare în curs.")
+                            }
+                        },
+                        textColor = if (searching) TextPrimary else TextDim,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    SecondaryButton(
+                        "Dezactivează găsirea",
+                        onClick = {
+                            LostPhoneRecovery.disable(context)
+                            enabled = false
+                            searching = false
+                            consent = false
+                            status = ""
+                            refresh++
+                            toast.show("Găsirea e oprită. Telefonul nu mai răspunde panoului.")
+                        },
+                        textColor = LogoutText,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                if (info.isNotBlank()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(info, style = BodySmall.copy(color = EmberHot))
+                }
+
+                Spacer(Modifier.height(18.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SectionLabel("Condiții de teren")
+                    Spacer(Modifier.width(8.dp))
+                    InfoDot(title = "Condiții de teren", text = GASIRE_DETAILS, size = 20)
+                }
+                Spacer(Modifier.height(8.dp))
+                ForjaCard(Modifier.coachTarget("gasire.teren").fillMaxWidth(), stroke = StrokeCard) {
+                    Text("INTERNET · LOCAȚIE PORNITĂ", style = monoLabel(9, 0.12f).copy(color = TextSecondary))
+                    if (bgMissing) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("„TOT TIMPUL” · LIPSEȘTE", style = monoLabel(9, 0.12f).copy(color = EmberHot))
                     }
                     Spacer(Modifier.height(10.dp))
-                    Text(
-                        "Pleacă de pe telefon doar poziția GPS, precizia și bateria — și doar cât durează o căutare pornită de tine din panou.",
-                        style = BodyTiny.copy(color = TextDim)
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    PrimaryButton(
-                        if (busy) "Se activează…" else "Activează găsirea",
-                        enabled = !busy && consent && owner != null && name.isNotBlank(),
-                        onClick = {
-                            info = ""
-                            permissions.launch(
-                                arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION) +
-                                    if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.POST_NOTIFICATIONS) else emptyArray()
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (owner == null) {
-                        Spacer(Modifier.height(8.dp))
-                        Text("Conectează-te în FORJA ca să înrolezi telefonul.", style = BodyTiny.copy(color = EmberHot))
-                    }
+                    SecondaryButton("Setări Android", onClick = { openSettings() }, modifier = Modifier.fillMaxWidth())
                 }
-            } else {
-                SectionLabel("Comenzi")
-                Spacer(Modifier.height(8.dp))
-                PrimaryButton("Deschide panoul online", onClick = { openPanel() }, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(8.dp))
-                if (!serviceUp) {
-                    SecondaryButton(
-                        "Reconectează telefonul",
-                        onClick = {
-                            LostPhoneRecovery.resume(context)
-                            refresh++
-                            toast.show("Serviciul găsirii repornește.")
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-                SecondaryButton(
-                    "Oprește căutarea curentă",
-                    onClick = {
-                        if (searching) {
-                            LostPhoneRecovery.stopSearch(context)
-                            searching = false
-                            toast.show("Căutarea s-a oprit. Găsirea rămâne activată.")
-                        } else {
-                            toast.show("Nicio căutare în curs.")
-                        }
-                    },
-                    textColor = if (searching) TextPrimary else TextDim,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(8.dp))
-                SecondaryButton(
-                    "Dezactivează găsirea",
-                    onClick = {
-                        LostPhoneRecovery.disable(context)
-                        enabled = false
-                        searching = false
-                        consent = false
-                        status = ""
-                        refresh++
-                        toast.show("Găsirea e oprită. Telefonul nu mai răspunde panoului.")
-                    },
-                    textColor = LogoutText,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
 
-            if (info.isNotBlank()) {
-                Spacer(Modifier.height(10.dp))
-                Text(info, style = BodySmall.copy(color = EmberHot))
-            }
-
-            Spacer(Modifier.height(18.dp))
-            SectionLabel("Condiții de teren")
-            Spacer(Modifier.height(8.dp))
-            ForjaCard(Modifier.fillMaxWidth(), stroke = StrokeCard) {
-                Text("Telefonul trebuie să aibă internet și locația Android pornită.", style = BodySmall.copy(color = TextSecondary))
-                if (bgMissing) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Pentru reconectare după restart: locația „Tot timpul” din setările Android.",
-                        style = BodySmall.copy(color = EmberHot)
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(22.dp))
                 Text(
-                    "Serverul păstrează doar amprenta secretului (SHA-256); poziția dispare după 24 h.",
-                    style = BodyTiny.copy(color = TextDim)
+                    "„Nu pierzi nimic cât timp știi unde să cauți.”",
+                    style = TitleModule.copy(fontSize = 17.sp, lineHeight = 23.sp, color = TextSecondary)
                 )
-                Spacer(Modifier.height(10.dp))
-                SecondaryButton("Deschide setările Android", onClick = { openSettings() }, modifier = Modifier.fillMaxWidth())
             }
-
-            Spacer(Modifier.height(22.dp))
-            Text(
-                "„Nu pierzi nimic cât timp știi unde să cauți.”",
-                style = TitleModule.copy(fontSize = 17.sp, lineHeight = 23.sp, color = TextSecondary)
-            )
         }
     }
 }

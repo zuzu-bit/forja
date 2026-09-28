@@ -48,6 +48,14 @@ private data class ModuleCard(
     val title: String, val subtitle: String, val image: String, val route: String
 )
 
+/** Ghidajul primei vizite (≤ 90 de caractere pe pas): ce e pe panou, spus o dată; apoi panoul arată doar cifre. */
+private val PANOU_STEPS = listOf(
+    CoachStep("panou.profil", "Profilul tău: setări, codul de invitație și ghidajul."),
+    CoachStep("panou.miscare", "Kilometrii de azi. Dedesubt, săptămâna: atinge-o pentru toate turele."),
+    CoachStep("panou.cifre", "Ziua în cifre: mese, km, antrenamente, somn, focus. Glisează."),
+    CoachStep("panou.prieteni", "Camarazii tăi, live. Le dai codul din Profil și vă vedeți pe hartă.", MascotState.Happy)
+)
+
 /** Dashboard „Ziua ta" — date reale: km din activități, mese din jurnal, somn din sesiuni. */
 @Composable
 fun DashboardScreen(
@@ -84,6 +92,7 @@ fun DashboardScreen(
     }
 
     val todayKm = activitiesToday.sumOf { it.distanceM } / 1000.0
+    val focusMin = forest.first * 15 + forest.third / 60
 
     val modules = listOf(
         ModuleCard(
@@ -109,15 +118,15 @@ fun DashboardScreen(
         ),
         ModuleCard(
             "Focus",
-            "timpul tău, apărat",
+            if (focusMin > 0) "$focusMin min azi" else "timpul tău, apărat",
             "https://t3.ftcdn.net/jpg/10/16/02/48/500_F_1016024842_sVPfKb4a4gZkZ7XjEjnGtdkeYz1eF2Gz.jpg",
             Route.FOCUS
         ),
         // v4.0 — Explorarea: zonele deblocate la plimbare și locurile unde ai stat.
         ModuleCard(
             "Explorare",
-            if (cellCount > 0) "$cellCount zone deblocate · $placeCount ${if (placeCount == 1) "loc" else "locuri"}"
-            else "ieși la o plimbare — deblochezi zone",
+            if (cellCount > 0) "$cellCount zone · $placeCount ${if (placeCount == 1) "loc" else "locuri"}"
+            else "prima plimbare",
             com.forja.app.core.media.Media.mediaUrl("354016637.jpg")
                 ?: "https://t4.ftcdn.net/jpg/04/30/39/81/500_F_430398119_8X2LMR6p3pWYrpsvH3DYgYUz32PfnxXl.jpg",
             Route.MAP
@@ -132,183 +141,187 @@ fun DashboardScreen(
         )
     )
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .topoBackground(decor = false)
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 120.dp)
-    ) {
-        // Antet compact pe fundal topografic — fără hero-video
-        Row(
+    CoachMarks(screen = "panou", steps = PANOU_STEPS) {
+        Column(
             Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxSize()
+                .topoBackground(decor = false)
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 120.dp)
         ) {
-            Column {
-                Text("${Fmt.greeting()}, ${name.split(' ').firstOrNull() ?: ""}".trim(), style = BodyStrong.copy(fontSize = 16.sp))
-                Spacer(Modifier.height(6.dp))
-                // Ștampila postului — numele postului, nu ora; momentul zilei îl duce Tone.report în cardul de jos.
-                // Fără animație, fila revine des în ecran.
-                StampLabel("RAPORT DE ZI", rotationDeg = -4f, appear = false)
-            }
-            Box(Modifier.pressable(onOpenProfile)) {
-                Avatar(name = name, size = 40.dp, ring = true)
-            }
-        }
-
-        Spacer(Modifier.height(4.dp))
-
-        // Motivația zilei — imagine + salut + citat, cu ghidul care „dansează"
-        MotivationCard(name = name)
-        Spacer(Modifier.height(12.dp))
-
-        // Mișcarea — video cu alergarea, într-un card, cu km-ii de azi peste el
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .height(190.dp)
-                .clip(RoundedCornerShape(Radii.card))
-                .border(1.dp, StrokeCard, RoundedCornerShape(Radii.card))
-        ) {
-            VideoSurface(
-                url = "https://v.ftcdn.net/10/70/20/79/700_F_1070207993_vIfgD2rf5RWK9Sz68WonFo6D78QWfBWy_ST.mp4",
-                posterUrl = "https://t4.ftcdn.net/jpg/04/30/39/81/500_F_430398119_8X2LMR6p3pWYrpsvH3DYgYUz32PfnxXl.jpg",
-                modifier = Modifier.fillMaxSize()
-            )
-            Box(
-                Modifier.fillMaxSize().background(
-                    androidx.compose.ui.graphics.Brush.verticalGradient(
-                        0f to Color(0x1A0A0A0B), 0.55f to Color(0x8C0A0A0B), 1f to Color(0xF20A0A0B)
-                    )
-                )
-            )
-            Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    CountUpNumeral(target = todayKm.toFloat(), size = 40, decimals = 1)
-                    Spacer(Modifier.width(8.dp))
-                    Text("km azi", style = Body.copy(color = TextSecondary), modifier = Modifier.padding(bottom = 6.dp))
-                }
-                Text(
-                    if (todayKm > 0 || weekDistance > 0) "săptămâna asta: ${Fmt.km(weekDistance)} km · vezi tot →"
-                    else "deschide harta pentru prima tură →",
-                    style = BodySmall.copy(color = TextSecondary),
-                    modifier = Modifier.pressable(if (todayKm > 0 || weekDistance > 0) onOpenActivities else onOpenMap)
-                )
-            }
-        }
-        Spacer(Modifier.height(18.dp))
-        SectionLabel("Progresul de azi", Modifier.padding(horizontal = 20.dp))
-        Spacer(Modifier.height(10.dp))
-        val sleepStat = lastSleep?.let {
-            Fmt.durationHm((((it.endAt ?: it.startAt) - it.startAt) / 60000).toInt())
-        } ?: "—"
-        val focusMin = forest.first * 15 + forest.third / 60
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp)
-        ) {
-            StatCard(Icons.Outlined.Restaurant, "${mealsToday.size}", "mese azi")
-            Spacer(Modifier.width(10.dp))
-            StatCard(Icons.Outlined.DirectionsRun, Fmt.km(todayKm), "km azi")
-            Spacer(Modifier.width(10.dp))
-            StatCard(Icons.Outlined.FitnessCenter, "$workoutsWeek", "antren. săpt.")
-            Spacer(Modifier.width(10.dp))
-            StatCard(Icons.Outlined.Bedtime, sleepStat, "somn aseară")
-            Spacer(Modifier.width(10.dp))
-            StatCard(Icons.Outlined.CenterFocusStrong, "${focusMin}m", "focus azi")
-        }
-
-        Spacer(Modifier.height(22.dp))
-
-        // Prietenii — reali, cu stare live onestă
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            SectionLabel("Prieteni acum")
-            Text(
-                "vezi harta →", style = BodySmall.copy(color = Accent2),
-                modifier = Modifier.pressable(onOpenMap)
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-        if (friends.isEmpty()) {
-            ForjaCard(
+            // Antet compact pe fundal topografic — fără hero-video
+            Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
+                    .statusBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Încă niciun camarad.", style = BodyStrong)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Trimite-i unui prieten codul tău din Profil. Apăreți unul altuia pe hartă.",
-                    style = BodySmall
-                )
-            }
-        } else {
-            LazyRow(contentPadding = PaddingValues(horizontal = 20.dp)) {
-                items(friends, key = { it.uid }) { f ->
-                    Column(
-                        Modifier
-                            .padding(end = 14.dp)
-                            .pressable(onOpenMap),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        val active = f.state in setOf("walk", "run", "ride", "gym") &&
-                                System.currentTimeMillis() - f.locUpdatedAt < 15 * 60_000
-                        Avatar(name = f.name, size = 52.dp, ring = true, live = active)
-                        Spacer(Modifier.height(6.dp))
-                        Text(f.name.split(' ').first(), style = BodySmall.copy(color = TextPrimary))
-                        Text(
-                            when {
-                                f.ghost -> "fantomă"
-                                f.state == "run" -> "aleargă"
-                                f.state == "ride" -> "pe roți"
-                                f.state == "walk" -> "se plimbă"
-                                f.state == "sleep" -> "doarme"
-                                else -> Fmt.freshness(f.locUpdatedAt)
-                            },
-                            style = BodyTiny.copy(color = if (active) Accent2 else TextDim)
-                        )
-                    }
+                Column {
+                    Text("${Fmt.greeting()}, ${name.split(' ').firstOrNull() ?: ""}".trim(), style = BodyStrong.copy(fontSize = 16.sp))
+                    Spacer(Modifier.height(6.dp))
+                    // Ștampila postului — numele postului, nu ora; momentul zilei îl duce salutul de deasupra.
+                    // Fără animație, fila revine des în ecran.
+                    StampLabel("RAPORT DE ZI", rotationDeg = -4f, appear = false)
+                }
+                Box(Modifier.coachTarget("panou.profil").pressable(onOpenProfile)) {
+                    Avatar(name = name, size = 40.dp, ring = true)
                 }
             }
-        }
 
-        Spacer(Modifier.height(22.dp))
-        SectionLabel("Modulele tale", Modifier.padding(horizontal = 20.dp))
-        Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(4.dp))
 
-        // Grid 2×2 module cu foto reale
-        Column(Modifier.padding(horizontal = 20.dp)) {
-            for (row in modules.chunked(2)) {
-                Row(Modifier.fillMaxWidth()) {
-                    for ((i, m) in row.withIndex()) {
-                        ModuleTile(
-                            m,
-                            Modifier
-                                .weight(1f)
-                                .padding(end = if (i == 0) 10.dp else 0.dp),
-                            onClick = { onOpenModule(m.route) }
+            // Motivația zilei — imagine + citat, cu ghidul care „dansează"
+            MotivationCard()
+            Spacer(Modifier.height(12.dp))
+
+            // Mișcarea — video cu alergarea, într-un card, cu km-ii de azi peste el
+            Box(
+                Modifier
+                    .padding(horizontal = 20.dp)
+                    .coachTarget("panou.miscare")
+                    .fillMaxWidth()
+                    .height(190.dp)
+                    .clip(RoundedCornerShape(Radii.card))
+                    .border(1.dp, StrokeCard, RoundedCornerShape(Radii.card))
+            ) {
+                VideoSurface(
+                    url = "https://v.ftcdn.net/10/70/20/79/700_F_1070207993_vIfgD2rf5RWK9Sz68WonFo6D78QWfBWy_ST.mp4",
+                    posterUrl = "https://t4.ftcdn.net/jpg/04/30/39/81/500_F_430398119_8X2LMR6p3pWYrpsvH3DYgYUz32PfnxXl.jpg",
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    Modifier.fillMaxSize().background(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            0f to Color(0x1A0A0A0B), 0.55f to Color(0x8C0A0A0B), 1f to Color(0xF20A0A0B)
                         )
+                    )
+                )
+                Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        CountUpNumeral(target = todayKm.toFloat(), size = 40, decimals = 1)
+                        Spacer(Modifier.width(8.dp))
+                        Text("km azi", style = Body.copy(color = TextSecondary), modifier = Modifier.padding(bottom = 6.dp))
                     }
+                    Text(
+                        if (todayKm > 0 || weekDistance > 0) "săptămâna · ${Fmt.km(weekDistance)} km ›" else "prima tură ›",
+                        style = BodySmall.copy(color = TextSecondary),
+                        modifier = Modifier.pressable(if (todayKm > 0 || weekDistance > 0) onOpenActivities else onOpenMap)
+                    )
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            SectionLabel("Progresul de azi", Modifier.padding(horizontal = 20.dp))
+            Spacer(Modifier.height(10.dp))
+            val sleepStat = lastSleep?.let {
+                Fmt.durationHm((((it.endAt ?: it.startAt) - it.startAt) / 60000).toInt())
+            } ?: "—"
+            Row(
+                Modifier.coachTarget("panou.cifre").fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp)
+            ) {
+                StatCard(Icons.Outlined.Restaurant, "${mealsToday.size}", "mese azi")
+                Spacer(Modifier.width(10.dp))
+                StatCard(Icons.Outlined.DirectionsRun, Fmt.km(todayKm), "km azi")
+                Spacer(Modifier.width(10.dp))
+                StatCard(Icons.Outlined.FitnessCenter, "$workoutsWeek", "antren. săpt.")
+                Spacer(Modifier.width(10.dp))
+                StatCard(Icons.Outlined.Bedtime, sleepStat, "somn aseară")
+                Spacer(Modifier.width(10.dp))
+                StatCard(Icons.Outlined.CenterFocusStrong, "${focusMin}m", "focus azi")
+            }
+
+            Spacer(Modifier.height(22.dp))
+
+            // Prietenii — reali, cu stare live onestă
+            Column(Modifier.coachTarget("panou.prieteni")) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SectionLabel("Prieteni acum")
+                    Text(
+                        "Harta ›", style = BodySmall.copy(color = Accent2),
+                        modifier = Modifier.pressable(onOpenMap)
+                    )
                 }
                 Spacer(Modifier.height(10.dp))
+                if (friends.isEmpty()) {
+                    ForjaCard(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp)
+                    ) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Niciun camarad încă.", style = BodyStrong, modifier = Modifier.weight(1f))
+                            Text(
+                                "Codul tău ›", style = BodySmall.copy(color = Accent2),
+                                modifier = Modifier.pressable(onOpenProfile)
+                            )
+                        }
+                    }
+                } else {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 20.dp)) {
+                        items(friends, key = { it.uid }) { f ->
+                            Column(
+                                Modifier
+                                    .padding(end = 14.dp)
+                                    .pressable(onOpenMap),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                val active = f.state in setOf("walk", "run", "ride", "gym") &&
+                                        System.currentTimeMillis() - f.locUpdatedAt < 15 * 60_000
+                                Avatar(name = f.name, size = 52.dp, ring = true, live = active)
+                                Spacer(Modifier.height(6.dp))
+                                Text(f.name.split(' ').first(), style = BodySmall.copy(color = TextPrimary))
+                                Text(
+                                    when {
+                                        f.ghost -> "fantomă"
+                                        f.state == "run" -> "aleargă"
+                                        f.state == "ride" -> "pe roți"
+                                        f.state == "walk" -> "se plimbă"
+                                        f.state == "sleep" -> "doarme"
+                                        else -> Fmt.freshness(f.locUpdatedAt)
+                                    },
+                                    style = BodyTiny.copy(color = if (active) Accent2 else TextDim)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(22.dp))
+            SectionLabel("Modulele tale", Modifier.padding(horizontal = 20.dp))
+            Spacer(Modifier.height(10.dp))
+
+            // Grid 2×2 module cu foto reale
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                for (row in modules.chunked(2)) {
+                    Row(Modifier.fillMaxWidth()) {
+                        for ((i, m) in row.withIndex()) {
+                            ModuleTile(
+                                m,
+                                Modifier
+                                    .weight(1f)
+                                    .padding(end = if (i == 0) 10.dp else 0.dp),
+                                onClick = { onOpenModule(m.route) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
             }
         }
     }
 }
 
-/** Motivația zilei: o singură carte curată — imagine în fundal, salut + citat, cu ghidul care „dansează". */
+/** Motivația zilei: o singură carte curată — imagine în fundal și citatul zilei, cu ghidul care „dansează". Salutul stă în antet. */
 @Composable
-private fun MotivationCard(name: String) {
+private fun MotivationCard() {
     // Fundalurile rămân; citatul vine din fondul comun (Tone.general) și e același toată ziua, altul mâine.
     // Imaginea urmează indexul citatului (modulo lista de imagini), deci e și ea stabilă pe zi.
     val images = listOf(
@@ -319,7 +332,6 @@ private fun MotivationCard(name: String) {
     )
     val quote = remember { Tone.ofDay(Tone.general) }
     val image = remember(quote) { images[Math.floorMod(Tone.general.indexOf(quote), images.size)] }
-    val hour = remember { java.time.LocalTime.now().hour }
     val mascot = remember { com.forja.app.core.media.Media.mediaUrl("guide.jpg") }
     val infinite = rememberInfiniteTransition(label = "dance")
     val rot by infinite.animateFloat(-7f, 7f, infiniteRepeatable(tween(1300), RepeatMode.Reverse), label = "rot")
@@ -345,11 +357,6 @@ private fun MotivationCard(name: String) {
             }
         }
         Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
-            Text(
-                Tone.report(name.split(' ').firstOrNull() ?: "", hour),
-                style = BodySmall.copy(color = Accent2)
-            )
-            Spacer(Modifier.height(4.dp))
             // Singurul citat cald al ecranului.
             WarmQuote(quote)
         }

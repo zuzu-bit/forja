@@ -72,9 +72,9 @@ fun MealAddSheet(
                 }
             }
             Spacer(Modifier.height(16.dp))
-            AddOption(Icons.Outlined.PhotoCamera, "Fotografiază", "Estimare cu model, porții editabile") { onPick(MealAddWay.Photo, mealType) }
-            AddOption(Icons.Outlined.PhotoLibrary, "Din galerie", "O poză deja făcută") { onPick(MealAddWay.Gallery, mealType) }
-            AddOption(Icons.Outlined.QrCodeScanner, "Scanează cod", "Exact, din eticheta produsului") { onPick(MealAddWay.Barcode, mealType) }
+            AddOption(Icons.Outlined.PhotoCamera, "Fotografiază", "Estimare cu model") { onPick(MealAddWay.Photo, mealType) }
+            AddOption(Icons.Outlined.PhotoLibrary, "Din galerie", "Poză deja făcută") { onPick(MealAddWay.Gallery, mealType) }
+            AddOption(Icons.Outlined.QrCodeScanner, "Scanează cod", "Exact, din etichetă") { onPick(MealAddWay.Barcode, mealType) }
             AddOption(Icons.Outlined.Edit, "Adaug manual", "Tu scrii valorile") { onPick(MealAddWay.Manual, mealType) }
         }
     }
@@ -132,7 +132,7 @@ fun VoiceSheet(current: MascotVoice, onPick: (MascotVoice) -> Unit, onDismiss: (
                 if (row == 0) Spacer(Modifier.height(10.dp))
             }
             Spacer(Modifier.height(10.dp))
-            Text("Schimbă doar replicile. Regulile și cifrele rămân aceleași.", style = BodyTiny.copy(color = TextDim))
+            Text("Schimbă doar replicile, nu cifrele.", style = BodyTiny.copy(color = TextDim))
         }
     }
 }

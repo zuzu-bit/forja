@@ -50,6 +50,19 @@ private val TAB_INSET = 84.dp
 private const val IMG_BOWL = "https://t3.ftcdn.net/jpg/03/30/19/86/500_F_330198627_aQsy9t5HhOn7TIsd6FEB0FJvKz4IqdhH.jpg"
 private const val IMG_COOK = "https://t4.ftcdn.net/jpg/05/03/88/17/500_F_503881704_hyhi1pOJrBNqQ0dJqK1Qceno2pa8KWiJ.jpg"
 
+/** Ghidajul primei vizite (≤ 90 de caractere pe pas): ordinul de sub titlu și rândurile explicative stau aici. */
+private val NUTRITIE_STEPS = listOf(
+    CoachStep("nutritie.ratie", "Inelul arată rația zilei. Atinge cipul ca s-o schimbi."),
+    CoachStep("nutritie.bucatar", "Bucătarul îți vorbește. Atinge eticheta ca să-i alegi vocea.", MascotState.Happy),
+    CoachStep("nutritie.adauga", "Adaugi o masă: poză, cod de bare sau manual. Codul e exact, poza e estimare."),
+    CoachStep("nutritie.drumuri", "Aceleași drumuri, aici jos. Punctul de lângă ele spune cum lucrează analiza.")
+)
+
+/** „Cum funcționează analiza”, la punctul „i” de lângă drumuri. */
+private const val ANALIZA_DETAILS =
+    "Poza pleacă la analiză cu model — prin serverul FORJA sau, dacă serverul lipsește, direct la Google cu cheia ta Gemini. " +
+        "Modelul estimează, nu cântărește. Codul de bare dă valori exacte din OpenFoodFacts. Nimic nu se salvează până nu confirmi."
+
 /** Nutriție à la BitePal: poza e regina, codul de bare e adjunctul, baza de date decide. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -142,136 +155,132 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
     fun photograph() { if (serverOn || geminiKey.isNotBlank()) onPhotograph() else keyOpen = true }
     fun closeScan() { scanGen++; galleryAnalyzing = false; scanBytes = null; scanReport = null; scanError = null }
 
+    // Ghidajul așteaptă cât stau deasupra chestionarul sau ecranul de scanare (pașii goi = nimic de arătat încă).
+    // Profilul null = DataStore încă necitit: chestionarul poate apărea în clipa următoare, deci ghidajul mai așteaptă.
+    val profNow = profile
+    val overlayUp = scanBytes != null || profileOpen || profNow == null || !profNow.done
     Box(Modifier.fillMaxSize().background(Surface0)) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 120.dp)
-        ) {
-            // Header foto — bolul cald, fără cifre peste el (cifrele stau în cardul zilei).
-            Box(Modifier.fillMaxWidth().height(168.dp)) {
-                AsyncImage(
-                    model = IMG_BOWL,
-                    contentDescription = null, contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+        CoachMarks(screen = "nutritie", steps = if (overlayUp) emptyList() else NUTRITIE_STEPS) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 120.dp)
+            ) {
+                // Header foto — bolul cald, fără cifre peste el (cifrele stau în cardul zilei).
+                Box(Modifier.fillMaxWidth().height(168.dp)) {
+                    AsyncImage(
+                        model = IMG_BOWL,
+                        contentDescription = null, contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    BoxScopeBottomScrim()
+                    TopScrim()
+                }
+
+                Spacer(Modifier.height(18.dp))
+
+                // Ordinul de zi al modulului: ștampilă + două bătăi + ordin.
+                ModuleHeader(
+                    stamp = "RAȚIE",
+                    title = "Mănânci real. Vezi clar.",
+                    modifier = Modifier.padding(horizontal = 20.dp)
                 )
-                BoxScopeBottomScrim()
-                TopScrim()
-            }
 
-            Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(18.dp))
 
-            // Ordinul de zi al modulului: ștampilă + două bătăi + ordin.
-            ModuleHeader(
-                stamp = "RAȚIE",
-                title = "Mănânci real. Vezi clar.",
-                order = "Scanezi codul sau fotografiezi masa. Codul e exact, poza e estimare. Tu confirmi porția.",
-                modifier = Modifier.padding(horizontal = 20.dp)
-            )
+                // ── Cardul zilei: inel kcal, bare macro, seria, mascota ──
+                DayCard(
+                    meals = meals, kcal = kcal, target = target, targets = targets, profile = profile, streak = streak,
+                    voice = voice,
+                    onTarget = { if (targets == null) targetOpen = true else profileOpen = true },
+                    onProfile = { profileOpen = true },
+                    onVoice = { voiceOpen = true },
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
 
-            Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(20.dp))
 
-            // ── Cardul zilei: inel kcal, bare macro, seria, mascota ──
-            DayCard(
-                meals = meals, kcal = kcal, target = target, targets = targets, profile = profile, streak = streak,
-                voice = voice,
-                onTarget = { if (targets == null) targetOpen = true else profileOpen = true },
-                onProfile = { profileOpen = true },
-                onVoice = { voiceOpen = true },
-                modifier = Modifier.padding(horizontal = 20.dp)
-            )
-
-            Spacer(Modifier.height(20.dp))
-
-            // Jurnalul meselor de azi
-            SectionLabel("Mesele de azi", Modifier.padding(horizontal = 20.dp))
-            Spacer(Modifier.height(10.dp))
-            Column(Modifier.padding(horizontal = 20.dp)) {
-                for (type in 0..3) {
-                    val entries = meals.filter { it.mealType == type }
-                    if (entries.isEmpty() && type == 3) continue
-                    if (entries.isEmpty()) {
-                        // Cardurile meselor — aceeași sticlă verde ca butoanele de mai jos.
-                        ForjaCard(
-                            Modifier.fillMaxWidth().padding(bottom = 10.dp),
-                            fill = Color(0x249DB77E), stroke = Color(0x619DB77E), padding = 12.dp
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                // Jurnalul meselor de azi
+                SectionLabel("Mesele de azi", Modifier.padding(horizontal = 20.dp))
+                Spacer(Modifier.height(10.dp))
+                Column(Modifier.padding(horizontal = 20.dp)) {
+                    for (type in 0..3) {
+                        val entries = meals.filter { it.mealType == type }
+                        if (entries.isEmpty() && type == 3) continue
+                        if (entries.isEmpty()) {
+                            // Cardurile meselor — aceeași sticlă verde ca butoanele de mai jos.
+                            ForjaCard(
+                                Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                                fill = Color(0x249DB77E), stroke = Color(0x619DB77E), padding = 12.dp
                             ) {
-                                Column {
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Text(
                                         when (type) {
-                                            0 -> "Micul dejun — încă nimic"
-                                            1 -> "Prânzul — încă nimic"
-                                            else -> "Cina — încă nimic"
+                                            0 -> "Micul dejun"
+                                            1 -> "Prânzul"
+                                            else -> "Cina"
                                         },
                                         style = BodyStrong.copy(color = TextSecondary)
                                     )
-                                    Text(mealTypeNames[type], style = monoLabel(8, 0.12f))
+                                    SecondaryButton(
+                                        "Adaugă", onClick = { addOpen = type }, padV = 8.dp,
+                                        modifier = if (type == 0) Modifier.coachTarget("nutritie.adauga") else Modifier
+                                    )
                                 }
-                                SecondaryButton("Adaugă", onClick = { addOpen = type }, padV = 8.dp)
                             }
+                        } else {
+                            entries.forEach { m -> MealRow(m, onDelete = { vm.deleteMeal(m.id) }) }
+                            Text(
+                                "+ adaugă la ${mealTypeNames[type].lowercase()}",
+                                style = BodySmall.copy(color = Accent2),
+                                modifier = (if (type == 0) Modifier.coachTarget("nutritie.adauga") else Modifier)
+                                    .padding(bottom = 12.dp, start = 2.dp).pressable({ addOpen = type })
+                            )
                         }
-                    } else {
-                        entries.forEach { m -> MealRow(m, onDelete = { vm.deleteMeal(m.id) }) }
-                        Text(
-                            "+ adaugă la ${mealTypeNames[type].lowercase()}",
-                            style = BodySmall.copy(color = Accent2),
-                            modifier = Modifier.padding(bottom = 12.dp, start = 2.dp).pressable({ addOpen = type })
-                        )
                     }
                 }
-            }
 
-            Spacer(Modifier.height(8.dp))
-            // Trei drumuri principale, cu imagini calde: poză, cod, manual.
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-                ImageTile("Fotografiază", IMG_BOWL, onClick = { photograph() }, modifier = Modifier.weight(1f))
-                Spacer(Modifier.width(10.dp))
-                ImageTile("Scanează cod", Media.mediaUrl("nut_scan.jpg") ?: IMG_COOK, onClick = onScan, modifier = Modifier.weight(1f))
-                Spacer(Modifier.width(10.dp))
-                ImageTile(
-                    "Adaug manual",
-                    Media.mediaUrl("471644726.jpg") ?: IMG_BOWL,
-                    onClick = { manualType = MealAnalyze.mealTypeForTime(System.currentTimeMillis()); manualOpen = true }, modifier = Modifier.weight(1f)
-                )
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-                ActionTile(
-                    label = if (galleryAnalyzing) "se analizează…" else "Din galerie",
-                    tint = Color(0xFF9DB77E),
-                    onClick = { galleryMealType = null; pickFromGallery() },
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(Modifier.width(10.dp))
-                ActionTile(
-                    label = "Caută",
-                    tint = Color(0xFF9DB77E),
-                    onClick = { searchOpen = true },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Cum funcționează analiza", style = BodyTiny.copy(color = TextDim2))
-                Spacer(Modifier.width(8.dp))
-                InfoDot(
-                    title = "Cum funcționează",
-                    text = "Poza pleacă la analiză cu model — prin serverul FORJA sau, dacă serverul lipsește, direct la Google cu cheia ta Gemini. Modelul estimează, nu cântărește. Codul de bare dă valori exacte din OpenFoodFacts. Nimic nu se salvează până nu confirmi."
-                )
-            }
+                Spacer(Modifier.height(8.dp))
+                // Trei drumuri principale, cu imagini calde: poză, cod, manual.
+                Row(Modifier.padding(horizontal = 20.dp).coachTarget("nutritie.drumuri").fillMaxWidth()) {
+                    ImageTile("Fotografiază", IMG_BOWL, onClick = { photograph() }, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(10.dp))
+                    ImageTile("Scanează cod", Media.mediaUrl("nut_scan.jpg") ?: IMG_COOK, onClick = onScan, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(10.dp))
+                    ImageTile(
+                        "Adaug manual",
+                        Media.mediaUrl("471644726.jpg") ?: IMG_BOWL,
+                        onClick = { manualType = MealAnalyze.mealTypeForTime(System.currentTimeMillis()); manualOpen = true }, modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    ActionTile(
+                        label = if (galleryAnalyzing) "se analizează…" else "Din galerie",
+                        tint = Color(0xFF9DB77E),
+                        onClick = { galleryMealType = null; pickFromGallery() },
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    ActionTile(
+                        label = "Caută",
+                        tint = Color(0xFF9DB77E),
+                        onClick = { searchOpen = true },
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    InfoDot(title = "Cum funcționează", text = ANALIZA_DETAILS)
+                }
 
-            // Un singur citat cald pe ecran — același toată ziua.
-            Spacer(Modifier.height(24.dp))
-            WarmQuote(Tone.ofDay(Tone.nutrition), Modifier.padding(horizontal = 20.dp))
+                // Un singur citat cald pe ecran — același toată ziua.
+                Spacer(Modifier.height(24.dp))
+                WarmQuote(Tone.ofDay(Tone.nutrition), Modifier.padding(horizontal = 20.dp))
+            }
         }
 
         // Ecranul de scanare „ca la BitePal” pentru poza din galerie: poza, banda amber, etichetele, cardul-bulă, mascota.
@@ -436,28 +445,33 @@ private fun DayCard(
         }
         Spacer(Modifier.height(8.dp))
         if (targets != null && profile != null) {
-            // „Ținta ta” cu explicația într-o linie.
+            // „Ținta ta”: cifrele pe un rând; cum e calculată stă la „i”, onestitatea în insignă.
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("ȚINTA TA", style = monoLabel(8, 0.14f).copy(color = Accent2))
+                Text("ȚINTA TA", style = monoLabel(8, 0.14f).copy(color = Accent2), modifier = Modifier.weight(1f))
+                SourceBadge("reper")
                 Spacer(Modifier.width(8.dp))
-                Text(targets.summary, style = BodyStrong.copy(fontSize = 13.sp))
+                InfoDot(title = "Rația ta", text = "Calculată ${Targets.explain(profile)}. Reper, nu prescripție.", size = 18)
             }
             Spacer(Modifier.height(2.dp))
-            Text(
-                "Calculată ${Targets.explain(profile)}. Reper, nu prescripție.",
-                style = BodyTiny.copy(color = TextDim)
-            )
+            Text(targets.summary, style = BodyStrong.copy(fontSize = 13.sp))
         } else {
-            Text(
-                "Reperele P/C/G vin din obiectivul de $target kcal (25 · 45 · 30 %). Orientare, nu prescripție.",
-                style = BodyTiny.copy(color = TextDim)
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Spune-mi greutatea și îți calculez rația ›",
-                style = BodyStrong.copy(fontSize = 13.sp, color = Accent2),
-                modifier = Modifier.pressable(onProfile)
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    Text(
+                        "Calculează rația ›",
+                        style = BodyStrong.copy(fontSize = 13.sp, color = Accent2),
+                        modifier = Modifier.pressable(onProfile)
+                    )
+                }
+                SourceBadge("orientativ")
+                Spacer(Modifier.width(8.dp))
+                InfoDot(
+                    title = "Reperele P/C/G",
+                    text = "Vin din obiectivul de $target kcal (25 · 45 · 30 %). Orientare, nu prescripție. " +
+                        "Spune-mi greutatea și îți calculez rația.",
+                    size = 18
+                )
+            }
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -470,6 +484,7 @@ private fun DayCard(
                 if (targets != null) "rația $target" else "obiectiv $target",
                 style = monoLabel(8, 0.12f).copy(color = Accent2),
                 modifier = Modifier
+                    .coachTarget("nutritie.ratie")
                     .clip(ChipShape)
                     .background(TabPillActive)
                     .pressable(onTarget)
@@ -478,7 +493,7 @@ private fun DayCard(
             Spacer(Modifier.weight(1f))
             Text(
                 when (streak) {
-                    0 -> "prima zi începe azi"
+                    0 -> "0 zile la rând"
                     1 -> "1 zi la rând"
                     else -> "$streak zile la rând"
                 },
@@ -495,6 +510,7 @@ private fun DayCard(
                     "BUCĂTARUL · ${voice.label.uppercase()} ›",
                     style = monoLabel(8, 0.14f).copy(color = Accent2),
                     modifier = Modifier
+                        .coachTarget("nutritie.bucatar")
                         .clip(ChipShape)
                         .background(TabPillActive)
                         .pressable(onVoice)
@@ -742,16 +758,16 @@ fun AiKeySheet(onSaved: (String) -> Unit, onClose: () -> Unit) {
             Text("Activează analiza pozelor", style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(6.dp))
             Text(
-                "Analiza folosește modelul Gemini (Google) cu cheia ta gratuită. Pozele pleacă direct la contul tău Google, nu prin serverele FORJA. Ce primești e o estimare — o corectezi înainte de salvare.",
+                "Cheia ta gratuită Gemini. Pozele pleacă direct la Google, nu prin FORJA.",
                 style = Body
             )
             Spacer(Modifier.height(12.dp))
-            Text("PAȘII (2 MINUTE, O SINGURĂ DATĂ)", style = monoLabel(9, 0.14f).copy(color = Accent2))
+            Text("3 PAȘI · 2 MINUTE", style = monoLabel(9, 0.14f).copy(color = Accent2))
             Spacer(Modifier.height(6.dp))
             Text(
-                "1. Deschide aistudio.google.com/apikey (logat cu contul Google)\n" +
-                    "2. Apasă „Create API key” și copiază codul\n" +
-                    "3. Lipește-l aici",
+                "1. aistudio.google.com/apikey\n" +
+                    "2. „Create API key” → copiază\n" +
+                    "3. Lipește aici",
                 style = BodySmall.copy(lineHeight = 19.sp)
             )
             Spacer(Modifier.height(14.dp))
