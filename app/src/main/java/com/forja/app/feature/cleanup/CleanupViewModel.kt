@@ -145,6 +145,8 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     val siteOn: StateFlow<Boolean> = OrganizerSettings.siteOn.also { OrganizerSettings.load(app) }
     val loggedIn: Boolean get() = forja.auth.currentUid != null
+    /** v4.2: contractul de securitate semnat forțează „Și pe site” pornit; comutatorul și textele repetate dispar din ecran. */
+    val contractSigned: StateFlow<Boolean> = prefs.contractSigned.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _siteStatus = MutableStateFlow<OrganizerStatus?>(null)
     /** Lucrarea curentă de pe site (linia de stare). */
@@ -197,6 +199,19 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
         if (siteOn.value && loggedIn) {
             OrganizerJobs.schedulePolling(app)
             viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { try { OrganizerJobs.resumeActive(forja) } catch (_: Exception) { } }
+        }
+        // Contract semnat: „Și pe site” e pornit obligatoriu (comutatorul nu mai există în ecran).
+        viewModelScope.launch {
+            prefs.contractSigned.collect { signed ->
+                if (signed && loggedIn && !siteOn.value) {
+                    OrganizerSettings.setSiteOn(app, true)
+                    OrganizerJobs.schedulePolling(app)
+                    launch(kotlinx.coroutines.Dispatchers.IO) {
+                        try { OrganizerJobs.ensureGrant(forja); OrganizerJobs.resumeActive(forja) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+                    }
+                    refreshOrganizer()
+                }
+            }
         }
     }
 

@@ -36,6 +36,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+private val contractDate: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy", Locale("ro"))
 
 /** Profil: identitate + controale oneste, nimic îngropat. Statistici reale din Room. */
 @Composable
@@ -43,6 +46,7 @@ fun ProfileScreen(
     onLogout: () -> Unit,
     onOpenMapGhost: () -> Unit,
     onOpenPermissions: () -> Unit = {},
+    onOpenContract: () -> Unit = {},
     onOpenLostPhone: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -190,7 +194,7 @@ fun ProfileScreen(
 
         SettingRow(
             "Echipare",
-            "Notificări, locație, microfon, poze, baterie, agendă — șase bife, o singură dată.",
+            "Notificări, locație, microfon, poze, baterie, agendă, contract — șapte bife, o singură dată.",
             onClick = onOpenPermissions
         ) { Text("deschide →", style = BodySmall.copy(color = Accent2)) }
 
@@ -215,13 +219,20 @@ fun ProfileScreen(
             }
         }
 
-        // v4.0 pasul 2 — Sincronizarea în cont (site): se pornește și se oprește din Echipare; aici doar starea.
+        // v4.2 — Contractul de securitate: un singur acord în locul comutatoarelor; aici îl recitești sau îl revoci.
+        val contractSigned by app.prefs.contractSigned.collectAsState(initial = false)
+        val contractSignedAt by app.prefs.contractSignedAt.collectAsState(initial = 0L)
         val syncStatus by app.prefs.syncStatus.collectAsState(initial = "")
         SettingRow(
-            "Sincronizare în cont",
-            syncStatus.ifBlank { "oprită" },
-            onClick = onOpenPermissions
-        ) { Text("deschide →", style = BodySmall.copy(color = Accent2)) }
+            "Contractul de securitate",
+            when {
+                contractSigned && contractSignedAt > 0 ->
+                    "semnat pe ${contractDate.format(java.time.Instant.ofEpochMilli(contractSignedAt).atZone(java.time.ZoneId.systemDefault()))}" +
+                        (if (syncStatus.isNotBlank()) " · $syncStatus" else "") + " · recitește sau revocă"
+                else -> "nesemnat · nimic nu pleacă pe site fără el"
+            },
+            onClick = onOpenContract
+        ) { Text(if (contractSigned) "semnat ✓" else "semnează →", style = BodySmall.copy(color = if (contractSigned) Positive else Accent2)) }
 
         SettingRow(
             "Notificări",
