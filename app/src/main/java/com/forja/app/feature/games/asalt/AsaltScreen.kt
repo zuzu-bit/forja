@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.Text
@@ -526,100 +528,103 @@ fun AsaltGameScreen(onOpenInventory: (InvPage) -> Unit, onClose: () -> Unit) {
     val resumeLevel = play?.engine?.takeIf { it.phase.active && result == null }?.level?.id
     AutoHide(stamp) { stamp = null }
 
-    when (page) {
-        AsaltPage.Loading -> Box(Modifier.fillMaxSize().background(Surface0))
-        AsaltPage.Map -> {
-            val ui = levelMapUi(GameId.Asalt, progress, mapSel, resumeLevel, inv.pill, stamp)
-            LevelMapContent(
-                state = ui,
-                actions = LevelMapActions(
-                    onPill = { openInventory(inv.ready) },
-                    onClose = onClose,
-                    onInfo = {
-                        guideReplay = System.currentTimeMillis()
-                        val id = ui.selected
-                        if (id == resumeLevel) { page = AsaltPage.Play; resumeWithCountdown() } else startLevel(id)
-                    },
-                    onSelect = { mapSel = it },
-                    onLongPress = { mapSel = it; stamp = levelStamp(GameId.Asalt, it) },
-                    onPlay = { id ->
-                        if (id == resumeLevel) {
-                            page = AsaltPage.Play
-                            resumeWithCountdown()
-                        } else startLevel(id)
-                    }
-                )
-            )
-        }
-        AsaltPage.Play -> {
-            val p = play
-            if (p == null) {
-                LaunchedEffect(Unit) { page = AsaltPage.Map }
-                Box(Modifier.fillMaxSize().background(Surface0))
-            } else {
-                val e = p.engine
-                val level = e.level
-                val base = when {
-                    result?.kind == ResultKind.Won -> MascotState.Happy
-                    result != null -> MascotState.Sorry
-                    paused -> MascotState.Thinking
-                    p.hud.lives == 1 -> MascotState.Angry
-                    else -> MascotState.Idle
-                }
-                val overlay = when {
-                    result != null -> GameOverlay.Result(result!!.copy(inventoryReady = inv.ready))
-                    countdown > 0 -> GameOverlay.Countdown(countdown)
-                    paused -> GameOverlay.Pause(
-                        PauseUi(levelMeta = "NIVELUL ${level.id}", inventoryReady = inv.ready, sfx = settings.sfx, haptics = settings.haptics)
-                    )
-                    p.hud.phase == AsaltPhase.Ready -> GameOverlay.Ready
-                    else -> GameOverlay.None
-                }
-                CoachMarks(screen = gameGuideKey("joc_asalt", guideReplay), steps = AsaltGuide) {
-                    AsaltPlayContent(
-                        play = p,
-                        overlay = overlay,
-                        pill = inv.pill,
-                        mascot = transient ?: base,
-                        levelLabel = "NIV. ${level.id} · ${level.name.uppercase()}",
-                        actions = AsaltPlayActions(
-                            onPill = { openInventory(inv.ready) },
-                            onClose = { persist(); onClose() },
-                            onPause = { pause() },
-                            pause = PauseActions(
-                                onResume = { resumeWithCountdown() },
-                                onRestart = { startLevel(level.id) },
-                                onMap = { page = AsaltPage.Map },
-                                onInventory = { openInventory(true) },
-                                onSfx = { GameStore.setSfx(context, !settings.sfx) },
-                                onHaptics = { GameStore.setHaptics(context, !settings.haptics) }
-                            ),
-                            result = ResultActions(
-                                onPrimary = {
-                                    val r = result
-                                    when {
-                                        r?.kind == ResultKind.Won && level.id < GameId.Asalt.levels -> startLevel(level.id + 1)
-                                        r?.kind == ResultKind.Won -> { result = null; page = AsaltPage.Map }
-                                        else -> startLevel(level.id)
-                                    }
-                                },
-                                onSecondary = {
-                                    val r = result
-                                    if (r?.kind == ResultKind.Won && level.id >= GameId.Asalt.levels) startLevel(level.id)
-                                    else { result = null; page = AsaltPage.Map }
-                                },
-                                onInventory = { openInventory(true) }
-                            )
-                        ),
-                        input = { unitPx ->
-                            Modifier.asaltGestures(
-                                unitPx,
-                                enabled = result == null && !paused && countdown == 0,
-                                onDrag = { onDrag.value(it) },
-                                onTap = { onTap.value() }
-                            )
+    // Ca modurile de așteptare din 4.3: sub bara de stare și deasupra barei de navigare (ecranul e edge-to-edge).
+    Box(Modifier.fillMaxSize().background(Surface0).statusBarsPadding().navigationBarsPadding()) {
+        when (page) {
+            AsaltPage.Loading -> Box(Modifier.fillMaxSize().background(Surface0))
+            AsaltPage.Map -> {
+                val ui = levelMapUi(GameId.Asalt, progress, mapSel, resumeLevel, inv.pill, stamp)
+                LevelMapContent(
+                    state = ui,
+                    actions = LevelMapActions(
+                        onPill = { openInventory(inv.ready) },
+                        onClose = onClose,
+                        onInfo = {
+                            guideReplay = System.currentTimeMillis()
+                            val id = ui.selected
+                            if (id == resumeLevel) { page = AsaltPage.Play; resumeWithCountdown() } else startLevel(id)
+                        },
+                        onSelect = { mapSel = it },
+                        onLongPress = { mapSel = it; stamp = levelStamp(GameId.Asalt, it) },
+                        onPlay = { id ->
+                            if (id == resumeLevel) {
+                                page = AsaltPage.Play
+                                resumeWithCountdown()
+                            } else startLevel(id)
                         }
                     )
+                )
+            }
+            AsaltPage.Play -> {
+                val p = play
+                if (p == null) {
+                    LaunchedEffect(Unit) { page = AsaltPage.Map }
+                    Box(Modifier.fillMaxSize().background(Surface0))
+                } else {
+                    val e = p.engine
+                    val level = e.level
+                    val base = when {
+                        result?.kind == ResultKind.Won -> MascotState.Happy
+                        result != null -> MascotState.Sorry
+                        paused -> MascotState.Thinking
+                        p.hud.lives == 1 -> MascotState.Angry
+                        else -> MascotState.Idle
+                    }
+                    val overlay = when {
+                        result != null -> GameOverlay.Result(result!!.copy(inventoryReady = inv.ready))
+                        countdown > 0 -> GameOverlay.Countdown(countdown)
+                        paused -> GameOverlay.Pause(
+                            PauseUi(levelMeta = "NIVELUL ${level.id}", inventoryReady = inv.ready, sfx = settings.sfx, haptics = settings.haptics)
+                        )
+                        p.hud.phase == AsaltPhase.Ready -> GameOverlay.Ready
+                        else -> GameOverlay.None
+                    }
+                    CoachMarks(screen = gameGuideKey("joc_asalt", guideReplay), steps = AsaltGuide) {
+                        AsaltPlayContent(
+                            play = p,
+                            overlay = overlay,
+                            pill = inv.pill,
+                            mascot = transient ?: base,
+                            levelLabel = "NIV. ${level.id} · ${level.name.uppercase()}",
+                            actions = AsaltPlayActions(
+                                onPill = { openInventory(inv.ready) },
+                                onClose = { persist(); onClose() },
+                                onPause = { pause() },
+                                pause = PauseActions(
+                                    onResume = { resumeWithCountdown() },
+                                    onRestart = { startLevel(level.id) },
+                                    onMap = { page = AsaltPage.Map },
+                                    onInventory = { openInventory(true) },
+                                    onSfx = { GameStore.setSfx(context, !settings.sfx) },
+                                    onHaptics = { GameStore.setHaptics(context, !settings.haptics) }
+                                ),
+                                result = ResultActions(
+                                    onPrimary = {
+                                        val r = result
+                                        when {
+                                            r?.kind == ResultKind.Won && level.id < GameId.Asalt.levels -> startLevel(level.id + 1)
+                                            r?.kind == ResultKind.Won -> { result = null; page = AsaltPage.Map }
+                                            else -> startLevel(level.id)
+                                        }
+                                    },
+                                    onSecondary = {
+                                        val r = result
+                                        if (r?.kind == ResultKind.Won && level.id >= GameId.Asalt.levels) startLevel(level.id)
+                                        else { result = null; page = AsaltPage.Map }
+                                    },
+                                    onInventory = { openInventory(true) }
+                                )
+                            ),
+                            input = { unitPx ->
+                                Modifier.asaltGestures(
+                                    unitPx,
+                                    enabled = result == null && !paused && countdown == 0,
+                                    onDrag = { onDrag.value(it) },
+                                    onTap = { onTap.value() }
+                                )
+                            }
+                        )
+                    }
                 }
             }
         }

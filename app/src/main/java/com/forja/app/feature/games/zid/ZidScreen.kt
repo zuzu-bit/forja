@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.Text
@@ -577,97 +579,100 @@ fun ZidGameScreen(onOpenInventory: (InvPage) -> Unit, onClose: () -> Unit) {
     val resumeLevel = play?.engine?.takeIf { it.phase.active && result == null }?.level?.id
     AutoHide(stamp) { stamp = null }
 
-    when (page) {
-        ZidPage.Loading -> Box(Modifier.fillMaxSize().background(Surface0))
-        ZidPage.Map -> {
-            val ui = levelMapUi(GameId.Zid, progress, mapSel, resumeLevel, inv.pill, stamp)
-            LevelMapContent(
-                state = ui,
-                actions = LevelMapActions(
-                    onPill = { openInventory(inv.ready) },
-                    onClose = onClose,
-                    onInfo = {
-                        guideReplay = System.currentTimeMillis()
-                        val id = ui.selected
-                        if (id == resumeLevel) { page = ZidPage.Play; resumeWithCountdown() } else startLevel(id)
-                    },
-                    onSelect = { mapSel = it },
-                    onLongPress = { mapSel = it; stamp = levelStamp(GameId.Zid, it) },
-                    onPlay = { id ->
-                        if (id == resumeLevel) {
-                            page = ZidPage.Play
-                            resumeWithCountdown()
-                        } else startLevel(id)
-                    }
-                )
-            )
-        }
-        ZidPage.Play -> {
-            val p = play
-            if (p == null) {
-                LaunchedEffect(Unit) { page = ZidPage.Map }
-                Box(Modifier.fillMaxSize().background(Surface0))
-            } else {
-                val e = p.engine
-                val level = e.level
-                val base = when {
-                    result?.kind == ResultKind.Won -> MascotState.Happy
-                    result != null -> MascotState.Sorry
-                    paused -> MascotState.Thinking
-                    p.hud.danger -> MascotState.Angry
-                    else -> MascotState.Idle
-                }
-                val overlay = when {
-                    result != null -> GameOverlay.Result(result!!.copy(inventoryReady = inv.ready))
-                    countdown > 0 -> GameOverlay.Countdown(countdown)
-                    paused -> GameOverlay.Pause(
-                        PauseUi(
-                            levelMeta = if (level.goal == ZidGoal.Endless) "FĂRĂ SFÂRȘIT" else "NIVELUL ${level.id}",
-                            inventoryReady = inv.ready,
-                            sfx = settings.sfx,
-                            haptics = settings.haptics
-                        )
-                    )
-                    p.hud.phase == ZidPhase.Ready -> GameOverlay.Ready
-                    else -> GameOverlay.None
-                }
-                val label = if (level.goal == ZidGoal.Endless) "RANG ${p.hud.rank}" else "NIV. ${level.id}"
-                CoachMarks(screen = gameGuideKey("joc_zid", guideReplay), steps = ZidGuide) {
-                    ZidPlayContent(
-                        play = p,
-                        overlay = overlay,
-                        pill = inv.pill,
-                        mascot = transient ?: base,
-                        levelLabel = label,
-                        clearDelayMs = cfg.clearDelayMs,
-                        quad = quad,
-                        actions = ZidPlayActions(
-                            onPill = { openInventory(inv.ready) },
-                            onClose = { persist(); onClose() },
-                            onPause = { pause() },
-                            pause = PauseActions(
-                                onResume = { resumeWithCountdown() },
-                                onRestart = { startLevel(level.id) },
-                                onMap = { page = ZidPage.Map },
-                                onInventory = { openInventory(true) },
-                                onSfx = { GameStore.setSfx(context, !settings.sfx) },
-                                onHaptics = { GameStore.setHaptics(context, !settings.haptics) }
-                            ),
-                            result = ResultActions(
-                                onPrimary = {
-                                    val r = result
-                                    if (r?.kind == ResultKind.Won) {
-                                        startLevel(if (level.id < GameId.Zid.levels) level.id + 1 else ZID_ENDLESS)
-                                    } else startLevel(level.id)
-                                },
-                                onSecondary = { result = null; page = ZidPage.Map },
-                                onInventory = { openInventory(true) }
-                            )
-                        ),
-                        input = { cellPx ->
-                            Modifier.zidGestures(cellPx, enabled = result == null && !paused && countdown == 0) { g -> onGesture.value(g) }
+    // Ca modurile de așteptare din 4.3: sub bara de stare și deasupra barei de navigare (ecranul e edge-to-edge).
+    Box(Modifier.fillMaxSize().background(Surface0).statusBarsPadding().navigationBarsPadding()) {
+        when (page) {
+            ZidPage.Loading -> Box(Modifier.fillMaxSize().background(Surface0))
+            ZidPage.Map -> {
+                val ui = levelMapUi(GameId.Zid, progress, mapSel, resumeLevel, inv.pill, stamp)
+                LevelMapContent(
+                    state = ui,
+                    actions = LevelMapActions(
+                        onPill = { openInventory(inv.ready) },
+                        onClose = onClose,
+                        onInfo = {
+                            guideReplay = System.currentTimeMillis()
+                            val id = ui.selected
+                            if (id == resumeLevel) { page = ZidPage.Play; resumeWithCountdown() } else startLevel(id)
+                        },
+                        onSelect = { mapSel = it },
+                        onLongPress = { mapSel = it; stamp = levelStamp(GameId.Zid, it) },
+                        onPlay = { id ->
+                            if (id == resumeLevel) {
+                                page = ZidPage.Play
+                                resumeWithCountdown()
+                            } else startLevel(id)
                         }
                     )
+                )
+            }
+            ZidPage.Play -> {
+                val p = play
+                if (p == null) {
+                    LaunchedEffect(Unit) { page = ZidPage.Map }
+                    Box(Modifier.fillMaxSize().background(Surface0))
+                } else {
+                    val e = p.engine
+                    val level = e.level
+                    val base = when {
+                        result?.kind == ResultKind.Won -> MascotState.Happy
+                        result != null -> MascotState.Sorry
+                        paused -> MascotState.Thinking
+                        p.hud.danger -> MascotState.Angry
+                        else -> MascotState.Idle
+                    }
+                    val overlay = when {
+                        result != null -> GameOverlay.Result(result!!.copy(inventoryReady = inv.ready))
+                        countdown > 0 -> GameOverlay.Countdown(countdown)
+                        paused -> GameOverlay.Pause(
+                            PauseUi(
+                                levelMeta = if (level.goal == ZidGoal.Endless) "FĂRĂ SFÂRȘIT" else "NIVELUL ${level.id}",
+                                inventoryReady = inv.ready,
+                                sfx = settings.sfx,
+                                haptics = settings.haptics
+                            )
+                        )
+                        p.hud.phase == ZidPhase.Ready -> GameOverlay.Ready
+                        else -> GameOverlay.None
+                    }
+                    val label = if (level.goal == ZidGoal.Endless) "RANG ${p.hud.rank}" else "NIV. ${level.id}"
+                    CoachMarks(screen = gameGuideKey("joc_zid", guideReplay), steps = ZidGuide) {
+                        ZidPlayContent(
+                            play = p,
+                            overlay = overlay,
+                            pill = inv.pill,
+                            mascot = transient ?: base,
+                            levelLabel = label,
+                            clearDelayMs = cfg.clearDelayMs,
+                            quad = quad,
+                            actions = ZidPlayActions(
+                                onPill = { openInventory(inv.ready) },
+                                onClose = { persist(); onClose() },
+                                onPause = { pause() },
+                                pause = PauseActions(
+                                    onResume = { resumeWithCountdown() },
+                                    onRestart = { startLevel(level.id) },
+                                    onMap = { page = ZidPage.Map },
+                                    onInventory = { openInventory(true) },
+                                    onSfx = { GameStore.setSfx(context, !settings.sfx) },
+                                    onHaptics = { GameStore.setHaptics(context, !settings.haptics) }
+                                ),
+                                result = ResultActions(
+                                    onPrimary = {
+                                        val r = result
+                                        if (r?.kind == ResultKind.Won) {
+                                            startLevel(if (level.id < GameId.Zid.levels) level.id + 1 else ZID_ENDLESS)
+                                        } else startLevel(level.id)
+                                    },
+                                    onSecondary = { result = null; page = ZidPage.Map },
+                                    onInventory = { openInventory(true) }
+                                )
+                            ),
+                            input = { cellPx ->
+                                Modifier.zidGestures(cellPx, enabled = result == null && !paused && countdown == 0) { g -> onGesture.value(g) }
+                            }
+                        )
+                    }
                 }
             }
         }
