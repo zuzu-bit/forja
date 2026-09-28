@@ -27,13 +27,14 @@ import java.util.Locale
  *
  * - În memorie: ultimele 200; pe telefon: ultimele 100 (DataStore „forja_music”, cheia „diag”).
  * - Către serverul FORJA (POST /v1/diag/music): doar cu cont și cu contractul semnat; în așteptare cel mult 150,
- *   trimise câte 50 după fiecare încercare. Serverul le arată în jurnalul de admin (`music [n]`).
+ *   trimise după fiecare încercare în loturi de cel mult 50 și sub 15 000 de octeți (serverul refuză peste 16 KB).
+ *   Un lot refuzat definitiv (400 / 413) se aruncă, ca să nu blocheze coada. Serverul le arată în jurnalul de admin
+ *   (`music [n]`).
  */
 internal object MusicLog {
     private const val RING = 200
     private const val KEEP = 100
     private const val PENDING_MAX = 150
-    private const val BATCH = DiagCodec.MAX_EVENTS
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, _ -> })
     private val lock = Mutex()
@@ -80,12 +81,25 @@ internal object MusicLog {
             if (uid.isBlank()) return@withLock Upload.NO_ACCOUNT
             val signed = try { app.prefs.contractSigned.first() } catch (e: CancellationException) { throw e } catch (_: Exception) { false }
             if (!signed) return@withLock Upload.NO_CONTRACT
+            val dev = device()
+            val ver = appVersion()
             while (pending.isNotEmpty()) {
-                val batch = pending.take(BATCH)
-                val ok = try { app.forjaApi.musicDiag(body(batch)) } catch (e: CancellationException) { throw e } catch (_: Exception) { false }
-                if (!ok) {
-                    persist(app)
-                    return@withLock Upload.FAILED
+                val batch = pending.take(DiagCodec.fit(dev, ver, pending).coerceAtLeast(1))
+                val code = try {
+                    app.forjaApi.musicDiag(DiagCodec.body(dev, ver, batch))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    0
+                }
+                when (code) {
+                    in 200..299 -> Unit
+                    // Refuzat pentru totdeauna (lot prea mare / formă greșită): altfel același lot ar bloca mereu coada.
+                    400, 413 -> Unit
+                    else -> {
+                        persist(app)
+                        return@withLock Upload.FAILED
+                    }
                 }
                 repeat(batch.size) { pending.removeAt(0) }
             }
@@ -95,8 +109,9 @@ internal object MusicLog {
     }
 
     /** Corpul cererii (DiagCodec): { device, app, events:[…] }. */
-    fun body(events: List<AttemptEvent>): String =
-        DiagCodec.body(device(), "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", events)
+    fun body(events: List<AttemptEvent>): String = DiagCodec.body(device(), appVersion(), events)
+
+    private fun appVersion(): String = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
 
     private suspend fun load(app: Context) {
         if (loaded) return

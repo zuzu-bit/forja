@@ -51,4 +51,17 @@ class DiagCodecTest {
         assertEquals(setOf("music", "spoken", "video", "unknown"), MediaKind.entries.map { it.wire }.toSet())
         assertFalse(DiagCodec.line(e).contains("Marș"))
     }
+
+    @Test fun batchesStayUnderTheServerBodyLimit() {
+        // Rânduri mari (pachet de 100, versiune de 40, eroare de 120): 50 ar trece de 16 KB.
+        val big = e.copy(pkg = "p".repeat(100), ver = "v".repeat(40), err = "x".repeat(120))
+        val events = List(50) { big }
+        val n = DiagCodec.fit("samsung SM-S911B · sdk 35 · oneui 70000", "4.4 (66)", events)
+        assertTrue("$n", n in 1 until 50)
+        val body = DiagCodec.body("samsung SM-S911B · sdk 35 · oneui 70000", "4.4 (66)", events.take(n))
+        assertTrue(body.toByteArray(Charsets.UTF_8).size <= DiagCodec.MAX_BYTES)
+        // Rânduri mici: încap toate 50.
+        assertEquals(DiagCodec.MAX_EVENTS, DiagCodec.fit("d", "a", List(80) { e }))
+        assertEquals(0, DiagCodec.fit("d", "a", emptyList()))
+    }
 }

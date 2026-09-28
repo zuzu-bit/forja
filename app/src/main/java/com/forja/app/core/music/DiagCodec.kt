@@ -22,6 +22,8 @@ import kotlinx.serialization.json.put
  */
 object DiagCodec {
     const val MAX_EVENTS = 50
+    /** Serverul primește corpuri de cel mult 16 384 de octeți (altfel 413); rămâne loc de siguranță. */
+    const val MAX_BYTES = 15_000
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -45,6 +47,22 @@ object DiagCodec {
     }.toString()
 
     fun line(e: AttemptEvent): String = event(e).toString()
+
+    /**
+     * Câte rânduri de la începutul lui [events] încap într-o cerere: cel mult [MAX_EVENTS] și corpul (UTF-8) sub
+     * [maxBytes]. Cel puțin unul (un rând are cel mult ~600 de octeți).
+     */
+    fun fit(device: String, app: String, events: List<AttemptEvent>, maxBytes: Int = MAX_BYTES): Int {
+        var size = body(device, app, emptyList()).toByteArray(Charsets.UTF_8).size
+        var n = 0
+        for (e in events.take(MAX_EVENTS)) {
+            val add = line(e).toByteArray(Charsets.UTF_8).size + if (n > 0) 1 else 0
+            if (n > 0 && size + add > maxBytes) break
+            size += add
+            n++
+        }
+        return n
+    }
 
     fun parse(line: String): AttemptEvent? = try {
         val o = json.parseToJsonElement(line).jsonObject
