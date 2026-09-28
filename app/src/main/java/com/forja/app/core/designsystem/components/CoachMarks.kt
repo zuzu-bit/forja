@@ -67,6 +67,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -298,6 +299,8 @@ fun CoachMarks(screen: String, steps: List<CoachStep>, content: @Composable () -
 }
 
 // Valorile din prototip (Ghidaj.dc.html; px din prototip = dp).
+/** Înălțimea estimată a cardului (mascota 64 + butoanele 40 + spații), doar pentru decizia „încape între ținte?”. */
+private val CardEstimate = 164.dp
 private const val START_WINDOW_MS = 3_000L
 private const val MOVE_MS = 450
 private const val PULSE_MS = 1_800
@@ -457,32 +460,28 @@ private fun CoachOverlay(
         label = "coachPulseT"
     )
 
-    // Cardul: înălțimea măsurată → poziția-țintă → poziția animată (prima dată pusă direct, fără alunecare).
-    var cardHeight by remember { mutableIntStateOf(0) }
+    // Cardul: marginea lui de JOS se calculează din ținte (cu o înălțime estimată pentru „încape?”) și se animă;
+    // cardul se așază deasupra ei chiar în trecerea de layout care îl măsoară — fără stare intermediară, deci apare
+    // în același cadru cu spotul (înainte aștepta un cadru în plus și în capturi nu apărea deloc).
     val statusTop = WindowInsets.statusBars.getTop(density).toFloat()
     val navBottom = WindowInsets.navigationBars.getBottom(density).toFloat()
     // Barele sistemului, cât intră din ele peste gazdă (ecranele sunt edge-to-edge).
     val topSafe = max(0f, statusTop - host.top)
     val bottomSafe = max(0f, navBottom - max(0f, rootHeight - host.bottom))
-    val cardTargetY: Float? = if (cardHeight == 0 || host.height < 1f) null else density.cardTop(
+    val estimate = with(density) { CardEstimate.toPx() }
+    val bottomTarget: Float = if (host.height < 1f) 0f else density.cardTop(
         hole = target,
         obstacles = obstacles,
-        cardHeight = cardHeight.toFloat(),
+        cardHeight = estimate,
         height = host.height,
         topSafe = topSafe,
         bottomSafe = bottomSafe
+    ) + estimate
+    val cardBottom: State<Float> = animateFloatAsState(
+        targetValue = bottomTarget,
+        animationSpec = if (reduced) snap() else tween(MOVE_MS, easing = MoveEasing),
+        label = "coachCardBottom"
     )
-    val cardY = remember { Animatable(0f) }
-    var placed by remember { mutableStateOf(false) }
-    LaunchedEffect(cardTargetY) {
-        val y = cardTargetY ?: return@LaunchedEffect
-        if (!placed || reduced) {
-            cardY.snapTo(y)
-            placed = true
-        } else {
-            cardY.animateTo(y, tween(MOVE_MS, easing = MoveEasing))
-        }
-    }
 
     Box(modifier.graphicsLayer { this.alpha = alpha }) {
         // Întunecarea cu decupaj: strat separat, spotul „șters” cu BlendMode.Clear, apoi conturul și inelul amber.
@@ -520,14 +519,15 @@ private fun CoachOverlay(
             onSkip = onSkip,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                // Prima așezare (și sub mișcare redusă) citește direct ținta calculată: cardul apare în același cadru în care
-                // i se cunoaște înălțimea, fără să aștepte efectul de mai sus (altfel Robolectric și primul cadru îl arătau gol).
-                .offset { IntOffset(0, (if (!placed || reduced) cardTargetY ?: 0f else cardY.value).roundToInt()) }
                 .padding(horizontal = CardMargin)
                 .widthIn(max = 480.dp)
                 .fillMaxWidth()
-                .onSizeChanged { cardHeight = it.height }
-                .graphicsLayer { this.alpha = if (cardTargetY != null) 1f else 0f }
+                .layout { measurable, constraints ->
+                    val card = measurable.measure(constraints)
+                    layout(card.width, card.height) {
+                        card.place(0, (cardBottom.value - card.height).roundToInt().coerceAtLeast(0))
+                    }
+                }
         )
     }
 }
