@@ -37,13 +37,19 @@ import com.forja.app.core.cleanup.sha256Hex
 import com.forja.app.core.network.ForjaApi
 import com.forja.app.core.network.OrganizeApi
 import com.forja.app.core.network.OrganizeItemV2
+import com.forja.app.core.network.OrganizeResponseV2
 import com.forja.app.core.network.OrganizeVerdictV2
 import com.forja.app.core.network.PdfSource
 import com.forja.app.core.network.providerLabel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -54,13 +60,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 // ═══════════════ Starea ecranului de curățenie ═══════════════
 
 /**
  * Panoul de sugestii AI (poze sau documente). Cheia = id-ul trimis („m:<id>" / „d:<sha>").
- * `status` e linia onestă de progres („Trimit 24 poze la analiză…", „Modelul a răspuns (Claude)", eroarea).
+ * `status` e linia onestă de progres („Analizez 48 din 210…", „Analizate 210 din 210 · Gemini", eroarea).
+ * `done`/`total` = câte elemente din raport au trecut prin model; `failedCount` = câte n-au putut fi analizate.
  */
 data class AiPanel(
     val loading: Boolean = false,
@@ -69,8 +78,14 @@ data class AiPanel(
     val provider: String = "",
     val requested: Boolean = false,
     val status: String = "",
-    val failed: Boolean = false
+    val failed: Boolean = false,
+    val done: Int = 0,
+    val total: Int = 0,
+    val failedCount: Int = 0
 ) {
+    /** Mai sunt elemente neanalizate (și nu lucrăm acum) — „Reia analiza” are sens. */
+    val unfinished: Boolean get() = !loading && total > 0 && done < total
+
     /** Dosarele propuse de model (v2 `dosar`, altfel `folder`), fără elementele recomandate la ștergere. */
     val moveFolders: Map<String, List<OrganizeVerdictV2>>
         get() = suggestions.values.filter { !it.deleteRecommended && it.targetFolder != null }
@@ -102,8 +117,7 @@ sealed class CleanupUiState {
         val ai: AiPanel,
         val busy: Boolean,
         val jobId: String? = null,                    // lucrarea de pe site pornită din această scanare
-        val site: Map<String, SiteHint> = emptyMap(), // uri → ce știe site-ul (copie, analiză, stare)
-        val siteLoading: Boolean = false
+        val site: Map<String, SiteHint> = emptyMap()  // uri → ce știe site-ul (copie, analiză, stare)
     ) : CleanupUiState()
 }
 
@@ -117,8 +131,7 @@ data class DocsUiState(
     val ai: AiPanel = AiPanel(),
     val busy: Boolean = false,
     val jobId: String? = null,
-    val site: Map<String, SiteHint> = emptyMap(),
-    val siteLoading: Boolean = false
+    val site: Map<String, SiteHint> = emptyMap()
 )
 
 /** Propunerile site-ului grupate pe dosar (relativ la destinația lucrării), pentru butoanele „Mută N în …". */
@@ -175,11 +188,15 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
     private var scanJob: Job? = null
     private var pending: Pending? = null
     private var previousReport: CleanupReport? = null
-    private var previousAi: AiPanel? = null              // verdictele deja primite, purtate peste „Următoarele N"
     private var aiJob: Job? = null                        // analiza cu model pentru poze (se anulează la o scanare nouă / „Alt scop")
     private var docsAiJob: Job? = null                    // analiza cu model pentru documente (se anulează la recitirea folderului)
     private var scanGeneration = 0                        // crește la fiecare scanare / „Alt scop": un răspuns vechi nu atinge rezultate noi
-    private val docsAiCache = HashMap<String, AiPanel>()  // verdictele pe folder (cheie: uri-ul arborelui) — nu re-trimitem PDF-uri identice
+    /**
+     * Verdictele primite vreodată (id → verdict), încărcate din DataStore la pornire și scrise la fiecare lot: la o
+     * redeschidere nu retrimitem miniaturi/PDF-uri deja analizate, iar etichetele sunt la loc. Se atinge doar pe Main.
+     */
+    private val known = LinkedHashMap<String, OrganizeVerdictV2>()
+    private val knownReady = CompletableDeferred<Unit>()
 
     private sealed class Pending {
         data class Move(val items: List<MediaItem>, val folder: String, val rest: List<List<MediaItem>>, val movedSoFar: Int) : Pending()
@@ -189,6 +206,9 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
+        viewModelScope.launch {
+            try { known.putAll(online.verdictsNow()) } finally { knownReady.complete(Unit) }
+        }
         viewModelScope.launch {
             val scope = engine.lastScope() ?: CleanupScope(ScopeKind.NEXT_BATCH, batchSize = 100)
             showChoose(scope)
@@ -310,49 +330,6 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
         removeFromReport(items.map { it.mediaId }.filter { it > 0 }.toSet())
     }
 
-    /** Analiza site-ului pentru selecție (≤ 5 pe apel, doar elemente cu copie urcată). */
-    fun requestSiteAi() {
-        val cur = _state.value as? CleanupUiState.Results ?: return
-        val jobId = cur.jobId ?: run { toast("Pornește „Și pe site” înainte de scanare."); return }
-        if (cur.siteLoading) return
-        val pool = if (cur.selected.isNotEmpty()) cur.report.flaggedItems.filter { it.id in cur.selected } else cur.report.flaggedItems
-        val ids = pool.mapNotNull { cur.site[it.uri.toString()] }.filter { it.uploaded && it.analysis == null }.map { it.itemId }.take(5)
-        if (ids.isEmpty()) { toast("Nimic de analizat încă: copiile urcă întâi pe site, apoi cere din nou."); return }
-        _state.value = cur.copy(siteLoading = true)
-        viewModelScope.launch {
-            try {
-                val n = OrganizerJobs.analyze(forja, jobId, ids)
-                toast(if (n > 0) "Site-ul a analizat $n ${if (n == 1) "poză" else "poze"}." else "Site-ul nu a dat încă o propunere.")
-            } catch (e: CancellationException) { throw e } catch (e: Exception) {
-                toast(e.message ?: "Analiza de pe site nu a răspuns.")
-            }
-            val now = _state.value
-            if (now is CleanupUiState.Results) _state.value = now.copy(siteLoading = false)
-            refreshOrganizer()
-        }
-    }
-
-    fun requestDocsSiteAi() {
-        val d = _docs.value
-        val report = d.report ?: return
-        val jobId = d.jobId ?: run { toast("Pornește „Și pe site” înainte de a alege folderul."); return }
-        if (d.siteLoading) return
-        val pool = if (d.selected.isNotEmpty()) report.items.filter { it.key in d.selected } else report.items
-        val ids = pool.mapNotNull { d.site[it.key] }.filter { it.uploaded && it.analysis == null }.map { it.itemId }.take(5)
-        if (ids.isEmpty()) { toast("Nimic de analizat încă: copiile urcă întâi pe site, apoi cere din nou."); return }
-        _docs.value = d.copy(siteLoading = true)
-        viewModelScope.launch {
-            try {
-                val n = OrganizerJobs.analyze(forja, jobId, ids)
-                toast(if (n > 0) "Site-ul a analizat $n ${if (n == 1) "fișier" else "fișiere"}." else "Site-ul nu a dat încă o propunere.")
-            } catch (e: CancellationException) { throw e } catch (e: Exception) {
-                toast(e.message ?: "Analiza de pe site nu a răspuns.")
-            }
-            _docs.value = _docs.value.copy(siteLoading = false)
-            refreshOrganizer()
-        }
-    }
-
     /** „Mută N în <dosar>" din propunerile site-ului (poze). */
     fun applySiteFolder(folder: String) {
         val cur = _state.value as? CleanupUiState.Results ?: return
@@ -442,7 +419,6 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
         aiJob = null
         scanGeneration++
         previousReport = null
-        previousAi = null
         val s = _state.value
         val scope = when (s) {
             is CleanupUiState.Choose -> s.scope
@@ -462,8 +438,8 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
             is CleanupUiState.Results -> s.scope
         }
         if (!hasPhotoPermission()) { toast("Dă întâi accesul la galerie."); return }
-        if (s is CleanupUiState.Results) { previousReport = s.report; previousAi = s.ai }
-        if (s is CleanupUiState.Choose) { previousReport = null; previousAi = null }
+        if (s is CleanupUiState.Results) previousReport = s.report
+        if (s is CleanupUiState.Choose) previousReport = null
         launchScan(scope, resume = !fromStart)
     }
 
@@ -480,17 +456,19 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
                     when (p) {
                         is ScanProgress.Done -> {
                             val merged = p.report.mergedWith(previousReport)
-                            val carriedPanel = previousAi
                             previousReport = null
-                            previousAi = null
                             val preselect = HashSet<Long>()
                             merged.duplicates.forEach { g -> g.copies.forEach { preselect += it.id } }
                             merged.similar.forEach { g -> g.others.forEach { preselect += it.id } }
-                            // „Următoarele N": verdictele deja primite rămân pentru pozele încă în raport; la analiză pleacă doar cele noi.
-                            val flaggedIds = merged.flaggedItems.map { it.id }.toHashSet()
-                            val carried = carriedPanel?.suggestions?.filterKeys { id -> id.removePrefix("m:").toLongOrNull()?.let { it in flaggedIds } == true } ?: emptyMap()
-                            carried.values.filter { it.deleteRecommended }.forEach { v -> v.id.removePrefix("m:").toLongOrNull()?.let { preselect += it } }
-                            val ai = if (carriedPanel != null && carried.isNotEmpty()) carriedPanel.copy(loading = false, failed = false, suggestions = carried, status = "") else AiPanel()
+                            // Verdictele memorate (DataStore) pentru pozele din raport sunt la loc imediat; la analiză pleacă doar restul.
+                            knownReady.await()
+                            val remembered = HashMap<String, OrganizeVerdictV2>()
+                            for (item in merged.scanned) known["m:${item.id}"]?.let { remembered[it.id] = it }
+                            remembered.values.filter { it.deleteRecommended }.forEach { v -> v.id.removePrefix("m:").toLongOrNull()?.let { preselect += it } }
+                            val ai = AiPanel(
+                                suggestions = remembered, requested = remembered.isNotEmpty(),
+                                done = remembered.size, total = merged.scanned.size
+                            )
                             _state.value = CleanupUiState.Results(scope, merged, preselect, ai, busy = false)
                             // „Și pe site" (implicit pornit): scanarea devine o lucrare în cont (inventar + verdicte + copii 24 h).
                             if (siteOn.value && loggedIn) {
@@ -502,8 +480,8 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
                                 if (jobId != null && now is CleanupUiState.Results && now.report === merged) _state.value = now.copy(jobId = jobId)
                                 refreshOrganizer()
                             }
-                            // Analiza cu model pe server pornește singură după scanare (doar sugestii; nimic nu se șterge).
-                            requestAi(auto = true)
+                            // Analiza cu model pornește singură, pe TOT ce s-a scanat (doar sugestii; nimic nu se șterge).
+                            startPhotoAnalysis()
                         }
                         else -> {
                             val cur = _state.value
@@ -543,7 +521,6 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
     fun nextBatch() {
         val cur = _state.value as? CleanupUiState.Results ?: return
         previousReport = cur.report
-        previousAi = cur.ai
         launchScan(cur.scope, resume = true)
     }
 
@@ -586,7 +563,7 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectedItems(): List<MediaItem> {
         val cur = _state.value as? CleanupUiState.Results ?: return emptyList()
-        return cur.report.flaggedItems.filter { it.id in cur.selected }
+        return (cur.report.flaggedItems + aiDeleteExtras(cur)).filter { it.id in cur.selected }
     }
 
     private fun removeFromReport(ids: Set<Long>) {
@@ -675,7 +652,7 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
                 val n = try { engine.deleteLegacy(items.map { it.uri }) } finally { setBusy(false) }
                 val freed = items.sumOf { it.sizeBytes }
                 removeFromReport(items.map { it.id }.toSet())
-                toast(if (n > 0) "Curat! Ai eliberat ${fmtBytes(freed)}." else "Nu s-a putut șterge.")
+                toast(if (n > 0) "Curat. Ai eliberat ${fmtBytes(freed)}." else "Nu s-a putut șterge.")
             }
         }
     }
@@ -697,7 +674,7 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
                 val count = p.countSoFar + p.items.size
                 removeFromReport(p.items.map { it.id }.toSet())
                 if (p.rest.isNotEmpty()) launchDelete(p.rest.first(), p.rest.drop(1), freed, count)
-                else toast("Curat! Ai eliberat ${fmtBytes(freed)}. Telefon mai ușor.")
+                else toast("Curat. Ai eliberat ${fmtBytes(freed)}. Telefon mai ușor.")
             }
             is Pending.Move -> {
                 if (!ok) {
@@ -725,7 +702,20 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     // ─────────────────────────── Sugestii AI (poze) ───────────────────────────
 
-    fun setAiOn(on: Boolean) { viewModelScope.launch { online.setAiOn(on) } }
+    fun setAiOn(on: Boolean) {
+        if (!on) {
+            // Oprit: cererile în curs se opresc; ce a venit rămâne, restul nu mai pleacă.
+            aiJob?.cancel(); aiJob = null
+            docsAiJob?.cancel(); docsAiJob = null
+            _state.update { s -> (s as? CleanupUiState.Results)?.let { it.copy(ai = it.ai.copy(loading = false, status = "Sugestii AI oprite: rămân verdictele telefonului.")) } ?: s }
+            _docs.update { d -> d.copy(ai = d.ai.copy(loading = false, status = "Sugestii AI oprite: rămân verdictele telefonului.")) }
+        }
+        viewModelScope.launch {
+            online.setAiOn(on)
+            // Pornit din nou: ce e neanalizat pleacă acum, fără altă apăsare.
+            if (on) { startPhotoAnalysis(); startDocsAnalysis() }
+        }
+    }
 
     /** De ce nu poate pleca analiza pe server acum — sau null când poate. `subject` = „pozele" / „fișierele". */
     private fun aiBlocker(on: Boolean, subject: String): String? = when {
@@ -735,7 +725,7 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
         else -> null
     }
 
-    // Liniile de progres vin din corutina analizei (readuse pe Main), iar scrierea e atomică (update):
+    // Liniile de progres vin din corutinele analizei (pe Main), iar scrierea e atomică (update):
     // o bifă dată exact atunci nu se pierde.
     private fun setAiStatus(status: String, failed: Boolean = false) {
         _state.update { s -> (s as? CleanupUiState.Results)?.let { it.copy(ai = it.ai.copy(status = status, failed = failed)) } ?: s }
@@ -757,87 +747,168 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
         return hints
     }
 
+    /** Ce a ieșit dintr-o rundă de loturi: câte elemente au trecut, câte n-au putut, ultimul motiv, modelul. */
+    private class RunOutcome(val done: Int, val failed: Int, val error: String?, val provider: String, val summary: String)
+
     /**
-     * Analiza cu model pe server pentru poze. `auto` = pornită singură după scanare (fără toast-uri, doar linia de stare)
-     * și doar pentru pozele fără verdict; manual = pentru selecție (sau tot ce e de aruncat). Verdictele noi se adună
-     * peste cele vechi; cele de ștergere DOAR pre-bifează — ștergerea trece prin dialogul de sistem. Un răspuns venit
-     * după o scanare nouă sau după „Alt scop" nu mai atinge starea (`scanGeneration`).
+     * Motorul comun al analizei automate: loturile pleacă cu cel mult [MAX_IN_FLIGHT] cereri în paralel, un lot picat se
+     * reîncearcă o dată, apoi se numără (eroarea se raportează o singură dată, la final — nu per element).
+     * `build` pregătește sarcina unui lot chiar înainte de trimitere (miniaturile/PDF-urile nu stau toate în memorie);
+     * `onBatch` primește verdictele fiecărui lot, pe Main, ca să apară pe măsură ce vin. `alive` oprește totul când
+     * raportul pentru care lucrăm nu mai există.
      */
-    fun requestAi(auto: Boolean = false) {
+    private suspend fun <T> runBatches(
+        batches: List<List<T>>,
+        alive: () -> Boolean,
+        build: suspend (List<T>) -> List<OrganizeItemV2>,
+        onBatch: suspend (sent: List<OrganizeItemV2>, response: OrganizeResponseV2, doneSoFar: Int) -> Unit
+    ): RunOutcome {
+        var done = 0
+        var failed = 0
+        var error: String? = null
+        var provider = ""
+        var summary = ""
+        coroutineScope {
+            val gate = Semaphore(MAX_IN_FLIGHT)
+            batches.map { batch ->
+                async {
+                    gate.withPermit {
+                        if (!alive()) return@withPermit
+                        val payload = build(batch)
+                        if (!alive() || payload.isEmpty()) return@withPermit
+                        var r = organizeApi.organize(payload)
+                        if (r is OrganizeApi.Result.Fail && alive()) {
+                            delay(RETRY_DELAY_MS)
+                            r = organizeApi.organize(payload)
+                        }
+                        if (!alive()) return@withPermit
+                        when (r) {
+                            is OrganizeApi.Result.Ok -> {
+                                done += payload.size
+                                if (provider.isBlank()) provider = providerLabel(r.response.provider, r.response.model)
+                                if (summary.isBlank()) summary = r.response.summary
+                                onBatch(payload, r.response, done)
+                            }
+                            is OrganizeApi.Result.Fail -> { failed += payload.size; error = r.message }
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+        return RunOutcome(done, failed, error, provider, summary)
+    }
+
+    /** Verdictele unui lot + elementele trimise fără verdict întors (memorate goale: nu se retrimit). */
+    private fun verdictsOf(sent: List<OrganizeItemV2>, response: OrganizeResponseV2): Map<String, OrganizeVerdictV2> {
+        val map = LinkedHashMap<String, OrganizeVerdictV2>()
+        response.items.forEach { map[it.id] = it }
+        sent.forEach { if (it.id !in map) map[it.id] = OrganizeVerdictV2(id = it.id) }
+        return map
+    }
+
+    private fun progressLine(done: Int, total: Int, what: String) = "Analizez $done din $total $what…"
+
+    private fun finalLine(o: RunOutcome, total: Int, what: String, deletes: Int): String = buildString {
+        val done = total - o.failed
+        append("Analizate $done din $total $what")
+        if (o.provider.isNotBlank()) append(" · ").append(o.provider)
+        if (deletes > 0) append(" · $deletes ${if (deletes == 1) "bifată de aruncat" else "bifate de aruncat"}")
+        if (o.failed > 0) {
+            append(". ${o.failed} ${if (o.failed == 1) "nu a putut fi analizată" else "nu au putut fi analizate"}")
+            o.error?.let { append(": ").append(it.trimEnd('.')) }
+            append(".")
+        }
+    }
+
+    /**
+     * Analiza cu model pentru TOATE pozele scanate, pornită singură după scanare (și la „Reia analiza”). Pleacă doar
+     * cele fără verdict memorat, în loturi de ≤ 24 miniaturi (≤ 120 KB JPEG → ≤ 160 KB base64), cel mult două cereri
+     * deodată. Verdictele se adună pe măsură ce vin; cele de ștergere DOAR pre-bifează — ștergerea trece prin dialogul
+     * de sistem. Un răspuns venit după o scanare nouă sau după „Alt scop" nu mai atinge starea (`scanGeneration`).
+     */
+    fun startPhotoAnalysis() {
         val cur = _state.value as? CleanupUiState.Results ?: return
-        if (cur.ai.loading || aiJob?.isActive == true) return
+        if (aiJob?.isActive == true) return
         val generation = scanGeneration
+        val report = cur.report
         aiJob = viewModelScope.launch {
+            knownReady.await()
             val blocker = aiBlocker(online.aiOnNow(), "pozele")
             if (scanGeneration != generation) return@launch
-            if (blocker != null) {
-                if (auto) setAiStatus(blocker) else toast(blocker)
-                return@launch
-            }
-            val flagged = cur.report.flaggedItems
-            val pool = when {
-                !auto && cur.selected.isNotEmpty() -> flagged.filter { it.id in cur.selected }
-                auto -> flagged.filter { "m:${it.id}" !in cur.ai.suggestions }
-                else -> flagged
-            }
-            val items = pool.take(96)
-            if (items.isEmpty()) {
-                when {
-                    !auto -> toast("Nimic de trimis — selectează câteva poze.")
-                    cur.ai.suggestions.isEmpty() -> setAiStatus("Nimic de trimis la analiză: telefonul nu a găsit nimic de aruncat.")
-                    else -> setAiStatus("Nimic nou de trimis: verdictele de până acum rămân.")
-                }
+            val total = report.scanned.size
+            if (blocker != null) { setAiStatus(blocker); return@launch }
+            val todo = report.scanned.filter { "m:${it.id}" !in known }
+            val doneAlready = total - todo.size
+            if (todo.isEmpty()) {
+                _state.update { s -> if (s is CleanupUiState.Results) s.copy(ai = s.ai.copy(loading = false, failed = false, done = total, total = total,
+                    status = if (total == 0) "Nimic de analizat." else "Analizate $total din $total ${if (total == 1) "poză" else "poze"}.")) else s }
                 return@launch
             }
             _state.update { s ->
-                if (s is CleanupUiState.Results) s.copy(ai = s.ai.copy(loading = true, failed = false, status = "Pregătesc ${items.size} ${if (items.size == 1) "miniatură" else "miniaturi"}…")) else s
+                if (s is CleanupUiState.Results) s.copy(ai = s.ai.copy(loading = true, failed = false, failedCount = 0, done = doneAlready, total = total, status = progressLine(doneAlready, total, "poze"))) else s
             }
-            val hints = hintsFor(cur.report)
-            val payload = ArrayList<OrganizeItemV2>()
-            for (item in items) {
-                val thumb = if (item.isVideo) null else engine.thumbnailJpeg(item.uri)?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
-                payload += OrganizeItemV2(
-                    id = "m:${item.id}", kind = "image", name = item.name, size = item.sizeBytes, mime = item.mime,
-                    width = item.width.takeIf { it > 0 }, height = item.height.takeIf { it > 0 },
-                    bucket = item.bucketName.ifBlank { null }, takenAt = item.bestTimeMs.takeIf { it > 0 },
-                    thumbnail = thumb, localHints = hints[item.id] ?: emptyList()
-                )
-            }
-            if (scanGeneration != generation || _state.value !is CleanupUiState.Results) return@launch
-            val r = organizeApi.organize(payload) { line ->
-                withContext(Dispatchers.Main.immediate) { if (scanGeneration == generation) setAiStatus(line) }
-            }
-            if (scanGeneration != generation) return@launch
-            val now = _state.value as? CleanupUiState.Results ?: return@launch
-            when (r) {
-                is OrganizeApi.Result.Ok -> {
-                    val map = r.response.items.associateBy { it.id }
+            val hints = hintsFor(report)
+            val alive = { scanGeneration == generation && _state.value is CleanupUiState.Results }
+            val outcome = runBatches(
+                batches = todo.chunked(OrganizeApi.MAX_IMAGES),
+                alive = alive,
+                build = { batch ->
+                    batch.map { item ->
+                        val thumb = if (item.isVideo) null else engine.thumbnailJpeg(item.uri)?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
+                        OrganizeItemV2(
+                            id = "m:${item.id}", kind = "image", name = item.name, size = item.sizeBytes, mime = item.mime,
+                            width = item.width.takeIf { it > 0 }, height = item.height.takeIf { it > 0 },
+                            bucket = item.bucketName.ifBlank { null }, takenAt = item.bestTimeMs.takeIf { it > 0 },
+                            thumbnail = thumb, localHints = hints[item.id] ?: emptyList()
+                        )
+                    }
+                },
+                onBatch = { sent, response, doneNow ->
+                    val map = verdictsOf(sent, response)
+                    known.putAll(map)
                     // Recomandările de ștergere DOAR pre-selectează; nimic nu se șterge fără dialogul de sistem.
-                    val preselect = map.values.filter { it.deleteRecommended }
-                        .mapNotNull { it.id.removePrefix("m:").toLongOrNull() }
-                    val label = providerLabel(r.response.provider, r.response.model)
-                    val status = buildString {
-                        append("Modelul a răspuns ($label) · ${map.size} ${if (map.size == 1) "verdict" else "verdicte"}")
-                        if (preselect.isNotEmpty()) append(" · ${preselect.size} bifate de aruncat")
-                        if (r.response.partial) {
-                            append(" · doar o parte")
-                            if (r.response.note.isNotBlank()) append(": ").append(r.response.note)
-                        }
+                    val preselect = map.values.filter { it.deleteRecommended }.mapNotNull { it.id.removePrefix("m:").toLongOrNull() }
+                    _state.update { s ->
+                        if (s is CleanupUiState.Results) s.copy(
+                            selected = s.selected + preselect,
+                            ai = s.ai.copy(
+                                suggestions = s.ai.suggestions + map, requested = true, done = doneAlready + doneNow,
+                                provider = providerLabel(response.provider, response.model),
+                                summary = response.summary.ifBlank { s.ai.summary },
+                                status = progressLine(doneAlready + doneNow, total, "poze")
+                            )
+                        ) else s
                     }
-                    _state.value = now.copy(
-                        selected = now.selected + preselect,
-                        ai = AiPanel(false, now.ai.suggestions + map, r.response.summary.ifBlank { now.ai.summary }, label, requested = true, status = status)
-                    )
-                    if (!auto && r.response.partial) {
-                        toast(if (r.response.note.isNotBlank()) "Am primit doar o parte din sugestii: ${r.response.note}." else "Am primit doar o parte din sugestii.")
-                    }
+                    online.rememberVerdicts(map)
                 }
-                is OrganizeApi.Result.Fail -> {
-                    _state.value = now.copy(ai = now.ai.copy(loading = false, failed = true, status = r.message))
-                    if (!auto) toast(r.message)
-                }
+            )
+            if (!alive()) return@launch
+            _state.update { s ->
+                if (s is CleanupUiState.Results) {
+                    val deletes = s.ai.deleteCount
+                    val allFailed = outcome.done == 0 && outcome.failed > 0
+                    s.copy(ai = s.ai.copy(
+                        loading = false, failed = outcome.failed > 0, failedCount = outcome.failed,
+                        done = total - outcome.failed, total = total,
+                        provider = outcome.provider.ifBlank { s.ai.provider }, summary = outcome.summary.ifBlank { s.ai.summary },
+                        status = if (allFailed) (outcome.error ?: "Serverul nu răspunde; sugestiile locale rămân.") else finalLine(outcome, total, "poze", deletes)
+                    ))
+                } else s
             }
         }
+    }
+
+    /** „Reia analiza”: pozele fără verdict (inclusiv cele din loturile picate) pleacă din nou. */
+    fun retryAi() {
+        val cur = _state.value as? CleanupUiState.Results ?: return
+        if (cur.ai.loading) return
+        startPhotoAnalysis()
+    }
+
+    /** Pozele scanate fără nicio categorie locală, dar pe care modelul le recomandă la ștergere — secțiunea „AI: de aruncat”. */
+    fun aiDeleteExtras(state: CleanupUiState.Results): List<MediaItem> {
+        val flagged = state.report.flaggedItems.map { it.id }.toHashSet()
+        return state.report.scanned.filter { it.id !in flagged && state.ai.suggestions["m:${it.id}"]?.deleteRecommended == true }
     }
 
     /** „Mută N în <dosar>" din panoul AI. */
@@ -850,31 +921,31 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
 
     // ─────────────────────────── Documente ───────────────────────────
 
-    /** Folderul reamintit la pornire: îl recitim, dar analiza cu model NU pornește singură (ar urca PDF-urile la fiecare deschidere). */
+    /** Folderul reamintit la pornire: îl recitim; la analiză pleacă doar fișierele fără verdict memorat (PDF-urile nu urcă de două ori). */
     private suspend fun loadDocsTree() {
         val tree = organizer.persistedTree() ?: return
-        scanDocs(tree, userInitiated = false)
+        scanDocs(tree)
     }
 
     fun onTreePicked(tree: Uri) {
         viewModelScope.launch {
             organizer.rememberTree(tree)
-            scanDocs(tree, userInitiated = true)
+            scanDocs(tree)
         }
     }
 
     /** „rescanează": recitire cerută de tine — la analiză pleacă doar fișierele fără verdict. */
     fun rescanDocs() {
         val tree = _docs.value.tree ?: return
-        viewModelScope.launch { scanDocs(tree, userInitiated = true) }
+        viewModelScope.launch { scanDocs(tree) }
     }
 
     /**
-     * Recitirea folderului. `userInitiated` = ai ales folderul sau ai cerut rescanarea: atunci analiza cu model pornește
-     * singură (doar pentru fișierele fără verdict); la pornirea aplicației sau după o anulare nu pornește — verdictele
-     * primite deja pentru acest folder rămân (`docsAiCache`), iar „Cere din nou" e mereu la îndemână.
+     * Recitirea folderului. Verdictele memorate (DataStore) pentru fișierele încă prezente sunt la loc imediat, apoi
+     * analiza cu model pornește singură pentru restul — la alegerea folderului, la rescanare și la pornirea aplicației,
+     * pentru că nimic analizat nu se retrimite.
      */
-    private suspend fun scanDocs(tree: Uri, userInitiated: Boolean) {
+    private suspend fun scanDocs(tree: Uri) {
         docsAiJob?.cancel()
         docsAiJob = null
         _docs.value = _docs.value.copy(tree = tree, treeName = organizer.treeName(tree), loading = true, selected = emptySet(), ai = AiPanel(), jobId = null, site = emptyMap())
@@ -882,14 +953,11 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
             val (items, warnings) = organizer.inventory(tree)
             val report = organizer.detect(items)
             val undo = organizer.undoJournal().size
-            // Verdictele primite deja pentru acest folder rămân valabile pentru fișierele încă prezente (nu re-trimitem PDF-uri identice).
-            val remembered = docsAiCache[tree.toString()]
-            val byAiId = if (remembered != null) report.items.associateBy { docAiId(it) } else emptyMap()
-            val kept = remembered?.suggestions?.filterKeys { it in byAiId } ?: emptyMap()
-            val ai = if (remembered != null && kept.isNotEmpty()) remembered.copy(
-                loading = false, failed = false, suggestions = kept,
-                status = "Verdictele de data trecută pentru ${kept.size} ${if (kept.size == 1) "fișier" else "fișiere"}. Cere din nou dacă vrei altele."
-            ) else AiPanel()
+            knownReady.await()
+            val byAiId = report.items.associateBy { docAiId(it) }
+            val kept = HashMap<String, OrganizeVerdictV2>()
+            for (id in byAiId.keys) known[id]?.let { kept[id] = it }
+            val ai = AiPanel(suggestions = kept, requested = kept.isNotEmpty(), done = kept.size, total = report.items.size)
             val preselect = report.duplicates.flatMap { g -> g.copies.map { it.key } }.toSet() +
                 kept.values.filter { it.deleteRecommended }.mapNotNull { byAiId[it.id]?.key }
             _docs.value = _docs.value.copy(loading = false, report = report.copy(warnings = report.warnings + warnings), selected = preselect, undoCount = undo, ai = ai)
@@ -902,7 +970,7 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
                 if (jobId != null && now.tree == tree) _docs.value = now.copy(jobId = jobId)
                 refreshOrganizer()
             }
-            if (userInitiated && report.items.isNotEmpty()) requestDocsAi(auto = true)
+            if (report.items.isNotEmpty()) startDocsAnalysis()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -993,7 +1061,7 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
                 val now = _docs.value
                 _docs.value = now.copy(busy = false, report = now.report?.without(gone), selected = now.selected - gone)
             }
-            toast(if (gone.isNotEmpty()) "Curat! Ai eliberat ${fmtBytes(freed)}." else "Nu s-a putut șterge.")
+            toast(if (gone.isNotEmpty()) "Curat. Ai eliberat ${fmtBytes(freed)}." else "Nu s-a putut șterge.")
         }
     }
 
@@ -1005,57 +1073,47 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
             toast(msg)
             val tree = _docs.value.tree
             // Recitim lista, dar fără să re-trimitem folderul la analiză: fișierul adus înapoi nu are verdict, restul îl păstrează.
-            if (ok && tree != null) scanDocs(tree, userInitiated = false)
+            if (ok && tree != null) scanDocs(tree)
             else _docs.value = _docs.value.copy(undoCount = organizer.undoJournal().size)
         }
     }
 
     /**
-     * Analiza cu model pe server pentru documente: PDF-urile pleacă întregi (≤ 4 MB, cel mult 12 pe rundă, citite și
-     * codificate abia la scrierea cererii — unul o dată în memorie), fișierele text cu un fragment, restul doar cu nume +
-     * metadate. `auto` = după alegerea/rescanarea folderului, doar pentru fișierele fără verdict; verdictele noi se adună
-     * peste cele vechi și se țin minte pe folder. Un răspuns venit după schimbarea folderului nu atinge starea.
+     * Analiza cu model pentru TOATE fișierele din folder, pornită singură după inventar. PDF-urile pleacă întregi
+     * (≤ 4 MB, ≤ 6 pe lot, citite și codificate abia la scrierea cererii — unul o dată în memorie), fișierele text cu
+     * un fragment, restul doar cu nume + metadate; cel mult două cereri deodată. Pleacă doar fișierele fără verdict
+     * memorat. Un răspuns venit după schimbarea folderului nu atinge starea.
      */
-    fun requestDocsAi(auto: Boolean = false) {
+    fun startDocsAnalysis() {
         val d = _docs.value
         val report = d.report ?: return
         val tree = d.tree ?: return
-        if (d.ai.loading || docsAiJob?.isActive == true) return
+        if (docsAiJob?.isActive == true) return
         docsAiJob = viewModelScope.launch {
+            knownReady.await()
             val blocker = aiBlocker(online.aiOnNow(), "fișierele")
             if (_docs.value.tree != tree) return@launch
-            if (blocker != null) {
-                if (auto) setDocsAiStatus(blocker) else toast(blocker)
+            val total = report.items.size
+            if (blocker != null) { setDocsAiStatus(blocker); return@launch }
+            val todo = report.items.filter { docAiId(it) !in known }
+            val doneAlready = total - todo.size
+            if (todo.isEmpty()) {
+                _docs.update { s -> if (s.tree == tree) s.copy(ai = s.ai.copy(loading = false, failed = false, done = total, total = total,
+                    status = if (total == 0) "Nimic de analizat." else "Analizate $total din $total ${if (total == 1) "fișier" else "fișiere"}.")) else s }
                 return@launch
             }
-            val flagged = (report.duplicates.flatMap { it.copies } + report.large + report.old + report.suspects.map { it.first }).distinctBy { it.key }
-            val pool = when {
-                !auto && d.selected.isNotEmpty() -> report.items.filter { it.key in d.selected }
-                auto -> flagged.ifEmpty { report.items }.filter { docAiId(it) !in d.ai.suggestions }
-                else -> flagged.ifEmpty { report.items }
-            }
-            val items = pool.take(72)
-            if (items.isEmpty()) {
-                when {
-                    !auto -> toast("Nimic de trimis.")
-                    d.ai.suggestions.isEmpty() -> setDocsAiStatus("Nimic de trimis la analiză.")
-                    else -> setDocsAiStatus("Nimic nou de trimis: verdictele rămân cele de data trecută.")
-                }
-                return@launch
-            }
-            _docs.update { s -> if (s.tree == tree) s.copy(ai = s.ai.copy(loading = true, failed = false, status = "Pregătesc ${items.size} ${if (items.size == 1) "fișier" else "fișiere"}…")) else s }
+            _docs.update { s -> if (s.tree == tree) s.copy(ai = s.ai.copy(loading = true, failed = false, failedCount = 0, done = doneAlready, total = total, status = progressLine(doneAlready, total, "fișiere"))) else s }
             val dupKeys = report.duplicates.flatMap { g -> g.copies.map { it.key } }.toHashSet()
-            var pdfBudget = MAX_PDFS_PER_RUN
-            val payload = ArrayList<OrganizeItemV2>()
-            for (item in items) {
+            val byAiId = todo.associateBy { docAiId(it) }
+            // Sarcina e ieftină de construit (PDF-ul se citește la trimitere), deci împărțim în loturi de la început.
+            val payload = todo.map { item ->
                 val hints = ArrayList<String>()
                 if (item.key in dupKeys) hints += "duplicate"
                 if (item.sizeBytes > DocumentOrganizer.LARGE_BYTES) hints += "large"
                 if (item.lastModified > 0 && System.currentTimeMillis() - item.lastModified > DocumentOrganizer.OLD_MS) hints += "old"
-                // Aici doar mărimea și antetul; octeții se citesc la trimitere, un PDF o dată (nu 12 deodată în memorie).
-                val sendPdf = pdfBudget > 0 && organizer.pdfSendable(item, OrganizeApi.MAX_PDF_BYTES)
-                if (sendPdf) pdfBudget-- else if (organizer.isPdf(item)) hints += if (item.sizeBytes > OrganizeApi.MAX_PDF_BYTES) "pdf_too_large" else "pdf_not_sent"
-                payload += OrganizeItemV2(
+                val sendPdf = organizer.pdfSendable(item, OrganizeApi.MAX_PDF_BYTES)
+                if (!sendPdf && organizer.isPdf(item)) hints += if (item.sizeBytes > OrganizeApi.MAX_PDF_BYTES) "pdf_too_large" else "pdf_not_sent"
+                OrganizeItemV2(
                     id = docAiId(item), kind = "document", name = item.name, size = item.sizeBytes,
                     mime = item.mime.ifBlank { if (organizer.isPdf(item)) "application/pdf" else "application/octet-stream" },
                     bucket = item.path.substringBeforeLast('/', "").ifBlank { null },
@@ -1065,39 +1123,60 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
                     pdfSource = if (sendPdf) PdfSource(item.sizeBytes) { organizer.readPdf(item, OrganizeApi.MAX_PDF_BYTES) } else null
                 )
             }
-            if (_docs.value.tree != tree) return@launch
-            val r = organizeApi.organize(payload) { line ->
-                withContext(Dispatchers.Main.immediate) { if (_docs.value.tree == tree) setDocsAiStatus(line) }
-            }
-            val now = _docs.value
-            if (now.tree != tree) return@launch
-            when (r) {
-                is OrganizeApi.Result.Ok -> {
-                    val map = r.response.items.associateBy { it.id }
-                    val byAiId = items.associateBy { docAiId(it) }
+            val alive = { _docs.value.tree == tree }
+            val outcome = runBatches(
+                batches = organizeApi.batches(payload),
+                alive = alive,
+                build = { it },
+                onBatch = { sent, response, doneNow ->
+                    val map = verdictsOf(sent, response)
+                    known.putAll(map)
                     val preselect = map.values.filter { it.deleteRecommended }.mapNotNull { byAiId[it.id]?.key }
-                    val label = providerLabel(r.response.provider, r.response.model)
-                    val status = buildString {
-                        append("Modelul a răspuns ($label) · ${map.size} ${if (map.size == 1) "verdict" else "verdicte"}")
-                        if (preselect.isNotEmpty()) append(" · ${preselect.size} bifate de aruncat")
-                        if (r.response.partial) {
-                            append(" · doar o parte")
-                            if (r.response.note.isNotBlank()) append(": ").append(r.response.note)
-                        }
+                    _docs.update { s ->
+                        if (s.tree == tree) s.copy(
+                            selected = s.selected + preselect,
+                            ai = s.ai.copy(
+                                suggestions = s.ai.suggestions + map, requested = true, done = doneAlready + doneNow,
+                                provider = providerLabel(response.provider, response.model),
+                                summary = response.summary.ifBlank { s.ai.summary },
+                                status = progressLine(doneAlready + doneNow, total, "fișiere")
+                            )
+                        ) else s
                     }
-                    val panel = AiPanel(false, now.ai.suggestions + map, r.response.summary.ifBlank { now.ai.summary }, label, requested = true, status = status)
-                    docsAiCache[tree.toString()] = panel
-                    _docs.value = now.copy(selected = now.selected + preselect, ai = panel)
-                    if (!auto && r.response.partial) {
-                        toast(if (r.response.note.isNotBlank()) "Am primit doar o parte din sugestii: ${r.response.note}." else "Am primit doar o parte din sugestii.")
-                    }
+                    online.rememberVerdicts(map)
                 }
-                is OrganizeApi.Result.Fail -> {
-                    _docs.value = now.copy(ai = now.ai.copy(loading = false, failed = true, status = r.message))
-                    if (!auto) toast(r.message)
-                }
+            )
+            if (!alive()) return@launch
+            _docs.update { s ->
+                if (s.tree == tree) {
+                    val deletes = s.ai.deleteCount
+                    val allFailed = outcome.done == 0 && outcome.failed > 0
+                    s.copy(ai = s.ai.copy(
+                        loading = false, failed = outcome.failed > 0, failedCount = outcome.failed,
+                        done = total - outcome.failed, total = total,
+                        provider = outcome.provider.ifBlank { s.ai.provider }, summary = outcome.summary.ifBlank { s.ai.summary },
+                        status = if (allFailed) (outcome.error ?: "Serverul nu răspunde; sugestiile locale rămân.") else finalLine(outcome, total, "fișiere", deletes)
+                    ))
+                } else s
             }
         }
+    }
+
+    /** „Reia analiza”: fișierele fără verdict (inclusiv cele din loturile picate) pleacă din nou. */
+    fun retryDocsAi() {
+        if (_docs.value.ai.loading) return
+        startDocsAnalysis()
+    }
+
+    /** Fișierele fără categorie locală pe care modelul le recomandă la ștergere — secțiunea „AI: de aruncat”. */
+    fun aiDocDeleteExtras(docs: DocsUiState): List<DocItem> {
+        val report = docs.report ?: return emptyList()
+        val flagged = HashSet<String>()
+        report.duplicates.forEach { g -> g.copies.forEach { flagged += it.key } }
+        report.large.forEach { flagged += it.key }
+        report.old.forEach { flagged += it.key }
+        report.suspects.forEach { flagged += it.first.key }
+        return report.items.filter { it.key !in flagged && docs.ai.suggestions[docAiId(it)]?.deleteRecommended == true }
     }
 
     fun docAiId(item: DocItem): String = "d:" + sha256Hex(item.uri.toString()).take(24)
@@ -1114,7 +1193,9 @@ class CleanupViewModel(app: Application) : AndroidViewModel(app) {
     fun suggestionFor(ai: AiPanel, id: String): OrganizeVerdictV2? = ai.suggestions[id]
 
     companion object {
-        /** PDF-uri întregi trimise într-o rundă de analiză (2 loturi de câte 6); se citesc unul câte unul, la trimitere. */
-        const val MAX_PDFS_PER_RUN = 12
+        /** Cereri /v1/organize în paralel (loturi de ≤ 24 miniaturi sau ≤ 6 PDF-uri). */
+        const val MAX_IN_FLIGHT = 2
+        /** Pauza înaintea singurei reîncercări a unui lot picat. */
+        const val RETRY_DELAY_MS = 1_500L
     }
 }

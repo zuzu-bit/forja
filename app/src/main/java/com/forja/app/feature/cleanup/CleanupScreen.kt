@@ -121,6 +121,9 @@ fun CleanupScreen(onBack: () -> Unit) {
     var preview by remember { mutableStateOf<MediaItem?>(null) }
     var albumSheet by remember { mutableStateOf(false) }
 
+    // Mascota cu cască: gândește cât scanăm/analizăm, se bucură când a terminat, își cere scuze la eroare.
+    val mascotState = mascotStateFor(tab, state, docs)
+
     Column(
         Modifier.fillMaxSize().topoBackground(decor = false).statusBarsPadding().navigationBarsPadding()
     ) {
@@ -129,11 +132,13 @@ fun CleanupScreen(onBack: () -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                // Ștampila postului deasupra titlului; titlul rămâne numele modulului, cu elipsă la nevoie.
+            Mascot(state = mascotState, hat = MascotHat.Helmet, size = 72.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                // Ștampila postului deasupra titlului; titlul rămâne numele modulului, cu elipsă la nevoie (mascota ia 72 dp).
                 StampLabel("INVENTAR", rotationDeg = -4f)
                 Spacer(Modifier.height(6.dp))
-                Text("Curățenie de azi", style = TitleModule.copy(fontSize = 24.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Curățenie de azi", style = TitleModule.copy(fontSize = 20.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     "TELEFON UȘOR · MINTE LIMPEDE",
                     style = monoLabel(9, 0.14f).copy(color = Accent2),
@@ -195,6 +200,7 @@ fun CleanupScreen(onBack: () -> Unit) {
                 )
                 is CleanupUiState.Results -> ResultsView(
                     vm = vm, state = s, aiOn = aiOn, siteOn = siteOn, contract = contract, siteStatus = siteStatus,
+                    mascotState = mascotState,
                     onPreview = { preview = it },
                     onDone = onBack
                 )
@@ -202,6 +208,7 @@ fun CleanupScreen(onBack: () -> Unit) {
         } else {
             DocsTab(
                 vm = vm, docs = docs, aiOn = aiOn, siteOn = siteOn, contract = contract, siteStatus = siteStatus,
+                mascotState = mascotState,
                 onPickTree = { try { treeLauncher.launch(null) } catch (_: Exception) { toast.show("Nu pot deschide selectorul de foldere.") } }
             )
         }
@@ -279,11 +286,7 @@ fun CleanupScreen(onBack: () -> Unit) {
                 Text(fmtDate(item.bestTimeMs), style = BodyTiny.copy(color = TextDim))
                 if (ai != null) {
                     Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SuggestionDot(ai)
-                        Spacer(Modifier.width(8.dp))
-                        Text(ai.line { id -> results?.report?.scanned?.firstOrNull { "m:${it.id}" == id }?.name }, style = BodySmall.copy(color = TextSecondary))
-                    }
+                    AiVerdictRow(ai, nameOf = { id -> results?.report?.scanned?.firstOrNull { "m:${it.id}" == id }?.name }, style = BodySmall.copy(color = TextSecondary))
                 }
                 if (siteHint != null) {
                     Spacer(Modifier.height(8.dp))
@@ -304,6 +307,69 @@ fun CleanupScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+// ─────────────────────────── Mascota și eticheta AI a unui element ───────────────────────────
+
+/** Starea mascotei din antet: gândește cât scanăm/analizăm, fericită când analiza s-a încheiat, tristă la eroare. */
+private fun mascotStateFor(tab: Int, state: CleanupUiState, docs: DocsUiState): MascotState {
+    val ai = if (tab == 0) (state as? CleanupUiState.Results)?.ai else docs.ai
+    return when {
+        tab == 0 && state is CleanupUiState.Scanning -> if (state.paused) MascotState.Idle else MascotState.Thinking
+        tab == 1 && docs.loading -> MascotState.Thinking
+        ai == null -> MascotState.Idle
+        ai.loading -> MascotState.Thinking
+        ai.failed -> MascotState.Sorry
+        ai.requested -> MascotState.Happy
+        else -> MascotState.Idle
+    }
+}
+
+/** Replica mascotei cât timp analiza merge sau după ce s-a încheiat; null când nu are nimic de spus. */
+private fun mascotLineFor(ai: AiPanel, what: String, whatOne: String): String? = when {
+    ai.loading -> if (what == "poze") "Mă uit la fiecare poză." else "Citesc fiecare fișier."
+    ai.failed && ai.done == 0 -> "Nu am reușit să văd ${if (what == "poze") "pozele" else "fișierele"}. Reiau când vrei."
+    ai.failed -> "Am văzut ${ai.done} din ${ai.total}. Restul mai încerc la „Reia analiza”."
+    ai.requested && ai.deleteCount > 0 -> "Am o propunere pentru ${ai.deleteCount} ${if (ai.deleteCount == 1) whatOne else what}."
+    ai.requested && ai.moveFolders.isNotEmpty() -> "Am dosare propuse pentru ${ai.moveFolders.values.sumOf { it.size }} ${if (ai.moveFolders.values.sumOf { it.size } == 1) whatOne else what}."
+    ai.requested && ai.done > 0 -> "Nimic de aruncat din ce am văzut."
+    else -> null
+}
+
+/**
+ * Eticheta de o linie sub element: „<dosar> · <motiv>” (din `dosar`/`folder`, apoi `motiv`/`reason`/`rezumat`),
+ * plus „duplicat al <nume>” când `duplicatDe` există. Null când modelul n-a spus nimic (element memorat fără verdict).
+ */
+private fun aiLabel(v: OrganizeVerdictV2, nameOf: (String) -> String?): String? {
+    val parts = ArrayList<String>(3)
+    v.targetFolder?.let { parts += it }
+    val why = v.displayReason.ifBlank { v.rezumat.trim() }
+    if (why.isNotBlank()) parts += why
+    v.duplicatDe?.trim()?.takeIf { it.isNotBlank() && it != v.id }?.let { other -> parts += "duplicat al ${nameOf(other) ?: "altui element"}" }
+    return parts.joinToString(" · ").ifBlank { null }
+}
+
+/** Chip mic „AI: șterge · <încredere>” — doar o recomandare; ștergerea trece prin dialogul de sistem. */
+@Composable
+private fun AiDeleteChip(v: OrganizeVerdictV2, modifier: Modifier = Modifier) {
+    val conf = v.displayConfidence
+    Box(modifier.clip(ChipShape).background(Error.copy(alpha = 0.92f)).padding(horizontal = 5.dp, vertical = 2.dp)) {
+        Text(
+            if (conf.isNotBlank()) "AI: șterge · $conf" else "AI: șterge",
+            style = monoLabel(7, 0.06f).copy(color = Color.White), maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** Verdictul unui element pe un rând: chip-ul de ștergere (dacă e cazul) + eticheta de o linie. */
+@Composable
+private fun AiVerdictRow(v: OrganizeVerdictV2, nameOf: (String) -> String?, style: androidx.compose.ui.text.TextStyle = BodyTiny.copy(color = TextSecondary), maxLines: Int = 2) {
+    val label = aiLabel(v, nameOf)
+    if (!v.deleteRecommended && label == null) return
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (v.deleteRecommended) { AiDeleteChip(v); Spacer(Modifier.width(6.dp)) } else { SuggestionDot(v); Spacer(Modifier.width(6.dp)) }
+        Text(label ?: "", style = style, maxLines = maxLines, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
     }
 }
 
@@ -547,7 +613,15 @@ private fun ProgressCard(
         is ScanProgress.Done -> Quad(1, 1, "gata", null)
     }
     val fraction = if (total > 0) done.toFloat() / total else 0f
+    val says = when {
+        state.paused -> "Pauză. Progresul e salvat."
+        p == null || p is ScanProgress.Inventory -> "Fac inventarul."
+        p is ScanProgress.Hashing -> "Caut copiile identice."
+        else -> "Mă uit la fiecare poză."
+    }
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        MascotSays(says, hat = MascotHat.Helmet, state = if (state.paused) MascotState.Idle else MascotState.Talking)
+        Spacer(Modifier.height(12.dp))
         ForjaCard(Modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(state.scope.title.uppercase(), style = monoLabel(9, 0.14f).copy(color = TextDim))
@@ -581,8 +655,8 @@ private fun ProgressCard(
         }
         Spacer(Modifier.height(14.dp))
         Text(
-            if (contract) "Scanarea se face pe telefon. Abia după: miniaturile pleacă la analiza cu model, copiile pe site — conform contractului."
-            else "Scanarea se face pe telefon. Abia după: miniaturile pleacă la analiza cu model („Sugestii AI”), copiile în cont („Și pe site”) — ambele se pot opri.",
+            if (contract) "Scanarea se face pe telefon. După, miniaturile pleacă automat la analiza cu model."
+            else "Scanarea se face pe telefon. După, miniaturile pleacă automat la analiza cu model („Sugestii AI”) și copiile în cont („Și pe site”) — ambele se pot opri.",
             style = BodyTiny.copy(color = TextDim), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center
         )
     }
@@ -603,13 +677,16 @@ private fun ResultsView(
     siteOn: Boolean,
     contract: Boolean,
     siteStatus: OrganizerStatus?,
+    mascotState: MascotState,
     onPreview: (MediaItem) -> Unit,
     onDone: () -> Unit
 ) {
     val report = state.report
     val flagged = report.flaggedItems
     val flaggedBytes = flagged.sumOf { it.sizeBytes }
-    val selectedItems = flagged.filter { it.id in state.selected }
+    // Poze fără categorie locală, dar recomandate la ștergere de model: secțiunea „AI: de aruncat” (doar bifate).
+    val aiExtras = remember(report, state.ai.suggestions) { vm.aiDeleteExtras(state) }
+    val selectedItems = (flagged + aiExtras).filter { it.id in state.selected }
     val selectedBytes = selectedItems.sumOf { it.sizeBytes }
     val nameOf: (String) -> String = { uri -> report.scanned.firstOrNull { it.uri.toString() == uri }?.name ?: "poză" }
     // „copie a <nume>": id-ul din `duplicatDe` („m:<id>") → numele pozei din raport, calculat o dată pe raport.
@@ -621,8 +698,13 @@ private fun ResultsView(
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 16.dp)
         ) {
             item(key = "summary") {
+                val says = if (vm.aiAvailable && aiOn) mascotLineFor(state.ai, "poze", "poză") else null
+                if (says != null) {
+                    MascotSays(says, hat = MascotHat.Helmet, state = if (state.ai.loading) MascotState.Talking else mascotState)
+                    Spacer(Modifier.height(10.dp))
+                }
                 Text(
-                    "${report.scanned.size} verificate · ${flagged.size} de aruncat · ${fmtBytes(flaggedBytes)}" +
+                    "${report.scanned.size} verificate · ${flagged.size + aiExtras.size} de aruncat · ${fmtBytes(flaggedBytes + aiExtras.sumOf { it.sizeBytes })}" +
                         (if (report.warnings.isNotEmpty()) " · ${report.warnings.size} necitite" else ""),
                     style = BodyTiny.copy(color = TextSecondary)
                 )
@@ -632,14 +714,17 @@ private fun ResultsView(
                 }
                 Spacer(Modifier.height(10.dp))
             }
-            if (report.isEmpty) {
+            if (report.isEmpty && aiExtras.isEmpty()) {
                 item(key = "empty") {
                     ForjaCard(Modifier.fillMaxWidth()) {
                         Text("Nimic de aruncat aici. Telefon curat.", style = BodyStrong.copy(fontSize = 15.sp))
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            if (report.hasMore) "Mai sunt poze de verificat — mergem mai departe când vrei."
-                            else "Ai trecut prin tot ce era de trecut. Ține-o așa.",
+                            when {
+                                state.ai.loading -> "Modelul se uită încă la poze. Dacă are o propunere, apare aici."
+                                report.hasMore -> "Mai sunt poze de verificat — mergem mai departe când vrei."
+                                else -> "Ai trecut prin tot ce era de trecut. Ține-o așa."
+                            },
                             style = BodySmall.copy(color = TextSecondary)
                         )
                     }
@@ -659,17 +744,19 @@ private fun ResultsView(
                 }
                 categorySection(vm, state, cat, items, tiles, onPreview, aiNames)
             }
+            if (aiExtras.isNotEmpty()) {
+                aiExtrasSection(vm, state, aiExtras, onPreview, aiNames)
+            }
             if (vm.aiAvailable || (siteOn && state.jobId != null)) {
                 item(key = "ai") {
                     AiPanelCard(
                         ai = state.ai, aiOn = aiOn, aiAvailable = vm.aiAvailable,
                         subject = "miniaturi ≤ 512 px",
                         onToggle = { vm.setAiOn(it) },
-                        onRequest = { vm.requestAi() },
+                        onRetry = { vm.retryAi() },
                         onApplyFolder = { vm.applyAiFolder(it) },
-                        siteOn = siteOn, contract = contract, siteJob = state.jobId != null, siteMode = siteStatus?.takeIf { it.jobId == state.jobId }?.mode,
-                        siteRoot = OrganizerJobs.PHOTO_DESTINATION, site = state.site, siteLoading = state.siteLoading, nameOf = nameOf,
-                        onSiteRequest = { vm.requestSiteAi() },
+                        siteOn = siteOn, contract = contract, siteJob = state.jobId != null,
+                        siteRoot = OrganizerJobs.PHOTO_DESTINATION, site = state.site, nameOf = nameOf,
                         onApplySiteFolder = { vm.applySiteFolder(it) }
                     )
                     Spacer(Modifier.height(12.dp))
@@ -739,8 +826,21 @@ private fun LazyListScope.categorySection(
         }
         Spacer(Modifier.height(8.dp))
     }
+    tileRows(cat.name, tiles, state, vm, onPreview, aiNames)
+    item(key = "sp-${cat.name}") { Spacer(Modifier.height(14.dp)) }
+}
+
+/** Grila de 3 pe rând, cu eticheta AI de o linie sub fiecare poză. */
+private fun LazyListScope.tileRows(
+    section: String,
+    tiles: List<Tile>,
+    state: CleanupUiState.Results,
+    vm: CleanupViewModel,
+    onPreview: (MediaItem) -> Unit,
+    aiNames: Map<String, String>
+) {
     val rows = tiles.chunked(3)
-    items(rows.size, key = { i -> "r-${cat.name}-${rows[i].first().item.id}" }) { i ->
+    items(rows.size, key = { i -> "r-$section-${rows[i].first().item.id}" }) { i ->
         val row = rows[i]
         Row(Modifier.fillMaxWidth()) {
             row.forEach { t ->
@@ -750,17 +850,39 @@ private fun LazyListScope.categorySection(
                     siteBadge = state.site[t.item.uri.toString()]?.let { it.analysis != null || it.state == "moved" } == true,
                     onToggle = { vm.toggleSelect(t.item.id) },
                     onLong = { onPreview(t.item) },
+                    nameOf = { aiNames[it] },
                     modifier = Modifier.weight(1f)
                 )
             }
             repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
         }
     }
-    val aiLines = tiles.filter { !it.keeper }.mapNotNull { t -> state.ai.suggestions["m:${t.item.id}"]?.let { t.item.name to it } }
-    if (aiLines.isNotEmpty()) {
-        item(key = "ai-${cat.name}") { AiLines(aiLines, nameOf = { aiNames[it] }) }
+}
+
+/** „AI: de aruncat” — poze fără categorie locală, recomandate la ștergere de model. Bifate, nu șterse: tu confirmi. */
+private fun LazyListScope.aiExtrasSection(
+    vm: CleanupViewModel,
+    state: CleanupUiState.Results,
+    items: List<MediaItem>,
+    onPreview: (MediaItem) -> Unit,
+    aiNames: Map<String, String>
+) {
+    val ids = items.map { it.id }
+    val allSelected = ids.all { it in state.selected }
+    val targets = items.filter { it.id in state.selected }.ifEmpty { items }
+    item(key = "h-AI") {
+        SectionLabel("AI: de aruncat · ${items.size} · ${fmtBytes(items.sumOf { it.sizeBytes })}", color = Accent2)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SecondaryButton(if (allSelected) "Deselectează" else "Selectează tot", onClick = { vm.selectAll(ids, !allSelected) }, padV = 8.dp)
+            SecondaryButton("Șterge ${targets.size} · ${fmtBytes(targets.sumOf { it.sizeBytes })}", onClick = { vm.deleteItems(targets) }, padV = 8.dp, textColor = Error)
+        }
+        Spacer(Modifier.height(4.dp))
+        Text("Recomandarea modelului, cu motiv. Verifică și confirmă tu.", style = BodyTiny.copy(color = TextDim))
+        Spacer(Modifier.height(8.dp))
     }
-    item(key = "sp-${cat.name}") { Spacer(Modifier.height(14.dp)) }
+    tileRows("AI", items.map { Tile(it, null, false) }, state, vm, onPreview, aiNames)
+    item(key = "sp-AI") { Spacer(Modifier.height(14.dp)) }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -774,11 +896,13 @@ private fun MediaTile(
     onToggle: () -> Unit,
     onLong: () -> Unit,
     modifier: Modifier = Modifier,
-    siteBadge: Boolean = false
+    siteBadge: Boolean = false,
+    nameOf: (String) -> String? = { null }
 ) {
+    Column(modifier.padding(3.dp)) {
     Box(
-        modifier
-            .padding(3.dp)
+        Modifier
+            .fillMaxWidth()
             .aspectRatio(1f)
             .clip(ThumbShape)
             .background(Surface2)
@@ -804,12 +928,14 @@ private fun MediaTile(
         if (item.isVideo) {
             Text("VIDEO", style = monoLabel(7, 0.10f).copy(color = Color.White), modifier = Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 26.dp))
         }
-        if (badge != null) {
-            Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { SuggestionDot(badge) }
+        if (badge != null && !keeper) {
+            Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) {
+                if (badge.deleteRecommended) AiDeleteChip(badge, Modifier.widthIn(max = 96.dp)) else SuggestionDot(badge)
+            }
         }
         if (siteBadge) {
             Box(
-                Modifier.align(Alignment.BottomStart).padding(start = if (badge != null) 28.dp else 6.dp, bottom = 6.dp)
+                Modifier.align(Alignment.TopStart).padding(start = 4.dp, top = 22.dp)
                     .clip(ChipShape).background(Color(0xCC0A0A0B)).padding(horizontal = 4.dp, vertical = 1.dp)
             ) { Text("SITE", style = monoLabel(6, 0.10f).copy(color = Accent2)) }
         }
@@ -819,6 +945,14 @@ private fun MediaTile(
                 .border(1.5.dp, Color.White, CircleShape),
             contentAlignment = Alignment.Center
         ) { if (selected) Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(14.dp)) }
+    }
+    // Eticheta AI de o linie: „<dosar> · <motiv>” / „duplicat al …”; rândul rămâne rezervat ca grila să stea aliniată.
+    val label = badge?.let { aiLabel(it, nameOf) }
+    Text(
+        label ?: " ",
+        style = BodyTiny.copy(fontSize = 9.sp, lineHeight = 12.sp, color = if (badge?.deleteRecommended == true) Error else TextSecondary),
+        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 2.dp, vertical = 2.dp)
+    )
     }
 }
 
@@ -834,34 +968,13 @@ private fun SuggestionDot(s: OrganizeVerdictV2) {
     }
 }
 
-/** Liniile „AI: <rezumat> · dosar: <nume> · <motiv>" pentru elementele unei categorii care au verdict. */
-@Composable
-private fun AiLines(lines: List<Pair<String, OrganizeVerdictV2>>, nameOf: (String) -> String? = { null }, max: Int = 8) {
-    if (lines.isEmpty()) return
-    Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-        lines.take(max).forEach { (name, v) ->
-            Row(verticalAlignment = Alignment.Top) {
-                Box(Modifier.padding(top = 4.dp)) { SuggestionDot(v) }
-                Spacer(Modifier.width(8.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(name, style = BodyTiny.copy(color = TextDim), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(v.line(nameOf), style = BodyTiny.copy(color = TextSecondary), maxLines = 3, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-        }
-        if (lines.size > max) {
-            Text("încă ${lines.size - max} cu verdict · apasă lung pe o poză ca să-l vezi", style = BodyTiny.copy(color = TextDim))
-        }
-    }
-}
-
 // ─────────────────────────── Panoul AI (poze și documente) ───────────────────────────
 
 /**
- * Panoul AI: analiza cu model pe serverul FORJA (/v1/organize v2: miniaturi, PDF-uri, fragmente — pornește singură
- * după scanare) și, când „Și pe site” e pornit, analiza contului online pe copiile din 24 h.
- * Sursa e etichetată de fiecare dată: „FORJA AI” vs „Site”. Linia de stare spune onest ce se întâmplă.
+ * Panoul AI: analiza cu model pe serverul FORJA (/v1/organize v2: miniaturi, PDF-uri, fragmente) pornește singură
+ * după scanare, pe tot ce s-a scanat; aici rămân comutatorul, linia onestă de progres („Analizez 48 din 210…”),
+ * „Reia analiza” când ceva a rămas neanalizat și butoanele „Mută N în <dosar>”. Propunerile site-ului (copiile din
+ * 24 h) apar dedesubt, etichetate „Site”.
  */
 @Composable
 private fun AiPanelCard(
@@ -870,17 +983,14 @@ private fun AiPanelCard(
     aiAvailable: Boolean,
     subject: String,
     onToggle: (Boolean) -> Unit,
-    onRequest: () -> Unit,
+    onRetry: () -> Unit,
     onApplyFolder: (String) -> Unit,
     siteOn: Boolean = false,
     contract: Boolean = false,
     siteJob: Boolean = false,
-    siteMode: String? = null,
     siteRoot: String = "",
     site: Map<String, SiteHint> = emptyMap(),
-    siteLoading: Boolean = false,
     nameOf: (String) -> String = { it },
-    onSiteRequest: () -> Unit = {},
     onApplySiteFolder: (String) -> Unit = {}
 ) {
     ForjaCard(Modifier.fillMaxWidth()) {
@@ -888,109 +998,37 @@ private fun AiPanelCard(
             Column(Modifier.weight(1f).padding(end = 12.dp)) {
                 Text("Sugestii AI", style = BodyStrong.copy(fontSize = 15.sp))
                 Text(
-                    if (aiOn) "Analiză cu model pe serverul FORJA, pornită după scanare. Pleacă doar $subject. Modelul propune, tu decizi — nimic nu se șterge singur."
+                    if (aiOn) "Analiză cu model pe serverul FORJA, automată după scanare, pe tot ce s-a scanat. Pleacă doar $subject. Modelul propune, tu decizi — nimic nu se șterge singur."
                     else "Oprit: rămân verdictele telefonului. Nimic nu pleacă la analiză.",
                     style = BodyTiny.copy(color = TextSecondary)
                 )
             }
             if (aiAvailable) ForjaSwitch(aiOn, onToggle)
         }
-        if (siteOn && siteJob) {
-            // Contract semnat: numărătoarea și cererea manuală dispar (rândul „Pe site” e deja în rezumat); rămân propunerile.
-            if (!contract) {
-                Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SourceBadge("Site", Accent2)
-                    Spacer(Modifier.width(8.dp))
-                    val uploaded = site.values.count { it.uploaded }
-                    val analyzed = site.values.count { it.analysis != null }
-                    Text(
-                        "$uploaded ${if (uploaded == 1) "copie" else "copii"} pe site · $analyzed ${if (analyzed == 1) "analizată" else "analizate"}",
-                        style = BodyTiny.copy(color = TextSecondary), modifier = Modifier.weight(1f)
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-            if (contract) {
-                if (siteLoading) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(color = Accent2, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Text("site-ul analizează", style = BodyTiny.copy(color = TextDim))
-                    }
-                }
-            } else if (siteMode == "online") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SecondaryButton(
-                        if (siteLoading) "site-ul analizează…" else "Cere analiza site-ului (≤ 5)",
-                        onClick = { if (!siteLoading) onSiteRequest() }, modifier = Modifier.weight(1f)
-                    )
-                    if (siteLoading) {
-                        Spacer(Modifier.width(12.dp))
-                        CircularProgressIndicator(color = Accent2, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    }
-                }
-            } else {
-                Text(
-                    "Analiza de conținut pe site cere „Sugestii AI” pornit înainte de scanare. Copiile și verdictele telefonului sunt deja acolo.",
-                    style = BodyTiny.copy(color = TextDim)
-                )
-            }
-            val siteFolders = siteFolders(site, siteRoot)
-            if (siteFolders.isNotEmpty()) {
-                Spacer(Modifier.height(10.dp))
-                siteFolders.entries.sortedByDescending { it.value.size }.take(6).forEach { (folder, list) ->
-                    PrimaryButton(
-                        "Site: mută ${list.size} în $folder", onClick = { onApplySiteFolder(folder) },
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp), small = true
-                    )
-                }
-                site.entries.filter { it.value.analysis != null }.take(6).forEach { (uri, h) ->
-                    val a = h.analysis!!
-                    Text(
-                        "${nameOf(uri)} → ${a.destination}" + (if (a.reason.isNotBlank()) " — ${a.reason}" else ""),
-                        style = BodyTiny.copy(color = TextDim), maxLines = 2, overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
         if (aiOn && aiAvailable) {
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SourceBadge("FORJA AI")
-                Spacer(Modifier.width(8.dp))
-            }
-            if (ai.status.isNotBlank()) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    ai.status,
-                    style = BodyTiny.copy(color = if (ai.failed) Error else if (ai.loading) Accent2 else TextSecondary),
-                    maxLines = 3, overflow = TextOverflow.Ellipsis
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SecondaryButton(
-                    if (ai.loading) "analizează…" else if (ai.requested || ai.failed) "Cere din nou" else "Cere sugestii pentru selecție",
-                    onClick = { if (!ai.loading) onRequest() }, modifier = Modifier.weight(1f)
-                )
                 if (ai.loading) {
-                    Spacer(Modifier.width(12.dp))
-                    CircularProgressIndicator(color = Accent2, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    CircularProgressIndicator(color = Accent2, modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 }
+                if (ai.status.isNotBlank()) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        ai.status,
+                        style = BodyTiny.copy(color = if (ai.failed) Error else if (ai.loading) Accent2 else TextSecondary),
+                        maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            if (ai.failed || ai.unfinished) {
+                Spacer(Modifier.height(8.dp))
+                SecondaryButton("Reia analiza", onClick = onRetry, modifier = Modifier.fillMaxWidth(), padV = 10.dp)
             }
             if (ai.requested) {
-                Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(Positive)); Text("păstrează", style = BodyTiny.copy(color = TextDim))
-                    Spacer(Modifier.width(6.dp))
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(Error)); Text("de aruncat (doar bifat)", style = BodyTiny.copy(color = TextDim))
-                    Spacer(Modifier.width(6.dp))
-                    Icon(Icons.Outlined.FolderOpen, null, tint = Accent2, modifier = Modifier.size(12.dp)); Text("dosar propus", style = BodyTiny.copy(color = TextDim))
-                }
                 if (ai.deleteCount > 0) {
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         "${ai.deleteCount} ${if (ai.deleteCount == 1) "element bifat" else "elemente bifate"} la recomandarea modelului, cu motiv. Verifică și confirmă tu.",
                         style = BodyTiny.copy(color = TextDim)
@@ -1008,11 +1046,40 @@ private fun AiPanelCard(
                 }
                 if (ai.summary.isNotBlank()) {
                     Spacer(Modifier.height(6.dp))
-                    Text(ai.summary, style = BodySmall.copy(color = TextSecondary))
+                    Text(ai.summary, style = BodySmall.copy(color = TextSecondary), maxLines = 4, overflow = TextOverflow.Ellipsis)
                 }
                 if (ai.provider.isNotBlank()) {
                     Spacer(Modifier.height(4.dp))
                     Text("ANALIZĂ CU MODEL · ${ai.provider.uppercase()}", style = monoLabel(8, 0.12f).copy(color = TextDim2))
+                }
+            }
+        }
+        if (siteOn && siteJob) {
+            val siteFolders = siteFolders(site, siteRoot)
+            if (!contract) {
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SourceBadge("Site", Accent2)
+                    Spacer(Modifier.width(8.dp))
+                    val uploaded = site.values.count { it.uploaded }
+                    val analyzed = site.values.count { it.analysis != null }
+                    Text("Pe site: $uploaded · analizate: $analyzed", style = BodyTiny.copy(color = TextSecondary), modifier = Modifier.weight(1f))
+                }
+            }
+            if (siteFolders.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                siteFolders.entries.sortedByDescending { it.value.size }.take(6).forEach { (folder, list) ->
+                    PrimaryButton(
+                        "Mută ${list.size} în $folder (site)", onClick = { onApplySiteFolder(folder) },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp), small = true
+                    )
+                }
+                site.entries.filter { it.value.analysis != null }.take(6).forEach { (uri, h) ->
+                    val a = h.analysis!!
+                    Text(
+                        "${nameOf(uri)} → ${a.destination}" + (if (a.reason.isNotBlank()) " — ${a.reason}" else ""),
+                        style = BodyTiny.copy(color = TextDim), maxLines = 2, overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
@@ -1031,6 +1098,7 @@ private fun DocsTab(
     siteOn: Boolean,
     contract: Boolean,
     siteStatus: OrganizerStatus?,
+    mascotState: MascotState,
     onPickTree: () -> Unit
 ) {
     val tree = docs.tree
@@ -1038,8 +1106,8 @@ private fun DocsTab(
         Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Alege un folder cu documente (ex: Download).", style = Body, modifier = Modifier.padding(bottom = 6.dp), textAlign = TextAlign.Center)
             Text(
-                if (contract) "Android nu ne lasă la toate fișierele fără riscuri — deci alegi tu folderul. Îl ținem minte. PDF-urile ≤ 4 MB și fragmente din fișierele text pleacă la analiza cu model, copiile pe site — conform contractului."
-                else "Android nu ne lasă la toate fișierele fără riscuri — deci alegi tu folderul. Îl ținem minte. PDF-urile ≤ 4 MB și fragmente din fișierele text pleacă la analiza cu model, copiile în cont — doar cât timp lași comutatoarele pornite.",
+                if (contract) "Android nu ne lasă la toate fișierele fără riscuri — deci alegi tu folderul. Îl ținem minte. PDF-urile ≤ 4 MB și fragmente din fișierele text pleacă automat la analiza cu model."
+                else "Android nu ne lasă la toate fișierele fără riscuri — deci alegi tu folderul. Îl ținem minte. PDF-urile ≤ 4 MB și fragmente din fișierele text pleacă automat la analiza cu model, copiile în cont — cât timp lași comutatoarele pornite.",
                 style = BodyTiny.copy(color = TextDim), modifier = Modifier.padding(bottom = 14.dp), textAlign = TextAlign.Center
             )
             SecondaryButton("Alege folderul", onClick = onPickTree)
@@ -1078,15 +1146,27 @@ private fun DocsTab(
             }
             Spacer(Modifier.height(8.dp))
         }
+        val aiExtras = remember(report, docs.ai.suggestions) { vm.aiDocDeleteExtras(docs) }
         val selectedDocs = report?.items?.filter { it.key in docs.selected } ?: emptyList()
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 16.dp)) {
             if (report != null) {
-                if (report.isEmpty && !docs.loading) {
+                val says = if (docs.loading) "Fac inventarul." else if (vm.aiAvailable && aiOn) mascotLineFor(docs.ai, "fișiere", "fișier") else null
+                if (says != null) {
+                    item(key = "says") {
+                        MascotSays(says, hat = MascotHat.Helmet, state = if (docs.loading || docs.ai.loading) MascotState.Talking else mascotState)
+                        Spacer(Modifier.height(12.dp))
+                    }
+                }
+                if (report.isEmpty && aiExtras.isEmpty() && !docs.loading) {
                     item(key = "empty") {
                         ForjaCard(Modifier.fillMaxWidth()) {
                             Text("Nimic de aruncat aici. Folder curat.", style = BodyStrong.copy(fontSize = 15.sp))
                             Spacer(Modifier.height(4.dp))
-                            Text("Modelul poate totuși propune dosare pentru tot folderul — vezi panoul de mai jos.", style = BodySmall.copy(color = TextSecondary))
+                            Text(
+                                if (docs.ai.loading) "Modelul citește încă fișierele. Dosarele propuse apar mai jos."
+                                else "Dosarele propuse de model, dacă sunt, apar mai jos.",
+                                style = BodySmall.copy(color = TextSecondary)
+                            )
                         }
                         Spacer(Modifier.height(14.dp))
                     }
@@ -1096,18 +1176,18 @@ private fun DocsTab(
                 docSection(vm, docs, "Mari", "Mari", report.large, report.large.map { DocRowModel(it, "mare", false) }, docNames)
                 docSection(vm, docs, "Vechi", "Vechi", report.old, report.old.map { DocRowModel(it, "vechi (>3 luni)", false) }, docNames)
                 docSection(vm, docs, "Suspecte", "Duplicate", report.suspects.map { it.first }, report.suspects.map { DocRowModel(it.first, it.second, false) }, docNames)
+                docSection(vm, docs, "AI: de aruncat", "De verificat", aiExtras, aiExtras.map { DocRowModel(it, null, false) }, docNames, moveButton = false)
                 if (vm.aiAvailable || (siteOn && docs.jobId != null)) {
                     item(key = "ai") {
                         AiPanelCard(
                             ai = docs.ai, aiOn = aiOn, aiAvailable = vm.aiAvailable,
                             subject = "PDF-urile (≤ 4 MB), fragmente scurte din fișierele text și numele celorlalte",
                             onToggle = { vm.setAiOn(it) },
-                            onRequest = { vm.requestDocsAi() },
+                            onRetry = { vm.retryDocsAi() },
                             onApplyFolder = { vm.applyDocsAiFolder(it) },
-                            siteOn = siteOn, contract = contract, siteJob = docs.jobId != null, siteMode = siteStatus?.takeIf { it.jobId == docs.jobId }?.mode,
-                            siteRoot = OrganizerJobs.DOC_DESTINATION, site = docs.site, siteLoading = docs.siteLoading,
+                            siteOn = siteOn, contract = contract, siteJob = docs.jobId != null,
+                            siteRoot = OrganizerJobs.DOC_DESTINATION, site = docs.site,
                             nameOf = { uri -> report.items.firstOrNull { it.key == uri }?.name ?: "fișier" },
-                            onSiteRequest = { vm.requestDocsSiteAi() },
                             onApplySiteFolder = { vm.applyDocsSiteFolder(it) }
                         )
                         Spacer(Modifier.height(12.dp))
@@ -1144,7 +1224,8 @@ private fun LazyListScope.docSection(
     category: String,
     items: List<DocItem>,
     rows: List<DocRowModel>,
-    aiNames: Map<String, String>
+    aiNames: Map<String, String>,
+    moveButton: Boolean = true
 ) {
     if (items.isEmpty()) return
     val keys = items.map { it.key }
@@ -1155,8 +1236,12 @@ private fun LazyListScope.docSection(
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SecondaryButton(if (allSelected) "Deselectează" else "Selectează tot", onClick = { vm.selectDocs(keys, !allSelected) }, padV = 8.dp)
-            SecondaryButton("Mută în ${DocumentOrganizer.ROOT_FOLDER}/$category", onClick = { vm.moveDocs(vm.docTargets(items), category) }, padV = 8.dp)
+            if (moveButton) SecondaryButton("Mută în ${DocumentOrganizer.ROOT_FOLDER}/$category", onClick = { vm.moveDocs(vm.docTargets(items), category) }, padV = 8.dp)
             SecondaryButton("Șterge ${targets.size}", onClick = { vm.deleteDocs(vm.docTargets(items)) }, padV = 8.dp, textColor = Error)
+        }
+        if (!moveButton) {
+            Spacer(Modifier.height(4.dp))
+            Text("Recomandarea modelului, cu motiv. Verifică și confirmă tu.", style = BodyTiny.copy(color = TextDim))
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -1198,11 +1283,7 @@ private fun DocRow(
                 )
                 if (badge != null) {
                     Spacer(Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        SuggestionDot(badge)
-                        Spacer(Modifier.width(6.dp))
-                        Text(badge.line(aiNameOf), style = BodyTiny.copy(color = TextSecondary), maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    }
+                    AiVerdictRow(badge, nameOf = aiNameOf)
                 }
                 if (siteHint != null) {
                     Spacer(Modifier.height(4.dp))
