@@ -92,7 +92,7 @@ export async function handleRecovery(req,account,readJSON){
  }
  if(action==='extend'&&method==='POST'){
   const v=await body(['command','minutes']);current(v.command);if(d.command.kind!=='locate')bad('Doar urmărirea se prelungește.',409);
-  if(!Number.isSafeInteger(v.minutes)||v.minutes<1||v.minutes>30)bad('Alege 10 minute.');
+  if(!Number.isSafeInteger(v.minutes)||v.minutes<1||v.minutes>30)bad('Prelungește cu 1–30 de minute.');
   if(d.command.minutes+v.minutes>RECOVERY_RULES.extend_cap_minutes)bad('O căutare ține cel mult 60 de minute.',409);
   d.command.minutes+=v.minutes;d.command.until+=v.minutes*MIN;await s.put(key,d);await alarm(d);return reply({command:d.command});
  }

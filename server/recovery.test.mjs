@@ -71,7 +71,7 @@ test('extend adds minutes to a locate, capped at 60 minutes in total',async()=>{
  const e=await f.call(route(d,'extend'),'POST',{command:c.id,minutes:10});assert.equal(e.status,200);assert.equal(e.command.minutes,20);assert.equal(e.command.until,a.command.until+10*60000);
  for(let i=0;i<4;i++)assert.equal((await f.call(route(d,'extend'),'POST',{command:c.id,minutes:10})).status,200);
  assert.equal((await row(f)).command.minutes,60);assert.equal((await f.call(route(d,'extend'),'POST',{command:c.id,minutes:10})).status,409);
- assert.equal((await f.call(route(d,'extend'),'POST',{command:randomUUID(),minutes:10})).status,409);assert.equal((await f.call(route(d,'extend'),'POST',{command:c.id,minutes:0})).status,400);
+ assert.equal((await f.call(route(d,'extend'),'POST',{command:randomUUID(),minutes:10})).status,409);assert.equal((await f.call(route(d,'extend'),'POST',{command:c.id,minutes:0})).status,400);assert.match((await f.call(route(d,'extend'),'POST',{command:c.id,minutes:45})).error,/1–30 de minute/,'the message names the real limit');
  const g=fixture(),p=await enrollV2(g),r=await ring(g,p);assert.equal((await g.call(route(p,'extend'),'POST',{command:r.id,minutes:10})).status,409,'a ring is not extended');});
 test('rename from the site: at most 40 characters and it survives a phone re-grant',async()=>{const f=fixture(),d=await enrollV2(f);const r=await f.call(`devices/${d.id}`,'PATCH',{name:'  Telefonul Lanei  '});assert.equal(r.status,200);assert.equal(r.device.name,'Telefonul Lanei');
  for(const name of ['', '   ','x'.repeat(41),'a\nb',7])assert.equal((await f.call(`devices/${d.id}`,'PATCH',{name})).status,400);

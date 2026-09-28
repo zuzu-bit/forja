@@ -22,7 +22,8 @@ Site-ul `/health` anunță `lost_phone: 2`.
      „Sună” preia imediat locul unei urmăriri active; o urmărire nu întrerupe soneria.
    - Cererea așteaptă telefonul **30 de minute** (`start_before`). Minutele sau secundele încep când
      telefonul confirmă (`status` = `locating`/`ringing`), nu când ai apăsat, așa că un telefon adormit nu pierde din ele.
-4. **Prelungirea**: `POST devices/:id/extend {command, minutes:10}` — doar pentru urmărire, cel mult 60 de minute în total.
+4. **Prelungirea**: `POST devices/:id/extend {command, minutes:10}` — doar pentru urmărire; 1–30 de minute pe cerere
+   (site-ul trimite 10), cel mult 60 de minute în total.
 5. **Oprirea**: `DELETE devices/:id/command?id=` (site) sau `POST devices/:id/stop {secret, command}` (telefon,
    „Am găsit telefonul” / „Oprește”) sau `status: found|stopped`. Oprirea închide doar cererea:
    **ultima poziție și poziția căutării rămân** pe hartă.
