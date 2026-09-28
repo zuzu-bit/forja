@@ -71,14 +71,14 @@ class FocusBlockActivity : ComponentActivity() {
                         )
                         Spacer(Modifier.height(10.dp))
                         Text(
-                            "Tu ai dat consemnul, paznicul doar îl ține. Copacul tău crește cât timp stai la post.",
+                            "Copacul tău crește cât stai la post.",
                             style = Body.copy(fontSize = 15.sp),
                             textAlign = TextAlign.Center
                         )
                         Spacer(Modifier.height(30.dp))
                         // O singură cale, cea aleasă de tine: înapoi în FORJA, la copacul care crește.
                         PrimaryButton(
-                            text = "Mă întorc la copac",
+                            text = "La copac",
                             onClick = { ReturnToForja.go(this@FocusBlockActivity) },
                             modifier = Modifier.fillMaxWidth()
                         )

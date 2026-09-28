@@ -36,6 +36,23 @@ val PlaceAmber = Color(0xFFF3B952)
 
 private val ThresholdOptions = listOf(30 to "30 min", 60 to "1 h", 120 to "2 h", 300 to "5 h")
 
+/** Ghidajul primei deschideri a foii (≤ 90 de caractere pe pas). Pasul „prag” e fraza Lanei, cuvânt cu cuvânt. */
+private val LOCURI_STEPS = listOf(
+    CoachStep("locuri.teritorii", "Teritorii: celule de 150 m, cucerite pe jos, alergând sau pe bicicletă. Din mașină, nu."),
+    CoachStep("locuri.prag", "Un loc = ai STAT aici cel puțin atât. Mersul pe stradă nu e vizită."),
+    CoachStep("locuri.site", "Și pe site: zonele și locurile apar și în panoul online. Implicit oprit.", MascotState.Thinking),
+    CoachStep("locuri.loc", "Dă-i un nume și stele. Cu o stea, îl poți recomanda prietenilor.", MascotState.Happy)
+)
+
+/** Tot ce explicau înainte rândurile foii, la punctul „i” de lângă titlu. */
+private const val LOCURI_DETAILS =
+    "Teritoriu: o celulă de 150 m, cucerită pe jos, alergând sau pe bicicletă. Din mașină nu se pune. " +
+        "Zona ta: un cerc de 5 km în jurul teritoriilor tale.\n\n" +
+        "Un loc = ai STAT aici cel puțin atât. Mersul pe stradă nu e vizită. Locurile apar singure.\n\n" +
+        "Și pe site: pleacă din telefon celulele de 150 m și locurile, cu nume, stele și notă. Atât. " +
+        "Oprit, nimic din explorare nu pleacă din telefon.\n\n" +
+        "Un loc cu nume și cel puțin o stea se poate recomanda. Ce recomandă prietenii apare jos și pe hartă, cu punct albastru."
+
 /** Cifrele teritoriului pentru foaie: celule, „41 %” din zona ta, locul între prieteni (null = n-ai prieteni), pe moduri. */
 data class TerritorySummary(
     val cells: Int,
@@ -58,7 +75,8 @@ fun visitsLabel(visits: Int, who: String? = null): String {
 
 /**
  * Sheet „Locurile tale”: teritoriile cucerite (cu procentul din zona ta și locul între prieteni), pragul de ședere,
- * fiecare loc editabil (nume, stele, notă, de câte ori ai fost), „Pe hartă”, „Recomandă prietenilor”, plus recomandările primite.
+ * fiecare loc editabil (nume, stele, notă, de câte ori ai fost), „Pe hartă”, „Recomandă”, plus recomandările primite.
+ * Explicațiile stau în ghidajul primei deschideri și la punctul „i” de lângă titlu; pe foaie rămân cifrele și stările.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,170 +100,155 @@ fun PlacesSheet(
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = Surface1, shape = SheetShape
     ) {
-        Column(
-            Modifier
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp)
-                .fillMaxHeight(0.9f)
-                .verticalScroll(rememberScrollState())
-                .imePadding()
-        ) {
-            Text("Locurile tale", style = TitleModule.copy(fontSize = 20.sp))
-            Spacer(Modifier.height(2.dp))
-            Text(
-                if (territory == null) "Ai cucerit $cellCount teritorii · ${places.size} locuri"
-                else "Ai cucerit ${territory.cells} teritorii · ${territory.percentLabel} din zona ta" +
-                    (territory.rank?.let { " · Loc #$it între prieteni" } ?: ""),
-                style = BodySmall.copy(color = TextSecondary)
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            // Teritoriile: cum le-ai cucerit. Din mașină nu se pune.
-            if (territory != null) {
-                ForjaCard(Modifier.fillMaxWidth(), fill = Surface2) {
-                    SectionLabel("Teritorii")
-                    Spacer(Modifier.height(8.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TerritoryStat("PE JOS", territory.walk, Accent2)
-                        TerritoryStat("ALERGARE", territory.run, Positive)
-                        TerritoryStat("BICICLETĂ", territory.ride, Color(0xFF4FA3A0))
-                        TerritoryStat("ZONA TA", null, PlaceAmber, text = territory.percentLabel)
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "O celulă de 150 m se cucerește pe jos, alergând sau pe bicicletă. Din mașină nu se pune. " +
-                            "Zona ta = un cerc de 5 km în jurul teritoriilor tale.",
-                        style = BodyTiny.copy(color = TextDim)
-                    )
+        CoachMarks(screen = "locuri", steps = LOCURI_STEPS) {
+            Column(
+                Modifier
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 28.dp)
+                    .fillMaxHeight(0.9f)
+                    .verticalScroll(rememberScrollState())
+                    .imePadding()
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Locurile tale", style = TitleModule.copy(fontSize = 20.sp), modifier = Modifier.weight(1f))
+                    InfoDot(title = "Locurile tale", text = LOCURI_DETAILS)
                 }
-                Spacer(Modifier.height(10.dp))
-            }
+                Spacer(Modifier.height(4.dp))
+                // Cifrele, nu propoziția: teritorii · locuri · locul între prieteni.
+                Text(
+                    listOfNotNull(
+                        (territory?.cells ?: cellCount).let { if (it == 1) "1 teritoriu" else "$it teritorii" },
+                        "${places.size} ${if (places.size == 1) "loc" else "locuri"}",
+                        territory?.rank?.let { "#$it între prieteni" }
+                    ).joinToString(" · ").uppercase(),
+                    style = monoLabel(9, 0.12f).copy(color = TextSecondary)
+                )
 
-            // Pragul: cât trebuie să STAI ca să fie loc.
-            ForjaCard(Modifier.fillMaxWidth(), fill = Surface2) {
-                SectionLabel("Un loc = ai stat cel puțin")
-                Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ThresholdOptions.forEach { (min, label) ->
-                        val on = thresholdMin == min
-                        Box(
-                            Modifier
-                                .weight(1f)
-                                .clip(ChipShape)
-                                .background(if (on) Accent else Surface1)
-                                .border(1.dp, if (on) Accent2 else StrokeCardStrong, ChipShape)
-                                .pressable({ onThreshold(min) })
-                                .padding(vertical = 9.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                label,
-                                style = BodyStrong.copy(fontSize = 13.sp, color = if (on) OnAccent else TextSecondary)
-                            )
+                Spacer(Modifier.height(16.dp))
+
+                // Teritoriile: cum le-ai cucerit. Din mașină nu se pune.
+                if (territory != null) {
+                    ForjaCard(Modifier.coachTarget("locuri.teritorii").fillMaxWidth(), fill = Surface2) {
+                        SectionLabel("Teritorii")
+                        Spacer(Modifier.height(8.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            TerritoryStat("PE JOS", territory.walk, Accent2)
+                            TerritoryStat("ALERGARE", territory.run, Positive)
+                            TerritoryStat("BICICLETĂ", territory.ride, Color(0xFF4FA3A0))
+                            TerritoryStat("ZONA TA", null, PlaceAmber, text = territory.percentLabel)
                         }
                     }
+                    Spacer(Modifier.height(10.dp))
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Un loc = ai STAT aici cel puțin atât. Mersul pe stradă nu e vizită.",
-                    style = BodyTiny.copy(color = TextDim)
-                )
-            }
 
-            Spacer(Modifier.height(10.dp))
-
-            // „Și pe site”: opt-in explicit, implicit oprit. Spunem clar ce pleacă din telefon.
-            ForjaCard(Modifier.fillMaxWidth(), fill = Surface2) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Și pe site", style = BodyStrong.copy(fontSize = 14.sp))
-                        Text(
-                            "Zonele și locurile tale apar și în panoul online, cu același cont.",
-                            style = BodyTiny.copy(color = TextDim)
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    ForjaSwitch(checked = syncSite, onCheckedChange = onSyncSite)
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    if (syncSite) "Pleacă din telefon: celulele de 150 m și locurile, cu nume, stele și notă. Atât. „Harta ta te așteaptă și pe laptop.”"
-                    else "Oprit. Nimic din explorare nu pleacă din telefon.",
-                    style = BodyTiny.copy(color = TextDim)
-                )
-            }
-
-            Spacer(Modifier.height(18.dp))
-            SectionLabel("Locurile mele")
-            Spacer(Modifier.height(8.dp))
-
-            if (places.isEmpty()) {
-                Text(
-                    "Niciun loc încă. Locurile apar singure, după ce stai undeva destul. „Acasă e unde te oprești, nu unde treci.”",
-                    style = BodySmall.copy(color = TextDim)
-                )
-            }
-
-            places.forEach { p ->
-                key(p.id) {
-                    PlaceCard(
-                        place = p,
-                        onSave = onSave,
-                        onDelete = onDelete,
-                        onRecommend = onRecommend,
-                        onPick = onPick
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(18.dp))
-            SectionLabel("De la prieteni")
-            Spacer(Modifier.height(8.dp))
-
-            if (recommended.isEmpty()) {
-                Text(
-                    "Când un prieten recomandă un loc, apare aici și pe hartă, cu punct albastru.",
-                    style = BodySmall.copy(color = TextDim)
-                )
-            }
-
-            recommended.forEach { r ->
-                key(r.id) {
-                    ForjaCard(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp),
-                        fill = Surface2, padding = 12.dp
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                // Pragul: cât trebuie să STAI ca să fie loc.
+                ForjaCard(Modifier.coachTarget("locuri.prag").fillMaxWidth(), fill = Surface2) {
+                    SectionLabel("Un loc = ai stat cel puțin")
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ThresholdOptions.forEach { (min, label) ->
+                            val on = thresholdMin == min
                             Box(
                                 Modifier
-                                    .size(10.dp)
-                                    .clip(CircleShape)
-                                    .background(SleepRem)
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(r.name.ifBlank { "Loc recomandat" }, style = BodyStrong.copy(fontSize = 14.sp))
+                                    .weight(1f)
+                                    .clip(ChipShape)
+                                    .background(if (on) Accent else Surface1)
+                                    .border(1.dp, if (on) Accent2 else StrokeCardStrong, ChipShape)
+                                    .pressable({ onThreshold(min) })
+                                    .padding(vertical = 9.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Text(
-                                    "de la ${r.ownerName} · ${Fmt.freshness(r.at)}" +
-                                        (if (r.visits >= 2) " · ${visitsLabel(r.visits, r.ownerName.split(' ').first())}" else ""),
-                                    style = BodyTiny.copy(color = TextDim)
+                                    label,
+                                    style = BodyStrong.copy(fontSize = 13.sp, color = if (on) OnAccent else TextSecondary)
                                 )
                             }
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                "Pe hartă",
-                                style = BodySmall.copy(color = Accent2),
-                                modifier = Modifier.pressable({ onPick(r.lat, r.lng) })
-                            )
                         }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // „Și pe site”: opt-in explicit, implicit oprit. Spunem clar ce pleacă din telefon.
+                ForjaCard(Modifier.coachTarget("locuri.site").fillMaxWidth(), fill = Surface2) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Și pe site", style = BodyStrong.copy(fontSize = 14.sp), modifier = Modifier.weight(1f))
+                        Spacer(Modifier.width(12.dp))
+                        ForjaSwitch(checked = syncSite, onCheckedChange = onSyncSite)
+                    }
+                    // Onestitatea rămâne, scurtă: ce pleacă, doar cât e pornit.
+                    if (syncSite) {
                         Spacer(Modifier.height(6.dp))
-                        StarRow(stars = r.stars, size = 16.dp, tint = SleepRem, onPick = null)
-                        if (r.note.isNotBlank()) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(r.note, style = BodySmall.copy(color = TextSecondary))
+                        Text("Pleacă: celulele și locurile tale. Atât.", style = BodyTiny.copy(color = TextDim))
+                    }
+                }
+
+                Spacer(Modifier.height(18.dp))
+                SectionLabel("Locurile mele")
+                Spacer(Modifier.height(8.dp))
+
+                if (places.isEmpty()) {
+                    Text("Niciun loc încă.", style = BodySmall.copy(color = TextDim))
+                }
+
+                places.forEachIndexed { i, p ->
+                    key(p.id) {
+                        PlaceCard(
+                            place = p,
+                            onSave = onSave,
+                            onDelete = onDelete,
+                            onRecommend = onRecommend,
+                            onPick = onPick,
+                            modifier = if (i == 0) Modifier.coachTarget("locuri.loc") else Modifier
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(18.dp))
+                SectionLabel("De la prieteni")
+                Spacer(Modifier.height(8.dp))
+
+                if (recommended.isEmpty()) {
+                    Text("Nimic încă.", style = BodySmall.copy(color = TextDim))
+                }
+
+                recommended.forEach { r ->
+                    key(r.id) {
+                        ForjaCard(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp),
+                            fill = Surface2, padding = 12.dp
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(SleepRem)
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(r.name.ifBlank { "Loc recomandat" }, style = BodyStrong.copy(fontSize = 14.sp))
+                                    Text(
+                                        "de la ${r.ownerName} · ${Fmt.freshness(r.at)}" +
+                                            (if (r.visits >= 2) " · ${visitsLabel(r.visits, r.ownerName.split(' ').first())}" else ""),
+                                        style = BodyTiny.copy(color = TextDim)
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "Pe hartă",
+                                    style = BodySmall.copy(color = Accent2),
+                                    modifier = Modifier.pressable({ onPick(r.lat, r.lng) })
+                                )
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            StarRow(stars = r.stars, size = 16.dp, tint = SleepRem, onPick = null)
+                            if (r.note.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(r.note, style = BodySmall.copy(color = TextSecondary))
+                            }
                         }
                     }
                 }
@@ -254,14 +257,15 @@ fun PlacesSheet(
     }
 }
 
-/** Un loc al meu: nume + stele + notă editabile, „Pe hartă”, „Recomandă prietenilor”, „Șterge”. */
+/** Un loc al meu: nume + stele + notă editabile, „Pe hartă”, „Recomandă”, „Șterge”. */
 @Composable
 private fun PlaceCard(
     place: PlaceEntity,
     onSave: (PlaceEntity) -> Unit,
     onDelete: (PlaceEntity) -> Unit,
     onRecommend: (PlaceEntity) -> Unit,
-    onPick: (Double, Double) -> Unit
+    onPick: (Double, Double) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var name by remember(place.id) { mutableStateOf(place.name) }
     var note by remember(place.id) { mutableStateOf(place.note) }
@@ -276,9 +280,9 @@ private fun PlaceCard(
     val canRecommend = edited.name.isNotBlank() && edited.stars >= 1
 
     ForjaCard(
-        Modifier
-            .fillMaxWidth()
-            .padding(bottom = 10.dp),
+        modifier
+            .padding(bottom = 10.dp)
+            .fillMaxWidth(),
         fill = Surface2, padding = 12.dp
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -289,9 +293,13 @@ private fun PlaceCard(
                     .background(PlaceAmber)
             )
             Spacer(Modifier.width(10.dp))
+            // Cifre: de câte ori (doar de la 2 în sus), cât ai stat, când ai fost ultima dată.
             Text(
-                (if (place.visits >= 2) "${visitsLabel(place.visits)} · ai stat " else "Ai stat ") +
-                    "${stayLabel(place.stayMs)} · ultima dată ${Fmt.freshness(place.lastAt)}",
+                listOfNotNull(
+                    if (place.visits >= 2) "${place.visits}×" else null,
+                    stayLabel(place.stayMs),
+                    Fmt.freshness(place.lastAt)
+                ).joinToString(" · "),
                 style = BodyTiny.copy(color = TextDim),
                 modifier = Modifier.weight(1f)
             )
@@ -330,7 +338,7 @@ private fun PlaceCard(
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             PrimaryButton(
-                text = if (place.recommended) "Recomandă din nou" else "Recomandă prietenilor",
+                text = "Recomandă",
                 small = true,
                 enabled = canRecommend,
                 onClick = { onRecommend(edited) },
@@ -343,7 +351,7 @@ private fun PlaceCard(
         }
         if (!canRecommend) {
             Spacer(Modifier.height(6.dp))
-            Text("Pune-i un nume și cel puțin o stea ca să-l poți recomanda.", style = BodyTiny.copy(color = TextDim))
+            Text("Nume + o stea, ca să-l recomanzi.", style = BodyTiny.copy(color = TextDim))
         }
 
         Spacer(Modifier.height(10.dp))

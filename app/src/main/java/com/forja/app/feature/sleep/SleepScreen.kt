@@ -64,6 +64,25 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+/** Ghidajul primei vizite: explicațiile stau aici și la „i”, nu pe ecran (≤ 90 de caractere pe pas). */
+private val SOMN_STEPS = listOf(
+    CoachStep("somn.start", "Apasă când te bagi în pat. Lasă telefonul lângă tine, cu fața în jos."),
+    CoachStep("somn.veghe", "Veghea ține FORJA trează cât dormi. Fără ea, alarma poate rămâne mută.", MascotState.Thinking),
+    CoachStep("somn.sunete", "Sunete de adormit: alegi cât durează, apoi atingi unul."),
+    CoachStep("somn.alarma", "Alarma te trezește la finalul unui ciclu, în fereastra aleasă. Niciodată mai târziu.", MascotState.Happy)
+)
+
+/** „Despre somn”, la punctul „i”: tot ce era scris pe ecran înainte, pentru cine vrea să citească. */
+private const val SOMN_DETAILS =
+    "FORJA nu pune diagnostice. Stadiile somnului sunt o estimare din mișcare, pe ferestre de 1 minut și cicluri de ~90 de minute.\n\n" +
+        "Clipurile de 5 s rămân pe telefon și le ștergi tu. Înregistrarea întreagă urcă pe serverul FORJA doar ca să fie ascultată " +
+        "de model: pe telefon stă 24 h, pe server 7 zile, apoi dispare. Implicit urcă doar pe Wi-Fi, cu bateria peste 15 %; " +
+        "o noapte are ~10 MB la fiecare 30 de minute.\n\n" +
+        "Analiza e făcută de un model, pe server. Transcrierile sunt exact ce s-a auzit, fără completări. Unde încrederea e mică, ascultă tu.\n\n" +
+        "Veghea de noapte: FORJA trebuie scoasă de la optimizarea bateriei și, pe Android 14+, lăsată să pornească alarma pe tot ecranul. " +
+        "Altfel, dimineața rămâne doar o notificare.\n\n" +
+        "Dacă sforăitul revine des, vorbește cu un medic — ai istoricul aici."
+
 /** Somn à la Sleep as Android: microfon local, hipnogramă pe cicluri, alarmă deșteaptă. */
 @Composable
 fun SleepScreen() {
@@ -183,548 +202,545 @@ fun SleepScreen() {
         while (nightPlayer.playing) { delay(500); nightPlayer.tick() }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(SleepBg)
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 120.dp)
-    ) {
-        // Header conștient de oră: dimineața (6–11) video luminos + raport;
-        // seara (19–6) video închis + „Pregătește-te de somn"; în rest, neutru.
-        val hour = remember { java.time.LocalTime.now().hour }
-        val morning = hour in 6..10
-        val eveningSleep = hour >= 19 || hour < 6
-        Box(Modifier.fillMaxWidth().height(252.dp)) {
-            if (morning) {
-                VideoSurface(
-                    url = "https://v.ftcdn.net/11/26/44/56/700_F_1126445619_bJBEc25rOq3b1ofF41h2oJgHrEOy7kVy_ST.mp4",
-                    posterUrl = "https://t3.ftcdn.net/jpg/04/70/98/78/500_F_470987805_jsREzUZZZNUDZ56fG4J9Cpz4UquN6zJg.jpg",
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                VideoSurface(
-                    url = "",
-                    posterUrl = "https://t3.ftcdn.net/jpg/05/62/79/66/500_F_562796663_NJKtdLr9EatSHwup53J47QNnYOCr0ZZ8.jpg",
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0.2f to Color.Transparent,
-                            0.7f to Color(0xB30B111C),
-                            1f to Color(0xFF0B111C)
-                        )
-                    )
-            )
-            Column(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .statusBarsPadding()
-                    .padding(20.dp)
-            ) {
-                // Ștampila postului, deasupra numelui filei — în culoarea nopții, ca să rămână în paleta somnului.
-                StampLabel("STINGEREA", color = SleepTextDim, rotationDeg = -4f)
-                Spacer(Modifier.height(6.dp))
-                Text("Somn", style = TitleModule)
-                Text(
-                    when {
-                        morning -> "RAPORT DE DIMINEAȚĂ"
-                        eveningSleep -> "PREGĂTEȘTE-TE DE SOMN"
-                        else -> "ÎNTRE DOUĂ NOPȚI"
-                    },
-                    style = monoLabel(9, 0.16f).copy(color = SleepRem)
-                )
-            }
-            if (!morning) {
-                Text(
-                    if (eveningSleep) "Lasă ziua jos. Pornește somnul când te bagi în pat."
-                    else "Raportul nopții te așteaptă mâine dimineață.",
-                    style = Body.copy(color = SleepRem),
-                    modifier = Modifier.align(Alignment.BottomStart).padding(20.dp)
-                )
-            }
-            if (morning) Row(
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(20.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val score = last?.score ?: 0
-                ProgressRing(
-                    progress = score / 100f,
-                    ringSize = 96.dp,
-                    strokeWidth = 7.dp,
-                    track = Color(0x2E7896BE),
-                    brush = Brush.linearGradient(listOf(SleepDeep, SleepRem))
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("$score", style = heroNumeral(30))
-                        Text(
-                            when {
-                                score >= 80 -> "ODIHNIT"
-                                score >= 60 -> "DECENT"
-                                score > 0 -> "OBOSIT"
-                                else -> "—"
-                            },
-                            style = monoLabel(7, 0.14f).copy(color = SleepTextDim)
-                        )
-                    }
-                }
-                Spacer(Modifier.width(18.dp))
-                Column {
-                    last?.let { s ->
-                        val min = (((s.endAt ?: s.startAt) - s.startAt) / 60000).toInt()
-                        Text(Fmt.durationHm(min), style = heroNumeral(30))
-                        Text(
-                            "${Fmt.clock(s.startAt)} → ${Fmt.clock(s.endAt ?: s.startAt)}",
-                            style = monoLabel(9, 0.10f).copy(color = SleepTextDim)
-                        )
-                    } ?: Text("Prima noapte, diseară.\nRaportul, mâine.", style = Body.copy(color = SleepTextDim))
-                }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // Pornire/oprire sesiune
-        if (active != null) {
-            ForjaCard(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                fill = SleepCard, stroke = SleepStroke
-            ) {
-                Text("Sesiune de somn activă", style = BodyStrong)
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    "De la ${Fmt.clock(active!!.startAt)} · ${if (hasMic) "microfon + mișcare; noaptea urcă dimineața pe server" else "doar mișcare (fără microfon)"}.",
-                    style = BodySmall.copy(color = SleepTextDim)
-                )
-                Spacer(Modifier.height(12.dp))
-                PrimaryButton(
-                    text = "M-am trezit",
-                    onClick = {
-                        SleepTrackService.stop(context)
-                        toast.show("Raportul se pregătește…")
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        } else {
-            PrimaryButton(
-                text = "Încep să dorm",
-                onClick = {
-                    val need = missingSleepPermissions()
-                    if (need.isEmpty()) {
-                        hasMic = true
-                        SleepTrackService.start(context)
-                        startSleepExtras()
-                        toast.show(
-                            if (alarmEnabled && !fullScreenOk) "Permite alarma pe tot ecranul din cardul „Veghea de noapte”."
-                            else "Noapte bună. Lasă telefonul lângă tine, cu fața în jos."
-                        )
-                    } else {
-                        permLauncher.launch(need.toTypedArray())
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
-            )
-        }
-
-        // Veghea de noapte — fără scutirea de baterie, OEM-urile omoară serviciul; fără alarma pe
-        // tot ecranul (Android 14+), dimineața rămâne doar o notificare.
-        if (!batteryExempt || !fullScreenOk) {
-            Spacer(Modifier.height(12.dp))
-            ForjaCard(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                fill = SleepCard, stroke = SleepStroke
-            ) {
-                Text("Veghea de noapte", style = BodyStrong)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "FORJA trebuie să rămână trează cât dormi tu. Scoate-o de la optimizarea bateriei și permite alarma pe tot ecranul.",
-                    style = BodySmall.copy(color = SleepTextDim)
-                )
-                Spacer(Modifier.height(8.dp))
-                Row {
-                    Text(
-                        if (batteryExempt) "BATERIE · OK" else "BATERIE · LIPSĂ",
-                        style = monoLabel(8, 0.12f).copy(color = if (batteryExempt) Accent2 else SleepRem)
-                    )
-                    if (Build.VERSION.SDK_INT >= 34) {
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            if (fullScreenOk) "ALARMĂ PE ECRAN · OK" else "ALARMĂ PE ECRAN · LIPSĂ",
-                            style = monoLabel(8, 0.12f).copy(color = if (fullScreenOk) Accent2 else SleepRem)
-                        )
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                PrimaryButton(
-                    text = "Permite veghea",
-                    onClick = { requestVigil() },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-
-        Spacer(Modifier.height(20.dp))
-
-        // Sunete de adormit — fișiere reale, carduri mari cu imagini
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            verticalAlignment = Alignment.CenterVertically
+    CoachMarks(screen = "somn", steps = SOMN_STEPS) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(SleepBg)
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 120.dp)
         ) {
-            SectionLabel("Sunete de adormit", color = SleepTextDim)
-            Spacer(Modifier.width(8.dp))
-            InfoDot(
-                title = "Despre sunete",
-                text = "Sunete reale, redate din aplicație — merg și fără internet. Se opresc la finalul temporizatorului sau când apeși din nou.\n\nSursă (freesound.org): inchadney și felix.blume — CC0; D W, Corsica_S, mystiscool și RHumphries — CC BY."
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-
-        // Temporizator — se oprește peste…
-        val selTimer by com.forja.app.core.sleep.SleepSounds.timerMinutes.collectAsState()
-        Row(Modifier.padding(horizontal = 20.dp)) {
-            listOf(15 to "15 min", 30 to "30 min", 45 to "45 min", 60 to "1 oră", 0 to "∞").forEach { (m, lbl) ->
-                val sel = selTimer == m
-                Box(
-                    Modifier.padding(end = 8.dp).clip(ChipShape)
-                        .then(
-                            if (sel) Modifier.background(AccentGradient)
-                            else Modifier.background(Color(0xFF152233)).border(1.dp, SleepStroke, ChipShape)
-                        )
-                        .pressable({ com.forja.app.core.sleep.SleepSounds.setTimer(m) })
-                        .padding(horizontal = 12.dp, vertical = 7.dp)
-                ) { Text(lbl, style = BodyStrong.copy(fontSize = 13.sp, color = if (sel) OnAccent else SleepRem)) }
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-
-        val playingSound by com.forja.app.core.sleep.SleepSounds.current.collectAsState()
-        val sounds = listOf(
-            Triple("rain", "Ploaie", "snd_rain.jpg"),
-            Triple("storm", "Furtună", "snd_storm.jpg"),
-            Triple("wind", "Vânt", "snd_wind.jpg"),
-            Triple("stream", "Pârâu", "snd_stream.jpg"),
-            Triple("fire", "Foc", "snd_fire.jpg"),
-            Triple("forest", "Pădure", "snd_forest.jpg")
-        )
-        Column(Modifier.padding(horizontal = 20.dp)) {
-            sounds.chunked(2).forEach { row ->
-                Row(Modifier.fillMaxWidth()) {
-                    row.forEachIndexed { idx, (key, label, img) ->
-                        SoundCard(
-                            label = label,
-                            imageKey = img,
-                            active = playingSound == key,
-                            modifier = Modifier.weight(1f).padding(end = if (idx == 0) 10.dp else 0.dp),
-                            onClick = { com.forja.app.core.sleep.SleepSounds.toggle(context, key) }
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        // Alarma circadiană — „treaz cel târziu la…"
-        SectionLabel("Alarma circadiană", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
-        Spacer(Modifier.height(10.dp))
-        ForjaCard(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            fill = SleepCard, stroke = SleepStroke
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("TREAZ CEL TÂRZIU LA", style = monoLabel(8, 0.14f).copy(color = SleepTextDim))
-                    Text(
-                        "%02d:%02d".format(alarmHour, alarmMinute),
-                        style = heroNumeral(34)
+            // Header conștient de oră: dimineața (6–11) video luminos + raport;
+            // seara (19–6) video închis + „Pregătește-te de somn"; în rest, neutru.
+            val hour = remember { java.time.LocalTime.now().hour }
+            val morning = hour in 6..10
+            val eveningSleep = hour >= 19 || hour < 6
+            Box(Modifier.fillMaxWidth().height(252.dp)) {
+                if (morning) {
+                    VideoSurface(
+                        url = "https://v.ftcdn.net/11/26/44/56/700_F_1126445619_bJBEc25rOq3b1ofF41h2oJgHrEOy7kVy_ST.mp4",
+                        posterUrl = "https://t3.ftcdn.net/jpg/04/70/98/78/500_F_470987805_jsREzUZZZNUDZ56fG4J9Cpz4UquN6zJg.jpg",
+                        modifier = Modifier.fillMaxSize()
                     )
-                    Text(
-                        if (alarmEnabled)
-                            "te trezesc la finalul unui ciclu de somn, cu cel mult $alarmWindow min înainte — niciodată mai târziu"
-                        else "oprită",
-                        style = BodyTiny.copy(color = SleepTextDim)
+                } else {
+                    VideoSurface(
+                        url = "",
+                        posterUrl = "https://t3.ftcdn.net/jpg/05/62/79/66/500_F_562796663_NJKtdLr9EatSHwup53J47QNnYOCr0ZZ8.jpg",
+                        modifier = Modifier.fillMaxSize()
                     )
-                }
-                ForjaSwitch(checked = alarmEnabled, onCheckedChange = { on ->
-                    scope.launch {
-                        app.prefs.setAlarmEnabled(on)
-                        if (on) toast.show(
-                            if (!fullScreenOk) "Permite alarma pe tot ecranul din cardul „Veghea de noapte”, altfel dimineața rămâne doar o notificare."
-                            else "La culcare setez și alarma din Ceas la %02d:%02d — plasă de siguranță.".format(alarmHour, alarmMinute)
-                        )
-                    }
-                })
-            }
-            Spacer(Modifier.height(10.dp))
-            Row {
-                listOf(6 to 30, 7 to 0, 7 to 30, 8 to 0).forEach { (h, m) ->
-                    val sel = h == alarmHour && m == alarmMinute
-                    Box(
-                        Modifier
-                            .padding(end = 8.dp)
-                            .clip(ChipShape)
-                            .background(if (sel) TabPillActive else Color(0x1A7896BE))
-                            .pressable({ scope.launch { app.prefs.setAlarmTime(h, m) } })
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            "%02d:%02d".format(h, m),
-                            style = BodyStrong.copy(fontSize = 13.sp, color = if (sel) Accent2 else SleepTextDim)
-                        )
-                    }
                 }
                 Box(
                     Modifier
-                        .padding(end = 8.dp)
-                        .clip(ChipShape)
-                        .background(Color(0x1A7896BE))
-                        .pressable({
-                            scope.launch {
-                                var m = alarmMinute + 15
-                                var h = alarmHour
-                                if (m >= 60) { m -= 60; h = (h + 1) % 24 }
-                                app.prefs.setAlarmTime(h, m)
-                            }
-                        })
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                ) {
-                    Text("+15 min", style = BodyStrong.copy(fontSize = 13.sp, color = SleepTextDim))
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            Text("FEREASTRA DE TREZIRE", style = monoLabel(8, 0.14f).copy(color = SleepTextDim))
-            Spacer(Modifier.height(6.dp))
-            Row {
-                listOf(20, 30, 40).forEach { w ->
-                    val sel = w == alarmWindow
-                    Box(
-                        Modifier
-                            .padding(end = 8.dp)
-                            .clip(ChipShape)
-                            .background(if (sel) TabPillActive else Color(0x1A7896BE))
-                            .pressable({ scope.launch { app.prefs.setAlarmWindowMin(w) } })
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            "$w min",
-                            style = BodyStrong.copy(fontSize = 13.sp, color = if (sel) Accent2 else SleepTextDim)
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0.2f to Color.Transparent,
+                                0.7f to Color(0xB30B111C),
+                                1f to Color(0xFF0B111C)
+                            )
                         )
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(20.dp))
-
-        // Rezumatul de dimineață — AI, două propoziții din cifre reale.
-        if (!last?.summary.isNullOrBlank()) {
-            ForjaCard(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                fill = SleepCard, stroke = SleepStroke
-            ) {
-                SectionLabel("Rezumatul dimineții", color = SleepTextDim)
-                Spacer(Modifier.height(6.dp))
-                Text(last!!.summary, style = Body.copy(color = TextPrimary, fontSize = 14.sp, lineHeight = 19.sp))
-            }
-            Spacer(Modifier.height(20.dp))
-        }
-
-        // Noaptea, ascultată — cronologia serverului, cu dovezi (8 s în jurul fiecărui moment).
-        last?.let { s ->
-            NightListenedSection(session = s, app = app, report = report, player = nightPlayer, onChanged = { refresh++ })
-            Spacer(Modifier.height(20.dp))
-        }
-
-        // Înregistrarea completă a nopții — pe telefon 24 h, pe server 7 zile, apoi dispare.
-        last?.let { s ->
-            if (s.recordedUntil > System.currentTimeMillis() && nightChunks.isNotEmpty()) {
-                NightRecordingCard(session = s, app = app, report = report, player = nightPlayer)
-                Spacer(Modifier.height(20.dp))
-            }
-        }
-
-        // Hipnograma — ciclurile nopții
-        SectionLabel("Ciclurile nopții", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
-        Spacer(Modifier.height(10.dp))
-        ForjaCard(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            fill = SleepCard, stroke = SleepStroke
-        ) {
-            val s = last
-            if (s == null || s.phases.isBlank()) {
-                Text("Hipnograma apare după prima noapte înregistrată.", style = BodySmall.copy(color = SleepTextDim))
-            } else {
-                Hypnogram(s.phases, Modifier.fillMaxWidth().height(96.dp))
-                Spacer(Modifier.height(12.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    PhaseLegend("Profund", Fmt.durationHm(s.deepMin), SleepDeep)
-                    PhaseLegend("Ușor", Fmt.durationHm(s.lightMin), SleepLight)
-                    PhaseLegend("REM", Fmt.durationHm(s.remMin), SleepRem)
-                }
-                report.staging?.let { st ->
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Adormit în ${st.latencyMin} min · ${when (st.awakenings) { 0 -> "fără treziri"; 1 -> "o trezire"; else -> "${st.awakenings} treziri" }}" +
-                            if (st.awakeMin > 0) " · ${st.awakeMin} min treaz" else "",
-                        style = BodyTiny.copy(color = TextSecondary)
-                    )
-                    if (st.lines.isNotEmpty()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "Scor ${st.score} = " + st.lines.joinToString(" · ") { l ->
-                                (if (l.delta < 0) "−${-l.delta}" else "${l.delta}") + ": ${l.reason}"
-                            },
-                            style = BodyTiny.copy(color = SleepTextDim)
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Estimare din mișcare (ferestre de 1 min) și cicluri de ~90 min · ${s.movements} mișcări",
-                    style = monoLabel(8, 0.10f).copy(color = SleepTextDim)
                 )
+                Column(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(20.dp)
+                ) {
+                    // Ștampila postului, deasupra numelui filei — în culoarea nopții, ca să rămână în paleta somnului.
+                    StampLabel("STINGEREA", color = SleepTextDim, rotationDeg = -4f)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Somn", style = TitleModule)
+                    Text(
+                        when {
+                            morning -> "RAPORT DE DIMINEAȚĂ"
+                            eveningSleep -> "PREGĂTEȘTE-TE DE SOMN"
+                            else -> "ÎNTRE DOUĂ NOPȚI"
+                        },
+                        style = monoLabel(9, 0.16f).copy(color = SleepRem)
+                    )
+                }
+                // Seara, eroul e ora alarmei — o cifră, nu o propoziție.
+                if (eveningSleep && alarmEnabled) {
+                    Column(Modifier.align(Alignment.BottomStart).padding(20.dp)) {
+                        Text("%02d:%02d".format(alarmHour, alarmMinute), style = heroNumeral(40))
+                        Text("TREAZ CEL TÂRZIU", style = monoLabel(9, 0.14f).copy(color = SleepTextDim))
+                    }
+                }
+                if (morning) Row(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val score = last?.score ?: 0
+                    ProgressRing(
+                        progress = score / 100f,
+                        ringSize = 96.dp,
+                        strokeWidth = 7.dp,
+                        track = Color(0x2E7896BE),
+                        brush = Brush.linearGradient(listOf(SleepDeep, SleepRem))
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("$score", style = heroNumeral(30))
+                            Text(
+                                when {
+                                    score >= 80 -> "ODIHNIT"
+                                    score >= 60 -> "DECENT"
+                                    score > 0 -> "OBOSIT"
+                                    else -> "—"
+                                },
+                                style = monoLabel(7, 0.14f).copy(color = SleepTextDim)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(18.dp))
+                    Column {
+                        last?.let { s ->
+                            val min = (((s.endAt ?: s.startAt) - s.startAt) / 60000).toInt()
+                            Text(Fmt.durationHm(min), style = heroNumeral(30))
+                            Text(
+                                "${Fmt.clock(s.startAt)} → ${Fmt.clock(s.endAt ?: s.startAt)}",
+                                style = monoLabel(9, 0.10f).copy(color = SleepTextDim)
+                            )
+                        } ?: Text("Prima noapte, diseară.", style = Body.copy(color = SleepTextDim))
+                    }
+                }
             }
-        }
 
-        Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(16.dp))
 
-        // Evenimentele nopții — cu clipuri de 5s
-        SectionLabel("Noaptea ta · Evenimente", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
-        Spacer(Modifier.height(10.dp))
-        val lastId = last?.id
-        if (lastId != null) {
-            val events by app.db.sleepDao().eventsForSession(lastId).collectAsState(initial = emptyList())
-            if (events.isEmpty()) {
+            // Pornire/oprire sesiune
+            if (active != null) {
                 ForjaCard(
                     Modifier.fillMaxWidth().padding(horizontal = 20.dp),
                     fill = SleepCard, stroke = SleepStroke
                 ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Somn în curs", style = BodyStrong, modifier = Modifier.weight(1f))
+                        Text("DE LA ${Fmt.clock(active!!.startAt)}", style = monoLabel(9, 0.12f).copy(color = SleepRem))
+                    }
+                    Spacer(Modifier.height(4.dp))
                     Text(
-                        "Nicio noapte zgomotoasă înregistrată — sau microfonul n-a fost pornit.",
-                        style = BodySmall.copy(color = SleepTextDim)
+                        if (hasMic) "MICROFON + MIȘCARE" else "DOAR MIȘCARE",
+                        style = monoLabel(8, 0.12f).copy(color = SleepTextDim)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    PrimaryButton(
+                        text = "M-am trezit",
+                        onClick = {
+                            SleepTrackService.stop(context)
+                            toast.show("Raportul se pregătește…")
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             } else {
-                Column(Modifier.padding(horizontal = 20.dp)) {
-                    events.forEach { ev -> SleepEventCard(ev, app) }
-                    val talkPhrases = events
-                        .filter { it.type == "talk" && !it.transcript.isNullOrBlank() }
-                        .mapNotNull { it.transcript }
-                    val snoreCount = events.count { it.type == "snore" }
-                    if (talkPhrases.isNotEmpty() || snoreCount > 0) {
-                        Spacer(Modifier.height(12.dp))
-                        SleepTalkSummary(talkPhrases, snoreCount, app)
+                PrimaryButton(
+                    text = "Mă culc",
+                    onClick = {
+                        val need = missingSleepPermissions()
+                        if (need.isEmpty()) {
+                            hasMic = true
+                            SleepTrackService.start(context)
+                            startSleepExtras()
+                            toast.show(
+                                if (alarmEnabled && !fullScreenOk) "Permite alarma pe tot ecranul din cardul „Veghea de noapte”."
+                                else "Noapte bună. Lasă telefonul lângă tine, cu fața în jos."
+                            )
+                        } else {
+                            permLauncher.launch(need.toTypedArray())
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 20.dp).coachTarget("somn.start").fillMaxWidth()
+                )
+            }
+
+            // Veghea de noapte — fără scutirea de baterie, OEM-urile omoară serviciul; fără alarma pe
+            // tot ecranul (Android 14+), dimineața rămâne doar o notificare.
+            if (!batteryExempt || !fullScreenOk) {
+                Spacer(Modifier.height(12.dp))
+                ForjaCard(
+                    Modifier.padding(horizontal = 20.dp).coachTarget("somn.veghe").fillMaxWidth(),
+                    fill = SleepCard, stroke = SleepStroke
+                ) {
+                    Text("Veghea de noapte", style = BodyStrong)
+                    Spacer(Modifier.height(8.dp))
+                    Row {
+                        Text(
+                            if (batteryExempt) "BATERIE · OK" else "BATERIE · LIPSĂ",
+                            style = monoLabel(8, 0.12f).copy(color = if (batteryExempt) Accent2 else SleepRem)
+                        )
+                        if (Build.VERSION.SDK_INT >= 34) {
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                if (fullScreenOk) "ALARMĂ PE ECRAN · OK" else "ALARMĂ PE ECRAN · LIPSĂ",
+                                style = monoLabel(8, 0.12f).copy(color = if (fullScreenOk) Accent2 else SleepRem)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    PrimaryButton(
+                        text = "Permite veghea",
+                        onClick = { requestVigil() },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // Sunete de adormit — fișiere reale, carduri mari cu imagini
+            Column(Modifier.padding(horizontal = 20.dp).coachTarget("somn.sunete")) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SectionLabel("Sunete de adormit", color = SleepTextDim)
+                    Spacer(Modifier.width(8.dp))
+                    InfoDot(
+                        title = "Despre sunete",
+                        text = "Sunete reale, redate din aplicație — merg și fără internet. Se opresc la finalul temporizatorului sau când apeși din nou.\n\nSursă (freesound.org): inchadney și felix.blume — CC0; D W, Corsica_S, mystiscool și RHumphries — CC BY."
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+
+                // Temporizator — se oprește peste…
+                val selTimer by com.forja.app.core.sleep.SleepSounds.timerMinutes.collectAsState()
+                Row {
+                    listOf(15 to "15 min", 30 to "30 min", 45 to "45 min", 60 to "1 oră", 0 to "∞").forEach { (m, lbl) ->
+                        val sel = selTimer == m
+                        Box(
+                            Modifier.padding(end = 8.dp).clip(ChipShape)
+                                .then(
+                                    if (sel) Modifier.background(AccentGradient)
+                                    else Modifier.background(Color(0xFF152233)).border(1.dp, SleepStroke, ChipShape)
+                                )
+                                .pressable({ com.forja.app.core.sleep.SleepSounds.setTimer(m) })
+                                .padding(horizontal = 12.dp, vertical = 7.dp)
+                        ) { Text(lbl, style = BodyStrong.copy(fontSize = 13.sp, color = if (sel) OnAccent else SleepRem)) }
                     }
                 }
             }
-        } else {
+            Spacer(Modifier.height(12.dp))
+
+            val playingSound by com.forja.app.core.sleep.SleepSounds.current.collectAsState()
+            val sounds = listOf(
+                Triple("rain", "Ploaie", "snd_rain.jpg"),
+                Triple("storm", "Furtună", "snd_storm.jpg"),
+                Triple("wind", "Vânt", "snd_wind.jpg"),
+                Triple("stream", "Pârâu", "snd_stream.jpg"),
+                Triple("fire", "Foc", "snd_fire.jpg"),
+                Triple("forest", "Pădure", "snd_forest.jpg")
+            )
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                sounds.chunked(2).forEach { row ->
+                    Row(Modifier.fillMaxWidth()) {
+                        row.forEachIndexed { idx, (key, label, img) ->
+                            SoundCard(
+                                label = label,
+                                imageKey = img,
+                                active = playingSound == key,
+                                modifier = Modifier.weight(1f).padding(end = if (idx == 0) 10.dp else 0.dp),
+                                onClick = { com.forja.app.core.sleep.SleepSounds.toggle(context, key) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // Alarma circadiană — „treaz cel târziu la…"
+            Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                SectionLabel("Alarma circadiană", color = SleepTextDim)
+                Spacer(Modifier.width(8.dp))
+                InfoDot(
+                    title = "Alarma circadiană",
+                    text = "Te trezesc la finalul unui ciclu de somn, cu cel mult $alarmWindow min înainte de ora aleasă — " +
+                        "niciodată mai târziu. La culcare setez și alarma din Ceas, ca plasă de siguranță."
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            ForjaCard(
+                Modifier.padding(horizontal = 20.dp).coachTarget("somn.alarma").fillMaxWidth(),
+                fill = SleepCard, stroke = SleepStroke
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("CEL TÂRZIU", style = monoLabel(8, 0.14f).copy(color = SleepTextDim))
+                        Text(
+                            "%02d:%02d".format(alarmHour, alarmMinute),
+                            style = heroNumeral(34).copy(color = if (alarmEnabled) TextPrimary else SleepTextDim)
+                        )
+                    }
+                    ForjaSwitch(checked = alarmEnabled, onCheckedChange = { on ->
+                        scope.launch {
+                            app.prefs.setAlarmEnabled(on)
+                            if (on) toast.show(
+                                if (!fullScreenOk) "Permite alarma pe tot ecranul din cardul „Veghea de noapte”, altfel dimineața rămâne doar o notificare."
+                                else "La culcare setez și alarma din Ceas la %02d:%02d — plasă de siguranță.".format(alarmHour, alarmMinute)
+                            )
+                        }
+                    })
+                }
+                Spacer(Modifier.height(10.dp))
+                Row {
+                    listOf(6 to 30, 7 to 0, 7 to 30, 8 to 0).forEach { (h, m) ->
+                        val sel = h == alarmHour && m == alarmMinute
+                        Box(
+                            Modifier
+                                .padding(end = 8.dp)
+                                .clip(ChipShape)
+                                .background(if (sel) TabPillActive else Color(0x1A7896BE))
+                                .pressable({ scope.launch { app.prefs.setAlarmTime(h, m) } })
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                "%02d:%02d".format(h, m),
+                                style = BodyStrong.copy(fontSize = 13.sp, color = if (sel) Accent2 else SleepTextDim)
+                            )
+                        }
+                    }
+                    Box(
+                        Modifier
+                            .padding(end = 8.dp)
+                            .clip(ChipShape)
+                            .background(Color(0x1A7896BE))
+                            .pressable({
+                                scope.launch {
+                                    var m = alarmMinute + 15
+                                    var h = alarmHour
+                                    if (m >= 60) { m -= 60; h = (h + 1) % 24 }
+                                    app.prefs.setAlarmTime(h, m)
+                                }
+                            })
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text("+15 min", style = BodyStrong.copy(fontSize = 13.sp, color = SleepTextDim))
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text("FEREASTRA DE TREZIRE", style = monoLabel(8, 0.14f).copy(color = SleepTextDim))
+                Spacer(Modifier.height(6.dp))
+                Row {
+                    listOf(20, 30, 40).forEach { w ->
+                        val sel = w == alarmWindow
+                        Box(
+                            Modifier
+                                .padding(end = 8.dp)
+                                .clip(ChipShape)
+                                .background(if (sel) TabPillActive else Color(0x1A7896BE))
+                                .pressable({ scope.launch { app.prefs.setAlarmWindowMin(w) } })
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                "$w min",
+                                style = BodyStrong.copy(fontSize = 13.sp, color = if (sel) Accent2 else SleepTextDim)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // Rezumatul de dimineață — AI, două propoziții din cifre reale.
+            if (!last?.summary.isNullOrBlank()) {
+                ForjaCard(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    fill = SleepCard, stroke = SleepStroke
+                ) {
+                    SectionLabel("Rezumatul dimineții", color = SleepTextDim)
+                    Spacer(Modifier.height(6.dp))
+                    Text(last!!.summary, style = Body.copy(color = TextPrimary, fontSize = 14.sp, lineHeight = 19.sp))
+                }
+                Spacer(Modifier.height(20.dp))
+            }
+
+            // Noaptea, ascultată — cronologia serverului, cu dovezi (8 s în jurul fiecărui moment).
+            last?.let { s ->
+                NightListenedSection(session = s, app = app, report = report, player = nightPlayer, onChanged = { refresh++ })
+                Spacer(Modifier.height(20.dp))
+            }
+
+            // Înregistrarea completă a nopții — pe telefon 24 h, pe server 7 zile, apoi dispare.
+            last?.let { s ->
+                if (s.recordedUntil > System.currentTimeMillis() && nightChunks.isNotEmpty()) {
+                    NightRecordingCard(session = s, app = app, report = report, player = nightPlayer)
+                    Spacer(Modifier.height(20.dp))
+                }
+            }
+
+            // Hipnograma — ciclurile nopții
+            SectionLabel("Ciclurile nopții", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
+            Spacer(Modifier.height(10.dp))
             ForjaCard(
                 Modifier.fillMaxWidth().padding(horizontal = 20.dp),
                 fill = SleepCard, stroke = SleepStroke
             ) {
-                Text("Evenimentele apar după prima noapte.", style = BodySmall.copy(color = SleepTextDim))
-            }
-        }
-
-        Spacer(Modifier.height(20.dp))
-
-        // Tendința săptămânii
-        SectionLabel("Săptămâna ta", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
-        Spacer(Modifier.height(10.dp))
-        ForjaCard(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            fill = SleepCard, stroke = SleepStroke
-        ) {
-            val byDay = (0..6).map { ago ->
-                val dayStart = Fmt.startOfDayMillis((6 - ago).toLong())
-                val dayEnd = dayStart + 24 * 3600_000
-                week.filter { it.startAt in dayStart until dayEnd }
-                    .sumOf { (((it.endAt ?: it.startAt) - it.startAt) / 60000).toInt() }
-            }
-            val maxMin = (byDay.maxOrNull() ?: 0).coerceAtLeast(480)
-            val avg = byDay.filter { it > 0 }.let { if (it.isEmpty()) 0 else it.sum() / it.size }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(90.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
-            ) {
-                byDay.forEachIndexed { i, min ->
-                    val isToday = i == 6
-                    val h by animateFloatAsState(
-                        (min.toFloat() / maxMin).coerceIn(0.04f, 1f),
-                        Springs.natural(), label = "bar$i"
-                    )
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(
-                            Modifier
-                                .width(22.dp)
-                                .fillMaxHeight(h)
-                                .clip(CircleShape)
-                                .background(
-                                    if (isToday) Brush.verticalGradient(listOf(Accent, Accent2))
-                                    else Brush.verticalGradient(listOf(SleepLight, SleepDeep))
-                                )
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        val dayIdx = (java.time.LocalDate.now().dayOfWeek.value - 1 - (6 - i) + 7) % 7
+                val s = last
+                if (s == null || s.phases.isBlank()) {
+                    Text("Apare după prima noapte.", style = BodySmall.copy(color = SleepTextDim))
+                } else {
+                    Hypnogram(s.phases, Modifier.fillMaxWidth().height(96.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        PhaseLegend("Profund", Fmt.durationHm(s.deepMin), SleepDeep)
+                        PhaseLegend("Ușor", Fmt.durationHm(s.lightMin), SleepLight)
+                        PhaseLegend("REM", Fmt.durationHm(s.remMin), SleepRem)
+                    }
+                    report.staging?.let { st ->
+                        Spacer(Modifier.height(8.dp))
                         Text(
-                            if (isToday) "azi" else Fmt.dayLetters[dayIdx],
-                            style = monoLabel(8, 0.08f).copy(color = if (isToday) Accent2 else SleepTextDim)
+                            "Adormit în ${st.latencyMin} min · ${when (st.awakenings) { 0 -> "fără treziri"; 1 -> "o trezire"; else -> "${st.awakenings} treziri" }}" +
+                                if (st.awakeMin > 0) " · ${st.awakeMin} min treaz" else "",
+                            style = BodyTiny.copy(color = TextSecondary)
                         )
+                        if (st.lines.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Scor ${st.score} = " + st.lines.joinToString(" · ") { l ->
+                                    (if (l.delta < 0) "−${-l.delta}" else "${l.delta}") + ": ${l.reason}"
+                                },
+                                style = BodyTiny.copy(color = SleepTextDim)
+                            )
+                        }
                     }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "ESTIMARE DIN MIȘCARE · ${s.movements} MIȘCĂRI",
+                        style = monoLabel(8, 0.10f).copy(color = SleepTextDim)
+                    )
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                if (avg > 0) "media ${Fmt.durationHm(avg)}" else "încă fără date",
-                style = monoLabel(8, 0.10f).copy(color = SleepTextDim)
-            )
-        }
 
-        Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(20.dp))
 
-        // Istoricul compact — ultimele 14 nopți: dată, durată, scor, sforăituri.
-        SectionLabel("Nopțile tale", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
-        Spacer(Modifier.height(10.dp))
-        ForjaCard(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            fill = SleepCard, stroke = SleepStroke
-        ) {
-            if (nights.isEmpty()) {
-                Text("Prima noapte apare aici, mâine dimineață.", style = BodySmall.copy(color = SleepTextDim))
+            // Evenimentele nopții — cu clipuri de 5s
+            SectionLabel("Noaptea ta · Evenimente", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
+            Spacer(Modifier.height(10.dp))
+            val lastId = last?.id
+            if (lastId != null) {
+                val events by app.db.sleepDao().eventsForSession(lastId).collectAsState(initial = emptyList())
+                if (events.isEmpty()) {
+                    ForjaCard(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                        fill = SleepCard, stroke = SleepStroke
+                    ) {
+                        Text("Niciun eveniment.", style = BodySmall.copy(color = SleepTextDim))
+                    }
+                } else {
+                    Column(Modifier.padding(horizontal = 20.dp)) {
+                        events.forEach { ev -> SleepEventCard(ev, app) }
+                        val talkPhrases = events
+                            .filter { it.type == "talk" && !it.transcript.isNullOrBlank() }
+                            .mapNotNull { it.transcript }
+                        val snoreCount = events.count { it.type == "snore" }
+                        if (talkPhrases.isNotEmpty() || snoreCount > 0) {
+                            Spacer(Modifier.height(12.dp))
+                            SleepTalkSummary(talkPhrases, snoreCount, app)
+                        }
+                    }
+                }
             } else {
-                nights.forEachIndexed { idx, s ->
-                    key(s.id) { NightRow(s, app) }
-                    if (idx < nights.lastIndex) {
-                        Spacer(Modifier.height(8.dp))
-                        Box(Modifier.fillMaxWidth().height(1.dp).background(SleepStroke))
-                        Spacer(Modifier.height(8.dp))
+                ForjaCard(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    fill = SleepCard, stroke = SleepStroke
+                ) {
+                    Text("Apar după prima noapte.", style = BodySmall.copy(color = SleepTextDim))
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // Tendința săptămânii
+            SectionLabel("Săptămâna ta", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
+            Spacer(Modifier.height(10.dp))
+            ForjaCard(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                fill = SleepCard, stroke = SleepStroke
+            ) {
+                val byDay = (0..6).map { ago ->
+                    val dayStart = Fmt.startOfDayMillis((6 - ago).toLong())
+                    val dayEnd = dayStart + 24 * 3600_000
+                    week.filter { it.startAt in dayStart until dayEnd }
+                        .sumOf { (((it.endAt ?: it.startAt) - it.startAt) / 60000).toInt() }
+                }
+                val maxMin = (byDay.maxOrNull() ?: 0).coerceAtLeast(480)
+                val avg = byDay.filter { it > 0 }.let { if (it.isEmpty()) 0 else it.sum() / it.size }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(90.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    byDay.forEachIndexed { i, min ->
+                        val isToday = i == 6
+                        val h by animateFloatAsState(
+                            (min.toFloat() / maxMin).coerceIn(0.04f, 1f),
+                            Springs.natural(), label = "bar$i"
+                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(
+                                Modifier
+                                    .width(22.dp)
+                                    .fillMaxHeight(h)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isToday) Brush.verticalGradient(listOf(Accent, Accent2))
+                                        else Brush.verticalGradient(listOf(SleepLight, SleepDeep))
+                                    )
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            val dayIdx = (java.time.LocalDate.now().dayOfWeek.value - 1 - (6 - i) + 7) % 7
+                            Text(
+                                if (isToday) "azi" else Fmt.dayLetters[dayIdx],
+                                style = monoLabel(8, 0.08f).copy(color = if (isToday) Accent2 else SleepTextDim)
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (avg > 0) "media ${Fmt.durationHm(avg)}" else "încă fără date",
+                    style = monoLabel(8, 0.10f).copy(color = SleepTextDim)
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // Istoricul compact — ultimele 14 nopți: dată, durată, scor, sforăituri.
+            SectionLabel("Nopțile tale", Modifier.padding(horizontal = 20.dp), color = SleepTextDim)
+            Spacer(Modifier.height(10.dp))
+            ForjaCard(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                fill = SleepCard, stroke = SleepStroke
+            ) {
+                if (nights.isEmpty()) {
+                    Text("Prima apare mâine dimineață.", style = BodySmall.copy(color = SleepTextDim))
+                } else {
+                    nights.forEachIndexed { idx, s ->
+                        key(s.id) { NightRow(s, app) }
+                        if (idx < nights.lastIndex) {
+                            Spacer(Modifier.height(8.dp))
+                            Box(Modifier.fillMaxWidth().height(1.dp).background(SleepStroke))
+                            Spacer(Modifier.height(8.dp))
+                        }
                     }
                 }
             }
-        }
 
-        Spacer(Modifier.height(16.dp))
-        Row(
-            Modifier.padding(horizontal = 20.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Despre somn & confidențialitate", style = BodyTiny.copy(color = SleepTextDim))
-            Spacer(Modifier.width(8.dp))
-            InfoDot(
-                title = "Despre somn",
-                text = "FORJA nu pune diagnostice. Clipurile de 5 s rămân pe telefon și le ștergi tu. Înregistrarea întreagă urcă pe serverul FORJA doar ca să fie ascultată de model; pe telefon stă 24 h, pe server 7 zile, apoi dispare. Stadiile somnului sunt estimate din mișcare. Dacă sforăitul revine des, vorbește cu un medic — ai istoricul aici."
-            )
+            Spacer(Modifier.height(16.dp))
+            Row(
+                Modifier.padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Despre somn", style = BodyTiny.copy(color = SleepTextDim))
+                Spacer(Modifier.width(8.dp))
+                InfoDot(title = "Despre somn", text = SOMN_DETAILS)
+            }
         }
     }
 }
@@ -804,16 +820,17 @@ private fun NightRecordingCard(session: SleepSessionEntity, app: ForjaApp, repor
         val uploadedAny = report.progress?.uploaded?.isNotEmpty() == true
         val serverPart = when {
             report.legacy -> ""
-            uploadedAny -> "pe server 7 zile, apoi dispare."
-            report.progress?.done == true -> "pe server n-a putut urca."
-            else -> "pe server încă n-a urcat."
+            uploadedAny -> "server 7 zile"
+            report.progress?.done == true -> "server: n-a urcat"
+            else -> "server: încă nu"
         }
         Text(
-            (if (report.legacy) "Înregistrare veche, într-un singur fișier. "
-            else "Toată noaptea, în ${player.chunks.size} ${if (player.chunks.size == 1) "bucată" else "bucăți"}. ") +
-                (if (localLeft > 0) "Pe telefon 24 de ore" else "Pe telefon nu mai e") +
-                (if (serverPart.isEmpty()) "." else "; $serverPart"),
-            style = BodyTiny.copy(color = SleepTextDim)
+            listOf(
+                if (report.legacy) "un fișier" else "${player.chunks.size} ${if (player.chunks.size == 1) "bucată" else "bucăți"}",
+                if (localLeft > 0) "telefon 24 h" else "telefon: șters",
+                serverPart
+            ).filter { it.isNotBlank() }.joinToString(" · ").uppercase(),
+            style = monoLabel(8, 0.10f).copy(color = SleepTextDim)
         )
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -821,7 +838,7 @@ private fun NightRecordingCard(session: SleepSessionEntity, app: ForjaApp, repor
                 text = when {
                     player.preparing -> "se încarcă…"
                     player.playing -> "Pauză"
-                    else -> "▶ Ascultă toată noaptea"
+                    else -> "▶ Ascultă noaptea"
                 },
                 small = true,
                 onClick = { player.toggle() },
@@ -1077,22 +1094,21 @@ private fun NightListenedSection(session: SleepSessionEntity, app: ForjaApp, rep
     ) {
         when {
             report.manifest == null -> Text(
-                if (session.recordedUntil > 0L) "Înregistrarea acestei nopți nu mai e pe telefon. Ai doar clipurile prinse și mișcarea."
-                else "Fără înregistrare azi-noapte. Microfonul n-a fost pornit, așa că ai doar mișcarea.",
+                if (session.recordedUntil > 0L) "Înregistrarea nu mai e pe telefon." else "Fără microfon azi-noapte.",
                 style = BodySmall.copy(color = SleepTextDim)
             )
             report.legacy -> Text(
-                "Înregistrare veche, într-un singur fișier: fără cronologie, doar redare.",
+                "Înregistrare veche: doar redare.",
                 style = BodySmall.copy(color = SleepTextDim)
             )
             !app.forjaApi.available -> Text(
-                "Serverul FORJA nu e configurat în această versiune. Ai doar clipurile prinse pe telefon.",
+                "Fără server în această versiune.",
                 style = BodySmall.copy(color = SleepTextDim)
             )
             t == null || t.status == "processing" -> {
                 Text(
-                    if ((report.progress?.attempts ?: 0) >= SleepUpload.MAX_ATTEMPTS) "Urcarea a renunțat. Ai doar clipurile prinse pe telefon."
-                    else "Raportul nopții se pregătește pe server.",
+                    if ((report.progress?.attempts ?: 0) >= SleepUpload.MAX_ATTEMPTS) "Urcarea a renunțat."
+                    else "Se pregătește pe server.",
                     style = BodyStrong.copy(fontSize = 14.sp)
                 )
                 Spacer(Modifier.height(4.dp))
@@ -1103,14 +1119,13 @@ private fun NightListenedSection(session: SleepSessionEntity, app: ForjaApp, rep
             }
             t.status == "clips_only" -> Text(
                 if (t.reason.contains("gemini", ignoreCase = true) || t.reason.isBlank())
-                    "Serverul nu a putut asculta noaptea (lipsește cheia Gemini). Ai doar clipurile prinse pe telefon."
-                else "Serverul nu a putut asculta noaptea (${t.reason}). Ai doar clipurile prinse pe telefon.",
+                    "Neascultată: lipsește cheia Gemini."
+                else "Neascultată: ${t.reason}.",
                 style = BodySmall.copy(color = SleepTextDim)
             )
             !t.listened && !t.partial -> {
                 Text(
-                    "Serverul n-a terminat de ascultat noaptea" + (if (t.reason.isNotBlank()) " (${t.reason})." else ".") +
-                        " Ai doar clipurile prinse pe telefon.",
+                    "Ascultarea s-a oprit" + (if (t.reason.isNotBlank()) ": ${t.reason}." else "."),
                     style = BodySmall.copy(color = SleepTextDim)
                 )
                 Spacer(Modifier.height(10.dp))
@@ -1130,11 +1145,8 @@ private fun NightListenedSection(session: SleepSessionEntity, app: ForjaApp, rep
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Și pe date mobile", style = BodyStrong.copy(fontSize = 13.sp))
-                Text(
-                    "O noapte are ~10 MB la fiecare 30 min. Implicit urcă doar pe Wi-Fi, cu bateria peste 15 %.",
-                    style = BodyTiny.copy(color = SleepTextDim)
-                )
+                Text("Date mobile", style = BodyStrong.copy(fontSize = 13.sp))
+                Text("~10 MB / 30 MIN", style = monoLabel(8, 0.10f).copy(color = SleepTextDim))
             }
             ForjaSwitch(checked = cellular, onCheckedChange = { on ->
                 cellular = on
@@ -1209,10 +1221,7 @@ private fun TimelineBody(t: SleepTimeline, audioStart: Long, player: ChunkPlayer
         }
     }
     Spacer(Modifier.height(8.dp))
-    Text(
-        "Analiză cu model, pe server. Transcrierile sunt exact ce s-a auzit, fără completări. Unde încrederea e mică, ascultă tu.",
-        style = BodyTiny.copy(color = SleepTextDim)
-    )
+    SourceBadge("analiză cu model", tone = SleepTextDim)
 }
 
 /**
@@ -1223,7 +1232,7 @@ private fun TimelineBody(t: SleepTimeline, audioStart: Long, player: ChunkPlayer
 private fun RetryAnalysisButton(session: SleepSessionEntity, onChanged: () -> Unit) {
     val context = LocalContext.current
     val toast = LocalToast.current
-    SecondaryButton("Încearcă din nou", padV = 8.dp, onClick = {
+    SecondaryButton("Reîncearcă", padV = 8.dp, onClick = {
         val dir = AacRecorder.sessionDir(context.filesDir, session.id)
         val p = SleepUpload.loadProgress(dir) ?: SleepUpload.Progress()
         SleepUpload.saveProgress(dir, p.copy(rejected = emptyList(), analyzeRequestedAt = 0L, pollStartedAt = 0L, pollSpentMs = 0L, done = false, attempts = 0, lastError = ""))
