@@ -52,7 +52,10 @@ retention_hours:24, last_retention_days:7}`.
 - 5 telefoane pe cont; 100 de cereri în 24 h; 30 s între cereri noi (excepție: „Sună” peste o urmărire);
   un id de cerere închis nu mai poate fi redeschis 24 h; o oprire veche nu oprește o cerere mai nouă.
 - Pozițiile unei căutări cer o cerere confirmată și activă, coordonate și precizie valide, o măsurare
-  făcută după cerere, cel mult cu 90 s în urmă. Fix-ul unei bătăi poate avea cel mult 7 zile.
+  făcută după cerere, cel mult cu 90 s în urmă.
+- Bătaia e îngăduitoare, fiindcă de ea depinde găsirea: câmpurile necunoscute sunt ignorate, iar un fix sau o baterie
+  inutilizabile (malformate, mai vechi de 7 zile, cu ceasul telefonului mult înainte) se lasă deoparte fără să refuze bătaia;
+  un ceas puțin înainte e adus la ora serverului. Doar secretul și starea sunt obligatorii.
 - Înrolările fără nicio bătaie 30 de zile expiră. Alarma Durable Object-ului șterge fizic `position` după 24 h,
   `last` după 7 zile și cererile expirate.
 - Transparență față de cine ține telefonul: orice căutare și orice sonerie arată pe telefon o notificare

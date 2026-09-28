@@ -102,14 +102,14 @@ export async function handleRecovery(req,account,readJSON){
   const v=await body(['secret','status']);await device(v);if(!states.includes(v.status))bad('Stare invalidă.');d.seen_at=now;d.expires_at=now+RECOVERY_RULES.enrollment_ms;d.status=v.status;await s.put(key,d);await alarm(d);return reply({command:d.command});
  }
  if(action==='beat'&&method==='POST'){
-  const v=await body(['secret','status','fix','battery','charging'],['secret','status']);await device(v);if(!states.includes(v.status))bad('Stare invalidă.');
-  if(v.fix!==undefined&&v.fix!==null){
-   keys(v.fix,['lat','lon','accuracy','at']);
-   if(!validNumber(v.fix.lat,-90,90)||!validNumber(v.fix.lon,-180,180)||!validNumber(v.fix.accuracy,0,10000)||!Number.isSafeInteger(v.fix.at)||!validNumber(v.fix.at,now-RECOVERY_RULES.last_ms,now+10000))bad('Poziție sau precizie invalidă.');
-   keepLast(d,v.fix);
-  }
-  if(v.battery!==undefined&&v.battery!==null){if(!validNumber(v.battery,0,100))bad('Baterie invalidă.');d.battery=Math.round(v.battery);d.battery_at=now;}
-  if(v.charging!==undefined&&v.charging!==null){if(typeof v.charging!=='boolean')bad('Încărcare invalidă.');d.charging=v.charging;}
+  // The heartbeat is what keeps the phone findable, so it is lenient: unknown fields are ignored, and a fix or battery
+  // value that cannot be used (malformed, older than 7 days, far in the future) is dropped instead of refusing the beat.
+  const {value:v}=await readJSON(req,4096);if(!v||typeof v!=='object'||Array.isArray(v))bad('Bătaie invalidă.');await device(v);if(!states.includes(v.status))bad('Stare invalidă.');
+  const f=v.fix;
+  if(f&&typeof f==='object'&&validNumber(f.lat,-90,90)&&validNumber(f.lon,-180,180)&&validNumber(f.accuracy,0,10000)&&Number.isSafeInteger(f.at)&&f.at>=now-RECOVERY_RULES.last_ms&&f.at<=now+DAY)
+   keepLast(d,{lat:f.lat,lon:f.lon,accuracy:f.accuracy,at:Math.min(f.at,now)});
+  if(validNumber(v.battery,0,100)){d.battery=Math.round(v.battery);d.battery_at=now;}
+  if(typeof v.charging==='boolean')d.charging=v.charging;
   d.seen_at=now;d.expires_at=now+RECOVERY_RULES.enrollment_ms;d.status=v.status;d.proto=2;await s.put(key,d);await alarm(d);
   return reply({command:d.command,next_s:d.command?RECOVERY_RULES.active_beat_s:RECOVERY_RULES.beat_s});
  }
