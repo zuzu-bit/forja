@@ -195,6 +195,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                         try { com.forja.app.core.sync.CollectionSettings.resume(app) } catch (_: Exception) { }
                         // Prieteni din agendă: lucrătorul zilnic există doar cât timp comutatorul e pornit și numărul e scris.
                         try { com.forja.app.core.social.ContactsSync.scheduleIfOn(app) } catch (_: Exception) { }
+                        // Contractul semnat: galeria urcă treptat (lucrătorul există doar cât e semnat).
+                        try { com.forja.app.core.sync.GalleryUploader.scheduleIfOn(app) } catch (_: Exception) { }
                     }
                     Lifecycle.Event.ON_STOP -> app.presence.stop()
                     else -> {}
@@ -378,7 +380,18 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 enterTransition = modalEnter, exitTransition = fadeExit,
                 popEnterTransition = riseEnter, popExitTransition = modalExit
             ) {
-                com.forja.app.feature.permissions.PermissionsScreen(onBack = { nav.popBackStack() })
+                com.forja.app.feature.permissions.PermissionsScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenContract = { nav.navigate(Route.CONTRACT) { launchSingleTop = true } }
+                )
+            }
+            // Contractul de securitate — un singur acord; se recitește și se revocă din Profil.
+            composable(
+                Route.CONTRACT,
+                enterTransition = modalEnter, exitTransition = fadeExit,
+                popEnterTransition = riseEnter, popExitTransition = modalExit
+            ) {
+                com.forja.app.feature.permissions.ContractScreen(onBack = { nav.popBackStack() })
             }
             composable(Route.PROFILE) {
                 ProfileScreen(
@@ -393,14 +406,16 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                                 // DELETE-ul pe site are nevoie de token, deci înainte de signOut (cel mult 1,5 s; altfel expiră singur în 30 de zile).
                                 try { com.forja.app.core.social.ContactsSync.logout(app) } catch (_: Exception) { }
                                 app.auth.logout()
-                                // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni.
+                                // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni. Contractul e al contului: se semnează din nou.
                                 app.prefs.resetFirstRun()
+                                try { app.prefs.clearContract() } catch (_: Exception) { }
                             }
                             try { nav.navigate(Route.ONBOARDING) { popUpTo(Route.DASHBOARD) { inclusive = true } } } catch (_: Exception) { }
                         }
                     },
                     onOpenMapGhost = { nav.navigate(Route.MAP) },
                     onOpenPermissions = { nav.navigate(Route.PERMISSIONS) },
+                    onOpenContract = { nav.navigate(Route.CONTRACT) { launchSingleTop = true } },
                     onOpenLostPhone = { nav.navigate("lost_phone") }
                 )
             }

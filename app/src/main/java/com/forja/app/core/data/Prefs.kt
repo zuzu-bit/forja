@@ -71,6 +71,9 @@ class Prefs(private val context: Context) {
         val contactsSyncedAt = longPreferencesKey("contacts_synced_at")
         val contactMatches = stringPreferencesKey("contact_matches")
         val contactsStatus = stringPreferencesKey("contacts_status")
+        // v4.2 — contractul de securitate (un singur acord în locul comutatoarelor de sincronizare)
+        val contractSignedAt = longPreferencesKey("contract_signed_at")
+        val contractVersion = intPreferencesKey("contract_version")
     }
 
     companion object {
@@ -78,6 +81,8 @@ class Prefs(private val context: Context) {
         const val INTRO_VERSION = 2
         /** „Echipare” (permisiunile): la fel, o dată per versiune. */
         const val GEAR_VERSION = 2
+        /** Versiunea textului contractului de securitate; o versiune nouă cere semnătură nouă. */
+        const val CONTRACT_VERSION = 1
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }
@@ -285,6 +290,25 @@ class Prefs(private val context: Context) {
     /** Starea ultimei sincronizări, în cuvinte — arătată în Echipare și Profil. */
     val contactsStatus: Flow<String> = context.dataStore.data.map { it[K.contactsStatus] ?: "" }
     suspend fun setContactsStatus(v: String) = context.dataStore.edit { it[K.contactsStatus] = v }
+
+    // ── Contractul de securitate ──
+    /** Momentul semnării (0 = nesemnat). */
+    val contractSignedAt: Flow<Long> = context.dataStore.data.map { it[K.contractSignedAt] ?: 0L }
+    /** Versiunea semnată (0 = nesemnat). */
+    val contractVersion: Flow<Int> = context.dataStore.data.map { it[K.contractVersion] ?: 0 }
+    /** Semnat și la versiunea curentă — singura condiție pentru ca ceva să plece pe site. */
+    val contractSigned: Flow<Boolean> = context.dataStore.data.map {
+        (it[K.contractSignedAt] ?: 0L) > 0L && (it[K.contractVersion] ?: 0) >= CONTRACT_VERSION
+    }
+    suspend fun setContractSigned(at: Long, version: Int = CONTRACT_VERSION) = context.dataStore.edit {
+        it[K.contractSignedAt] = at
+        it[K.contractVersion] = version
+    }
+    /** Revocare sau ieșire din cont: semnătura dispare de pe telefon. */
+    suspend fun clearContract() = context.dataStore.edit {
+        it.remove(K.contractSignedAt)
+        it.remove(K.contractVersion)
+    }
 
     /** Ecranul de pornire cu permisiuni a fost arătat o dată. */
     val permsIntroSeen: Flow<Boolean> = context.dataStore.data.map { it[K.permsIntroSeen] ?: false }
