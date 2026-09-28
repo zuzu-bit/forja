@@ -47,6 +47,7 @@ fun ScannerScreen(onClose: () -> Unit) {
     val vm: NutritionViewModel = viewModel(viewModelStoreOwner = activity)
     val pending by vm.pending.collectAsState()
     val busy by vm.lookupBusy.collectAsState()
+    val mealType = remember { vm.pendingMealType?.also { vm.pendingMealType = null } }
     val toast = com.forja.app.core.designsystem.components.LocalToast.current
 
     var hasPermission by remember {
@@ -121,8 +122,9 @@ fun ScannerScreen(onClose: () -> Unit) {
         PortionSheet(
             product = p.product,
             source = p.source,
-            onConfirm = { mealType, grams ->
-                vm.confirmPending(mealType, grams)
+            initialMealType = mealType,
+            onConfirm = { type, grams ->
+                vm.confirmPending(type, grams)
                 toast.show("Salvat: ${p.product.name}.")
                 onClose()
             },

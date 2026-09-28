@@ -27,7 +27,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,16 +37,27 @@ import com.forja.app.ForjaApp
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.network.MealReport
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
-/** Fotografiază masa → serverul FORJA o descompune pe componente editabile. */
+/**
+ * Fotografiază masa → serverul FORJA o descompune pe componente editabile.
+ * După declanșare, poza intră în ecranul de scanare „ca la BitePal” ([MealScanScreen]); la răspuns, foaia de rezultat
+ * urcă peste el. Tipul mesei vine din „Adaugă” (prin [NutritionViewModel.pendingMealType]) sau după oră.
+ */
 @Composable
-fun MealCameraScreen(onClose: () -> Unit) {
+fun MealCameraScreen(onClose: () -> Unit, onManual: (() -> Unit)? = null) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
+    val activity = context as ComponentActivity
+    val vm: NutritionViewModel = viewModel(viewModelStoreOwner = activity)
+    val voice by vm.voice.collectAsState()
+    val mealType = remember { vm.pendingMealType?.also { vm.pendingMealType = null } ?: MealAnalyze.mealTypeForTime(System.currentTimeMillis()) }
+    val reduced = LocalReducedMotion.current
 
     var hasPermission by remember {
         mutableStateOf(
@@ -60,17 +70,39 @@ fun MealCameraScreen(onClose: () -> Unit) {
     LaunchedEffect(Unit) { if (!hasPermission) launcher.launch(Manifest.permission.CAMERA) }
 
     var analyzing by remember { mutableStateOf(false) }
-    var stages by remember { mutableStateOf(AnalyzeStages.idle) }
-    var report by remember { mutableStateOf<MealReport?>(null) }
+    var scanBytes by remember { mutableStateOf<ByteArray?>(null) }   // poza din ecranul de scanare
+    var scanReport by remember { mutableStateOf<MealReport?>(null) } // răspunsul, cât apar etichetele
+    var scanError by remember { mutableStateOf<AnalyzeOutcome.Fail?>(null) }
+    var report by remember { mutableStateOf<MealReport?>(null) }     // foaia de rezultat
     var lastBytes by remember { mutableStateOf<ByteArray?>(null) }
-    val dayTarget by remember { NutritionPrefs.of(context).kcalTarget }.collectAsState(initial = NutritionPrefs.DEFAULT_KCAL)
+    var scanGen by remember { mutableStateOf(0) }   // „Înapoi” în timpul analizei: răspunsul întârziat nu mai contează
+    val dayTarget by vm.kcalTarget.collectAsState()
     val imageCapture = remember { ImageCapture.Builder().build() }
 
+    suspend fun analyze(bytes: ByteArray) {
+        lastBytes = bytes
+        scanBytes = bytes
+        scanReport = null
+        scanError = null
+        analyzing = true
+        val gen = ++scanGen
+        val res = MealAnalyze.analyzeJpeg(app, bytes, mealType)
+        if (gen != scanGen) { analyzing = false; return }
+        when (res) {
+            is AnalyzeOutcome.Ok -> {
+                scanReport = res.report
+                delay(scanRevealMs(res.report, reduced)) // etichetele apar una câte una, apoi foaia urcă
+                analyzing = false
+                report = res.report
+            }
+            is AnalyzeOutcome.Fail -> { analyzing = false; scanError = res }
+        }
+    }
+
     fun capture() {
-        if (analyzing) return
+        if (analyzing || scanBytes != null) return
         val file = File(context.cacheDir, "meal_${System.currentTimeMillis()}.jpg")
         analyzing = true
-        stages = AnalyzeStages.idle
         imageCapture.takePicture(
             ImageCapture.OutputFileOptions.Builder(file).build(),
             ContextCompat.getMainExecutor(context),
@@ -85,13 +117,7 @@ fun MealCameraScreen(onClose: () -> Unit) {
                             toast.show("Poza nu s-a putut citi. Mai încearcă.")
                             return@launch
                         }
-                        lastBytes = bytes
-                        val res = MealAnalyze.analyzeJpeg(app, bytes) { stages = it }
-                        MealAnalyze.holdVerifyStep(res) // pasul 3 (v2) rămâne pe ecran o bătaie înainte de foaia de rezultat
-                        when (res) {
-                            is AnalyzeOutcome.Ok -> { analyzing = false; report = res.report }
-                            is AnalyzeOutcome.Fail -> { analyzing = false; toast.show(res.message) }
-                        }
+                        analyze(bytes)
                     }
                 }
                 override fun onError(exception: ImageCaptureException) {
@@ -167,20 +193,6 @@ fun MealCameraScreen(onClose: () -> Unit) {
                     }
                 }
             }
-            // Ecranul „Analiză…”: mascota + pașii reali, peste previzualizare. Vălul oprește atingerile
-            // (declanșatorul de sub el nu mai primește nimic); „Înapoi” e desenat deasupra și rămâne activ.
-            if (analyzing) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) { }
-                        .background(Color(0x99000000))
-                        .padding(horizontal = 20.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AnalyzeStagePanel(stages, Modifier.fillMaxWidth())
-                }
-            }
         } else {
             Column(
                 Modifier.align(Alignment.Center).padding(horizontal = 28.dp),
@@ -198,12 +210,22 @@ fun MealCameraScreen(onClose: () -> Unit) {
             "Înapoi", onClick = onClose,
             modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp)
         )
+
+        // Ecranul de scanare „ca la BitePal”, peste cameră: poza, banda amber, etichetele, cardul-bulă, mascota.
+        scanBytes?.let { bytes ->
+            MealScanScreen(
+                bytes = bytes, report = scanReport, error = scanError, voice = voice, dayTarget = dayTarget,
+                onBack = { scanGen++; analyzing = false; scanBytes = null; scanError = null; scanReport = null },
+                onRetry = { scanGen++; analyzing = false; scanBytes = null; scanError = null; scanReport = null },
+                onManual = { scanGen++; analyzing = false; scanBytes = null; scanError = null; if (onManual != null) onManual() else onClose() }
+            )
+        }
     }
 
     report?.let { r ->
         MealResultSheet(
             report = r,
-            initialMealType = MealAnalyze.mealTypeForTime(System.currentTimeMillis()),
+            initialMealType = mealType,
             onConfirm = { components, mealType ->
                 scope.launch {
                     val photoPath = lastBytes?.let { MealAnalyze.savePhoto(context, it) }
@@ -213,8 +235,8 @@ fun MealCameraScreen(onClose: () -> Unit) {
                     onClose()
                 }
             },
-            onDismiss = { report = null },
-            onRetake = { report = null },
+            onDismiss = { report = null; scanBytes = null; scanReport = null },
+            onRetake = { report = null; scanBytes = null; scanReport = null },
             dayTarget = dayTarget
         )
     }

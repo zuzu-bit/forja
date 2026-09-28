@@ -13,7 +13,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -39,9 +41,33 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
 
     private val nutritionPrefs = NutritionPrefs.of(app)
 
-    /** Obiectivul zilnic — DataStore-ul modulului (`forja_nutrition`), implicit 2000. */
-    val kcalTarget: StateFlow<Int> = nutritionPrefs.kcalTarget
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), NutritionPrefs.DEFAULT_KCAL)
+    /** Profilul corpului din chestionar; null până se citește DataStore-ul (ca chestionarul să nu clipească degeaba). */
+    val profile: StateFlow<BodyProfile?> = nutritionPrefs.profile.map<BodyProfile, BodyProfile?> { it }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** Rația calculată din corp (Mifflin-St Jeor) sau null fără profil complet. */
+    val targets: StateFlow<Targets?> = nutritionPrefs.profile.map { Targets.of(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /**
+     * Obiectivul zilnic: din corp când există profil, altfel valoarea din DataStore (implicit 2000, setabilă manual).
+     */
+    val kcalTarget: StateFlow<Int> = combine(nutritionPrefs.profile, nutritionPrefs.kcalTarget) { p, manual ->
+        Targets.of(p)?.kcal ?: manual
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), NutritionPrefs.DEFAULT_KCAL)
+
+    /** Personalitatea Bucătarului — schimbă replicile, nu regulile. */
+    val voice: StateFlow<MascotVoice> = nutritionPrefs.voice
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MascotVoice.Camarad)
+
+    fun saveProfile(p: BodyProfile) { viewModelScope.launch { nutritionPrefs.saveProfile(p) } }
+    fun setVoice(v: MascotVoice) { viewModelScope.launch { nutritionPrefs.setVoice(v) } }
+
+    /**
+     * Tipul mesei ales în „Adaugă” înainte de a pleca spre cameră / scanner (ecrane fără argumente de navigație).
+     * Se consumă o dată; null → tipul după oră.
+     */
+    var pendingMealType: Int? = null
 
     /** Zile la rând cu cel puțin o masă notată (local, onest); „azi” e calculat în flux, nu prins la crearea modelului. */
     val streak: StateFlow<Int> = nutritionPrefs.streak()

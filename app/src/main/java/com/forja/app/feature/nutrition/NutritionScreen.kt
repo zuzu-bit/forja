@@ -26,7 +26,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -34,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.forja.app.core.data.db.MealEntity
 import com.forja.app.core.designsystem.*
@@ -44,6 +44,9 @@ import com.forja.app.core.network.MealReport
 import com.forja.app.core.util.Fmt
 import java.time.LocalTime
 
+/** Bara de file stă peste ecranul Rație: suprapunerile pe tot ecranul (scanarea din galerie, chestionarul) lasă loc sub ele. */
+private val TAB_INSET = 84.dp
+
 private const val IMG_BOWL = "https://t3.ftcdn.net/jpg/03/30/19/86/500_F_330198627_aQsy9t5HhOn7TIsd6FEB0FJvKz4IqdhH.jpg"
 private const val IMG_COOK = "https://t4.ftcdn.net/jpg/05/03/88/17/500_F_503881704_hyhi1pOJrBNqQ0dJqK1Qceno2pa8KWiJ.jpg"
 
@@ -51,6 +54,7 @@ private const val IMG_COOK = "https://t4.ftcdn.net/jpg/05/03/88/17/500_F_5038817
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
+    val reduced = LocalReducedMotion.current
     val context = LocalContext.current
     val activity = context as ComponentActivity
     val app = remember { com.forja.app.ForjaApp.from(context) }
@@ -58,6 +62,9 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
     val meals by vm.meals.collectAsState()
     val kcal by vm.kcalToday.collectAsState()
     val target by vm.kcalTarget.collectAsState()
+    val targets by vm.targets.collectAsState()
+    val profile by vm.profile.collectAsState()
+    val voice by vm.voice.collectAsState()
     val streak by vm.streak.collectAsState()
     val vmPending by vm.pending.collectAsState()
     val lookupError by vm.lookupError.collectAsState()
@@ -69,10 +76,18 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
     var searchOpen by remember { mutableStateOf(false) }
     var manualOpen by remember { mutableStateOf(false) }
     var targetOpen by remember { mutableStateOf(false) }
+    var addOpen by remember { mutableStateOf<Int?>(null) }      // „Adaugă” pe o masă: tipul pre-selectat
+    var manualType by remember { mutableStateOf(1) }
+    var profileOpen by remember { mutableStateOf(false) }
+    var voiceOpen by remember { mutableStateOf(false) }
 
-    // ── Galerie: alegere manuală a unei poze pentru analiză ──
+    // ── Galerie: alegere manuală a unei poze pentru analiză (ecranul de scanare „ca la BitePal”) ──
     var galleryAnalyzing by remember { mutableStateOf(false) }
-    var galleryStages by remember { mutableStateOf(AnalyzeStages.idle) }
+    var galleryMealType by remember { mutableStateOf<Int?>(null) }
+    var scanBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var scanReport by remember { mutableStateOf<MealReport?>(null) }
+    var scanError by remember { mutableStateOf<AnalyzeOutcome.Fail?>(null) }
+    var scanGen by remember { mutableStateOf(0) }   // „Înapoi” în timpul analizei: răspunsul întârziat nu mai contează
     var galleryReport by remember { mutableStateOf<MealReport?>(null) }
     var galleryBytes by remember { mutableStateOf<ByteArray?>(null) }
 
@@ -81,7 +96,8 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
     ) { uri ->
         if (uri != null) {
             galleryAnalyzing = true
-            galleryStages = AnalyzeStages.idle
+            scanReport = null
+            scanError = null
             scope.launch {
                 val bytes = MealAnalyze.readUri(context, uri)
                 if (bytes == null) {
@@ -90,11 +106,18 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                     return@launch
                 }
                 galleryBytes = bytes
-                val res = MealAnalyze.analyzeJpeg(app, bytes) { galleryStages = it }
-                MealAnalyze.holdVerifyStep(res) // pasul 3 (v2) rămâne pe ecran o bătaie înainte de foaia de rezultat
+                scanBytes = bytes
+                val gen = ++scanGen
+                val res = MealAnalyze.analyzeJpeg(app, bytes, galleryMealType)
+                if (gen != scanGen) { galleryAnalyzing = false; return@launch }
                 when (res) {
-                    is AnalyzeOutcome.Ok -> { galleryAnalyzing = false; galleryReport = res.report }
-                    is AnalyzeOutcome.Fail -> { galleryAnalyzing = false; toast.show(res.message) }
+                    is AnalyzeOutcome.Ok -> {
+                        scanReport = res.report
+                        delay(scanRevealMs(res.report, reduced)) // etichetele apar una câte una, apoi foaia urcă
+                        galleryAnalyzing = false
+                        galleryReport = res.report
+                    }
+                    is AnalyzeOutcome.Fail -> { galleryAnalyzing = false; scanError = res }
                 }
             }
         }
@@ -117,6 +140,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
 
     val serverOn = app.forjaApi.available
     fun photograph() { if (serverOn || geminiKey.isNotBlank()) onPhotograph() else keyOpen = true }
+    fun closeScan() { scanGen++; galleryAnalyzing = false; scanBytes = null; scanReport = null; scanError = null }
 
     Box(Modifier.fillMaxSize().background(Surface0)) {
         Column(
@@ -150,8 +174,10 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
 
             // ── Cardul zilei: inel kcal, bare macro, seria, mascota ──
             DayCard(
-                meals = meals, kcal = kcal, target = target, streak = streak,
-                onTarget = { targetOpen = true },
+                meals = meals, kcal = kcal, target = target, targets = targets, profile = profile, streak = streak,
+                voice = voice,
+                onTarget = { if (targets == null) targetOpen = true else profileOpen = true },
+                onProfile = { profileOpen = true },
                 modifier = Modifier.padding(horizontal = 20.dp)
             )
 
@@ -186,11 +212,16 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                                     )
                                     Text(mealTypeNames[type], style = monoLabel(8, 0.12f))
                                 }
-                                SecondaryButton("Adaugă", onClick = { searchOpen = true }, padV = 8.dp)
+                                SecondaryButton("Adaugă", onClick = { addOpen = type }, padV = 8.dp)
                             }
                         }
                     } else {
                         entries.forEach { m -> MealRow(m, onDelete = { vm.deleteMeal(m.id) }) }
+                        Text(
+                            "+ adaugă la ${mealTypeNames[type].lowercase()}",
+                            style = BodySmall.copy(color = Accent2),
+                            modifier = Modifier.padding(bottom = 12.dp, start = 2.dp).pressable({ addOpen = type })
+                        )
                     }
                 }
             }
@@ -205,7 +236,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 ImageTile(
                     "Adaug manual",
                     Media.mediaUrl("471644726.jpg") ?: IMG_BOWL,
-                    onClick = { manualOpen = true }, modifier = Modifier.weight(1f)
+                    onClick = { manualType = MealAnalyze.mealTypeForTime(System.currentTimeMillis()); manualOpen = true }, modifier = Modifier.weight(1f)
                 )
             }
             Spacer(Modifier.height(10.dp))
@@ -213,7 +244,7 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 ActionTile(
                     label = if (galleryAnalyzing) "se analizează…" else "Din galerie",
                     tint = Color(0xFF9DB77E),
-                    onClick = { pickFromGallery() },
+                    onClick = { galleryMealType = null; pickFromGallery() },
                     modifier = Modifier.weight(1f)
                 )
                 Spacer(Modifier.width(10.dp))
@@ -237,24 +268,51 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
                 )
             }
 
+            // Profilul (rația din corp) și personalitatea Bucătarului.
+            Spacer(Modifier.height(18.dp))
+            SectionLabel("Setări", Modifier.padding(horizontal = 20.dp))
+            Spacer(Modifier.height(8.dp))
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                SettingsRow(
+                    title = "Profilul tău",
+                    value = profile?.takeIf { it.complete }?.let { Targets.explain(it).removePrefix("din ") } ?: "greutate, înălțime, vârstă, obiectiv",
+                    onClick = { profileOpen = true }
+                )
+                SettingsRow(
+                    title = "Cum îți vorbește Bucătarul",
+                    value = voice.label,
+                    onClick = { voiceOpen = true }
+                )
+            }
+
             // Un singur citat cald pe ecran — același toată ziua.
             Spacer(Modifier.height(24.dp))
             WarmQuote(Tone.ofDay(Tone.nutrition), Modifier.padding(horizontal = 20.dp))
         }
 
-        // Ecranul „Analiză…” pentru poza din galerie: mascota + pașii reali. Vălul oprește atingerile,
-        // ca nimic de dedesubt (tile-uri, „șterge”, foi) să nu se deschidă peste analiză.
-        if (galleryAnalyzing) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) { }
-                    .background(Color(0x99000000))
-                    .padding(horizontal = 20.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                AnalyzeStagePanel(galleryStages, Modifier.fillMaxWidth())
-            }
+        // Ecranul de scanare „ca la BitePal” pentru poza din galerie: poza, banda amber, etichetele, cardul-bulă, mascota.
+        scanBytes?.let { bytes ->
+            MealScanScreen(
+                bytes = bytes, report = scanReport, error = scanError, voice = voice, dayTarget = target,
+                onBack = { closeScan() },
+                onRetry = { closeScan(); pickFromGallery() },
+                onManual = { closeScan(); manualType = galleryMealType ?: MealAnalyze.mealTypeForTime(System.currentTimeMillis()); manualOpen = true },
+                bottomInset = TAB_INSET
+            )
+        }
+
+        // Chestionarul: prima dată (profil nesalvat) sau la cerere din „Profilul tău”.
+        val prof = profile
+        if (profileOpen || (prof != null && !prof.done)) {
+            NutritionOnboarding(
+                initial = prof ?: BodyProfile(),
+                onDone = { vm.saveProfile(it); profileOpen = false },
+                onClose = {
+                    // Închis înainte de final: rămâne cu ce a răspuns, nu se mai deschide singur (fără profil → 2000 + îndemn).
+                    vm.saveProfile((prof ?: BodyProfile()).copy(done = true)); profileOpen = false
+                },
+                bottomInset = TAB_INSET
+            )
         }
     }
 
@@ -275,7 +333,25 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
         FoodSearchSheet(vm = vm, onClose = { searchOpen = false })
     }
     if (manualOpen) {
-        ManualAddSheet(vm = vm, onClose = { manualOpen = false })
+        ManualAddSheet(vm = vm, initialMealType = manualType, onClose = { manualOpen = false })
+    }
+    addOpen?.let { type ->
+        MealAddSheet(
+            initialMealType = type, voice = voice,
+            onPick = { way, t ->
+                addOpen = null
+                when (way) {
+                    MealAddWay.Photo -> { vm.pendingMealType = t; photograph() }
+                    MealAddWay.Gallery -> { galleryMealType = t; pickFromGallery() }
+                    MealAddWay.Barcode -> { vm.pendingMealType = t; onScan() }
+                    MealAddWay.Manual -> { manualType = t; manualOpen = true }
+                }
+            },
+            onDismiss = { addOpen = null }
+        )
+    }
+    if (voiceOpen) {
+        VoiceSheet(current = voice, onPick = { vm.setVoice(it); voiceOpen = false }, onDismiss = { voiceOpen = false })
     }
     if (targetOpen) {
         TargetSheet(current = target, onSave = { vm.setKcalTarget(it); targetOpen = false }, onClose = { targetOpen = false })
@@ -296,17 +372,18 @@ fun NutritionScreen(onScan: () -> Unit, onPhotograph: () -> Unit = {}) {
     galleryReport?.let { r ->
         MealResultSheet(
             report = r,
-            initialMealType = MealAnalyze.mealTypeForTime(System.currentTimeMillis()),
+            initialMealType = galleryMealType ?: MealAnalyze.mealTypeForTime(System.currentTimeMillis()),
             onConfirm = { components, mealType ->
                 scope.launch {
                     val photoPath = galleryBytes?.let { MealAnalyze.savePhoto(context, it) }
                     val meal = MealAnalyze.saveMeal(app, r, components, mealType, System.currentTimeMillis(), photoPath)
                     toast.show("Salvat: ${meal.kcal} kcal.")
                     galleryReport = null
+                    closeScan()
                 }
             },
-            onDismiss = { galleryReport = null },
-            onRetake = { galleryReport = null; pickFromGallery() },
+            onDismiss = { galleryReport = null; closeScan() },
+            onRetake = { galleryReport = null; closeScan(); pickFromGallery() },
             dayTarget = target
         )
     }
@@ -328,29 +405,36 @@ internal fun chefLine(meals: List<MealEntity>, kcal: Int, target: Int, streak: I
     }
 }
 
-/** Cardul zilei: inel kcal din obiectiv (setabil), bare macro cumulate, seria și mascota cu o replică. */
+/**
+ * Cardul zilei: inel kcal din rația calculată din corp (sau obiectivul manual), bare macro cumulate față de reperele
+ * din profil, seria și mascota cu o replică. Fără profil: 2000 kcal + îndemnul „Spune-mi greutatea și îți calculez rația”.
+ */
 @Composable
 private fun DayCard(
     meals: List<MealEntity>,
     kcal: Int,
     target: Int,
+    targets: Targets?,
+    profile: BodyProfile?,
     streak: Int,
+    voice: MascotVoice,
     onTarget: () -> Unit,
+    onProfile: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val protein = meals.sumOf { it.protein }
     val carbs = meals.sumOf { it.carbs }
     val fat = meals.sumOf { it.fat }
-    // Repere orientative derivate din obiectivul zilnic (25 % P · 45 % C · 30 % G) — spuse ca atare sub bare
-    // și fără roșu la depășire: nu sunt o prescripție, iar „peste reper” la proteine nu e o problemă.
-    val pTarget = (target * 0.25 / 4).toInt().coerceAtLeast(1)
-    val cTarget = (target * 0.45 / 4).toInt().coerceAtLeast(1)
-    val fTarget = (target * 0.30 / 9).toInt().coerceAtLeast(1)
+    // Reperele P/C/G: din profil (1,8–2 g/kg proteine, 0,8 g/kg grăsimi, restul carbo) sau, fără profil, o împărțire
+    // orientativă a obiectivului (25 % P · 45 % C · 30 % G) — spuse ca atare și fără roșu la depășire.
+    val pTarget = targets?.protein ?: (target * 0.25 / 4).toInt().coerceAtLeast(1)
+    val cTarget = targets?.carbs ?: (target * 0.45 / 4).toInt().coerceAtLeast(1)
+    val fTarget = targets?.fat ?: (target * 0.30 / 9).toInt().coerceAtLeast(1)
     val hour = remember { LocalTime.now().hour }
     var lineSalt by remember { mutableStateOf(0) }
-    val line = remember(meals.size, kcal, target, streak, lineSalt) {
+    val line = remember(meals.size, kcal, target, streak, lineSalt, voice) {
         if (lineSalt == 0) chefLine(meals, kcal, target, streak, hour)
-        else CHEF_EXTRA[Math.floorMod(lineSalt, CHEF_EXTRA.size)]
+        else voice.extra[Math.floorMod(lineSalt, voice.extra.size)]
     }
 
     ForjaCard(modifier.fillMaxWidth(), padding = 16.dp) {
@@ -365,11 +449,31 @@ private fun DayCard(
                 MacroBar("GRĂSIMI", fat, MacroFatColor, target = fTarget, flagOver = false)
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "Reperele P/C/G vin din obiectivul de $target kcal (25 · 45 · 30 %). Orientare, nu prescripție.",
-            style = BodyTiny.copy(color = TextDim)
-        )
+        Spacer(Modifier.height(8.dp))
+        if (targets != null && profile != null) {
+            // „Ținta ta” cu explicația într-o linie.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("ȚINTA TA", style = monoLabel(8, 0.14f).copy(color = Accent2))
+                Spacer(Modifier.width(8.dp))
+                Text(targets.summary, style = BodyStrong.copy(fontSize = 13.sp))
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Calculată ${Targets.explain(profile)}. Reper, nu prescripție.",
+                style = BodyTiny.copy(color = TextDim)
+            )
+        } else {
+            Text(
+                "Reperele P/C/G vin din obiectivul de $target kcal (25 · 45 · 30 %). Orientare, nu prescripție.",
+                style = BodyTiny.copy(color = TextDim)
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Spune-mi greutatea și îți calculez rația ›",
+                style = BodyStrong.copy(fontSize = 13.sp, color = Accent2),
+                modifier = Modifier.pressable(onProfile)
+            )
+        }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -378,7 +482,7 @@ private fun DayCard(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                "obiectiv $target",
+                if (targets != null) "rația $target" else "obiectiv $target",
                 style = monoLabel(8, 0.12f).copy(color = Accent2),
                 modifier = Modifier
                     .clip(ChipShape)
@@ -398,10 +502,10 @@ private fun DayCard(
         }
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ChefMascot(size = 52.dp, modifier = Modifier.pressable({ lineSalt++ }))
+            Mascot(state = if (kcal > target) MascotState.Sorry else MascotState.Idle, hat = MascotHat.Chef, size = 56.dp, onTap = { lineSalt++ })
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("BUCĂTARUL", style = monoLabel(8, 0.14f).copy(color = Accent2))
+                Text("BUCĂTARUL · ${voice.label.uppercase()}", style = monoLabel(8, 0.14f).copy(color = Accent2))
                 Spacer(Modifier.height(2.dp))
                 Text(line, style = Body.copy(color = TextPrimary))
             }
@@ -409,12 +513,19 @@ private fun DayCard(
     }
 }
 
-private val CHEF_EXTRA = listOf(
-    "Farfuria de sus, în lumină. Restul fac eu.",
-    "Apa nu se uită.",
-    "Porția o decizi tu. Eu doar estimez.",
-    "Codul de bare e exact. Poza e estimare."
-)
+/** Un rând de setări: titlu + valoarea curentă + „›”. */
+@Composable
+private fun SettingsRow(title: String, value: String, onClick: () -> Unit) {
+    ForjaCard(Modifier.fillMaxWidth().padding(bottom = 8.dp).pressable(onClick), padding = 12.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = BodyStrong.copy(fontSize = 14.sp))
+                Text(value, style = BodySmall.copy(color = TextDim), maxLines = 1)
+            }
+            Text("›", style = TitleModule.copy(fontSize = 22.sp, color = TextDim))
+        }
+    }
+}
 
 /** O masă din jurnal: miniatură (locală), nume, oră, gramaj, sursă, macro-uri, kcal, ștergere. */
 @Composable
@@ -549,13 +660,14 @@ fun PortionSheet(
     product: FoodProduct,
     source: String,
     onConfirm: (mealType: Int, grams: Int) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initialMealType: Int? = null
 ) {
     val defaultGrams = product.servingGrams ?: 100
     var grams by remember { mutableStateOf(defaultGrams) }
     var mealType by remember {
         mutableStateOf(
-            when (LocalTime.now().hour) {
+            initialMealType ?: when (LocalTime.now().hour) {
                 in 5..10 -> 0
                 in 11..16 -> 1
                 in 17..22 -> 2
@@ -754,13 +866,13 @@ private fun FoodSearchSheet(vm: NutritionViewModel, onClose: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ManualAddSheet(vm: NutritionViewModel, onClose: () -> Unit) {
+private fun ManualAddSheet(vm: NutritionViewModel, initialMealType: Int = 1, onClose: () -> Unit) {
     var name by remember { mutableStateOf("") }
     var kcal by remember { mutableStateOf("") }
     var protein by remember { mutableStateOf("") }
     var carbs by remember { mutableStateOf("") }
     var fat by remember { mutableStateOf("") }
-    var mealType by remember { mutableStateOf(1) }
+    var mealType by remember { mutableStateOf(initialMealType.coerceIn(0, 3)) }
     ModalBottomSheet(
         onDismissRequest = onClose,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
