@@ -94,19 +94,36 @@ export const workers = {
 
   /**
    * Imaginile devin descrieri (max 8), apoi modelul de text produce JSON-ul cerut. `trace` (de la router) primește
-   * `visionNotes` (descrierile, refolosite la pasul de verificare, care nu vede poza) și `modelCalls` (câte apeluri env.AI.run au fost).
+   * `visionNotes` (descrierile, refolosite la pasul de verificare, care nu vede poza), `visionLabels` (etichetele pozelor descrise
+   * cu succes — ex. grupurile văzute la /v1/organize/clusters) și `modelCalls` (câte apeluri env.AI.run au fost). Descrierile rămân
+   * în `trace` pe durata cererii: repararea JSON-ului nu mai descrie pozele a doua oară. `describeConcurrency` (1–4, implicit 1)
+   * descrie mai multe poze în paralel.
    */
-  async generate(env, { model, system, prompt, images = [], schema = null, maxTokens, timeoutMs, trace = null }) {
+  async generate(env, { model, system, prompt, images = [], schema = null, maxTokens, timeoutMs, trace = null, describeConcurrency = 1 }) {
     const deadline = Date.now() + (timeoutMs || this.timeoutMs);
     const count = () => { if (trace) trace.modelCalls = (trace.modelCalls || 0) + 1; };
+    const described = trace ? (trace.described instanceof Map ? trace.described : (trace.described = new Map())) : new Map();
     const notes = [];
-    for (const img of images.slice(0, 8)) {
+    const labels = [];
+    const list = images.slice(0, 8);
+    const step = Math.max(1, Math.min(4, Math.floor(Number(describeConcurrency)) || 1));
+    for (let i = 0; i < list.length; i += step) {
       if (Date.now() > deadline - 5000) break;
-      const desc = await describeImage(env, img.b64, img.describePrompt || "Describe everything visible in this photo in detail: objects, food items with estimated portion size in grams, text, quality (sharp/blurry), whether it is a screenshot, document or meme. Be factual, do not guess what is not visible.", 300, count);
-      if (desc) notes.push(`${img.label ? "[" + img.label + "] " : ""}Descriere vizuală (model de vedere, engleză): ${desc}`);
+      const batch = list.slice(i, i + step);
+      const descs = await Promise.all(batch.map(async (img) => {
+        if (described.has(img)) return described.get(img);
+        const d = await describeImage(env, img.b64, img.describePrompt || "Describe everything visible in this photo in detail: objects, food items with estimated portion size in grams, text, quality (sharp/blurry), whether it is a screenshot, document or meme. Be factual, do not guess what is not visible.", 300, count);
+        if (d) described.set(img, d);
+        return d;
+      }));
+      batch.forEach((img, j) => {
+        if (!descs[j]) return;
+        notes.push(`${img.label ? "[" + img.label + "] " : ""}Descriere vizuală (model de vedere, engleză): ${descs[j]}`);
+        if (img.label) labels.push(String(img.label));
+      });
     }
     if (images.length && !notes.length) throw new AiError("workers: modelele de vedere n-au putut citi poza", { provider: "workers", model, kind: "empty" });
-    if (trace && notes.length) trace.visionNotes = notes.slice();
+    if (trace && notes.length) { trace.visionNotes = notes.slice(); trace.visionLabels = labels.slice(); }
     const full = notes.length ? prompt + "\n\n" + notes.join("\n") : prompt;
     let lastErr = null;
     // JSON forțat: `response_format: json_schema` (suportat de llama-3.3-70b). Dacă runtime-ul îl respinge, același model primește

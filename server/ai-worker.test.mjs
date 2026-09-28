@@ -121,7 +121,8 @@ test('curățenie v2: PDF-ul ajunge nativ la Gemini, răspunsul are rezumat/cate
   assert.equal(r.status, 200);
   const out = await r.json();
   assert.equal(out.versiune, 2);
-  assert.equal(out.provider, 'gemini/gemini-3.8-flash');
+  // 4.3: curățenia în masă preferă flash-lite (rapid, cotă mai mare) — vezi preferForTask în ai-gemini.mjs.
+  assert.equal(out.provider, 'gemini/gemini-3.5-flash-lite');
   assert.equal(out.partial, true, 'm:3 n-a primit sugestie → completat cu keep');
   const d1 = out.items.find((i) => i.id === 'd:1');
   assert.equal(d1.suggestion, 'move');

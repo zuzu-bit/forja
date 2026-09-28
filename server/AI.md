@@ -11,7 +11,7 @@ OpenAI se folosesc DOAR dacă cineva le pune cheia (probabil nu); Workers AI e m
 
 | Secret (GitHub) | De unde | Ce aduce | Limite / cost |
 |---|---|---|---|
-| `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → „Create API key” (cont Google, fără card) | Poze (mese, curățenie), **PDF nativ** și **singura cale pentru AUDIO integral**: clipurile de 5 s și chunk-urile de 30 min sunt ascultate întregi (vorbit cu transcriere exactă, sforăit cu intensitate, tuse). Modelele NU mai sunt fixate în cod: lista se descoperă din `GET /v1beta/models` (vezi „Lista dinamică de modele Gemini”). | Gratuit, cu cote SEPARATE per model (limitele exacte se schimbă des, nu le mai presupunem: în diag `limita: null`); un 429 la un model trece la modelul următor, nu la alt furnizor; contorul e per model. O noapte de 8 h în chunk-uri de 30 min = 16 cereri. |
+| `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → „Create API key” (cont Google, fără card) | Poze (mese, curățenie), **PDF nativ** și **singura cale pentru AUDIO integral**: clipurile de 5 s și chunk-urile de 30 min sunt ascultate întregi (vorbit cu transcriere exactă, sforăit cu intensitate, tuse). Modelele NU mai sunt fixate în cod: lista se descoperă din `GET /v1beta/models` (vezi „Lista dinamică de modele Gemini”). | Gratuit, cu cote SEPARATE per model, **pe minut** și pe zi (sonda din 28.09: **`gemini-3.8-flash` = 5 cereri/min** pe cheia gratuită; celelalte limite se schimbă des, nu le presupunem: în diag `limita: null`). Un 429 pune modelul în **răcire 65 s** și trece la modelul următor, nu la alt furnizor; contorul e per model. O masă = 1–2 cereri (două treceri), o noapte de 8 h în chunk-uri de 30 min = 16 cereri. |
 | `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) (cont, fără card). **Formatul cheii: începe cu `gsk_`** (≈ 56 de caractere). O valoare fără `gsk_` (de exemplu un id de organizație sau un token copiat pe jumătate) dă 401 la orice cerere. | A doua opinie gratuită: text cu Llama 3.3 70B (rezumate, curățenie fără PDF), **Whisper large v3 cu timpi pe segmente** (transcriere pentru clipuri și chunk-uri când Gemini lipsește sau pică) și viziune DOAR dacă lista `/models` a cheii are un model de viziune (Llama 4 Scout/Maverick au fost retrase: 404 în 28.09) — altfel Groq e sărit la poze și următorul furnizor preia. Modelele se descoperă dinamic (vezi „Lista dinamică de modele Groq”). Nu citește PDF (primește doar textul extras). | Gratuit, orientativ: `llama-3.3-70b` ≈ 14 400 cereri/zi; viziune Llama 4 ≈ 1 000/zi; Whisper ≈ 7 200 s audio/oră (≈ 4 chunk-uri de 30 min pe oră), 28 800 s/zi — o noapte întreagă prin Groq Whisper se întinde pe mai multe ore. |
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) (plătit) | Cea mai bună analiză foto/PDF/text (`claude-fable-5-1`, apoi `claude-opus-5-5`, `claude-sonnet-5`). Fără audio. | ≈ 0,10–0,30 $ per masă cu `claude-fable-5-1` (două treceri de ~2,5k tokeni intrare + ~1k ieșire, la 10 $/50 $ per MTok, gândirea mereu pornită; trimitem `output_config.effort: "low"` ca un apel să încapă în bugetele de 45–60 s); ≈ 0,05 $ cu `claude-opus-5-5` / `claude-sonnet-5` (pune `ANTHROPIC_MODEL`). Se folosește doar dacă cheia există. |
 | `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com) (plătit) | Opțional: poze + text (`gpt-5`, apoi `gpt-4.1`). Fără PDF nativ, fără audio. | După plată. |
@@ -35,6 +35,56 @@ Recomandare: pune măcar `GEMINI_API_KEY` (audio) și `GROQ_API_KEY` (a doua opi
 Ca să scoți o cheie: șterge secretul din GitHub și rulează `npx wrangler secret delete GEMINI_API_KEY` din `server/`
 (sau din dash.cloudflare.com → Workers → forja-api → Settings → Variables).
 
+## Sonda Gemini din 28.09 (fapte măsurate cu cheia gratuită a Lanei) și acordajul 4.3
+
+Sonda directă din CI (28.09.2026, 07:19 UTC; `build-apk.yml`, pasul de diagnostic) a trimis „Răspunde doar cu OK.” la patru modele,
+cu patru configurații de gândire, apoi o poză de 593 KB la `gemini-3.8-flash`:
+
+| Model | `{}` (implicit) | `thinkingBudget: 0` | `thinkingLevel: "minimal"` | `thinkingLevel: "low"` |
+|---|---|---|---|---|
+| `gemini-3.8-flash` | 200 în 2,9 s (97 tokeni de gândire) | 503 „high demand” (trecător) | **400** „Thinking level MINIMAL is not supported for this model” | 200 în 5,9 s (0 tokeni de gândire) |
+| `gemini-3.5-flash` | 503 „high demand” | 200 în 11,3 s | 200 în 14,1 s | 503 |
+| `gemini-flash-latest` | 200 în 2,2 s | 200 în 7,2 s | 429 (cotă) | 429 (cotă) |
+| `gemini-3.5-flash-lite` | 200 în 0,47 s | **400** „invalid argument” | 200 în 0,6 s | 200 în 0,4 s |
+
+Cu poza, toate trei încercările pe `gemini-3.8-flash` → **429** „Quota exceeded for metric generate_content_free_tier_requests,
+**limit: 5, model: gemini-3.8-flash**” — limita de 5 cereri e **pe minut** (40 s mai târziu `/v1/meal` a mers pe același model:
+200 în 35 s, pește 180 g, fasole 100 g, ulei 8 g, lămâie 30 g, 339 kcal; `verificat: false`, a doua trecere sărită pentru că primul
+pas a durat peste 25 s). Ce face serverul de acum (`ai-gemini.mjs`):
+
+- **Gândirea pe familie** (`geminiThinking`): 3.x flash (non-lite, inclusiv omni și flash-preview) → `{thinkingLevel: "low"}`;
+  3.x flash-lite → `{thinkingLevel: "minimal"}`; 2.5 flash / flash-lite → `{thinkingBudget: 0}`; pro / preview → `{thinkingLevel: "low"}`;
+  aliasurile `-latest` → fără `thinkingConfig` (acceptă implicitul); 1.x/2.0 → fără. La „low” și la implicit `maxOutputTokens` primește
+  loc în plus (2 048 / 4 096), fiindcă tokenii de gândire intră în el.
+- **400** care pomenește gândirea sau spune „invalid argument” (ori fără mesaj Google) → o reîncercare pe același model fără
+  `thinkingConfig`; dacă merge, modelul e ținut minte 6 h (per izolat, `faraGandire` în diag) și nu mai primește configurația. Un 400
+  despre schemă (sau tot „invalid argument”) → o dată fără `responseSchema`. Un 400 fără legătură (ex. „Unable to process input image”)
+  → direct modelul următor, fără reîncercări care ard cota. „API key not valid” → Gemini e oprit pentru cererea asta (restul modelelor
+  n-ar merge nici ele), următorul furnizor preia.
+- **503** „high demand” / `UNAVAILABLE` → **o reîncercare pe același model după 1,5 s** (doar dacă mai e timp în buget), apoi modelul
+  următor. Fără răcire, fără retragere.
+- **429** cu „limit: N, model: X” (din mesaj sau din `details` → `QuotaFailure`) → X **și** modelul cerut (un alias ca
+  `gemini-flash-latest` poate primi 429 pe cota lui `gemini-3.8-flash`) intră în **răcire 65 s**: memorie per izolat + KV/R2
+  `ai-cooldown/<model>.json` cu `ttl` (celelalte izolate îl văd; `purgeExpired` îl șterge). Modelul **nu** e retras; routerul îl sare
+  fără apel cât e în răcire (`attempts`: „în răcire după 429 (limită 5), încă 42 s (sărit)”), apoi revine. O cotă pe zi
+  (`quotaId …PerDay…`) → răcire 1 h. Un 429 fără „limit/model” → doar modelul următor, fără răcire ghicită.
+- Cererea care pică pentru că toate modelele sunt în răcire sau ocupate (503) primește „Serverul AI e ocupat acum. Mai încearcă peste
+  un minut.”, nu „limită zilnică”.
+- Textul erorilor Google e citit **doar** pentru clasificare: în `attempts`, `detalii` și jurnal ajung numai coduri și note scurte în
+  română („gemini a răspuns cu 429 (cotă 5 pe gemini-3.8-flash; în răcire 65 s)”), niciodată corpul răspunsului sau cheia.
+
+### Preferința pe sarcină (o sortare peste lista descoperită)
+
+Lista rămâne descoperită dinamic; `preferForTask` doar o reordonează stabil, după familie (nimic adăugat, nimic scos, `GEMINI_MODEL`
+din env trece tot primul):
+
+| Sarcina | Ordinea (cu lista cheii Lanei din 28.09) |
+|---|---|
+| `meal`, `sleep-summary`, `sleep-talk-summary` (calitate) | 3.8-flash → 3.7-flash → 3.6-flash → 3.5-flash → flash-latest → 3.5-flash-lite → 3.1-flash-lite → flash-lite-latest → restul în ordinea descoperită (2.5-flash, omni-1.1-flash, 2.5-flash-lite, 3.1-pro-preview, …) |
+| `organize`, `organize-clusters` (curățenie în masă) | 3.5-flash-lite → 3.1-flash-lite → flash-lite-latest (rapid: 0,4–0,6 s în sondă, cotă separată de 3.8) → 3.8-flash → 3.7 → 3.6 → 3.5-flash → flash-latest → restul |
+| audio (`sleep-audio`, `sleep-analyze`, `transcribe`) | (`gemini-3.5-transcribe` la transcriere) → omni-1.1-flash → 2.5-flash-native-audio-latest → ca la mese |
+| orice altă sarcină | ordinea descoperită, neschimbată |
+
 ## Lista dinamică de modele Gemini (de ce 2.5 a răspuns 404)
 
 Diagnosticul din 28.09 (test cap-coadă din CI, poză reală): `gemini-2.5-flash`, `gemini-2.5-pro` și `gemini-2.5-flash-lite` erau încă
@@ -55,9 +105,11 @@ pentru generare pe cheile gratuite, iar cheia Lanei avea deja `gemini-3.x` (3.5 
   trece la următorul; la cererea următoare nu-l mai încearcă.
 - Dacă descoperirea pică (rețea, 5xx, răspuns fără listă): lista statică `["gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest",
   "gemini-3.1-pro-preview"]` (`GEMINI_MODELS`), reîncercată după 10 minute.
-- Un 400 la `generateContent` (model nou care nu acceptă `thinkingBudget: 0`, sau `responseSchema` prea strictă) se reîncearcă o dată
-  fără `thinkingConfig`, apoi o dată fără `responseSchema` (JSON-ul rămâne cerut prin `responseMimeType` și validat de router).
-- `/v1/diag` → `models.gemini`: `sursa` (discovery/static), `descoperitLa`, `ordine`, `audio`, `transcriere`, `retrase`.
+- Un 400 la `generateContent` se tratează după mesajul Google (vezi „Sonda Gemini” mai sus): gândirea / „invalid argument” → o dată
+  fără `thinkingConfig`, schema → o dată fără `responseSchema` (JSON-ul rămâne cerut prin `responseMimeType` și validat de router);
+  alt 400 → modelul următor. 503 → o reîncercare după 1,5 s; 429 → răcire 65 s (nu retragere).
+- `/v1/diag` → `models.gemini`: `sursa` (discovery/static), `descoperitLa`, `ordine` (lista descoperită), `peSarcina` (primele modele
+  pentru `meal`, `organize-clusters`, audio), `audio`, `transcriere`, `retrase`, `racire` (`{model: {secunde, limita}}`), `faraGandire`.
 
 Ordinea așteptată cu cheia Lanei (28.09): 3.8-flash, 3.7-flash, 3.6-flash, 3.5-flash, (2.5-flash → 404, retras), omni-1.1-flash,
 3.5-flash-lite, 3.1-flash-lite, (2.5-flash-lite → retras), 3.1-pro-preview, (2.5-pro → retras), 3-flash-preview, omni-flash-preview,
@@ -102,6 +154,31 @@ răspundeau **404** — retrase de pe Groq. `ai-groq.mjs` descoperă lista la fe
   acești furnizori `rezumat` rămâne `""` și `confidence` „scăzută” (promptul o cere, `sanitizeOrganize` o impune: nimic „ghicit”). Per item, pe lângă v1
   (`suggestion`, `folder`, `reason`, `confidence`): `rezumat`, `categorie`, `dosar` (≤ 24 caractere), `sterge{recomandat, motiv,
   incredere}`, `duplicatDe`. Nimic nu se șterge automat.
+- `POST /v1/organize/clusters` — **inventarul 4.3** (DESIGN-4.3 §3; `ai-clusters.mjs`): numele dosarelor pentru grupurile de poze.
+  Aceeași autentificare ca restul `/v1` (Bearer, token Firebase). Cererea:
+  `{"clusters":[{"id":"c1","count":214,"from":1691834400000,"to":1691949600000,"loc":"Bucegi","hints":["munte"],"thumbs":["/9j/…"]}],"locale":"ro"}`
+  — `id` text unic ≤ 64 caractere; `count` câte poze are grupul; `from`/`to` ms (sau secunde, sau text ISO), luna se socotește în ora
+  României (opțional `tzOffsetMin` la rădăcina corpului); `loc` ≤ 60 caractere, `hints` ≤ 8 × 40 caractere (DATE în prompt, nu
+  instrucțiuni); `thumbs` JPEG (sau PNG/WebP) în base64, cu sau fără prefix `data:`; `locale` doar „ro”. **Limite:** 1–4 grupuri,
+  ≤ 24 miniaturi în total, fiecare ≤ 80 KB în base64 (≈ 60 KB JPEG), corp ≤ 6 MB → altfel 413; JSON stricat, fără grupuri, id lipsă,
+  lung sau duplicat, miniatură care nu e base64/JPEG → 400. Răspunsul 200 (exact aceste chei):
+  `{"clusters":[{"id":"c1","nume":"Munte · Bucegi","tema":"Munte","categorie":"Călătorii","pastrare":"da","motiv":"Trasee și peisaje montane."}],"provider":"gemini","model":"gemini-3.5-flash-lite"}`
+  — un obiect pe fiecare grup cerut, în ordinea cererii; `nume` ≤ 24 caractere („Temă · loc” sau „Temă · lună an”, ex. „Munte · Bucegi”,
+  „Nuntă · aug 2023”, „Mâncare”, „Acte foto”, „Meme”), fără nume de persoane (cerut în prompt), ghilimele, emoji, „!” sau caractere
+  interzise în nume de dosar; `categorie` una dintre Călătorii, Evenimente, Familie, Prieteni, Mâncare, Natură, Animale, Sport, Acte,
+  Capturi, Meme, Muncă, Diverse; `pastrare` „da” | „poate” | „nu”. **„nu” e conservator:** promptul îl permite doar pentru grupuri evident
+  inutile (accidentale, negre, din buzunar, capturi de ecrane de încărcare), iar serverul îl face „poate” când lipsește motivul sau când
+  modelul n-a văzut nicio poză din grup. Un grup sărit de model primește numele de rezervă („Diverse · aug 2023”) și „poate”.
+  Schema e dinamică (id-urile cererii ca enum, câte un obiect pe grup): un răspuns care sare un grup sau inventează un id e reparat o
+  dată. Drumul: sarcina `organize-clusters` → Gemini flash-lite întâi (toate miniaturile, etichetate „[grup c1 · 1/6]”, gândire
+  „minimal”); Groq (dacă are model de viziune) câte o miniatură pe grup; **Workers AI** descrie 1–2 miniaturi pe grup (prima și cea din
+  mijloc, în paralel) cu `llama-3.2-11b-vision`, apoi `llama-3.3-70b` scrie JSON-ul cu `response_format: json_schema`. Timp: 40 s pe
+  furnizor, ≤ 70 s în total. Totul pică → 422 `{error, detalii}` (≤ 600 caractere, fără chei); fără niciun furnizor → 503.
+  Numele sunt doar propuneri: aplicația le poate redenumi, iar „De aruncat” se aplică numai după confirmare.
+- **Jurnalul și reușitele:** la `meal`, `organize` și `organize/clusters` jurnalul primește și o linie la succes, ca să se vadă
+  rezervele: `AI meal ok: gemini/gemini-3.8-flash · 2 încercări · 21 s · înainte: gemini-3.7-flash 429` (furnizor/model, câte modele s-au
+  încercat, durata, codurile celor picate — fără conținut, fără chei); la eșec rămâne linia `AI meal: …` / `AI organize: …` /
+  `AI clusters: …`.
 - `POST /v1/sleep-audio` — clip WAV 5 s: cu Gemini → ascultare integrală (`type: talk|snore|cough|noise|silence`, `transcript`,
   `words`, `speech`, `confidence` 0..1, `intensity` 0..1), cu buget 20 s pe tot furnizorul; dacă pică → Whisper (30 s, fără să mai
   încerce Gemini o dată) + filtrul de halucinații + clasificarea acustică. Un WAV cu antet stricat dă verdict „noise” slab, nu eroare.
@@ -123,7 +200,8 @@ răspundeau **404** — retrase de pe Groq. `ai-groq.mjs` descoperă lista la fe
 - `POST /v1/sleep-summary` — rezumatul de dimineață, 2–4 propoziții calde și oneste din cifre și citate reale (`timeline`
   cu statistici și până la 6 citate); `POST /v1/sleep-talk-summary` — două propoziții din frazele auzite. Fără chei → Llama.
 - `GET /v1/diag` — `providers` (configured / configured but rejected (401) / absent), `keys` (codul HTTP al verificării și când s-a
-  făcut), `models.gemini` (ordinea descoperită), `order`, `mode`, `audio`, `lastUsed` per sarcină, `budget` (consum azi + limita
+  făcut), `models.gemini` (ordinea descoperită, `peSarcina`, `racire`, `faraGandire`), `order`, `mode`, `audio`, `organize`,
+  `organize-clusters: "ok"`, `meal`, `lastUsed` per sarcină, `budget` (consum azi + limita
   cunoscută; la Gemini și per model, în `modele`; la Workers `unitate: "apeluri model"`, limita reală în neuroni nu se măsoară aici),
   modelele Cloudflare care răspund (`?models=0` sare testul lor, ~30 s).
 
@@ -134,25 +212,31 @@ răspundeau **404** — retrase de pe Groq. `ai-groq.mjs` descoperă lista la fe
   dacă e legat) sau R2 (`RECORDS`).
   Se numără fiecare apel de model (la Workers fiecare `env.AI.run`). Pe Workers rulează mai multe izolate în paralel: cache-ul din
   memorie ține cel mult 60 s și incrementarea citește mai întâi valoarea stocată. La limită se sare modelul (Gemini) sau furnizorul;
-  la 429 Gemini trece la modelul următor (cota lui e separată), ceilalți furnizori trec la furnizorul următor.
+  la 429 Gemini pune modelul în răcire 65 s și trece la modelul următor (cota lui e separată), ceilalți furnizori trec la furnizorul următor.
 - JSON strict: extragere fără ghicit, validare cu schema (`ai-schemas.mjs`), o singură reîncercare „repară JSON-ul” per furnizor.
 - Textul venit de la client (note, fraze, nume de fișiere, text din documente) intră în prompt mărginit și marcat ca DATE,
   între « »; cifrele sunt limitate la intervale reale (`bounded`).
 - Timeouts: Gemini 90 s (audio 180 s), Groq/Claude/OpenAI 60 s, Workers 60 s — per model, când ruta nu dă un buget. Când ruta dă
-  `timeoutMs`, el e bugetul pe TOT furnizorul (toate modelele lui): mese 45 s; curățenie 40 s; clip de 5 s 20 s (Gemini) + 30 s (Whisper);
-  chunk 180 s. `totalTimeoutMs` plafonează toată cererea (mese 90 s, curățenie 60 s).
+  `timeoutMs`, el e bugetul pe TOT furnizorul (toate modelele lui): mese 45 s; curățenie 40 s; grupuri (clusters) 40 s; clip de 5 s 20 s
+  (Gemini) + 30 s (Whisper); chunk 180 s. `totalTimeoutMs` plafonează toată cererea (mese 90 s, curățenie 60 s, grupuri 70 s). Pauza de
+  1,5 s dinainte de reîncercarea unui 503 intră în bugetul furnizorului.
 
 ## Cum adaugi un furnizor nou
 
 1. `server/ai-<nume>.mjs` cu obiectul `{ name, timeoutMs, supports:{images, documents, audio, verifyWithImages, transcribe?},
-   available(env), models(env, {images, audio, task}) (poate fi async), retire?(env, model) (la 404), keyCheck?(env) → cod HTTP (pentru
-   diag), dailyLimit | perModelQuota + modelLimits, budgetUnit?, generate(env, {model, system,
+   available(env), models(env, {images, audio, task}) (poate fi async), retire?(env, model) (la 404), cooling?(env, model) → {until, limit}
+   | null (model în răcire, sărit fără apel), keyCheck?(env) → cod HTTP (pentru diag), dailyLimit | perModelQuota + modelLimits,
+   budgetUnit?, generate(env, {model, system,
    prompt, images, documents, audio, schema, maxTokens, timeoutMs, trace}) → text, transcribe?(env, {bytes, mime, language,
    timeoutMs}) → {text, segments, language, model, calls?} }`. `trace` e un obiect al routerului: pune în el `modelCalls` (câte
-   apeluri de model ai făcut) și `visionNotes` (descrierile pozelor, dacă verificatorul tău nu vede imaginea). Erorile se aruncă ca
+   apeluri de model ai făcut), `visionNotes` (descrierile pozelor, dacă verificatorul tău nu vede imaginea) și `visionLabels` (etichetele
+   pozelor descrise cu succes). O rută poate da pozele pe furnizor cu `imagesByProvider: {nume: [...]}` (ex. Workers: 1–2 pe grup). Routerul
+   întoarce și `tries` ([{provider, model, code}], pentru jurnal; `triesSummary(r)` face linia compactă). Erorile se aruncă ca
    `AiError` din `ai-common.mjs` (fără chei în mesaj; `fatal: true` la 429/401/403 sare peste restul modelelor furnizorului — la un
    furnizor cu `perModelQuota` un 429 trece doar la modelul următor).
 2. Îl pui în `ALL_PROVIDERS` din `ai-router.mjs`, la locul lui în ordine, și în `KNOWN_LIMITS`.
 3. Secretul: în tabelul de mai sus, în lista `for K in …` din `.github/workflows/build-apk.yml` (jobul `deploy-api`) și în `env:`.
 4. Teste: `server/ai-router.test.mjs` (ordine, fallback, reparare JSON), `server/ai-gemini.test.mjs` (descoperire, 404 retras, chei,
-   diag, Workers JSON forțat, buget de timp), `server/ai-groq.test.mjs` (euristici pe id, cache, Llama 4 → 404, fără viziune → sărit) — `cd server && node --check worker.js && npm test`.
+   diag, Workers JSON forțat, buget de timp), `server/ai-groq.test.mjs` (euristici pe id, cache, Llama 4 → 404, fără viziune → sărit),
+   `server/ai-gemini-tuning.test.mjs` (gândirea pe familie, 400/503/429 cu mesajele din sondă, răcirea în R2, preferința pe sarcină),
+   `server/ai-clusters.test.mjs` (contractul `/v1/organize/clusters`, limite, schemă, rezerva Workers) — `cd server && node --check worker.js && npm test`.
