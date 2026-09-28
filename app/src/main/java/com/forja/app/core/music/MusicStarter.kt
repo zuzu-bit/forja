@@ -173,9 +173,22 @@ object MusicStarter {
         true
     }
 
+    private var accessAt = 0L
+    private var accessCached = false
+
+    /** Accesul se citește din Setări; în timpul unei încercări instantaneele sunt dese, deci cel mult o dată la 2 s. */
+    private fun access(ctx: Context): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (now - accessAt > 2_000L || accessAt == 0L) {
+            accessCached = Music.hasAccess(ctx)
+            accessAt = now
+        }
+        return accessCached
+    }
+
     private fun buildSnapshot(): Snapshot {
         val ctx = appCtx ?: return Snapshot(access = false)
-        val access = Music.hasAccess(ctx)
+        val access = access(ctx)
         var keyTarget: String? = null
         var outside = false
         keyToken = null
