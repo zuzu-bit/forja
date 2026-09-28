@@ -239,7 +239,7 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
             !fsiOn -> "Bateria e gata. Mai lipsește alarma pe tot ecranul."
             else -> null
         }
-        Gear.Contacts -> null
+        Gear.Contacts -> if (contactsGranted) "Numărul tău îl scrii în Profil → Numărul tău · Prieteni din agendă." else null
         Gear.Contract -> when {
             contractSigned && contractSignedAt > 0 ->
                 "Semnat pe ${signedDate.format(Instant.ofEpochMilli(contractSignedAt).atZone(ZoneId.systemDefault()))} · apasă ca să-l recitești"
