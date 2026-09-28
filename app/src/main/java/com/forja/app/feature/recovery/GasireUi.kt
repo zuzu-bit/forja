@@ -169,14 +169,19 @@ fun GasireSheetContent(ui: FinderUi, probing: Boolean, actions: GasireActions, n
             Column(Modifier.weight(1f)) {
                 Text("Îl cauți de pe site.", style = TitleModule.copy(fontSize = 26.sp, lineHeight = 29.sp))
                 Spacer(Modifier.height(8.dp))
+                // Starea lângă punct (ca în rândul din Profil), dedesubt când a fost văzut și bateria. Pe un singur rând,
+                // la 360 dp procentul rămânea singur pe rândul doi.
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(7.dp).clip(CircleShape).background(tone))
                     Spacer(Modifier.width(7.dp))
-                    Text(
-                        FinderLogic.statusLine(ui.state, ui.lastOkAt, ui.battery, now),
-                        style = monoLabel(9, 0.12f).copy(color = tone, lineHeight = 13.sp),
-                    )
+                    Text(FinderLogic.statusWord(ui.state), style = monoLabel(9, 0.12f).copy(color = tone, lineHeight = 13.sp))
                 }
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    FinderLogic.statusDetail(ui.lastOkAt, ui.battery, now),
+                    style = monoLabel(9, 0.12f).copy(color = TextSecondary, lineHeight = 13.sp),
+                    modifier = Modifier.padding(start = 14.dp),
+                )
             }
             Spacer(Modifier.width(14.dp))
             FinderRadar(tone, 84.dp, live = ui.state == FinderState.Guard)

@@ -176,9 +176,15 @@ object FinderLogic {
         }
     }
 
-    /** Linia mono din foaia Găsire: „ÎN GARDĂ · VĂZUT ACUM 1 MIN · 64%”. */
-    fun statusLine(state: FinderState, lastOkAt: Long, battery: Int?, now: Long): String = buildList {
-        add(state.word.uppercase(java.util.Locale("ro")))
+    /** Linia mono din foaia Găsire, întreagă: „ÎN GARDĂ · VĂZUT ACUM 1 MIN · 64%”. */
+    fun statusLine(state: FinderState, lastOkAt: Long, battery: Int?, now: Long): String =
+        statusWord(state) + " · " + statusDetail(lastOkAt, battery, now)
+
+    /** Primul rând al stării din foaie, lângă punct: „ÎN GARDĂ”. */
+    fun statusWord(state: FinderState): String = state.word.uppercase(java.util.Locale("ro"))
+
+    /** Al doilea rând: „VĂZUT ACUM 1 MIN · 64%”; fără baterie cât nu l-am văzut niciodată. */
+    fun statusDetail(lastOkAt: Long, battery: Int?, now: Long): String = buildList {
         add(seen(lastOkAt, now))
         if (battery != null && battery in 0..100 && lastOkAt > 0) add("$battery%")
     }.joinToString(" · ")

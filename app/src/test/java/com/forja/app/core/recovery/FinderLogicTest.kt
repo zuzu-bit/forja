@@ -168,4 +168,14 @@ class FinderLogicTest {
         // Niciodată văzut: fără baterie (nu știm una reală).
         assertEquals("FĂRĂ LEGĂTURĂ · ÎNCĂ NEVĂZUT", FinderLogic.statusLine(FinderState.NoLink, 0L, 50, now))
     }
+
+    @Test fun sheetStatusSplitsIntoWordAndDetail() {
+        // Foaia pune starea pe primul rând și restul dedesubt, ca pe 360 dp procentul să nu rămână singur.
+        assertEquals("ÎN GARDĂ", FinderLogic.statusWord(FinderState.Guard))
+        assertEquals("FĂRĂ LEGĂTURĂ", FinderLogic.statusWord(FinderState.NoLink))
+        assertEquals("VĂZUT ACUM 1 MIN · 64%", FinderLogic.statusDetail(now - 61_000L, 64, now))
+        assertEquals("VĂZUT ACUM 3 H · 12%", FinderLogic.statusDetail(now - 3 * 3_600_000L, 12, now))
+        assertEquals("ÎNCĂ NEVĂZUT", FinderLogic.statusDetail(0L, 50, now))
+        assertEquals("VĂZUT CHIAR ACUM", FinderLogic.statusDetail(now - 5_000L, null, now))
+    }
 }
