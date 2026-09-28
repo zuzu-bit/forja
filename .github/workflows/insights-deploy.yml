@@ -1,7 +1,9 @@
 name: Deploy FORJA Insights
 on:
+  # Pe ramurile de lucru (claude/**) site-ul se publică doar la cerere (Actions → Run workflow), după ce aplicația și site-ul
+  # au fost verificate împreună; altfel orice push intermediar ajungea direct în producție.
   push:
-    branches: ['main', 'claude/**']
+    branches: ['main']
     paths: ['server/**', 'scripts/**', '!scripts/site-shots/**', '.github/workflows/insights-deploy.yml']
   workflow_dispatch:
 permissions:
