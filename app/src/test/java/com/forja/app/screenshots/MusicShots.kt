@@ -28,6 +28,7 @@ abstract class MusicShotsBase(private val suffix: String) {
     @Test fun failed() = s3c("failed", MusicWaitSamples.failed)
     @Test fun resumeStarting() = s3c("resume_starting", MusicWaitSamples.resumeStarting)
     @Test fun resumeFailed() = s3c("resume_failed", MusicWaitSamples.resumeFailed)
+    @Test fun pausedNeedsTap() = s3c("paused_needs_tap", MusicWaitSamples.pausedNeedsTap)
     @Test fun bookPlaying() = s3c("book_playing", MusicWaitSamples.bookPlaying)
     @Test fun noAccess() = s3c("noaccess", MusicWaitSamples.noAccess)
     @Test fun noAccessPlaying() = s3c("noaccess_playing", MusicWaitSamples.noAccessPlaying)
