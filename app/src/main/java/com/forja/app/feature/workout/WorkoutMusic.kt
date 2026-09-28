@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -199,7 +200,9 @@ fun discUi(
         s is StartState.NeedsTap -> DiscUi(
             DiscPhase.NEEDS_TAP, action = if (s.step.pkg == MusicKind.SPOTIFY) "Deschide Spotify" else "Deschide playerul"
         )
-        s is StartState.Failed -> DiscUi(DiscPhase.FAILED, action = "Deschide playerul")
+        s is StartState.Failed -> DiscUi(
+            DiscPhase.FAILED, action = if (s.open?.pkg == MusicKind.SPOTIFY) "Deschide Spotify" else "Deschide playerul"
+        )
         track != null -> DiscUi(DiscPhase.PAUSED, art, progress, badge, track.title, track.artist)
         else -> DiscUi(DiscPhase.IDLE)
     }
@@ -210,7 +213,7 @@ fun discUi(
 /**
  * `[ disc ]  Muzică   MIX · 12 PIESE ›   (comutator)` — discul și textul deschid foaia (o țintă mare), comutatorul
  * (țintă de 48 dp) pornește / oprește muzica. O atingere pe lângă nu mai oprește muzica pe tăcute.
- * Deasupra lui „Începe sesiunea” (singura acțiune principală).
+ * Stă sus în hub (sub citat, deasupra listei de azi), ca să se vadă de la intrare și pe S23.
  */
 @Composable
 fun WorkoutMusicRow(
@@ -416,15 +419,16 @@ private fun TrackRow(n: Int, item: PlayItem) {
             Text(item.title, style = BodyStrong.copy(fontSize = 14.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(item.artist.uppercase(), style = monoLabel(8, 0.10f).copy(color = TextDim), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Spacer(Modifier.width(8.dp))
-        Text(
-            when (item.tier) {
-                Tier.NEW -> "NOUĂ"
-                Tier.OLD -> "VECHE"
-                Tier.STEADY -> "DES"
-            },
-            style = monoLabel(8, 0.12f).copy(color = if (item.tier == Tier.OLD) Amber.copy(alpha = 0.8f) else TextDim2)
-        )
+        // Doar noile și vechile au semn (ele sunt Noi / Vechi din foaie); piesele constante, umplutura, rămân fără.
+        val tag = when (item.tier) {
+            Tier.NEW -> "NOUĂ"
+            Tier.OLD -> "VECHE"
+            Tier.STEADY -> null
+        }
+        if (tag != null) {
+            Spacer(Modifier.width(8.dp))
+            Text(tag, style = monoLabel(8, 0.12f).copy(color = if (item.tier == Tier.OLD) Amber.copy(alpha = 0.8f) else TextDim2))
+        }
     }
 }
 
@@ -456,8 +460,9 @@ private fun LikedRow(player: String?, spotify: Boolean, cold: Boolean) {
 
 /**
  * Discul muzicii: coperta (se rotește încet cât cântă; fix sub mișcare redusă), inel subțire = progresul piesei,
- * punct olive = lista FORJA, inimă = Melodii apreciate. Pornește: bare + arc care se rotește. Atinge ca să pornești:
- * play cu margine amber care pulsează. Nu a pornit: nota tăiată.
+ * punct olive = lista FORJA, inimă = Melodii apreciate. Pornește: bare gri, fixe (sau coperta stinsă) + arc olive
+ * care se rotește — nu seamănă cu „cântă”. Atinge ca să pornești: play cu margine amber care pulsează. Nu a pornit:
+ * nota tăiată. Mărimea e fixă (requiredSize): într-un rând prea îngust discul nu se turtește într-o pastilă.
  */
 @Composable
 fun MusicDisc(ui: DiscUi, size: Dp, modifier: Modifier = Modifier, dim: Boolean = false, overVideo: Boolean = false) {
@@ -466,11 +471,11 @@ fun MusicDisc(ui: DiscUi, size: Dp, modifier: Modifier = Modifier, dim: Boolean 
     val spin = if (ui.phase == DiscPhase.PLAYING && ui.art != null) inf?.animateFloat(0f, 360f, infiniteRepeatable(tween(14_000, easing = LinearEasing)), label = "discSpin") else null
     val arc = if (ui.phase == DiscPhase.STARTING) inf?.animateFloat(0f, 360f, infiniteRepeatable(tween(1_200, easing = LinearEasing)), label = "discArc") else null
     val pulse = if (ui.phase == DiscPhase.NEEDS_TAP) inf?.animateFloat(0.45f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "discPulse") else null
-    val bars = if (ui.phase == DiscPhase.STARTING || ui.phase == DiscPhase.PLAYING && ui.art == null) {
+    val bars = if (ui.phase == DiscPhase.PLAYING && ui.art == null) {
         inf?.animateFloat(0f, 1f, infiniteRepeatable(tween(800, easing = LinearEasing)), label = "discBars")
     } else null
 
-    Box(modifier.size(size).graphicsLayer { alpha = if (dim) 0.55f else 1f }, contentAlignment = Alignment.Center) {
+    Box(modifier.requiredSize(size).graphicsLayer { alpha = if (dim) 0.55f else 1f }, contentAlignment = Alignment.Center) {
         Box(
             Modifier
                 .fillMaxSize()
@@ -483,9 +488,17 @@ fun MusicDisc(ui: DiscUi, size: Dp, modifier: Modifier = Modifier, dim: Boolean 
             when {
                 art != null && (ui.phase == DiscPhase.PLAYING || ui.phase == DiscPhase.PAUSED || ui.phase == DiscPhase.STARTING) -> Image(
                     art, null, contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().padding(size * 0.08f).clip(CircleShape).graphicsLayer { rotationZ = spin?.value ?: 0f }
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(size * 0.08f)
+                        .clip(CircleShape)
+                        .graphicsLayer {
+                            rotationZ = spin?.value ?: 0f
+                            alpha = if (ui.phase == DiscPhase.STARTING) 0.45f else 1f
+                        }
                 )
-                ui.phase == DiscPhase.STARTING || ui.phase == DiscPhase.PLAYING -> Bars(bars?.value, Modifier.size(size * 0.46f))
+                ui.phase == DiscPhase.STARTING -> Bars(null, Modifier.size(size * 0.46f), dim = true)
+                ui.phase == DiscPhase.PLAYING -> Bars(bars?.value, Modifier.size(size * 0.46f))
                 ui.phase == DiscPhase.FAILED -> Icon(MusicIcons.NoteOff, null, tint = TextDim, modifier = Modifier.size(size * 0.42f))
                 ui.phase == DiscPhase.PAUSED -> Icon(MusicIcons.Note, null, tint = TextSecondary, modifier = Modifier.size(size * 0.42f))
                 else -> Icon(MusicIcons.Play, null, tint = if (ui.phase == DiscPhase.NEEDS_TAP) Amber else TextPrimary, modifier = Modifier.size(size * 0.42f))
@@ -529,10 +542,10 @@ fun MusicDisc(ui: DiscUi, size: Dp, modifier: Modifier = Modifier, dim: Boolean 
     }
 }
 
-/** Trei bare de egalizator (amber / jar / olive); fixe sub mișcare redusă. */
+/** Trei bare de egalizator (amber / jar / olive); fixe sub mișcare redusă. [dim] = pornește încă: gri și fixe. */
 @Composable
-private fun Bars(phase: Float?, modifier: Modifier) {
-    val colors = remember { listOf(Amber, EmberWarm, Accent2) }
+private fun Bars(phase: Float?, modifier: Modifier, dim: Boolean = false) {
+    val colors = remember(dim) { if (dim) List(3) { TextDim } else listOf(Amber, EmberWarm, Accent2) }
     val rest = remember { floatArrayOf(0.55f, 0.9f, 0.4f) }
     Canvas(modifier) {
         val bw = size.width / 5f
@@ -596,7 +609,8 @@ fun VideoMusicDisc(ui: DiscUi, onTap: () -> Unit, onLongPress: () -> Unit, onNex
 }
 
 /**
- * Banda de sub inelul pauzei (mâinile sunt libere): coperta 40 dp, un rând „Titlu · Artist”, ⏮ ⏯ ⏭ de 48 dp.
+ * Banda de sub inelul pauzei (mâinile sunt libere): coperta 40 dp, titlul (un rând) cu artistul sub el (mono mic, ca
+ * în foaie), ⏮ ⏯ ⏭ de 48 dp. Pe un singur rând „Titlu · Artist”, pe 360 dp artistul dispărea cu totul.
  * Cât pornește: „Pornește…”; la o atingere de pornit: „Deschide Spotify”; eșec: „Nu a pornit.” + deschide playerul.
  */
 @Composable
@@ -621,20 +635,26 @@ fun RestMusicStrip(
     ) {
         MusicDisc(ui, 40.dp)
         Spacer(Modifier.width(10.dp))
+        val track = ui.phase == DiscPhase.PLAYING || ui.phase == DiscPhase.PAUSED
         val line = when (ui.phase) {
-            DiscPhase.PLAYING, DiscPhase.PAUSED -> listOfNotNull(ui.title, ui.artist?.takeIf { it.isNotBlank() }).joinToString(" · ").ifEmpty { "Muzica ta" }
+            DiscPhase.PLAYING, DiscPhase.PAUSED -> ui.title?.takeIf { it.isNotBlank() } ?: "Muzica ta"
             DiscPhase.STARTING -> "Pornește…"
             DiscPhase.NEEDS_TAP -> ui.action ?: "Deschide playerul"
             DiscPhase.FAILED -> "Nu a pornit."
             DiscPhase.IDLE -> "Muzica ta"
         }
-        Text(
-            line,
-            style = BodyStrong.copy(fontSize = 14.sp, color = if (ui.phase == DiscPhase.NEEDS_TAP) Amber else TextPrimary),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
+        val artist = ui.artist?.takeIf { track && it.isNotBlank() && ui.title?.isNotBlank() == true }
+        Column(Modifier.weight(1f)) {
+            Text(
+                line,
+                style = BodyStrong.copy(fontSize = 14.sp, color = if (ui.phase == DiscPhase.NEEDS_TAP) Amber else TextPrimary),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (artist != null) {
+                Text(artist.uppercase(), style = monoLabel(8, 0.10f).copy(color = TextDim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
         when (ui.phase) {
             DiscPhase.NEEDS_TAP, DiscPhase.FAILED -> StripButton(MusicIcons.Open, ui.action ?: "Deschide playerul", onOpen)
             DiscPhase.STARTING -> Unit
