@@ -95,6 +95,12 @@ class ExploreTracker(private val app: ForjaApp) {
     @Volatile private var candidateLoaded = false
     @Volatile private var lastAcceptedAt = 0L
 
+    init {
+        // Tracker-ul se creează o dată pe proces, în ForjaApp.onCreate: tot atunci pornește oglinda pentru site
+        // (antrenamente, rație, emailul mutat din profil). Idempotent.
+        com.forja.app.core.data.SiteMirror.start(app)
+    }
+
     fun onLocation(loc: Location, source: String = "") {
         onFix(
             lat = loc.latitude, lng = loc.longitude,
