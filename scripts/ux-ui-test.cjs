@@ -1,539 +1,456 @@
 // Run after npm ci --prefix server: node scripts/ux-ui-test.cjs
 // FORJA_JSDOM may override the package path for an isolated local test runtime.
-// Exercises the shipped frontend against synthetic responses, never a live account.
+// Exercises the shipped 4.4 site (server/insights.html + the concatenated site-*.js.txt) in jsdom against the same synthetic
+// data and endpoint mock as the screenshot harness — never a live account. One section per ability (DESIGN-4.4 §3.1).
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
-const {server, createFixture, installMockFetch, clientSource} = require('./ux-fixture.cjs');
+const {server, clients, createFixture, installMockFetch, clientSource} = require('./ux-fixture.cjs');
 let JSDOM;
 try { ({JSDOM} = require(process.env.FORJA_JSDOM || require.resolve('jsdom', {paths: [server]}))); }
 catch { throw Error('Run npm ci --prefix server, or set FORJA_JSDOM to an installed jsdom package path.'); }
 const html = fs.readFileSync(path.join(server, 'insights.html'), 'utf8');
-const dom = new JSDOM(html, {url: 'https://forja.test', runScripts: 'outside-only', pretendToBeVisual: true});
-const w = dom.window;
-const errors = [];
-w.addEventListener('error', event => errors.push(event.error || event.message));
-w.addEventListener('unhandledrejection', event => errors.push(event.reason));
-w.IntersectionObserver = class {observe() {} unobserve() {} disconnect() {}};
-w.HTMLElement.prototype.scrollIntoView = () => {};
-w.scrollTo = () => {};
-w.HTMLDialogElement.prototype.showModal = function () {this.open = true;};
-w.HTMLDialogElement.prototype.close = function () {this.open = false; this.dispatchEvent(new w.Event('close'));};
-w.HTMLMediaElement.prototype.pause = () => {};
-w.HTMLMediaElement.prototype.load = () => {};
-w.crypto.randomUUID = randomUUID;
-w.URL.createObjectURL = () => 'blob:local-fixture';
-w.URL.revokeObjectURL = () => {};
-w.AbortController = AbortController;
-w.Response = Response;
-w.matchMedia = () => ({matches: false, addEventListener() {}, removeEventListener() {}});
-w.confirm = () => true;
-w.prompt = () => null;
-const mapLayers = [];
-const map = {
-  center: {lat: 44.414, lng: 26.095}, views: [], animations: [],
-  setView(point) {this.center = {lat: point[0], lng: point[1]}; this.views.push(point); return this;},
-  flyTo(point, zoom, options) {this.animations.push(options); return this.setView(point);},
-  fitBounds() {return this;}, getCenter() {return this.center;},
-  invalidateSize() {}, remove() {}, on() {return this;}, zoomControl: {setPosition() {}}
-};
-w.L = {
-  map: () => map, tileLayer: () => ({addTo() {return this;}}),
-  control: {zoom: () => ({addTo() {return this;}})},
-  layerGroup: () => ({items: [], addTo() {mapLayers.push(this); return this;}, clearLayers() {this.items = [];}, remove() {}, removeLayer(layer) {this.items = this.items.filter(item => item !== layer);}}),
-  divIcon: value => value, latLngBounds: points => ({points}),
-  marker: (point, options) => ({point, options, addTo(layer) {layer.items.push(this); return this;}, bindPopup(popup) {this.popup = popup; return this;}, getPopup() {return this.popup;}, setPopupContent(popup) {this.popup = popup; return this;}, setLatLng(point) {this.point = point; return this;}, setIcon(icon) {this.options.icon = icon; return this;}, openPopup() {return this;}, on() {return this;}}),
-  circle: (point, options) => ({point, options, addTo(layer) {layer.items.push(this); return this;}, setLatLng(point) {this.point = point; return this;}, setRadius() {return this;}, setStyle() {return this;}})
-};
-const fixture = createFixture();
-installMockFetch(w, fixture);
-w.eval(clientSource() + '\nwindow.__ux = {page, logout, refresh, refreshCleanup, refreshOrganizerJobs, openOrganizerJobItems, sendOrganizerCommand, approveOrganizerItems, deleteOrganizerJob, organizerV4, refreshFiles, moveVaultFile, vault, refreshSocial, socialChat, expireSocialMarkers, socialUI, refreshRecovery, recoveryUI, refreshPhones, refreshSleepReports, openSleepReport, localTimeInput, phoneWindows, phoneDurations, sleepUI, openVisibility, journeyShared, journeyUI, startJourney, stopJourney, journeyFlush};');
-const $ = id => {const node = w.document.getElementById(id); assert(node, `Missing #${id}`); return node;};
-const tick = () => new Promise(resolve => setTimeout(resolve, 15));
-const checks = [];
-async function check(name, fn) {await fn(); assert.equal(errors.length, 0, errors.join('\n')); checks.push(name);}
-async function submit(id) {$(id).dispatchEvent(new w.Event('submit', {bubbles: true, cancelable: true})); await tick();}
-async function clickText(container, pattern) {
-  const button = [...container.querySelectorAll('button')].find(b => pattern.test(b.textContent));
-  assert(button, `Missing action ${pattern}`); button.click(); await tick(); return button;
+const source = clientSource();
+const SECTIONS = ['azi', 'teren', 'camarazi', 'gasire', 'inventar', 'somn', 'ratie', 'mars', 'muzica', 'paza', 'cont'];
+const tick = (ms = 20) => new Promise(resolve => setTimeout(resolve, ms));
+async function until(fn, label, ms = 3000) { const start = Date.now(); while (Date.now() - start < ms) { if (fn()) return; await tick(10); } throw Error('Timed out: ' + label); }
+
+/** A fresh page: jsdom + stubs + mocked network + the real client. `renderers` records the MapLibre stand-in. */
+function page({hash = '', storage = {}, profile = 'rich', fail = [], visible = true} = {}) {
+  const dom = new JSDOM(html, {url: 'https://forja.test/insights' + (hash ? '#' + hash : ''), runScripts: 'outside-only', pretendToBeVisual: true});
+  const w = dom.window, errors = [], renderers = [];
+  w.addEventListener('error', e => errors.push(e.error || e.message));
+  w.addEventListener('unhandledrejection', e => errors.push(e.reason));
+  w.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
+  w.HTMLElement.prototype.scrollIntoView = () => {};
+  w.scrollTo = () => {};
+  w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  w.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new w.Event('close')); };
+  w.HTMLMediaElement.prototype.pause = () => {};
+  w.HTMLMediaElement.prototype.load = () => {};
+  w.crypto.randomUUID = randomUUID;
+  w.URL.createObjectURL = () => 'blob:local-fixture';
+  w.URL.revokeObjectURL = () => {};
+  w.AbortController = AbortController;
+  w.Response = Response;
+  w.matchMedia = q => ({matches: /min-width: 1024px/.test(q), media: q, addEventListener() {}, removeEventListener() {}});
+  w.confirm = () => { throw Error('native confirm() must not be used'); };
+  w.prompt = () => { throw Error('native prompt() must not be used'); };
+  w.alert = () => { throw Error('native alert() must not be used'); };
+  Object.defineProperty(w.navigator, 'clipboard', {value: {writeText: async text => { w.__copied = text; }}});
+  let visibility = visible ? 'visible' : 'hidden';
+  Object.defineProperty(w.document, 'visibilityState', {configurable: true, get: () => visibility});
+  Object.defineProperty(w.document, 'hidden', {configurable: true, get: () => visibility !== 'visible'});
+  // MapLibre stand-in: the page never loads the vendor script when these globals exist.
+  w.maplibregl = {};
+  w.ForjaMapRenderer = {create(container, opts) {
+    const r = {container, opts, data: [], modes: [], fits: 0, focused: [], ready: false, threeD: false, layers: {}, setData(d) { this.data.push(d); }, setMode(m) { this.modes.push(m); },
+      set3D(on) { this.threeD = on; return true; }, setLayers(l) { Object.assign(this.layers, l); }, setTheme(t) { this.theme = t; }, fitOwn() { this.fits++; return true; }, fitDevices() { this.deviceFits = (this.deviceFits || 0) + 1; return true; },
+      focus(p) { this.focused.push(p); return true; }, fitLine() { return true; }, resize() {}, destroy() { this.destroyed = true; }};
+    renderers.push(r);
+    setTimeout(() => { r.ready = true; opts.onReady(r); }, 5);
+    return r;
+  }};
+  for (const [k, v] of Object.entries(storage)) w.localStorage.setItem(k, v);
+  const fixture = createFixture(profile, Date.now(), {fail});
+  installMockFetch(w, fixture);
+  w.eval(source + '\nwindow.__ux = {Site, Auth, Poll, MapHost, Circle, Explore, Gasire, Teren, Inventar, Somn, Cont, Camarazi, Azi, signOut, route, parseHash, fmt, plural, fill};');
+  const $ = id => { const n = w.document.getElementById(id); assert(n, `Missing #${id}`); return n; };
+  const call = (suffix, method = 'GET') => fixture.calls.findLast(c => c.route.endsWith(suffix) && c.method === method);
+  return {dom, w, $, fixture, errors, renderers, call, ux: w.__ux, setVisible(v) { visibility = v ? 'visible' : 'hidden'; w.document.dispatchEvent(new w.Event('visibilitychange')); }};
 }
-const callFor = (suffix, method) => fixture.calls.findLast(c => c.route.endsWith(suffix) && c.method === method);
+async function login(p, password = 'local-demo-only') {
+  p.$('login-email').value = 'lana@example.test'; p.$('login-password').value = password;
+  p.$('login-form').dispatchEvent(new p.w.Event('submit', {bubbles: true, cancelable: true}));
+  await tick(40);
+}
+async function open(p, hash) { p.w.location.hash = '#' + hash; await tick(40); }
+const visibleText = p => p.w.document.body.textContent;
+const checks = [];
+async function check(name, fn) { await fn(); checks.push(name); }
+function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
 
 (async () => {
-  await check('unique IDs and linked form labels', () => {
-    const ids = [...w.document.querySelectorAll('[id]')].map(n => n.id);
+  await check('one page shell: unique ids, linked labels, viewport, every $() reference exists', () => {
+    const p = page();
+    const ids = [...p.w.document.querySelectorAll('[id]')].map(n => n.id);
     assert.equal(ids.length, new Set(ids).size, 'Duplicate HTML IDs');
-    for (const label of w.document.querySelectorAll('label[for]')) assert(w.document.getElementById(label.htmlFor), `Broken label for ${label.htmlFor}`);
-    assert(w.document.querySelector('meta[name="viewport"]'));
-    const generatedIds = new Set([...clientSource().matchAll(/\.id\s*=\s*['"]([^'"]+)['"]/g)].map(m => m[1]));
-    const references = new Set([...clientSource().matchAll(/\$\(['"]([^'"]+)['"]\)/g)].map(m => m[1]));
-    for (const id of references) assert(w.document.getElementById(id) || generatedIds.has(id), `Unbound DOM reference #${id}`);
+    for (const label of p.w.document.querySelectorAll('label[for]')) assert(p.w.document.getElementById(label.htmlFor), `Broken label for ${label.htmlFor}`);
+    assert(p.w.document.querySelector('meta[name="viewport"][content*="viewport-fit=cover"]'));
+    const generated = new Set([...source.matchAll(/\bid: ['"]([^'"]+)['"]/g)].map(m => m[1]));
+    for (const [, id] of source.matchAll(/\$\(['"]([^'"]+)['"]\)/g)) assert(p.w.document.getElementById(id) || generated.has(id), `Unbound DOM reference #${id}`);
+    for (const id of SECTIONS) assert(p.w.document.getElementById('s-' + id), 'section ' + id);
+    clean(p);
   });
-  await check('privacy is accessible before login and returns to login', async () => {
-    w.location.hash = '#privacy-location'; await tick();
-    assert(!$('privacy').hidden); assert($('privacy-location').open);
-    assert($('app').hidden); assert($('login').hidden);
-    $('privacy-back').click(); await tick(); assert($('privacy').hidden); assert(!$('login').hidden);
+
+  await check('the served script list, the harness and the deploy check agree; Leaflet and map-frame are gone', () => {
+    const staticSrc = fs.readFileSync(path.join(server, 'site-static.mjs'), 'utf8');
+    const listed = JSON.parse(/CLIENT_FILES = (\[[^\]]+\])/.exec(staticSrc)[1].replace(/'/g, '"'));
+    assert.deepEqual(listed, clients);
+    const verify = fs.readFileSync(path.join(server, 'verify-live.mjs'), 'utf8');
+    assert.deepEqual(JSON.parse(/const scripts = (\[[^\]]+\])/.exec(verify)[1].replace(/'/g, '"')), clients);
+    const worker = fs.readFileSync(path.join(server, 'insights-worker.mjs'), 'utf8');
+    for (const gone of ['leaflet', 'map-frame', 'insights-client.js.txt', 'journey-client', 'organizer-client']) { assert(!worker.includes(gone), gone); assert(!staticSrc.includes(gone), gone); }
+    for (const f of ['map-frame.html', 'map-frame-client.js.txt', 'vendor/leaflet-1.9.4.js.txt', 'insights-client.js.txt', 'social-client.js.txt']) assert(!fs.existsSync(path.join(server, f)), f);
+    const csp = /PAGE_CSP = "([^"]+)"/.exec(staticSrc)[1];
+    assert.match(csp, /font-src 'self'/); assert.match(csp, /script-src 'self';/); assert.doesNotMatch(csp, /unsafe-eval|openstreetmap|frame-src/);
+    assert.match(csp, /connect-src 'self' https:\/\/identitytoolkit\.googleapis\.com https:\/\/securetoken\.googleapis\.com https:\/\/tiles\.openfreemap\.org;/);
+    assert(!/<script(?![^>]*\bsrc=)[^>]*>/.test(html), 'no inline script');
   });
-  await check('real login flow uses mocked Firebase response', async () => {
-    assert($('app').hidden);
-    $('email').value = 'alex@example.test'; $('password').value = 'local-demo-only';
-    await submit('login-form');
-    assert(!$('app').hidden); assert($('login').hidden); assert.equal($('password').value, '');
-    assert.equal($('stats').children.length, 4);
-    assert(fixture.calls.some(c => c.url.includes('signInWithPassword')));
-    assert(fixture.calls.filter(c => c.route.startsWith('/v2/') || c.route.startsWith('/insights/api/')).every(c => c.headers.Authorization === 'Bearer local-demo-token'));
+
+  await check('retired surfaces are not on the page: social graph, organizer, cleanup, Campanii, web mic, Pentru tine, browser journey', () => {
+    const everything = html + source;
+    for (const gone of ['/v2/social/chat', '/v2/social/group', '/v2/social/partner', '/v2/social/visibility', '/v2/social/journey', '/v2/organizer', '/v2/cleanup', '/insights/api/campaign', '/insights/api/phones', '/v2/sleep/', '/insights/api/recommendations', '/insights/api/state', '/insights/map-frame', 'Campanii', 'Pentru tine', 'Organizează pe telefon', 'Curățenie automată', 'Cine mă vede', 'Explorează'])
+      assert(!everything.includes(gone), 'still present: ' + gone);
   });
-  await check('every existing feature remains reachable by navigation', async () => {
-    for (const name of ['overview', 'data', 'ai', 'content', 'control', 'files', 'social']) {
-      const button = w.document.querySelector(`[data-page="${name}"]`); assert(button, `Missing ${name} nav`);
-      button.click(); await tick();
-      assert(!$('page-' + name).hidden, `Failed opening ${name}`);
-      for (const other of ['overview','data','ai','content','control','files','social'].filter(p => p !== name)) assert($('page-' + other).hidden, `Page ${other} leaked into ${name}`);
+
+  await check('login screen: voice, reset link, no remembered password; wrong password is a Romanian message', async () => {
+    const p = page();
+    await tick(20);
+    assert(!p.$('login').hidden); assert(p.$('app').hidden);
+    assert.match(p.$('login-submit').textContent, /^Intră$/);
+    assert.equal(p.$('login-forgot').textContent, 'Ai uitat parola?');
+    await login(p, 'gresit');
+    assert(!p.$('login').hidden);
+    assert.equal(p.$('login-message').textContent, 'Email sau parolă greșite.');
+    assert.equal(p.w.localStorage.getItem('forja.auth.v1'), null);
+    clean(p);
+  });
+
+  await check('“Ai uitat parola?” sends the Firebase reset email for the typed address', async () => {
+    const p = page();
+    await tick(20);
+    p.$('login-forgot').click(); await tick(20);
+    assert.match(p.$('login-message').textContent, /adresa de email/);
+    p.$('login-email').value = 'lana@example.test';
+    p.$('login-forgot').click(); await tick(40);
+    const c = p.fixture.calls.find(x => x.url.includes('accounts:sendOobCode'));
+    assert(c); assert.deepEqual(JSON.parse(c.body), {requestType: 'PASSWORD_RESET', email: 'lana@example.test'});
+    assert.match(p.$('login-message').textContent, /Verifică emailul/);
+    clean(p);
+  });
+
+  await check('login persists only the refresh token under forja.auth.v1 and every API call carries the Bearer token', async () => {
+    const p = page();
+    await tick(20); await login(p);
+    assert(!p.$('app').hidden); assert.equal(p.$('login-password').value, '');
+    const saved = JSON.parse(p.w.localStorage.getItem('forja.auth.v1'));
+    assert.equal(saved.refresh, 'local-harness-refresh'); assert.equal(saved.v, 1);
+    assert(!('token' in saved) && !JSON.stringify(saved).includes('eyJ'), 'the ID token stays in memory');
+    await until(() => p.call('/insights/api/azi'), 'azi');
+    const apiCalls = p.fixture.calls.filter(c => c.route.startsWith('/v2/') || c.route.startsWith('/insights/api/'));
+    assert(apiCalls.length && apiCalls.every(c => /^Bearer [\w-]+\.[\w-]+\.[\w-]+$/.test(c.headers.Authorization)));
+    clean(p);
+  });
+
+  await check('a deep link survives the login: /insights#gasire → login → Găsire', async () => {
+    const p = page({hash: 'gasire'});
+    await tick(20);
+    assert(!p.$('login-target').hidden); assert.match(p.$('login-target').textContent, /Găsire/);
+    await login(p);
+    assert.equal(p.w.location.hash, '#gasire');
+    assert(!p.$('s-gasire').hidden); assert(p.$('s-azi').hidden);
+    assert.equal(p.w.document.title, 'FORJA · Găsire');
+    await until(() => p.$('gasire-panel').querySelector('.device'), 'device card');
+    clean(p);
+  });
+
+  await check('a saved session opens straight into the linked section; the detail after “/” is decoded (Uri.encode)', async () => {
+    const p = page({hash: 'inventar/inv-20260925-docs', storage: {'forja.auth.v1': JSON.stringify({v: 1, refresh: 'local-harness-refresh', uid: 'demo-owner', email: 'lana@example.test'})}});
+    await until(() => !p.$('app').hidden, 'app');
+    assert(p.$('login').hidden);
+    assert(p.fixture.calls.some(c => c.url.includes('securetoken.googleapis.com')));
+    assert(!p.fixture.calls.some(c => c.url.includes('signInWithPassword')));
+    await until(() => /Download\/Organizate/.test(p.$('inventar-runs').textContent), 'run detail');
+    assert.match(p.$('inventar-runs').textContent, /Facturi/);
+    assert.deepEqual({...p.ux.parseHash('#teren/44.43550%2C26.10160')}, {id: 'teren', detail: '44.43550,26.10160'});
+    clean(p);
+  });
+
+  await check('a revoked saved session falls back to the login with the link kept and the key removed', async () => {
+    const p = page({hash: 'somn', storage: {'forja.auth.v1': JSON.stringify({v: 1, refresh: 'revoked-refresh'})}});
+    await until(() => !p.$('login').hidden, 'login');
+    assert.equal(p.w.localStorage.getItem('forja.auth.v1'), null);
+    assert.match(p.$('login-message').textContent, /Sesiunea a expirat/);
+    assert.equal(p.w.location.hash, '#somn');
+    clean(p);
+  });
+
+  await check('navigation: 11 sections by hash, sidebar groups, phone bar Azi · Teren · Găsire · Mai mult, unknown hash → #azi', async () => {
+    const p = page();
+    await tick(20); await login(p);
+    const groups = [...p.w.document.querySelectorAll('#rail-nav .nav-label')].map(n => n.textContent);
+    assert.deepEqual(groups, ['ZIUA', 'LUMEA', 'CORPUL', 'TELEFONUL']);
+    assert.deepEqual([...p.w.document.querySelectorAll('#tabbar-items .tab-item')].map(n => n.textContent.trim()), ['Azi', 'Teren', 'Găsire', 'Mai mult']);
+    assert.deepEqual([...p.w.document.querySelectorAll('#more-grid a')].map(a => a.getAttribute('href')), ['#camarazi', '#somn', '#ratie', '#mars', '#inventar', '#muzica', '#paza', '#cont'], 'the sheet follows the sidebar groups');
+    for (const id of SECTIONS) {
+      await open(p, id);
+      for (const other of SECTIONS) assert.equal(p.$('s-' + other).hidden, other !== id, `${other} while on ${id}`);
+      assert(p.$('s-' + id).querySelector('.stamp'), 'stamp on ' + id);
+      assert(p.$('s-' + id).querySelector('.infodot'), '“i” on ' + id);
+      assert(p.$('chip-' + id), 'connection chip on ' + id);
+      assert.equal(p.w.document.querySelector(`#rail-nav [aria-current="page"], #rail-cont [aria-current="page"]`)?.dataset.nav, id);
     }
-    assert.equal($('vault-grid').children.length, 2);
-    assert($('organizer-requests').querySelector('form'));
-    assert($('cleanup-devices').querySelector('form'));
-    assert($('phone-list').children.length > 0);
+    await open(p, 'privacy');
+    assert.equal(p.w.location.hash, '#azi'); assert(!p.$('s-azi').hidden);
+    p.$('tab-more').click(); assert(!p.$('more-sheet').hidden);
+    p.w.document.dispatchEvent(new p.w.KeyboardEvent('keydown', {key: 'Escape'})); assert(p.$('more-sheet').hidden);
+    clean(p);
   });
-  await check('privacy topic preserves authenticated navigation', async () => {
-    w.__ux.page('files'); await tick();
-    w.location.hash = '#privacy-files'; await tick();
-    assert(!$('privacy').hidden); assert($('privacy-files').open); assert($('app').hidden);
-    $('privacy-back').click(); await tick();
-    assert($('privacy').hidden); assert(!$('app').hidden); assert(!$('page-files').hidden);
-    $('open-organizer').click(); assert($('organizer-settings').open);
+
+  await check('Azi: today, last night, one Legături tile per section, the mascot and the day quote', async () => {
+    const p = page();
+    await tick(20); await login(p);
+    await until(() => p.$('body-azi').querySelector('.links'), 'azi');
+    assert.equal(p.$('body-azi').querySelectorAll('.link-tile').length, 10);
+    assert.match(p.$('body-azi').textContent, /1 540/);
+    assert.match(p.$('line-azi').textContent, /^Raport de (dimineață|amiază|seară), Lana\.$/);
+    assert(p.$('body-azi').querySelector('.mascot .bubble')); assert(p.$('body-azi').querySelector('.quote blockquote'));
+    assert.equal(p.$('chip-azi').textContent, '9 DIN 10 LA POST');
+    assert.equal(p.w.document.querySelector('[data-link-dot="paza"]').className, 'dot stale');
+    clean(p);
   });
-  await check('mobile overflow menu closes after selection and Escape', async () => {
-    const matchMedia = w.matchMedia;
-    w.matchMedia = query => ({matches: query.includes('max-width'), addEventListener() {}, removeEventListener() {}});
-    $('nav-more').open = true; w.document.querySelector('[data-page="control"]').click(); await tick();
-    assert(!$('nav-more').open); assert(!$('page-control').hidden);
-    $('nav-more').open = true; w.document.dispatchEvent(new w.KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
-    assert(!$('nav-more').open); assert(w.document.querySelector('#nav-more a[href="#privacy"]'));
-    w.matchMedia = matchMedia;
+
+  await check('Teren: MapLibre host, explore pages + since, first fit on her own data, poll only while visible', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'teren');
+    await until(() => p.renderers[0]?.ready && p.renderers[0].fits > 0, 'map + fit');
+    const r = p.renderers[0];
+    assert.equal(p.renderers.length, 1);
+    assert(p.fixture.calls.some(c => c.route === '/v2/social/explore/state' && c.search.includes('cursor=')), 'paged explore');
+    const last = r.data.at(-1);
+    assert.equal(last.cells.features.length, p.fixture.data.explore.features.length);
+    assert.equal(last.places.length, 5); assert.equal(last.friends.length, 5); assert.equal(last.routes.length, 6); assert.equal(last.devices.length, 1);
+    assert(r.modes.includes('teren'));
+    assert(p.ux.Poll.jobs.has('teren:cerc') && p.ux.Poll.jobs.has('teren:explore'));
+    const fits = r.fits;
+    await p.ux.Explore.load();
+    assert.match(p.fixture.calls.findLast(c => c.route === '/v2/social/explore/state').search, /^\?since=\d+$/);
+    await p.ux.Circle.load(); await tick(20);
+    assert.equal(r.fits, fits, 'polls update data without moving the camera again');
+    const before = p.fixture.calls.length;
+    p.setVisible(false); p.ux.Poll.wake(); p.ux.Poll.jobs.get('teren:cerc').kick(); await tick(30);
+    assert.equal(p.fixture.calls.length, before, 'a hidden tab does not poll');
+    p.setVisible(true);
+    await open(p, 'azi');
+    assert(!p.ux.Poll.jobs.has('teren:cerc') && !p.ux.Poll.jobs.has('teren:explore'), 'leaving Teren stops its polls');
+    clean(p);
   });
-  await check('social tabs support keyboard focus and progressive disclosure', async () => {
-    w.__ux.page('social'); await tick();
-    $('social-people-tab').focus(); $('social-people-tab').dispatchEvent(new w.KeyboardEvent('keydown', {key:'ArrowRight', bubbles:true}));
-    assert.equal(w.document.activeElement, $('social-plans-tab')); assert(!$('social-tab-plans').hidden); assert($('social-tab-people').hidden);
-    assert.equal($('social-plans-tab').getAttribute('aria-selected'), 'true');
-    const plan = $('social-tab-plans').querySelector('[data-map-selection]'); plan.open = true; await tick();
-    assert(w.document.querySelector('.social-map-wrap').classList.contains('is-selecting'));
-    $('social-plans-tab').dispatchEvent(new w.KeyboardEvent('keydown', {key:'Home', bubbles:true}));
-    assert.equal(w.document.activeElement, $('social-people-tab')); assert(!w.document.querySelector('.social-map-wrap').classList.contains('is-selecting'));
-    $('social-add-friend').click(); assert($('social-invite-details').open); assert.equal(w.document.activeElement, $('social-invite'));
+
+  await check('Teren: a place is edited in the panel (name, stars, note) through PATCH explore/places', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'teren');
+    await until(() => p.$('teren-panel').querySelector('.tabs'), 'panel');
+    p.$('teren-tab-locuri').click();
+    const row = p.$('teren-panel').querySelector('.place-row'); assert(row); row.click(); await tick(20);
+    const name = p.$('place-name'); assert.equal(name.value, 'Herăstrău · debarcader');
+    name.value = 'Debarcaderul';
+    p.$('teren-panel').querySelectorAll('.stars .star')[2].click();
+    p.$('place-note').value = 'Joi, 7:00.';
+    [...p.$('teren-panel').querySelectorAll('button')].find(b => b.textContent === 'Salvează').click();
+    await tick(40);
+    const c = p.call('/v2/social/explore/places/p1', 'PATCH');
+    assert.deepEqual(JSON.parse(c.body), {name: 'Debarcaderul', stars: 3, note: 'Joi, 7:00.'});
+    assert.match(p.$('toast').textContent, /Salvat/);
+    clean(p);
   });
-  await check('journal and audio tabs preserve controls', async () => {
-    w.__ux.page('data');
-    for (const name of ['journals', 'audio', 'sessions']) {
-      w.document.querySelector(`[data-tab="${name}"]`).click(); assert(!$(name).hidden);
+
+  await check('Teren deep link #teren/<lat>,<lng> drops a pin and focuses once', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'teren/44.43550,26.10160');
+    await until(() => p.renderers[0]?.focused.length, 'focus');
+    const r = p.renderers[0];
+    assert.deepEqual({...r.focused[0]}, {lat: 44.4355, lng: 26.1016});
+    assert.deepEqual({...r.data.at(-1).pin}, {lat: 44.4355, lng: 26.1016});
+    await p.ux.Circle.load(); await tick(20);
+    assert.equal(r.focused.length, 1, 'later polls do not pull the camera back');
+    clean(p);
+  });
+
+  await check('Camarazi: the app friends, family, ghost hides position and song, invite code, Din agendă toggle', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'camarazi');
+    await until(() => p.$('camarazi-list').querySelectorAll('.friend').length, 'friends');
+    const cards = [...p.$('camarazi-list').querySelectorAll('.friend')];
+    assert.equal(cards.length, 6, '2 family + 4 friends (Radu is family and friend: shown once)');
+    const ghost = cards.find(c => /Ioana/.test(c.textContent));
+    assert.equal(ghost.tagName, 'DIV'); assert.match(ghost.textContent, /mod fantomă/); assert(!ghost.querySelector('.friend-music'));
+    const ana = cards.find(c => /Ana Ionescu/.test(c.textContent));
+    assert.equal(ana.getAttribute('href'), '#teren/44.44620,26.09850'); assert.match(ana.textContent, /Fetele care ard/);
+    assert.equal(p.w.document.querySelector('.invite-code').textContent, 'K7Q2XM');
+    [...p.$('camarazi-side').querySelectorAll('button')].find(b => /Copiază/.test(b.textContent)).click(); await tick(20);
+    assert.equal(p.w.__copied, 'K7Q2XM');
+    await until(() => !p.$('camarazi-side').querySelector('.switch').disabled, 'discovery');
+    const toggle = p.$('camarazi-side').querySelector('.switch'); assert.equal(toggle.checked, true);
+    toggle.click(); await tick(40);
+    assert(p.call('/v2/social/contacts/discovery', 'DELETE'));
+    const refreshes = p.fixture.calls.filter(c => c.url.includes('securetoken')).length;
+    p.$('camarazi-side').querySelector('.switch').click(); await tick(60);
+    assert.deepEqual(JSON.parse(p.call('/v2/social/contacts/discovery', 'POST').body), {consent: true});
+    assert(p.fixture.calls.filter(c => c.url.includes('securetoken')).length > refreshes, 'a fresh token before binding the number');
+    clean(p);
+  });
+
+  await check('Găsire v2: Sună 60 s, Urmărește 10 min, +10, Oprește keeps the last point, rename, Scoate telefonul', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'gasire');
+    await until(() => p.$('gasire-panel').querySelector('.device'), 'device');
+    const btn = re => [...p.$('gasire-panel').querySelectorAll('button')].find(b => re.test(b.textContent));
+    assert.match(p.$('gasire-panel').textContent, /ÎN GARDĂ/); assert.match(p.$('gasire-panel').textContent, /±12 m/);
+    btn(/^Sună$/).click(); await tick(60);
+    const ring = JSON.parse(p.call('/v2/recovery/devices/' + p.fixture.data.devices[0].id + '/command', 'POST').body);
+    assert.equal(ring.kind, 'ring'); assert.equal(ring.seconds, 60); assert.match(ring.id, /^[0-9a-f-]{36}$/);
+    assert.match(p.$('gasire-panel').textContent, /SUNĂ/);
+    assert.equal(p.ux.Poll.jobs.get('gasire:devices').ms, 5000, 'fast poll while a command is active');
+    btn(/Oprește/).click(); await tick(60);
+    assert.equal(p.call('/command', 'DELETE').search, '?id=' + ring.id);
+    assert.match(p.$('gasire-panel').textContent, /±12 m/, 'the last position stays');
+    btn(/Urmărește 10 min/).click(); await tick(60);
+    const locate = JSON.parse(p.call('/command', 'POST').body); assert.equal(locate.kind, 'locate'); assert.equal(locate.minutes, 10);
+    btn(/\+10 min/).click(); await tick(60);
+    assert.deepEqual(JSON.parse(p.call('/extend', 'POST').body), {command: locate.id, minutes: 10});
+    p.$('gasire-panel').querySelector('.device-head .icon-btn').click(); await tick(20);
+    [...p.$('sheet-body').querySelectorAll('button')].find(b => /Redenumește/.test(b.textContent)).click(); await tick(30);
+    p.$('device-name').value = 'Telefonul Lanei';
+    p.$('sheet-body').querySelector('form').dispatchEvent(new p.w.Event('submit', {bubbles: true, cancelable: true})); await tick(60);
+    assert.deepEqual(JSON.parse(p.call('/v2/recovery/devices/' + p.fixture.data.devices[0].id, 'PATCH').body), {name: 'Telefonul Lanei'});
+    p.$('gasire-panel').querySelector('.device-head .icon-btn').click(); await tick(20);
+    [...p.$('sheet-body').querySelectorAll('button')].find(b => /Scoate telefonul/.test(b.textContent)).click(); await tick(30);
+    [...p.$('sheet-body').querySelectorAll('button')].find(b => b.textContent === 'Scoate telefonul').click(); await tick(60);
+    assert(p.call('/grant', 'DELETE'));
+    await until(() => /Semnează contractul în FORJA\. Telefonul apare aici singur\./.test(p.$('gasire-panel').textContent), 'empty state');
+    clean(p);
+  });
+
+  await check('Inventar: last run with folders, De aruncat, destination; older runs; gallery copies with preview and delete', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'inventar');
+    await until(() => p.$('inventar-runs').querySelector('.run-card') && p.$('inventar-vault').querySelector('.thumb'), 'inventar');
+    const card = p.$('inventar-runs').querySelector('.run-card');
+    assert.equal(card.querySelectorAll('.folder:not(.trash)').length, 8, 'top 8 folders on the overview');
+    assert.match(card.textContent, /De aruncat/); assert.match(card.textContent, /Pictures\/FORJA/); assert.match(card.textContent, /3 fișiere nu s-au mutat/);
+    assert.equal(p.$('inventar-runs').querySelectorAll('.run-row').length, 2);
+    assert.equal(p.$('inventar-vault').querySelectorAll('.thumb').length, 10);
+    assert(!/null|undefined/.test(p.$('inventar-vault').textContent));
+    p.$('inventar-vault').querySelector('.thumb').click(); await tick(60);
+    assert(p.$('preview-dialog').open);
+    [...p.$('preview-actions').querySelectorAll('button')].find(b => /Șterge copia/.test(b.textContent)).click(); await tick(30);
+    [...p.$('sheet-body').querySelectorAll('button')].find(b => b.textContent === 'Șterge copia').click(); await tick(60);
+    assert(p.fixture.calls.some(c => c.method === 'DELETE' && /^\/v2\/files\/[0-9a-f-]+$/.test(c.route)), 'DELETE /v2/files/<id>');
+    assert.equal(p.$('inventar-vault').querySelectorAll('.thumb').length, 9);
+    clean(p);
+  });
+
+  await check('Somn: 14 nights, chart, night timeline with playable moments from the chunk', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'somn');
+    await until(() => p.$('body-somn').querySelectorAll('.night-row').length, 'nights');
+    assert.equal(p.$('body-somn').querySelectorAll('.night-row').length, 14);
+    assert(p.w.document.body.classList.contains('night'), 'night palette');
+    await open(p, 'somn/s31');
+    await until(() => p.$('body-somn').querySelector('.events'), 'timeline');
+    assert.equal(p.$('body-somn').querySelectorAll('.event').length, 7);
+    assert.match(p.$('body-somn').textContent, /Nu, lasă, mâine dimineață/);
+    assert.match(p.$('body-somn').textContent, /ANALIZĂ CU MODEL/);
+    p.$('body-somn').querySelector('.play-btn').click(); await tick(40);
+    assert(p.call('/insights/api/somn/s31/chunk/0'));
+    clean(p);
+  });
+
+  await check('Rație, Marș, Muzică, Pază render their contract data with honest labels', async () => {
+    const p = page();
+    await tick(20); await login(p);
+    await open(p, 'ratie'); await until(() => p.$('body-ratie').querySelector('.meal'), 'meals');
+    assert.equal(p.$('body-ratie').querySelectorAll('.meal').length, 4);
+    for (const label of ['ESTIMAT', 'EXACT · COD DE BARE', 'MANUAL']) assert(p.$('body-ratie').textContent.includes(label), label);
+    assert.match(p.$('body-ratie').textContent, /Mai ai 560 kcal/);
+    await open(p, 'mars'); await until(() => p.$('body-mars').querySelector('.act'), 'mars');
+    assert.equal(p.$('body-mars').querySelectorAll('.act').length, 7); assert.equal(p.$('body-mars').querySelectorAll('.work').length, 3);
+    assert(p.$('body-mars').querySelector('.route-sketch path'), 'mini route');
+    await open(p, 'muzica'); await until(() => p.$('body-muzica').querySelector('.top-row'), 'muzica');
+    assert.equal(p.$('body-muzica').querySelectorAll('.top-row').length, 10); assert.match(p.$('body-muzica').textContent, /Vama Veche/);
+    assert(p.ux.Poll.jobs.has('muzica:data'));
+    await open(p, 'paza'); await until(() => p.$('body-paza').querySelector('.app-row'), 'paza');
+    assert.equal(p.$('body-paza').querySelectorAll('.app-row').length, 7);
+    clean(p);
+  });
+
+  await check('Cont: contract v3, ten pipes with “ultima dată”, intake pause with revision, privacy, Ieși', async () => {
+    const p = page();
+    await tick(20); await login(p); await open(p, 'cont');
+    await until(() => p.$('body-cont').querySelector('.pipe'), 'cont');
+    assert.equal(p.$('body-cont').querySelectorAll('.pipe').length, 10);
+    assert.equal(p.$('chip-cont').textContent, 'CONTRACT v3');
+    assert(!/\.\./.test(p.$('body-cont').textContent), 'no double full stop');
+    p.$('body-cont').querySelector('.intake .switch').click(); await tick(60);
+    assert.deepEqual(JSON.parse(p.call('/insights/api/intake', 'POST').body), {accepting: false, revision: 4});
+    assert.match(p.$('cont-intake-sub').textContent, /În pauză/);
+    p.$('cont-logout').click(); await tick(20);
+    assert(!p.$('login').hidden); assert(p.$('app').hidden);
+    assert.equal(p.w.localStorage.getItem('forja.auth.v1'), null);
+    assert.equal(p.ux.Poll.jobs.size, 0);
+    assert.equal(p.ux.Auth.session, null);
+    for (const id of SECTIONS) assert.equal(p.$('s-' + id).childElementCount, 0, id + ' emptied');
+    clean(p);
+  });
+
+  await check('empty account: every section shows an honest empty state, never an error', async () => {
+    const p = page({profile: 'empty'});
+    await tick(20); await login(p);
+    const expect = {azi: /FĂRĂ SEMNAL|0 DIN 10/, camarazi: /Niciun camarad încă/, gasire: /Semnează contractul în FORJA\. Telefonul apare aici singur\./, inventar: /Niciun inventar încă/, somn: /Prima noapte apare aici/, ratie: /Prima masă apare aici/, mars: /Prima tură apare aici/, muzica: /Liniște pe post/, paza: /Niciun raport de pază/, cont: /Nesemnat/};
+    for (const [id, re] of Object.entries(expect)) {
+      await open(p, id);
+      await until(() => re.test(p.$('s-' + id).textContent), id, 3000);
+      assert(!p.$('s-' + id).querySelector('.state-error'), id + ' shows an error');
     }
-    w.document.querySelector('[data-tab="audio"]').click(); $('audio-control').click(); await tick();
-    assert(!$('page-control').hidden);
+    await open(p, 'teren');
+    await until(() => !p.$('teren-empty').hidden, 'teren empty');
+    assert.match(p.$('teren-empty').textContent, /Semnează contractul în FORJA/);
+    clean(p);
   });
-  await check('unknown sleep scores and audio intervals do not become invented sleep measurements', async () => {
-    const original = fixture.state.journals.sleep.records, today = new Date(); today.setHours(0,0,0,0);
-    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate()-1);
-    fixture.state.journals.sleep.records = [
-      {startAt:yesterday.getTime()+60000,endAt:null,score:null},
-      {startAt:today.getTime()+60000,endAt:today.getTime()+120000,score:-1},
-      {startAt:today.getTime()+120000,endAt:today.getTime()+180000,score:95,measurement:'recording_interval'},
-      {startAt:today.getTime()+180000,endAt:today.getTime()+240000,score:82}
-    ];
-    try {
-      await w.__ux.refresh();
-      const rows = [...$('journals').querySelectorAll('.panel:first-child tbody tr')].map(row => [...row.querySelectorAll('td')].map(cell => cell.textContent));
-      assert.equal(rows.length,4); assert.equal(rows[0][1],'—');
-      assert.deepEqual(rows.map(row => row[3]),['—','—','—','82']);
-      assert.equal(rows[2][2],'Înregistrare audio'); assert.equal(rows[2][1],'1 min');
-      const bars = [...$('sleep-chart').querySelectorAll('.sleep-bar')];
-      assert.equal(bars.length,7); assert(bars.slice(0,6).every(bar => bar.hidden)); assert(!bars[6].hidden);
-    } finally {fixture.state.journals.sleep.records=original; await w.__ux.refresh();}
+
+  await check('server errors become a retryable, Romanian error state', async () => {
+    const p = page({fail: ['/insights/api/muzica']});
+    await tick(20); await login(p); await open(p, 'muzica');
+    await until(() => p.$('body-muzica').querySelector('.state-error'), 'error');
+    assert.match(p.$('body-muzica').textContent, /Nu a mers\. Încearcă din nou\./);
+    assert.match(p.$('body-muzica').textContent, /Serverul nu răspunde acum\./);
+    assert([...p.$('body-muzica').querySelectorAll('button')].some(b => b.textContent === 'Reîncearcă'));
+    assert.equal(p.ux.fmt.dec(1.25, 1), '1,3'); assert.equal(p.ux.plural(21, 'zonă', 'zone'), '21 de zone'); assert.equal(p.ux.plural(1, 'zonă', 'zone'), '1 zonă');
+    clean(p);
   });
-  await check('social invitations preserve intended request payload', async () => {
-    w.__ux.page('social'); await tick();
-    const code = '12345678-1234-4234-8234-123456789012';
-    $('social-invite').value = code; await submit('social-invite-form');
-    assert.equal(callFor('/invite', 'POST').body.code, code);
-    assert.equal(fixture.calls.filter(c => c.route === '/v2/social/session' && c.method === 'POST').length, 0, 'Navigation must not enable location sharing');
+
+  await check('untrusted text is rendered as text (no HTML injection from names, titles or notes)', async () => {
+    const p = page();
+    p.fixture.data.cerc.friends[0].name = '<img src=x onerror=alert(1)>';
+    p.fixture.data.cerc.friends[0].nowPlaying.title = '<b>bold</b>';
+    p.fixture.data.inventar.runs[0].folders[0].name = '<script>x()</script>';
+    await tick(20); await login(p);
+    await open(p, 'camarazi'); await until(() => p.$('camarazi-list').querySelector('.friend'), 'friends');
+    await open(p, 'inventar'); await until(() => p.$('inventar-runs').querySelector('.run-card'), 'runs');
+    assert.equal(p.w.document.querySelectorAll('#app img[src="x"], #app script').length, 0);
+    assert(![...p.w.document.querySelectorAll('#app b')].some(b => b.textContent === 'bold'));
+    assert.match(p.$('s-camarazi').textContent, /<img src=x onerror=alert\(1\)>/);
+    assert.match(p.$('s-inventar').textContent, /<script>x\(\)<\/script>/);
+    clean(p);
   });
-  await check('saved places and group invites use current map center', async () => {
-    map.setView([44.412, 26.093]); $('social-place-name').value = 'Locul nostru'; await submit('social-place-form');
-    assert.deepEqual(callFor('/place','POST').body, {name: 'Locul nostru', lat: 44.412, lon: 26.093});
-    $('social-group-name').value = 'La plimbare'; $('social-group-mode').value = 'cycle';
-    $('social-group-at').value = '2026-09-22T17:00'; $('social-group-place').value = 'Parc';
-    $('social-group-members').querySelector('input').checked = true; await submit('social-group-form');
-    assert.equal(callFor('/group','POST').body.mode, 'cycle');
-    assert.deepEqual(callFor('/group','POST').body.friends, ['demo-ana']);
+
+  await check('copy: Romanian comma-below diacritics, no “!” in visible text, buttons ≤ 18 characters', async () => {
+    const p = page();
+    await tick(20); await login(p);
+    for (const id of SECTIONS) { await open(p, id); await tick(60); }
+    await open(p, 'gasire'); await until(() => p.$('gasire-panel').querySelector('.device'), 'device');
+    const text = visibleText(p);
+    assert(!/[şţŞŢ]/.test(text + source + html), 'cedilla ş/ţ found');
+    const bang = [...p.w.document.querySelectorAll('#app *, #login *')].filter(n => n.children.length === 0 && /!/.test(n.textContent));
+    assert.equal(bang.length, 0, 'exclamation marks: ' + bang.map(n => n.textContent).join(' | '));
+    // Butoanele de acțiune (nu cardurile apăsabile, care poartă un nume de fișier sau de loc).
+    const long = [...p.w.document.querySelectorAll('.btn, .map-btn, .chip-btn, .seg-btn, .tab, .tab-item, .link-btn, .menu-row, #login-submit')].map(b => b.textContent.trim()).filter(t => t.length > 18);
+    assert.deepEqual(long, []);
+    clean(p);
   });
-  await check('contact discovery can still be disabled explicitly', async () => {
-    await clickText($('social-partner'), /Oprește.*găsirea|Oprește.*număr|Dezactivează.*găsirea|Nu mă mai găsi|Oprește descoperirea/i);
-    assert(callFor('/contacts/discovery', 'DELETE'));
-  });
-  await check('a timed sharing session expires locally even with a fresh position', async () => {
-    fixture.social.me.session = {mode:'walk', until:Date.now() - 1};
-    fixture.social.me.location.at = Date.now(); await w.__ux.refreshSocial(); w.__ux.expireSocialMarkers();
-    assert.equal(w.__ux.socialUI.data.me.session, null); assert.equal(w.__ux.socialUI.data.me.location, null);
-    assert(!w.__ux.socialUI.markers.has(fixture.social.me.id)); assert($('social-ghost').hidden);
-    fixture.social.me.session = {mode:'walk', until:Date.now() + 3600000}; await w.__ux.refreshSocial();
-  });
-  await check('stopping sharing during a poll refreshes the final server state', async () => {
-    const fetch = w.fetch; let resolve;
-    const before = structuredClone(fixture.social);
-    w.fetch = (url, options) => String(url).endsWith('/v2/social/state') ? new Promise(r => {resolve = r;}) : fetch(url, options);
-    const poll = w.__ux.refreshSocial(); await tick(); $('social-ghost').click(); await tick();
-    assert.equal(fixture.social.me.session, null);
-    w.fetch = fetch; resolve(Response.json(before)); await poll; await tick();
-    assert.equal(w.__ux.socialUI.data.me.session, null); assert($('social-ghost').hidden);
-    fixture.social.me.session = {mode:'walk', until:Date.now() + 3600000}; await w.__ux.refreshSocial();
-  });
-  await check('friend and message text remain escaped', async () => {
-    fixture.social.friends[0].name = '<img src=x onerror=alert(1)>';
-    fixture.messages[0].text = '<script>steal()</script>';
-    await w.__ux.refreshSocial();
-    assert($('social-friends').textContent.includes('<img'));
-    assert.equal($('social-friends').querySelectorAll('img').length, 0);
-    await w.__ux.socialChat(fixture.social.friends[0]);
-    assert($('social-messages').textContent.includes('<script>'));
-    assert.equal($('social-messages').querySelectorAll('script').length, 0);
-  });
-  await check('ghost control stops sharing and stale friend positions disappear', async () => {
-    $('social-ghost').click(); await tick(); assert(callFor('/session', 'DELETE'));
-    for (const person of [w.__ux.socialUI.data.me, ...w.__ux.socialUI.data.friends]) if (person.location) person.location.at = Date.now() - 120001;
-    w.__ux.expireSocialMarkers(); assert.equal(w.__ux.socialUI.layer.items.length, 0);
-  });
-  await check('recovery start and stop retain explicit commands', async () => {
-    await clickText($('recovery-devices'), /Localizează|Găsește telefonul|Caută telefonul/i);
-    const start = callFor('/command','POST'); assert(start); assert.equal(start.body.minutes, 15);
-    assert.match(start.body.id, /^[a-f\d-]{36}$/); assert(!('owner' in start.body));
-    assert.match($('recovery-devices').textContent, /aștept|trimis/i);
-    await clickText($('recovery-devices'), /Oprește căutarea|Oprește/i); assert(callFor('/command','DELETE'));
-    fixture.recovery[0].position = {lat:44.415,lon:26.095,accuracy:28,battery:67,at:Date.now()};
-    await w.__ux.refreshRecovery(); assert.equal(w.__ux.recoveryUI.layer.items.length, 2);
-    fixture.recovery[0].position.at = Date.now() - 120001;
-    await w.__ux.refreshRecovery(); assert.match($('recovery-devices').textContent, /Ultima poziție cunoscută/);
-    assert.equal(w.__ux.recoveryUI.layer.items.length, 2);
-    fixture.recovery[0].position.at = Date.now() - 86400001;
-    await w.__ux.refreshRecovery(); assert.equal(w.__ux.recoveryUI.layer.items.length, 0);
-  });
-  await check('recovery duration survives polling and active state is explicit', async () => {
-    const select = $('recovery-devices').querySelector('select'); select.value = '30'; select.dispatchEvent(new w.Event('change'));
-    await w.__ux.refreshRecovery(); assert.equal($('recovery-devices').querySelector('select').value, '30');
-    await clickText($('recovery-devices'), /Localizează/); assert.equal(callFor('/command','POST').body.minutes, 30);
-    fixture.recovery[0].command.phase = 'active'; await w.__ux.refreshRecovery();
-    assert.match($('recovery-devices').textContent, /Căutare activă/);
-    await clickText($('recovery-devices'), /Oprește căutarea/);
-  });
-  await check('a recovery command during a poll refreshes the queued result', async () => {
-    const fetch = w.fetch; let resolve;
-    const before = structuredClone(fixture.recovery);
-    w.fetch = (url, options) => String(url).endsWith('/v2/recovery/devices') ? new Promise(r => {resolve = r;}) : fetch(url, options);
-    const poll = w.__ux.refreshRecovery(); await tick();
-    await clickText($('recovery-devices'), /Localizează/);
-    assert(fixture.recovery[0].command);
-    w.fetch = fetch; resolve(Response.json({devices: before})); await poll; await tick();
-    assert.equal(w.__ux.recoveryUI.data[0].command.phase, 'queued');
-    assert.match($('recovery-devices').textContent, /Așteptăm confirmarea/);
-    await clickText($('recovery-devices'), /Oprește căutarea/);
-  });
-  await check('map actions respect reduced motion', async () => {
-    const matchMedia = w.matchMedia; w.matchMedia = () => ({matches: true, addEventListener() {}, removeEventListener() {}});
-    await clickText($('social-places'), /Pe hartă/); assert.equal(map.animations.at(-1).animate, false);
-    w.matchMedia = matchMedia;
-  });
-  await check('AI stays opt in and campaign save stays separate from publish', async () => {
-    w.__ux.page('ai'); assert($('recommend').disabled);
-    $('ai-consent').checked = true; $('ai-consent').dispatchEvent(new w.Event('change')); $('recommend').click(); await tick();
-    assert.equal(callFor('/recommendations','POST').body.consent, true); assert.equal($('recommendations').children.length, 1);
-    w.__ux.page('content'); await tick();
-    $('campaign-sponsor').value = 'Demo'; $('campaign-title').value = 'Weekend'; $('campaign-body').value = 'O idee simplă.';
-    $('campaign-save').click(); await tick(); assert.equal(callFor('/campaigns','POST').body.content.published, false);
-  });
-  await check('legacy phone controls remain bounded to one hour', async () => {
-    w.__ux.page('control'); await tick();
-    const durations = [...$('phone-list').querySelector('select').options].map(o => Number(o.value));
-    assert.equal(Math.max(...durations), 60);
-    assert.equal($('sleep-reports').querySelectorAll(':scope>details').length, 0);
-  });
-  await check('sleep start sends an explicit 12 hour command and awaits confirmation', async () => {
-    const phone = fixture.phones[0]; phone.sleep_capable = true; phone.sleep_analysis_allowed = true;
-    await w.__ux.refreshPhones();
-    const select = $('phone-list').querySelector('select'); select.value = '720'; select.dispatchEvent(new w.Event('change'));
-    await clickText($('phone-list'), /^Pornește acum$/);
-    const request = fixture.calls.findLast(c => c.route === '/insights/api/phones/' + phone.id + '/command');
-    assert.equal(request.body.purpose, 'sleep'); assert.equal(request.body.minutes, 720);
-    assert.match(request.body.sleep_id, /^[a-f\d-]{36}$/); assert.match(request.body.id, /^[a-f\d-]{36}$/);
-    assert.match($('phone-list').textContent, /așteaptă confirmarea/i);
-    assert(!$('phone-list').textContent.includes('● Se înregistrează'));
-    phone.command = null; await w.__ux.refreshPhones();
-  });
-  await check('a daytime nap can be scheduled then replaced with new hours', async () => {
-    const phone = fixture.phones[0];
-    const start = new Date(); start.setHours(14, 0, 0, 0); if (start.getTime() <= Date.now()) start.setDate(start.getDate() + 1);
-    const end = new Date(start.getTime() + 90 * 60000);
-    function setTime(key, date) {const field = $('phone-' + phone.id + '-' + key); field.value = w.__ux.localTimeInput(date.getTime()); field.dispatchEvent(new w.Event('input'));}
-    setTime('start', start); setTime('end', end);
-    await clickText($('phone-list'), /^Programează intervalul$/);
-    const first = fixture.calls.findLast(c => c.route === '/insights/api/phones/' + phone.id + '/command');
-    assert.equal(first.body.purpose, 'sleep'); assert.equal(first.body.start_at, start.getTime()); assert.equal(first.body.stop_at, end.getTime());
-    assert.equal(first.body.minutes, 90); assert.match($('phone-list').textContent, /Programat/);
-    setTime('start', new Date(start.getTime() + 60000)); setTime('end', new Date(end.getTime() + 60000));
-    await clickText($('phone-list'), /^Salvează orele$/);
-    const replacement = fixture.calls.findLast(c => c.route === '/insights/api/phones/' + phone.id + '/command');
-    assert.equal(replacement.body.replace_command, first.body.id); assert.notEqual(replacement.body.sleep_id, first.body.sleep_id);
-    assert.equal(replacement.body.start_at, start.getTime() + 60000);
-    phone.command = null; await w.__ux.refreshPhones();
-  });
-  await check('unready and actively recording phones cannot start another sleep session', async () => {
-    const phone = fixture.phones[0]; phone.audio_ready = false; await w.__ux.refreshPhones();
-    let start = [...$('phone-list').querySelectorAll('button')].find(b => b.textContent === 'Pornește acum'); assert(start.disabled);
-    phone.audio_ready = true; phone.sleep_session = {state:'recording'}; await w.__ux.refreshPhones();
-    start = [...$('phone-list').querySelectorAll('button')].find(b => b.textContent === 'Pornește acum'); assert(start.disabled);
-    assert.match($('phone-list').textContent, /Se înregistrează/); phone.sleep_session = null;
-  });
-  await check('sleep reports escape transcripts and retain retry, pagination and privacy actions', async () => {
-    const id = randomUUID(), chunk = randomUUID();
-    const result = {id, started_at:Date.now()-7200000, state:'needs_retry'};
-    fixture.sleep.sessions = [result];
-    fixture.sleep.reports[id] = {id, recorded_ms:120000, analyzed_ms:60000, analysis_consent:true, snoring:{status:'unavailable'},
-      chunks:[{id:chunk,item_id:randomUUID(),recorded_from:Date.now()-7200000,duration_ms:60000,state:'failed',result:{transcript:'<img src=x onerror=alert(1)> Text demo',topics:[{title:'<script>injected()</script>'}],limitations:['limited']}}],
-      next_cursor:'page-two', pages:{'page-two':{id,analysis_consent:true,chunks:[{id:randomUUID(),item_id:randomUUID(),recorded_from:Date.now()-7140000,duration_ms:60000,state:'complete',result:{transcript_status:'empty'}}],next_cursor:null}}
-    };
-    await w.__ux.refreshSleepReports(); const report = $('sleep-reports').querySelector(':scope>details'); report.open = true; await tick();
-    assert(report.textContent.includes('<img')); assert.equal(report.querySelectorAll('img,script').length, 0);
-    assert(report.querySelector('a[href="#privacy-sleep"]')); assert.match(report.textContent, /2 min primit · 1 min analizat/);
-    await clickText(report, /^Reîncearcă analiza$/);
-    assert.equal(callFor('/chunks','POST').body.recording_session_id, chunk);
-    await clickText(report, /^Mai multe fragmente$/);
-    assert.equal(report.querySelectorAll('.file-card').length, 2); assert.match(report.textContent, /Nu s-a distins vorbire/);
-    await clickText(report, /^Șterge raportul$/); assert(callFor('/' + id,'DELETE')); assert.equal($('sleep-reports').querySelectorAll(':scope>details').length, 0);
-  });
-  await check('open sleep reports update automatically without interrupting active playback', async () => {
-    const id = randomUUID(), chunk = {id:randomUUID(),item_id:randomUUID(),recorded_from:Date.now()-60000,duration_ms:60000,state:'pending'};
-    fixture.sleep.sessions = [{id,started_at:Date.now()-60000,state:'analyzing',chunk_count:1,analyzed_ms:0,snoring:{status:'unavailable'}}];
-    fixture.sleep.reports[id] = {id,recorded_ms:60000,analyzed_ms:0,analysis_consent:true,snoring:{status:'unavailable'},chunks:[chunk],next_cursor:null};
-    await w.__ux.refreshSleepReports(); const report = $('sleep-reports').querySelector(':scope>details'); report.open = true; await tick();
-    assert.match(report.querySelector('.sleep-report-body').textContent, /În așteptare/);
-    fixture.sleep.sessions[0].state = 'complete'; fixture.sleep.sessions[0].analyzed_ms = 60000;
-    fixture.sleep.reports[id].analyzed_ms = 60000; chunk.state = 'complete'; chunk.result = {transcript:'Text nou, disponibil automat.'};
-    await w.__ux.refreshSleepReports(); await tick(); assert(report.textContent.includes('Text nou, disponibil automat.'));
-    const audio = w.document.createElement('audio'); let playing = true;
-    Object.defineProperty(audio,'paused',{get:()=>!playing}); Object.defineProperty(audio,'ended',{get:()=>false});
-    report.querySelector('.file-card').append(audio);
-    fixture.sleep.sessions[0].chunk_count = 2; chunk.result.transcript = 'Actualizare după ascultare.';
-    await w.__ux.refreshSleepReports(); await tick();
-    assert(audio.isConnected); assert(!report.textContent.includes('Actualizare după ascultare.'));
-    playing = false; await w.__ux.refreshSleepReports(); await tick();
-    assert(report.textContent.includes('Actualizare după ascultare.')); assert(!audio.isConnected);
-  });
-  await check('late sleep detail responses cannot overwrite the newer report', async () => {
-    const report = $('sleep-reports').querySelector(':scope>details'), id = report.dataset.sleep;
-    const body = report.querySelector('.sleep-report-body'), fetch = w.fetch, pending = [];
-    w.fetch = (url, options) => String(url) === '/v2/sleep/sessions/' + id ? new Promise(r => pending.push(r)) : fetch(url, options);
-    try {
-      const first = w.__ux.openSleepReport(id,body); await tick();
-      const second = w.__ux.openSleepReport(id,body); await tick(); assert.equal(pending.length, 2);
-      const old = structuredClone(fixture.sleep.reports[id]), recent = structuredClone(old);
-      old.chunks[0].result.transcript = 'Stare veche, primită târziu.';
-      recent.chunks[0].result.transcript = 'Raport recent, afișat corect.';
-      pending[1](Response.json(recent)); await second;
-      pending[0](Response.json(old)); await first;
-      assert(report.textContent.includes('Raport recent, afișat corect.'));
-      assert(!report.textContent.includes('Stare veche, primită târziu.'));
-    } finally {w.fetch = fetch;}
-  });
-  await check('deleting a sleep report while audio loads cannot start detached playback', async () => {
-    const report = $('sleep-reports').querySelector(':scope>details');
-    assert(report?.open);
-    const fetch = w.fetch, createURL = w.URL.createObjectURL, play = w.HTMLMediaElement.prototype.play;
-    let resolve, created = 0, played = 0;
-    w.fetch = (url, options) => /\/v2\/sessions\/[^/]+\/items\//.test(String(url)) ? new Promise(r => {resolve = r;}) : fetch(url, options);
-    w.URL.createObjectURL = () => {created++; return 'blob:delayed-sleep';};
-    w.HTMLMediaElement.prototype.play = async () => {played++;};
-    try {
-      await clickText(report, /^Ascultă fragmentul$/); assert(resolve, 'Audio fetch must be in flight');
-      await clickText(report, /^Șterge raportul$/); assert(!report.isConnected);
-      resolve(new Response(new Uint8Array([1,2,3]), {headers:{'content-type':'audio/mp4'}})); await tick();
-      assert.equal(created, 0, 'Detached cards must not allocate media URLs');
-      assert.equal(played, 0, 'Deleted reports must not begin playback');
-    } finally {w.fetch = fetch; w.URL.createObjectURL = createURL; w.HTMLMediaElement.prototype.play = play;}
-  });
-  await check('v4 organizes the whole gallery with an explicit grant and a queued phone command', async () => {
-    const d=fixture.cleanup.devices[0];d.protocol=4;d.grant.sources=[{id:randomUUID(),source:'files',folder:'Documente',label:'Documentele mele'}];
-    w.__ux.page('files');await tick();await w.__ux.refreshCleanup(true);await tick();
-    assert(!$('organizer-workspace').hidden);assert.equal($('organizer-requests').children.length,0,'v4 must not duplicate the legacy form');
-    $('organizer-workspace').querySelector('[data-organizer-count="0"]').click();
-    $('organizer-start').click();await tick();await tick();
-    const create=fixture.calls.findLast(c=>c.route.endsWith('/jobs')&&c.method==='POST');
-    assert.equal(create.body.source,'photos');assert.equal(create.body.scope.folder,'');assert.equal(create.body.auto_apply,true);assert.equal(create.body.ai_consent,false);
-    const command=callFor('/command','POST');assert.equal(command.body.count,0);assert.equal(command.body.action,'continue');
-    assert.match($('organizer-jobs').textContent,/Așteaptă telefonul/);assert(!$('organizer-jobs').textContent.includes('Gata'));
-    assert(!$('organizer-jobs').querySelector('progress'),'Unknown/empty inventory must not show invented progress');
-    assert.equal([...$('organizer-jobs').querySelectorAll('button')].filter(b=>/^Continuă$|^Următoarele/.test(b.textContent)).length,0);
-  });
-  await check('v4 document selection preserves the authorized tree and exact next-N count', async () => {
-    $('organizer-workspace').querySelector('[data-organizer-source="files"]').click();
-    assert.equal($('organizer-source-id').selectedOptions[0].textContent,'Documentele mele');
-    $('organizer-scope').value='folder';$('organizer-scope').dispatchEvent(new w.Event('change'));
-    $('organizer-folder').value='Facturi';$('organizer-folder').dispatchEvent(new w.Event('input'));
-    $('organizer-workspace').querySelector('[data-organizer-count="-1"]').click();$('organizer-count').value='75';$('organizer-count').dispatchEvent(new w.Event('input'));
-    $('organizer-start').click();await tick();await tick();
-    const create=fixture.calls.findLast(c=>c.route.endsWith('/jobs')&&c.method==='POST');
-    assert.equal(create.body.source,'files');assert.equal(create.body.source_id,fixture.cleanup.devices[0].grant.sources[0].id);assert.equal(create.body.scope.folder,'Facturi');
-    assert.equal(callFor('/command','POST').body.count,75);
-    const before=fixture.calls.filter(c=>c.route.endsWith('/jobs')&&c.method==='POST').length;
-    $('organizer-mode').value='online';$('organizer-mode').dispatchEvent(new w.Event('change'));$('organizer-start').click();await tick();
-    assert.equal(fixture.calls.filter(c=>c.route.endsWith('/jobs')&&c.method==='POST').length,before,'Online content consent is required');
-    $('organizer-mode').value='local';$('organizer-mode').dispatchEvent(new w.Event('change'));
-  });
-  await check('v4 progress and verified copies stay distinct from moved originals', async () => {
-    const job=fixture.organizer.jobs[0];job.state='partial';job.inventory_unavailable=2;job.counters={total:8,moved:2,uploaded:1,needs_review:1,failed_retryable:1,copied_pending_removal:1};
-    const id=randomUUID(),file={...fixture.files.items[0],id:randomUUID(),expires_at:Date.now()+86400000};
-    fixture.organizer.items[job.id]={items:[{id,name:'<img onerror=bad()> factură',state:'uploaded',destination:'FORJA/Facturi',reason:'<script>bad()</script>',received:true,file,file_id:file.id},{id:randomUUID(),name:'Original mutat',state:'moved',destination:'FORJA/Poze',received:false,file:null,file_id:randomUUID()}],next_cursor:null,total:2};
-    await w.__ux.refreshOrganizerJobs();const card=$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"]');
-    assert.match(card.textContent,/2 din 8 mutate/);assert.match(card.textContent,/2 inaccesibile pe telefon/);assert.match(card.textContent,/originalele încă așteaptă/);
-    const detail=card.querySelector('.organizer-job-detail');detail.open=true;await tick();
-    assert.equal(detail.querySelectorAll('img,script').length,0);assert.equal([...detail.querySelectorAll('button')].filter(b=>b.textContent==='Vezi copia').length,1);
-    assert.match(detail.textContent,/Progresul originalului este păstrat/);
-    const checkbox=detail.querySelector('input[type=checkbox]');checkbox.checked=true;checkbox.dispatchEvent(new w.Event('change'));
-    const before=fixture.calls.filter(c=>c.route.endsWith('/approve')).length;
-    await clickText(detail,/^Aprobă mutările$/);assert.equal(fixture.calls.filter(c=>c.route.endsWith('/approve')).length,before,'Move approval is separate');
-    const confirm=[...detail.querySelectorAll('input[type=checkbox]')].at(-1);confirm.checked=true;await clickText(detail,/^Aprobă mutările$/);
-    assert.equal(callFor('/approve','POST').body.items[0].id,id);assert.equal(callFor('/approve','POST').body.confirm,true);
-  });
-  await check('v4 command response defeats an older overlapping poll', async () => {
-    const job=fixture.organizer.jobs[0];job.state='paused';await w.__ux.refreshOrganizerJobs();
-    const old=structuredClone(fixture.organizer.jobs),fetch=w.fetch;let resolve;
-    w.fetch=(url,options)=>String(url).endsWith('/jobs')&&(!options?.method||options.method==='GET')?new Promise(r=>resolve=r):fetch(url,options);
-    try{const poll=w.__ux.refreshOrganizerJobs();await tick();await w.__ux.sendOrganizerCommand(w.__ux.organizerV4.jobs.get(job.id),'continue',50);resolve(Response.json({jobs:old}));await poll;
-      assert.equal(w.__ux.organizerV4.jobs.get(job.id).state,'awaiting_phone');assert.equal(callFor('/command','POST').body.count,50);
-    }finally{w.fetch=fetch;}
-  });
-  await check('v4 lost command responses retry the same request and original revision', async () => {
-    const job=fixture.organizer.jobs[0];job.state='paused';await w.__ux.refreshOrganizerJobs();
-    const fetch=w.fetch;let failed=false;w.fetch=async(url,options)=>{const response=await fetch(url,options);if(String(url).endsWith('/command')&&!failed){failed=true;throw new Error('Connection lost after server acceptance');}return response;};
-    try{await assert.rejects(w.__ux.sendOrganizerCommand(w.__ux.organizerV4.jobs.get(job.id),'continue',100));await w.__ux.refreshOrganizerJobs();await w.__ux.sendOrganizerCommand(w.__ux.organizerV4.jobs.get(job.id),'continue',100);
-      const requests=fixture.calls.filter(c=>c.route.endsWith('/command')&&c.body.count===100).slice(-2);assert.equal(requests.length,2);assert.deepEqual(requests[0].body,requests[1].body);
-    }finally{w.fetch=fetch;}
-  });
-  await check('v4 completed finite batches offer the next N without pretending the job finished', async () => {
-    const job=fixture.organizer.jobs[0];job.state='running';job.command={action:'continue',count:50,status:'complete',selected:50,finished:50};await w.__ux.refreshOrganizerJobs();
-    const card=$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"]'),choice=card.querySelector('select[aria-label="Mărimea următorului lot"]');assert(choice);
-    choice.value='100';choice.dispatchEvent(new w.Event('change'));await clickText(card,/^Organizează următorul lot$/);
-    assert.equal(callFor('/command','POST').body.count,100);assert.match(card.textContent,/Așteaptă telefonul/);
-  });
-  await check('local analyzed items permit explicit approval without claiming a cloud copy', async () => {
-    const job=fixture.organizer.jobs[0];job.mode='local';job.state='partial';job.updated_at=Date.now();const id=randomUUID();
-    fixture.organizer.items[job.id]={items:[{id,version:'local-1',sha256:'a'.repeat(64),name:'Document local',state:'analyzed',destination:'FORJA/Facturi',received:false,file:null}],total:1,next_cursor:null};
-    await w.__ux.refreshOrganizerJobs();const body=$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"] .organizer-items');await w.__ux.openOrganizerJobItems(job.id,body);
-    assert.equal([...body.querySelectorAll('button')].filter(b=>b.textContent==='Vezi copia').length,0);const choice=body.querySelector('input[type=checkbox]');assert(!choice.disabled);choice.checked=true;choice.dispatchEvent(new w.Event('change'));
-    const fetch=w.fetch;let lost=false;w.fetch=async(url,options)=>{const response=await fetch(url,options);if(String(url).endsWith('/approve')&&!lost){lost=true;throw Error('Lost approval response');}return response;};
-    try{await assert.rejects(w.__ux.approveOrganizerItems(job.id,body,true));await w.__ux.refreshOrganizerJobs();await w.__ux.approveOrganizerItems(job.id,body,true);
-      const requests=fixture.calls.filter(c=>c.route.endsWith('/approve')).slice(-2);assert.deepEqual(requests[0].body,requests[1].body);
-    }finally{w.fetch=fetch;}
-  });
-  await check('original moves require confirmation and retain queued status until a phone receipt', async () => {
-    const job=fixture.organizer.jobs[0],item=fixture.files.items[0];Object.assign(item,{device_id:job.device,organizer_job:job.id,organizer_item:randomUUID(),folder:'Documente'});await w.__ux.refreshFiles();
-    const oldPrompt=w.prompt,oldConfirm=w.confirm;w.prompt=()=> 'FORJA/Facturi';w.confirm=()=>false;
-    try{const before=fixture.calls.length;await w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id));assert(!fixture.calls.slice(before).some(c=>c.method==='PATCH'));
-      w.confirm=()=>true;await w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id));let card=$('vault-grid').querySelector('[data-file="'+item.id+'"]');assert.equal(card.querySelector('.vault-folder').textContent,'Documente');assert.match(card.textContent,/Mutare cerută → FORJA\/Facturi/);
-      await w.__ux.refreshFiles(false,true);assert.match(card.textContent,/așteaptă telefonul/);
-      item.folder='FORJA/Facturi';delete item.pending_folder;item.sync_state='applied';await w.__ux.refreshFiles(false,true);assert.equal(card.querySelector('.vault-folder').textContent,'FORJA/Facturi');assert(card.querySelector('.vault-sync').hidden);assert(card.querySelector('[data-vault-move]').disabled);
-    }finally{w.prompt=oldPrompt;w.confirm=oldConfirm;}
-  });
-  await check('lost original-move responses preserve their approval request and revision', async () => {
-    const item=fixture.files.items[0],job=fixture.organizer.jobs[0],fetch=w.fetch,oldPrompt=w.prompt;w.prompt=()=> 'FORJA/Arhivă';let lost=false;
-    w.fetch=async(url,options)=>{const response=await fetch(url,options);if(options?.method==='PATCH'&&!lost){lost=true;job.revision++;throw Error('Lost move response');}return response;};
-    try{await assert.rejects(w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id)));await w.__ux.refreshFiles(false,true);await w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id));const requests=fixture.calls.filter(c=>c.route.endsWith('/'+item.id)&&c.method==='PATCH').slice(-2);assert.deepEqual(requests[0].body,requests[1].body);}
-    finally{w.fetch=fetch;w.prompt=oldPrompt;}
-  });
-  await check('a stale gallery poll cannot undo a newly queued original move', async () => {
-    const item=fixture.files.items[0],fetch=w.fetch,old=structuredClone(fixture.files),oldPrompt=w.prompt;let resolve;w.prompt=()=> 'FORJA/Documente';
-    w.fetch=(url,options)=>String(url).startsWith('/v2/files?')?new Promise(r=>resolve=r):fetch(url,options);
-    try{const poll=w.__ux.refreshFiles(false,true);await tick();await w.__ux.moveVaultFile(w.__ux.vault.rows.get(item.id));resolve(Response.json(old));await poll;assert.equal(w.__ux.vault.rows.get(item.id).pending_folder,'FORJA/Documente');assert.match($('vault-grid').querySelector('[data-file="'+item.id+'"] .vault-sync').textContent,/FORJA\/Documente/);}
-    finally{w.fetch=fetch;w.prompt=oldPrompt;}
-  });
-  await check('AI evidence is escaped and review-only deletion never selects or deletes originals', async () => {
-    const job=fixture.organizer.jobs[0],entry=fixture.organizer.items[job.id].items[0];entry.analysis={coverage:{status:'partial',pages_processed:1,pages_total:4},evidence:[{id:'e1',kind:'text',quote:'<img src=x onerror=bad()>',page:1}],deletion:{suggested:true,basis:'low_information',reason:'Scanare fără informație lizibilă.',evidence_ids:['e1'],requires_confirmation:true,review_only:true}};job.updated_at=Date.now();
-    await w.__ux.refreshOrganizerJobs();const body=$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"] .organizer-items');await w.__ux.openOrganizerJobItems(job.id,body);
-    assert.match(body.textContent,/1 din 4 pagini analizate/);assert.match(body.textContent,/De verificat pentru ștergere/);assert.equal(body.querySelectorAll('img,script').length,0);assert.equal([...body.querySelectorAll('button')].filter(b=>/^Șterge original/.test(b.textContent)).length,0);
-  });
-  await check('forgetting a job preserves its copies and removes only returned progress', async () => {
-    const job=fixture.organizer.jobs.at(-1),count=fixture.files.items.length;await w.__ux.deleteOrganizerJob(job.id);assert.equal(fixture.files.items.length,count);assert(!w.__ux.organizerV4.jobs.has(job.id));assert(!$('organizer-jobs').querySelector('[data-organizer-job="'+job.id+'"]'));
-  });
-  await check('visibility scopes remain independent per friend and need explicit consent', async () => {
-    w.__ux.page('social');await tick();await w.__ux.openVisibility();const form=$('social-visibility-form'),save=[...form.querySelectorAll('button')].find(b=>b.textContent==='Salvează');assert(save.disabled);
-    const first=[...form.querySelector('fieldset').querySelectorAll('input')];assert(first[1].disabled);first[0].checked=true;first[0].dispatchEvent(new w.Event('change'));assert(!first[1].disabled);first[1].checked=true;first[2].checked=true;
-    const second=[...form.querySelectorAll('fieldset')][1].querySelectorAll('input');second[2].checked=true;
-    const consent=[...form.querySelectorAll(':scope>label input')].at(-1);consent.checked=true;consent.dispatchEvent(new w.Event('change'));await clickText(form,/^Salvează$/);
-    const request=callFor('/visibility','POST');assert.deepEqual(request.body.grants[0],{id:fixture.social.friends[0].id,current:true,ghost:true,history:true});assert.deepEqual(request.body.grants[1],{id:fixture.social.friends[1].id,current:false,ghost:false,history:true});assert.equal(request.body.consent,true);
-    await w.__ux.openVisibility();await clickText($('social-visibility-form'),/^Oprește toate partajările$/);assert(callFor('/social/session','DELETE'));assert.equal(fixture.visibility.grants.length,0);
-  });
-  await check('stale visibility consent cannot restore sharing after stop-all', async () => {
-    fixture.visibility.grants=[{id:fixture.social.friends[0].id,current:true,ghost:true,history:true}];await w.__ux.openVisibility();const form=$('social-visibility-form');const consent=[...form.querySelectorAll(':scope>label input')].at(-1);consent.checked=true;consent.dispatchEvent(new w.Event('change'));
-    fixture.visibility={ghost:true,grants:[],updated_at:Date.now(),revision:fixture.visibility.revision+1};const before=fixture.calls.filter(c=>c.route.endsWith('/visibility')&&c.method==='POST').length;
-    await clickText(form,/^Salvează$/);await tick();assert($('visibility-dialog').open);assert([...form.querySelectorAll('fieldset input')].every(input=>!input.checked));assert(![...form.querySelectorAll(':scope>label input')].at(-1).checked);assert([...form.querySelectorAll('button')].find(b=>b.textContent==='Salvează').disabled);
-    assert.equal(fixture.calls.filter(c=>c.route.endsWith('/visibility')&&c.method==='POST').length,before+1,'Never retry previously granted scopes automatically');$('visibility-dialog').close();
-  });
-  await check('exploration starts only after consent and remains separate from social sharing', async () => {
-    let watched=0,cleared=0;Object.defineProperty(w.navigator,'geolocation',{configurable:true,value:{watchPosition(){watched++;return 42;},clearWatch(){cleared++;}}});
-    $('journey-start').click();assert($('journey-consent-dialog').open);assert($('journey-confirm').disabled);assert.equal(watched,0);
-    $('journey-consent').checked=true;$('journey-consent').dispatchEvent(new w.Event('change'));$('journey-confirm').click();await tick();assert.equal(watched,1);assert.equal(callFor('/journey/session','POST').body.consent,true);assert.equal(fixture.visibility.grants.length,0);
-    await w.__ux.stopJourney();assert(cleared>0);assert(callFor('/journey/session','DELETE'));assert.equal(w.__ux.journeyUI.recording,null);
-  });
-  await check('exploration queue survives history switching and stop waits for the active upload', async () => {
-    await w.__ux.startJourney();const id=w.__ux.journeyUI.recording;assert(id);w.__ux.journeyUI.queue.push({id:randomUUID(),session:id,points:[{at:Date.now(),lat:44.4,lon:26.1,accuracy:10,speed:0}]});
-    const fetch=w.fetch;let resolve;w.fetch=(url,options)=>String(url).endsWith('/journey/samples')?new Promise(r=>resolve=r):fetch(url,options);
-    try{const flush=w.__ux.journeyFlush();await tick();await w.__ux.journeyShared(fixture.social.friends[0].id);assert(w.__ux.journeyUI.sending);const before=fixture.calls.filter(c=>c.route.endsWith('/journey/session')&&c.method==='DELETE').length;const stop=w.__ux.stopJourney();await tick();assert.equal(fixture.calls.filter(c=>c.route.endsWith('/journey/session')&&c.method==='DELETE').length,before);
-      resolve(Response.json({ok:true}));await flush;await stop;assert.equal(w.__ux.journeyUI.queue.length,0);assert.equal(w.__ux.journeyUI.sending,false);assert.equal(w.__ux.journeyUI.recording,null);assert.equal(fixture.calls.filter(c=>c.route.endsWith('/journey/session')&&c.method==='DELETE').length,before+1);
-    }finally{w.fetch=fetch;await w.__ux.journeyShared(null);}
-  });
-  await check('denied shared history clears prior map data and place details', async () => {
-    const visit={id:randomUUID(),name:'Loc privat',lat:44.4,lon:26.1,observed_ms:19000000};fixture.journey.visits=[visit];await w.__ux.journeyShared(fixture.social.friends[0].id);assert.match($('journey-visits').textContent,/Loc privat/);
-    await clickText($('journey-visits'),/^Vezi locul$/);assert.match($('journey-selection').textContent,/Loc privat/);
-    const fetch=w.fetch;w.fetch=(url,options)=>String(url).includes('/journey/state')?Promise.resolve(Response.json({error:'Istoric indisponibil.'},{status:403})):fetch(url,options);
-    try{await w.__ux.journeyShared(fixture.social.friends[1].id);assert.equal(w.__ux.journeyUI.data,null);assert.equal($('journey-selection').textContent,'');assert.equal($('journey-visits').textContent,'');}
-    finally{w.fetch=fetch;fixture.journey.visits=[];await w.__ux.journeyShared(null);}
-  });
-  await check('logout clears private content and pending social data', async () => {
-    w.__ux.page('social'); await tick();
-    const fetch = w.fetch; let resolve, resolveSleep, resolveJobs;
-    w.fetch = (url, options) => String(url).endsWith('/v2/recovery/devices') ? new Promise(r => {resolve = r;}) : String(url).endsWith('/v2/sleep/sessions') ? new Promise(r => {resolveSleep = r;}) : String(url).endsWith('/jobs') ? new Promise(r=>resolveJobs=r) : fetch(url, options);
-    const pending = w.__ux.refreshRecovery(), pendingSleep = w.__ux.refreshSleepReports(), pendingJobs=w.__ux.refreshOrganizerJobs(); await tick(); w.__ux.logout();
-    resolve(Response.json({devices: fixture.recovery})); await pending;
-    resolveSleep(Response.json({sessions:[{id:randomUUID(),state:'complete',started_at:Date.now()}]})); await pendingSleep;
-    resolveJobs(Response.json({jobs:fixture.organizer.jobs}));await pendingJobs;
-    w.fetch = fetch;
-    assert($('app').hidden); assert(!$('login').hidden);
-    assert.equal(w.__ux.socialUI.data, null); assert.equal(w.__ux.recoveryUI.data, null);
-    assert.equal($('social-friends').childNodes.length, 0); assert.equal($('recovery-devices').childNodes.length, 0);
-    assert.equal($('vault-grid').childNodes.length, 0);
-    assert.equal($('sleep-reports').childNodes.length, 0); assert.equal(w.__ux.sleepUI.owner, null);
-    assert.equal($('organizer-jobs').childNodes.length,0);assert.equal(w.__ux.organizerV4.device,null);
-  });
-  await check('privacy opened during sign in stays the only visible screen', async () => {
-    const fetch = w.fetch; let resolve;
-    w.fetch = (url, options) => String(url).includes('signInWithPassword') ? new Promise(r => {resolve = r;}) : fetch(url, options);
-    $('email').value = 'alex@example.test'; $('password').value = 'local-demo-only';
-    await submit('login-form'); w.location.hash = '#privacy-ai'; await tick();
-    assert(!$('privacy').hidden); assert($('app').hidden);
-    w.fetch = fetch;
-    resolve(Response.json({idToken:'local-demo-token', refreshToken:'local-demo-refresh', expiresIn:'3600', email:'alex@example.test'}));
-    await tick(); assert(!$('privacy').hidden); assert($('app').hidden); assert($('login').hidden);
-    $('privacy-back').click(); await tick(); assert($('privacy').hidden); assert(!$('app').hidden);
-    w.__ux.logout();
-  });
-  await check('sleep deep link waits for login and opens the linked controls', async () => {
-    w.location.hash = '#sleep'; await tick();
-    assert(!$('login').hidden); assert($('app').hidden); assert($('privacy').hidden);
-    $('email').value = 'alex@example.test'; $('password').value = 'local-demo-only'; await submit('login-form');
-    assert(!$('app').hidden); assert(!$('page-control').hidden); assert.equal(w.location.hash, '#sleep');
-    w.document.querySelector('[data-page="data"]').click(); await tick();
-    assert(!$('page-data').hidden); assert.equal(w.location.hash, '');
-    w.location.hash = '#sleep'; await tick(); assert(!$('page-control').hidden);
-    w.__ux.logout();
-  });
-  console.log(JSON.stringify({passed: checks.length, checks, live_backend: false, live_browser: false}, null, 2));
-})().catch(error => {console.error(error); process.exitCode = 1;}).finally(() => w.close());
+
+  console.log(JSON.stringify({ok: true, checks}, null, 1));
+  process.exit(0);
+})().catch(error => { console.error(error); process.exit(1); });
