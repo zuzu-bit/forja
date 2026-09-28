@@ -105,6 +105,20 @@ test('the FORJA stack is installed once: ground paint under buildings, symbols o
   assert.equal(f.container.dataset.idle, '1');
 });
 
+test('FORJA data goes in as soon as the style is ready, not after the last slow tile; a later load changes nothing', () => {
+  let readyCalls = 0;
+  const f = fixture(), r = f.api.create(f.container, {onReady: () => readyCalls++}), map = f.maps[0];
+  r.setData({cells});
+  map.emit('style.load');
+  assert.equal(r.ready, true);
+  assert.equal(map.sources['forja-cells'].data.features.length, 3);
+  const layers = map.added.length, clicks = map.layerEvents.length;
+  map.emit('load');
+  assert.equal(map.added.length, layers, 'no second install');
+  assert.equal(map.layerEvents.length, clicks, 'click handlers bound once');
+  assert.equal(readyCalls, 1);
+});
+
 test('territory outline keeps only outer edges; heat is one point per cell', () => {
   const {api} = fixture();
   const square = {type: 'FeatureCollection', features: [cell(0, 0), cell(1, 0), cell(0, 1), cell(1, 1)]};

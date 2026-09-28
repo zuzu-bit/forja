@@ -283,12 +283,15 @@
     map.on('webglcontextlost', () => fail(Error('Placa grafică a oprit harta.')));
     map.on('webglcontextrestored', () => { if (state.failed) { state.failed = false; install(); } });
     map.on('styleimagemissing', e => provideImage(e.id));
+    // Datele FORJA intră imediat ce stilul e gata („style.load”), nu după ultima dală („load”): o dală lentă de la
+    // OpenFreeMap nu mai ține pe loc teritoriul, camarazii sau telefonul.
+    map.on('style.load', () => { clearTimeout(timeout); install(); });
     map.on('load', () => { clearTimeout(timeout); install(); });
     // Pentru teste și capturi: containerul spune când harta a terminat de desenat ultimele date.
     map.on('idle', () => { try { container.dataset.idle = '1'; } catch { /* container detașat */ } });
 
     function install() {
-      if (state.destroyed) return;
+      if (state.destroyed || state.ready) return;
       try {
         applyPalette(map, state.theme);
         const anchor = map.getLayer('building') ? 'building' : (map.getStyle().layers || []).find(l => l.type === 'symbol')?.id;
@@ -325,7 +328,8 @@
         symbol('forja-friends', 'forja-friends'); label('forja-friends-label', 'forja-friends', 0);
         symbol('forja-me', 'forja-me'); label('forja-me-label', 'forja-me', 0);
         symbol('forja-pin', 'forja-pin');
-        for (const id of PICKABLE) {
+        if (!state.picking) for (const id of PICKABLE) {
+          state.picking = true;
           map.on('click', id, e => { const f = e.features && e.features[0]; if (!f) return; const [lng, lat] = f.geometry.coordinates; opts.onPick && opts.onPick({kind: f.properties.kind, id: f.properties.id, lat, lng}); });
           map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
           map.on('mouseleave', id, () => { map.getCanvas().style.cursor = ''; });
