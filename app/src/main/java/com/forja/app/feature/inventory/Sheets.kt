@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -373,15 +374,15 @@ private fun DestRow(title: String, path: String, onClick: () -> Unit) {
 @Composable
 internal fun LocationBody(ui: LocationUi, onBack: () -> Unit, onPick: (InvDest) -> Unit, onOther: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(Modifier.fillMaxWidth().height(44.dp).padding(bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            // 48 dp de atins; desenat cu 4 dp mai la stânga, ca săgeata și titlul să stea unde erau (butonul de 40 dp).
             Box(
-                Modifier.size(40.dp).clip(R8).pressable(onBack).semantics { contentDescription = "Înapoi"; role = Role.Button },
+                Modifier.offset(x = (-4).dp).size(48.dp).clip(R8).pressable(onBack).semantics { contentDescription = "Înapoi"; role = Role.Button },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(InvIcons.Back, null, tint = TextSecondary, modifier = Modifier.size(20.dp))
             }
-            Spacer(Modifier.width(4.dp))
-            Text("Locație", style = cond(24, 28))
+            Text("Locație", style = cond(24, 28), modifier = Modifier.offset(x = (-4).dp))
         }
         for (o in ui.options) {
             DestOptionRow(o.label, o.path, o.selected, { DestIconBox(o.icon, o.selected) }) { onPick(o.dest) }

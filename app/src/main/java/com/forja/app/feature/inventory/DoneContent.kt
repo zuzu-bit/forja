@@ -198,14 +198,14 @@ fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Mod
                     }
                     val place = state.place?.target
                     if (place != null) {
-                        PlaceChip(place.label, actions.onPlace, Modifier.padding(top = 12.dp).riseIn(inAt(300)))
+                        PlaceChip(place.label, actions.onPlace, Modifier.padding(top = 2.dp).riseIn(inAt(300)))
                     }
                     if (state.failed > 0) {
                         Text(
                             "${fmtCount(state.failed)} NEMUTATE",
                             style = mono(10, 0.16f, color = Error),
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+                            modifier = Modifier.fillMaxWidth().padding(top = if (place != null) 2.dp else 10.dp)
                         )
                     }
                 }
@@ -226,26 +226,35 @@ fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Mod
     }
 }
 
-/** Calea noii locații („DOCUMENTS/ORGANIZATE”), ca etichetă mono atingibilă: deschide dosarul în Fișiere. */
+/**
+ * Calea noii locații („DOCUMENTS/ORGANIZATE”), ca etichetă mono atingibilă: deschide dosarul în Fișiere. Se vede de
+ * 34 dp, dar zona de atingere are 48 dp (e drumul principal spre dosar la poze); spațiul în plus stă în jurul ei.
+ */
 @Composable
 private fun PlaceChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val path = TreePaths.tail(label).uppercase()
-    Row(
+    Box(
         modifier
+            .heightIn(min = 48.dp)
             .pressable(onClick)
-            .height(34.dp)
-            .clip(R6)
-            .background(Surface1)
-            .border(1.dp, W09, R6)
-            .semantics(mergeDescendants = true) { role = Role.Button; contentDescription = "Deschide locația $label" }
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .semantics(mergeDescendants = true) { role = Role.Button; contentDescription = "Deschide locația $label" },
+        contentAlignment = Alignment.Center
     ) {
-        Icon(InvIcons.Folder, null, tint = Accent2, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(8.dp))
-        Text(path, style = mono(11, 0.08f, color = TextPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-        Spacer(Modifier.width(6.dp))
-        Icon(InvIcons.ChevronRight, null, tint = TextDim, modifier = Modifier.size(14.dp))
+        Row(
+            Modifier
+                .height(34.dp)
+                .clip(R6)
+                .background(Surface1)
+                .border(1.dp, W09, R6)
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(InvIcons.Folder, null, tint = Accent2, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(path, style = mono(11, 0.08f, color = TextPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            Spacer(Modifier.width(6.dp))
+            Icon(InvIcons.ChevronRight, null, tint = TextDim, modifier = Modifier.size(14.dp))
+        }
     }
 }
 

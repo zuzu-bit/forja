@@ -123,7 +123,9 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
     var albumSheet by remember { mutableStateOf(false) }
     var moveSheet by remember { mutableStateOf(false) }
     var folderMenu by remember { mutableStateOf<String?>(null) }
-    var confirmApply by remember { mutableStateOf(false) }
+    // Confirmarea și pagina ei „Locație” supraviețuiesc împreună recreării activității (selectorul „Alt dosar…” /
+    // „Alt folder…” e deschis peste ele); o confirmare nouă pornește mereu de la rezumat, nu de la „Locație”.
+    var confirmApply by rememberSaveable { mutableStateOf(false) }
     var confirmStop by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<String?>(null) }
@@ -131,6 +133,11 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
     var guideReplay by rememberSaveable { mutableLongStateOf(0L) }
     var lastNSheet by remember { mutableStateOf(false) }
     var showLocation by rememberSaveable { mutableStateOf(false) }
+    // Confirmarea ține doar de pagina cu dosarele: plecată de acolo (plan aplicat, renunțat, alt link), se închide.
+    val topPage = stack.last()
+    LaunchedEffect(topPage) {
+        if (topPage != InvPage.Folders) { confirmApply = false; showLocation = false }
+    }
     var foldersIntroFor by rememberSaveable { mutableStateOf<String?>(null) }
 
     // ── lansatoare ──
@@ -403,7 +410,7 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
                                     onOpenTrash = { leaveFolder(); openFolder = pl.trash.id; push(InvPage.Folder) },
                                     onOpenFolder = { id -> leaveFolder(); openFolder = id; push(InvPage.Folder) },
                                     onFolderLongPress = { id -> folderMenu = id },
-                                    onApply = { confirmApply = true }
+                                    onApply = { showLocation = false; confirmApply = true }
                                 )
                             )
                         }

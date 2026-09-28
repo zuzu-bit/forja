@@ -31,9 +31,13 @@ import com.forja.app.core.inventory.TreePaths
  *  4. ACTION_VIEW implicit pe dosar (orice aplicație care declară tipul), cu acord de citire pentru arborii noștri.
  *  5. Aplicația de fișiere generică (CATEGORY_APP_FILES), la fel ca în 4.3; apoi un toast.
  *
- * Pentru „Galerie” (poze): (1) prima poză mutată, ACTION_VIEW — deschide galeria chiar pe ea (MediaStore păstrează
- * _ID-ul după mutare), deterministă; (2) albumul în Galeria Samsung (`?bucketId=`, neverificat — după cea sigură);
- * (3) galeria generică; (4) orice aplicație care arată imagini.
+ * Pentru „Galerie” (poze), ordinea din inventar-fixes §2.4: (1) când s-a atins un singur album și Galeria Samsung e
+ * instalată, chiar albumul (`?bucketId=`, `vnd.android.cursor.dir/image`) — noua locație, nu o poză din ea;
+ * NEVERIFICAT pe S23, e pe lista de verificat cu adb (§2.6: `am start -a android.intent.action.VIEW -t
+ * vnd.android.cursor.dir/image -p com.sec.android.gallery3d -d "content://media/external/images/media?bucketId=<ID>"`);
+ * dacă Galeria nu declară tipul, startActivity aruncă și trecem mai departe; (2) prima poză mutată, ACTION_VIEW —
+ * galeria deschisă chiar pe ea (MediaStore păstrează _ID-ul după mutare), albumul e la o atingere; (3) galeria
+ * generică; (4) orice aplicație care arată imagini. Mai multe albume atinse: eticheta cu calea deschide rădăcina.
  */
 internal object OpenPlace {
     private const val MY_FILES = "com.sec.android.app.myfiles"
@@ -73,19 +77,19 @@ internal object OpenPlace {
         return files(ctx)
     }
 
-    /** „Galerie”: prima poză mutată (sigur), apoi albumul Samsung, apoi galeria. */
+    /** „Galerie”: albumul nou în Galeria Samsung (un singur album atins), apoi prima poză mutată, apoi galeria. */
     fun gallery(ctx: Context, landing: Landing?): Boolean {
+        val bucket = landing?.bucketId
+        if (bucket != null && installed(ctx, SAMSUNG_GALLERY)) {
+            val album = MediaStore.Images.Media.EXTERNAL_CONTENT_URI.buildUpon().appendQueryParameter("bucketId", bucket.toString()).build()
+            if (start(ctx, Intent(Intent.ACTION_VIEW).setDataAndType(album, "vnd.android.cursor.dir/image").setPackage(SAMSUNG_GALLERY))) return true
+        }
         val first = landing?.first
         if (first != null) {
             val mime = landing.firstMime ?: "image/*"
             val view = Intent(Intent.ACTION_VIEW).setDataAndType(first, mime)
             if (start(ctx, Intent(view).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))) return true
             if (start(ctx, view)) return true
-        }
-        val bucket = landing?.bucketId
-        if (bucket != null && installed(ctx, SAMSUNG_GALLERY)) {
-            val album = MediaStore.Images.Media.EXTERNAL_CONTENT_URI.buildUpon().appendQueryParameter("bucketId", bucket.toString()).build()
-            if (start(ctx, Intent(Intent.ACTION_VIEW).setDataAndType(album, "vnd.android.cursor.dir/image").setPackage(SAMSUNG_GALLERY))) return true
         }
         if (start(ctx, Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_GALLERY))) return true
         return start(ctx, Intent(Intent.ACTION_VIEW).setType("image/*"))
