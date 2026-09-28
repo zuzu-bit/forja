@@ -5,7 +5,7 @@ const Muzica = {
   enter() { Poll.every('muzica:data', 60000, () => loadInto('muzica', Muzica.body, () => api('/insights/api/muzica'), d => { Muzica.data = d; Muzica.render(d); }, {replaceOnError: !Muzica.data}), true); },
   render(d) {
     const now = d.now && d.now.title ? d.now : null, sum = d.summary || null, top = [...(sum?.top || [])].sort((a, b) => (b.plays || 0) - (a.plays || 0) || (b.minutes || 0) - (a.minutes || 0));
-    if (!now && !top.length) { setLine('muzica', ''); fill(Muzica.body, emptyState('Liniște pe post.', 'Pornește muzica pe telefon. Topul vine după prima săptămână.', null, 'idle')); return; }
+    if (!now && !top.length) { setLine('muzica', ''); fill(Muzica.body, emptyState('Liniște pe post.', 'Pornește muzica pe telefon. Topul apare în câteva ore.', null, 'idle')); return; }
     setLine('muzica', sum ? `${sum.windowDays || 7} zile · ${fmt.dur(sum.totalMinutes || 0)} de muzică` : '');
     const nowCard = now
       ? h('article', {class: 'card now-card'},
@@ -18,7 +18,7 @@ const Muzica = {
           h('span', {class: 'top-rank', text: String(i + 1)}),
           h('div', {class: 'top-text'}, h('span', {class: 'top-title', text: t.title || 'Fără titlu'}), h('span', {class: 'top-artist', text: [t.artist, t.app].filter(Boolean).join(' · ')}), bar((t.plays || 0) / maxPlays, 'amber')),
           h('div', {class: 'top-num'}, h('b', {text: '×' + fmt.int(t.plays || 0)}), h('span', {text: fmt.dur(t.minutes || 0)})))))
-      : h('p', {class: 'panel-empty', text: 'Topul vine după prima săptămână cu muzică.'});
+      : h('p', {class: 'panel-empty', text: 'Topul vine din FORJA în câteva ore.'});
     fill(Muzica.body, h('div', {class: 'muzica-grid'}, nowCard,
       h('section', {class: 'card top-card'}, h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Topul săptămânii'}), sum?.updatedAt ? monoLabel('ACTUALIZAT ' + fmt.ago(sum.updatedAt).toUpperCase()) : null), list)));
   },

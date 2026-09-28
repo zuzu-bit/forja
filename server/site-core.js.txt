@@ -369,8 +369,22 @@ function ring(progress, size = 96, stroke = 8, color = 'url(#g-olive)', label = 
   return h('div', {class: 'ring', style: {width: size + 'px', height: size + 'px'}},
     s('svg', {width: size, height: size, viewBox: `0 0 ${size} ${size}`, 'aria-hidden': 'true'},
       s('circle', {cx: size / 2, cy: size / 2, r, fill: 'none', stroke: 'rgba(255,255,255,.08)', 'stroke-width': stroke}),
-      s('circle', {cx: size / 2, cy: size / 2, r, fill: 'none', stroke: color, 'stroke-width': stroke, 'stroke-linecap': 'round', 'stroke-dasharray': `${c * p} ${c}`, transform: `rotate(-90 ${size / 2} ${size / 2})`, class: 'ring-arc'})),
+      // La 0 nu desenăm arcul: capătul rotunjit ar lăsa un punct la ora 12.
+      p > 0 ? s('circle', {cx: size / 2, cy: size / 2, r, fill: 'none', stroke: color, 'stroke-width': stroke, 'stroke-linecap': 'round', 'stroke-dasharray': `${c * p} ${c}`, transform: `rotate(-90 ${size / 2} ${size / 2})`, class: 'ring-arc'}) : null),
     label ? h('div', {class: 'ring-label'}, label) : null);
+}
+/** Barele dese (30 de zile, ~9 px pe telefon) se aleg și trăgând degetul peste grafic: bara de sub deget se aprinde,
+ *  ridicarea degetului o alege. Glisarea verticală rămâne derularea paginii (touch-action: pan-y). */
+function scrubBars(box, pick) {
+  let active = false, idx = -1;
+  const cols = () => [...box.querySelectorAll('.bar-col')];
+  const at = x => { let best = -1, dist = 24; cols().forEach((b, i) => { if (b.disabled) return; const r = b.getBoundingClientRect(), d = Math.abs(r.left + r.width / 2 - x); if (d < dist) { dist = d; best = i; } }); return best; };
+  const mark = i => cols().forEach((b, j) => b.classList.toggle('scrub', j === i));
+  box.addEventListener('pointerdown', e => { if (e.pointerType !== 'touch') return; active = true; idx = at(e.clientX); mark(idx); });
+  box.addEventListener('pointermove', e => { if (!active) return; const i = at(e.clientX); if (i !== idx) { idx = i; mark(i); } });
+  box.addEventListener('pointerup', e => { if (!active) return; active = false; mark(-1); if (idx >= 0) { e.preventDefault(); pick(idx); } });
+  box.addEventListener('pointercancel', () => { active = false; mark(-1); });
+  return box;
 }
 function bar(fraction, cls = '') { return h('span', {class: 'bar' + (cls ? ' ' + cls : '')}, h('i', {style: {width: Math.round(Math.max(0, Math.min(1, num(fraction) || 0)) * 100) + '%'}})); }
 function badge(text, tone = '') { return h('span', {class: 'badge' + (tone ? ' ' + tone : ''), text: String(text).toUpperCase()}); }

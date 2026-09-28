@@ -6,9 +6,10 @@ const Paza = {
   render() {
     const d = Paza.data || {}, days = [...(d.days || [])].filter(x => fmt.dateKey(x.date) !== null).sort((a, b) => b.date.localeCompare(a.date));
     if (!days.length) { setLine('paza', ''); fill(Paza.body, emptyState('Niciun raport de pază.', 'Vine cu contractul semnat și Accesul la utilizare pornit.', null, 'idle')); return; }
-    const key = Paza.day && days.some(x => x.date === Paza.day) ? Paza.day : days[0].date, day = days.find(x => x.date === key);
+    // Fără alegere: ultima zi raportată (azi, sau ieri dimineața, înainte ca telefonul să trimită ziua de azi).
+    const latest = days[0].date, key = Paza.day && days.some(x => x.date === Paza.day) ? Paza.day : latest, day = days.find(x => x.date === key);
     const apps = [...(day.apps || [])].sort((a, b) => (b.minutes || 0) - (a.minutes || 0)), max = Math.max(1, ...apps.map(a => a.minutes || 0));
-    const p = fmt.durParts(day.totalMin), isToday = key === fmt.keyOf(Date.now());
+    const p = fmt.durParts(day.totalMin), isToday = key === fmt.keyOf(Date.now()), latestIsToday = latest === fmt.keyOf(Date.now());
     const opens = apps.reduce((a, x) => a + (x.opens || 0), 0);
     setLine('paza', d.updated_at ? 'Actualizat ' + fmt.ago(d.updated_at) : '');
     // Mereu 7 zile din calendar (ziua fără raport rămâne o coloană goală), ca bara să nu se lățească la un cont nou.
@@ -18,7 +19,8 @@ const Paza = {
     const wmax = Math.max(60, ...week.map(x => x.totalMin || 0));
     fill(Paza.body, h('div', {class: 'paza-grid'},
       h('article', {class: 'card paza-hero'},
-        h('div', {class: 'night-top'}, monoLabel(isToday ? 'AZI' : fmt.dayLong(fmt.dateKey(key)).toUpperCase()), isToday ? null : h('button', {type: 'button', class: 'chip-btn', onclick: () => { Paza.day = null; Paza.render(); }}, 'Azi')),
+        // Cipul duce înapoi la ziua implicită și spune care e: „Azi” doar când azi are deja raport.
+        h('div', {class: 'night-top'}, monoLabel(isToday ? 'AZI' : fmt.dayLong(fmt.dateKey(key)).toUpperCase()), key === latest ? null : h('button', {type: 'button', class: 'chip-btn', onclick: () => { Paza.day = null; Paza.render(); }}, latestIsToday ? 'Azi' : 'Ultima zi')),
         h('div', {class: 'paza-total'}, hero(String(p.h), 'h'), hero(String(p.m).padStart(2, '0'), 'min')),
         h('p', {class: 'muted', text: plural(opens, 'deschidere', 'deschideri') + ' · ' + plural(apps.length, 'aplicație', 'aplicații')}),
         h('div', {class: 'bars week'}, week.map(x => h('button', {type: 'button', class: 'bar-col' + (x.date === key ? ' sel' : ''), disabled: !!x.missing, title: fmt.day(fmt.dateKey(x.date)) + (x.missing ? ' · fără raport' : ' · ' + fmt.dur(x.totalMin)), onclick: () => { Paza.day = x.date; Paza.render(); }},

@@ -446,6 +446,34 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     clean(p);
   });
 
+  await check('Pază before today’s report: the latest day, and a chip that says where it leads', async () => {
+    const p = page();
+    const today = p.ux.fmt.keyOf(Date.now());
+    p.fixture.data.paza.days = p.fixture.data.paza.days.filter(d => d.date !== today);
+    await tick(20); await login(p); await open(p, 'paza');
+    await until(() => p.$('body-paza').querySelector('.app-row'), 'paza');
+    const hero = () => p.$('body-paza').querySelector('.paza-hero');
+    assert(!hero().querySelector('.chip-btn'), 'no “Azi” chip that would lead back to yesterday');
+    assert.doesNotMatch(hero().querySelector('.night-top .mono').textContent, /^AZI$/);
+    const older = [...hero().querySelectorAll('.bar-col')].filter(b => !b.disabled && !b.classList.contains('sel'))[0];
+    older.click(); await tick(20);
+    assert.equal(hero().querySelector('.chip-btn').textContent, 'Ultima zi');
+    hero().querySelector('.chip-btn').click(); await tick(20);
+    assert(!hero().querySelector('.chip-btn'));
+    assert.equal(hero().querySelector('.bar-col.sel')?.title.split(' · ')[0], p.ux.fmt.day(p.ux.fmt.dateKey(p.fixture.data.paza.days.map(d => d.date).sort().at(-1))));
+    clean(p);
+  });
+
+  await check('an empty ring draws no arc (no stray dot at 12 o’clock)', async () => {
+    const p = page({profile: 'empty'});
+    await tick(20); await login(p); await open(p, 'ratie');
+    await until(() => /Prima masă apare aici/.test(p.$('s-ratie').textContent), 'ratie');
+    await open(p, 'azi'); await until(() => p.$('body-azi').querySelector('.ring'), 'azi ring');
+    for (const r of p.w.document.querySelectorAll('#app .ring svg')) assert.equal(r.querySelectorAll('circle').length, r.querySelector('.ring-arc') ? 2 : 1);
+    assert(![...p.w.document.querySelectorAll('#app .ring-arc')].some(c => /^0 /.test(c.getAttribute('stroke-dasharray'))), 'no zero-length arc');
+    clean(p);
+  });
+
   await check('Cont: contract v3, ten pipes with “ultima dată”, intake pause with revision, privacy, Ieși', async () => {
     const p = page();
     await tick(20); await login(p); await open(p, 'cont');

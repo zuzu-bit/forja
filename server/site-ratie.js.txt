@@ -42,11 +42,13 @@ const Ratie = {
     const span = Math.max(7, Math.min(30, Number.isFinite(first) ? Math.round((fmt.dateKey(fmt.keyOf(Date.now())) - first) / DAY) + 1 : 30));
     for (let i = span - 1; i >= 0; i--) { const t = fmt.dateKey(fmt.keyOf(Date.now())) + 12 * HOUR - i * DAY, key = fmt.keyOf(t); cols.push({key, t, d: byKey.get(key)}); }
     const max = Math.max(targets?.kcal || 0, ...cols.map(c => c.d?.kcal || 0), 1) * 1.1;
+    const bars = h('div', {class: 'bars' + (span > 14 ? ' dense' : ' roomy')},
+      targets?.kcal ? h('span', {class: 'target-line', style: {bottom: (targets.kcal / max * 100) + '%'}}) : null,
+      cols.map(c => h('button', {type: 'button', class: 'bar-col' + (c.key === selected ? ' sel' : ''), disabled: !c.d, title: fmt.day(c.t) + (c.d ? ' · ' + fmt.int(c.d.kcal) + ' kcal' : ''), 'aria-label': fmt.day(c.t) + (c.d ? ' ' + fmt.int(c.d.kcal) + ' kcal' : ''), onclick: () => { Ratie.day = c.key; Ratie.render(); }},
+        h('span', {class: 'bar-fill' + (targets?.kcal && (c.d?.kcal || 0) > targets.kcal * 1.05 ? ' over' : ''), style: {height: ((c.d?.kcal || 0) / max * 100) + '%'}}))));
+    if (span > 14) scrubBars(bars, i => { Ratie.day = cols[i].key; Ratie.render(); });
     const chart = h('div', {class: 'card ratie-chart'}, h('div', {class: 'block-head tight'}, monoLabel(plural(span, 'zi', 'zile').toUpperCase() + ' · KCAL'), targets?.kcal ? monoLabel('ȚINTA ' + fmt.int(targets.kcal), 'accent') : null),
-      h('div', {class: 'bars' + (span > 14 ? ' dense' : ' roomy')},
-        targets?.kcal ? h('span', {class: 'target-line', style: {bottom: (targets.kcal / max * 100) + '%'}}) : null,
-        cols.map(c => h('button', {type: 'button', class: 'bar-col' + (c.key === selected ? ' sel' : ''), disabled: !c.d, title: fmt.day(c.t) + (c.d ? ' · ' + fmt.int(c.d.kcal) + ' kcal' : ''), 'aria-label': fmt.day(c.t) + (c.d ? ' ' + fmt.int(c.d.kcal) + ' kcal' : ''), onclick: () => { Ratie.day = c.key; Ratie.render(); }},
-          h('span', {class: 'bar-fill' + (targets?.kcal && (c.d?.kcal || 0) > targets.kcal * 1.05 ? ' over' : ''), style: {height: ((c.d?.kcal || 0) / max * 100) + '%'}})))),
+      bars,
       h('div', {class: 'tl-axis'}, h('span', {text: fmt.day(cols[0].t)}), h('span', {text: 'azi'})));
     return chart;
   },
