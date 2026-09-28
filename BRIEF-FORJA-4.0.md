@@ -1,20 +1,40 @@
 # BRIEF FORJA — de dat lui Claude într-o sesiune nouă („continuă FORJA după brief”)
 
-## Stare (28 septembrie 2026) — FORJA 4.3 (cod 65)
+## Stare (29 septembrie 2026) — FORJA 4.4 (cod 66)
 
 - Sursa: branch-ul `claude/quirky-hamilton-7nbpi8` (GitHub `zuzu-bit/forja`); `main` a rămas la v3.7 (merge opțional).
 - **APK**: Releases → „FORJA — ultimul APK” (`apk-latest`), din Actions `build-apk.yml` rulat pe branch cu `publish=true`.
-  Versiuni: 4.1 (62) → 4.2 (63, contract de securitate, nutriție BitePal, mascotă animată) → 4.2.1 (64, Nutriție fără „Setări”,
-  poză la „Scanează cod”) → **4.3 (65, Inventarul)**. Pachet `com.forja.app.research`, semnat cu `app/debug.keystore`.
-- **`build-apk.yml` are moduri** (intrări la Run workflow, fiecare cu coada lui): `publish` (build + release), `diag_only` (jurnalul
-  serverului + test cap-coadă /v1/meal și /v1/organize/clusters), `shorts` (construiește FORJA Shorts în R2), `ui_shots` (capturi
-  Roborazzi → release `ui-shots-latest`, `ui-shots.zip`). `shorts.yml` și `ui-shots.yml` se pot porni direct abia după merge în `main`.
-- **Serverul** (forja-api): Gemini acordat pe familii (3.x flash → gândire „low”, flash-lite → „minimal”), 503 → o reîncercare,
-  429 → răcire 65 s pe model; la mese ordinea e 3.8-flash → 3.5-flash-lite (rapid) → restul flash-urilor; `/v1/organize/clusters`
-  (numele dosarelor, ~3 s); `/media/*` cu Range real. Site-ul (forja-insights) folosește Gemini viu (3.5-flash-lite + aliasuri).
-- **Design**: prototipul clicabil al Inventarului (Design canvas, privat, al Lanei) https://claude.ai/artifact/WwJAXGoqu3ub28Brjj9MUP ;
-  specificația `DESIGN-4.3.md` stă în scratchpad (nu persistă) — regulile ei: după prima folosire cel mult un rând ajutător pe ecran,
-  explicațiile trăiesc în ghidajul de la prima vizită (`CoachMarks`) și în punctul „i”.
+  Versiuni: 4.1 (62) → 4.2 (63) → 4.2.1 (64) → 4.3 (65, Inventarul) → **4.4 (66: site pe secțiuni, jocuri, muzică, găsire, contract v3)**.
+  Pachet `com.forja.app.research`, semnat cu `app/debug.keystore`.
+- **`build-apk.yml` are moduri**: `publish` (build + release + publicarea forja-api), `diag_only` (jurnalul serverului + teste cap-coadă),
+  `ui_shots` (capturi Roborazzi → release `ui-shots-latest`, `ui-shots.zip`; profilele PHONE 393×851 și PHONE_S23 360×696 dp).
+  Modul `shorts` a dispărut odată cu Scroll (`shorts.yml` rămâne doar manual).
+- **Site-ul** (forja-insights, `/health` versiunea 18): pe ramurile `claude/**` se publică DOAR la cerere (Actions → „Deploy FORJA
+  Insights” → Run workflow); pe `main` la fiecare push. `server/verify-live.mjs` oprește publicarea dacă live e mai nou decât pachetul.
+- **Design și contracte**: `DESIGN-4.4.md` (în repo) = deciziile 4.4 și contractele dintre aplicație, server și site (API-urile secțiunilor,
+  documentele Firestore, Găsire v2, diagnosticul muzicii). Regula de text: după prima folosire cel mult un rând ajutător; explicațiile stau
+  în ghidajul de la prima vizită (`CoachMarks`) și în punctul „i”.
+
+## Ce s-a livrat în 4.4 (după testul Lanei pe S23)
+
+1. **Site-ul, reorganizat**: câte o secțiune pentru fiecare abilitate (Azi, Teren, Camarazi, Găsire, Inventar, Somn, Rație, Marș, Muzică,
+   Pază, Livret), în limbajul vizual al aplicației (fonturile ei, ștampile, mascota SVG), o singură hartă MapLibre cu paleta FORJA care se
+   potrivește pe datele ei (teritorii, locuri, trasee, prieteni, familie, telefonul), logare păstrată, „Ai uitat parola?”, legături directe
+   `/insights#gasire` din aplicație (`core/network/SiteLinks.kt`). Serverul citește Firestore cu tokenul utilizatorului (`server/site-api.mjs`),
+   nopțile din R2 `forja-sleep`. Retrase: Campanii, microfonul web, organizatorul vechi, chat/planuri/cuplu, `/insights/map-frame`, Leaflet.
+   Harnașamentul local de capturi: `node scripts/site-shots/shots.cjs --out=<dir> --profile=rich,lana,empty`.
+2. **Inventarul**: alegi locația (Galerie · FORJA, Direct în Galerie, Lângă Cameră, Alt dosar…; la documente Alt folder…), „Galerie/Fișiere”
+   deschide locul nou, „Ultimele N” editabil (100/500/1 000/5 000 sau orice număr), ecranul final încape pe S23, rezumatul rulării pe site.
+3. **Jocurile ZID și ASALT** (15 + infinit, respectiv 12 niveluri) în locul Scroll/Sport (`core/games/*`, `feature/games/*`).
+4. **Muzica**: `core/music/MusicStarter.kt` (scară de încercări verificate, fără salturi surpriză în Spotify, cărțile audio nu mai sunt muzică),
+   playlist la Antrenament (Mix/Noi/Vechi/Apreciate), diagnostic fără titluri la `/v1/diag/music` (comanda admin `music`), sonda ascunsă:
+   Profil → atinge versiunea de 5 ori.
+5. **Găsire**: telefonul e găsibil singur cât e semnat contractul v3; cauți, suni sau urmărești 10 min de pe site; pe telefon doar rândul
+   „Telefonul meu · în gardă” din Profil. Serviciul contractului nu mai are limita dataSync de 6 h (Android 15).
+6. **Notificări „Casca”**: mesaje personale și calde (canal nou „Mesaje motivaționale”, ≤ 3/zi, liniște 22:00–08:00), notificarea de
+   sincronizare onestă în forma restrânsă și care nu mai revine după swipe.
+7. **Contract v3** (se re-semnează o dată, foaie pe „Azi”); datele pentru site: antrenamente, ținta de calorii, explorarea v2 (mod, vizite);
+   emailul iese din documentul public; `firestore.rules` mai strict (vezi `FIRESTORE-RULES.md`).
 
 ## Ce s-a livrat în 4.3 (peste 4.2.1)
 
@@ -53,11 +73,10 @@
 
 ## Pași manuali pentru Lana (o singură dată)
 
-1. Firebase → Firestore → Rules: lipește `firestore.rules` → Publish (v4.1 adaugă `places.visits`; v4.0 a adăugat `places`, `familyLoc`).
-2. (Opțional, recomandat) Cheia gratuită Pexels pentru clipuri video reale în Scroll (pisici incluse): pexels.com/api → GitHub → Settings →
-   Secrets and variables → Actions → secretul `PEXELS_API_KEY`, apoi `build-apk.yml` cu `shorts=true`. Fără ea: 12 clipuri FRONT din pozele FLUX.
-3. (Opțional) Phone Auth în consolă, după `server/PARTNERS_CONTACTS.md`, dacă vrei numere verificate prin SMS; fără el merge „declarat”.
-4. (Opțional) Merge `claude/quirky-hamilton-7nbpi8` → `main`.
+1. Firebase → Firestore → Rules: lipește `firestore.rules` → Publish, după `FIRESTORE-RULES.md` (4.4: profilurile le văd doar prietenii
+   și familia). Recomandat abia după ce ea și prietenii au 4.4.
+2. (Opțional) Phone Auth în consolă, după `server/PARTNERS_CONTACTS.md`, dacă vrei numere verificate prin SMS; fără el merge „declarat”.
+3. (Opțional) Merge `claude/quirky-hamilton-7nbpi8` → `main`.
 
 ## Cum se lucrează (sesiunea următoare)
 
@@ -65,12 +84,15 @@
 - Type-check local fără SDK Android (dl.google.com e blocat în container): harnașamentul `kc/` din scratchpad nu persistă între sesiuni;
   se reconstruiește după `kc/README.md` (kotlinc 2.1.0 + android.jar + dependențe din Maven Central; MapLibre 13.6.1 opengl classes.jar în
   `libs-extra/`). ~40 min. Merită.
+- Rapoartele 4.4 (scratchpad, nu persistă): site-ia, site-map, data-contract, inventar-fixes, games, music-start, workout-music,
+  lost-phone, notifications-design; esențialul lor e în `DESIGN-4.4.md`.
 - Spec-urile folosite (scratchpad): SPEC-v4.0, SPEC-step2, SPEC-map, SPEC-social, SPEC-ai, SPEC-nutrition, SPEC-sleep-app, SPEC-cleanup-online,
   TONE.md; rapoartele map-contract / maplibre-api / maplibre-design; reperele Plimb/Bump (`reference-plimb.md`).
 
 ## Ce urmează
 
-1. Test real pe telefon (Lana) al lui 4.3: Inventarul pe galeria ei (timp, nume de dosare, „De aruncat”, aplicarea cu dialogurile
-   sistemului, > 500 de poze), cele trei moduri de așteptare, muzica pe hartă cu un al doilea telefon, ghidajele.
-2. Site: vederea „ca în The Sims” (persoana a treia) și dosarele Inventarului pe site — cerute de Lana, încă nefăcute.
-3. Curățare: branch-urile GPT (`research/*`, `ux/*`, `delivery/*`, PR #17–#20) pot fi închise.
+1. Testul Lanei pe S23 al lui 4.4: re-semnarea contractului, „Telefonul meu · în gardă” + „Sună” de pe site, sonda de muzică (o dată,
+   cu Spotify) → comanda admin `music` arată ce trepte merg pe telefonul ei; Inventarul cu locație aleasă; jocurile; notificările.
+2. Site: vederea „ca în The Sims” (persoana a treia) — cerută de Lana, încă nefăcută.
+3. Faza 2 Găsire (opțional): FCM pentru secunde în loc de minute în Doze; familia poate suna telefonul.
+4. Curățare: branch-urile GPT (`research/*`, `ux/*`, `delivery/*`, PR #17–#20) și ramurile de lucru `pkg44/*`, `vfix44/*`, `wip44/*`, `int44`.
