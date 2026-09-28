@@ -38,6 +38,7 @@ object MusicIcons {
     /** Săgeată în afară: deschide playerul. */
     val Open = stroke("M14 4h6v6", "M20 4l-9 9", "M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5")
     val ChevronRight = stroke("M9 6l6 6-6 6")
+    val Back = stroke("M15 18l-6-6 6-6")
 
     /** Iconița felului unei sesiuni (rândul „Reia”). */
     fun of(kind: MediaKind): ImageVector = when (kind) {

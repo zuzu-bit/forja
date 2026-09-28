@@ -477,8 +477,12 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     onOpenMapGhost = { nav.navigate(Route.MAP) },
                     onOpenPermissions = { nav.navigate(Route.PERMISSIONS) },
                     onOpenContract = { nav.navigate(Route.CONTRACT) { launchSingleTop = true } },
-                    onOpenLostPhone = { nav.navigate("lost_phone") }
+                    onOpenLostPhone = { nav.navigate("lost_phone") },
+                    onOpenProbe = { nav.navigate(Route.MUSIC_PROBE) { launchSingleTop = true } }
                 )
+            }
+            composable(Route.MUSIC_PROBE) {
+                com.forja.app.feature.probe.ProbeScreen(onBack = { nav.popBackStack() })
             }
             // „Telefonul meu” — găsirea telefonului pierdut (ruta e locală: Nav.kt nu se schimbă în pasul 2).
             composable("lost_phone") {

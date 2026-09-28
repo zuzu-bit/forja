@@ -23,5 +23,6 @@ object Route {
     const val WAIT_MUSIC = "inventory_music"     // „Cât aștepți” · Muzică (S3c)
     const val PERMISSIONS = "permissions"
     const val CONTRACT = "contract"
+    const val MUSIC_PROBE = "music_probe"    // proba ascunsă a pornirii muzicii (Profil → 5 atingeri pe versiune)
     fun activityDetail(id: Long) = "activity/$id"
 }
