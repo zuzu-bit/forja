@@ -49,6 +49,7 @@ private val CLAUSES = listOf(
             "Documentele: PDF-urile de cel mult 4 MB și fragmente scurte din fișierele text ale folderului ales la Curățenie, plus copii ale pozelor și fișierelor de aruncat.",
             "Activitatea în aplicații: numele aplicațiilor și timpul petrecut în ele — numai dacă dai accesul la utilizare din Setări Android.",
             "Agenda: doar amprente ale numerelor, ca prietenii cu FORJA să apară singuri. Numele și numerele rămân pe telefon.",
+            "Ce asculți: titlul și artistul, ca prietenii să vadă pe hartă.",
             "Înregistrările nopții: sunetul dormitorului, în bucăți de 30 de minute, urcate dimineața pe Wi-Fi — doar când pornești tu Stingerea cu microfonul.",
             "Microfonul live, ziua, nu pornește prin acest contract. Are permisiune și acord separat și rămâne oprit."
         )

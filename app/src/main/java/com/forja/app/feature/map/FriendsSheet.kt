@@ -10,7 +10,10 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -24,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -31,6 +35,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.forja.app.ForjaApp
 import com.forja.app.core.data.Friend
+import com.forja.app.core.data.listening
 import com.forja.app.core.location.BgLocation
 import com.forja.app.core.social.ContactsSync
 import com.forja.app.core.designsystem.*
@@ -260,6 +265,18 @@ fun FriendsSheet(
                                     }
                                 )
                             )
+                            f.listening()?.let { song ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Filled.MusicNote, contentDescription = "Ascultă", tint = EmberHot, modifier = Modifier.size(12.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        song,
+                                        style = BodyTiny.copy(color = TextPrimary),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                             if (f.lastActivityType != null && f.lastActivityKm > 0) {
                                 Text(
                                     "ultima: ${Fmt.km(f.lastActivityKm * 1000)} km ${

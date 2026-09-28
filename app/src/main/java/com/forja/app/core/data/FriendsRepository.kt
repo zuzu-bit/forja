@@ -38,8 +38,19 @@ data class Friend(
     /** Fotografia de profil (users/{uid}.photoUrl), dacă și-a pus una; altfel inițiale. */
     val photoUrl: String? = null,
     /** A venit din agendă (potrivire reciprocă a numerelor) — etichetă „din agendă”; se completează din Prefs.contactMatches. */
-    val fromContacts: Boolean = false
+    val fromContacts: Boolean = false,
+    /** Ce ascultă acum, „Titlu · Artist” (users/{uid}.nowPlaying), doar proaspăt (< 10 min) și niciodată în fantomă. */
+    val nowPlaying: String? = null,
+    /** Momentul publicării lui [nowPlaying] — ca ecranul să-l stingă singur după 10 minute. */
+    val nowPlayingAt: Long = 0L
 )
+
+/** O melodie publicată e „acum” 10 minute; după aceea nu mai apare (MusicPresence o reîmprospătează la 5 min). */
+const val NOW_PLAYING_FRESH_MS = 10 * 60_000L
+
+/** „Titlu · Artist” cât timp e proaspăt; null altfel. */
+fun Friend.listening(now: Long = System.currentTimeMillis()): String? =
+    nowPlaying?.takeIf { now - nowPlayingAt < NOW_PLAYING_FRESH_MS }
 
 /** Poziția unui prieten care m-a pus în familie — scrisă mereu, și în fantomă. */
 data class FamilyLoc(
@@ -162,6 +173,13 @@ class FriendsRepository(
                         if (u != null && u.exists()) {
                             val ghostUntil = u.getLong("ghostUntil") ?: 0L
                             val ghost = ghostUntil == -1L || ghostUntil > System.currentTimeMillis()
+                            // Ce ascultă: doar titlul și artistul, doar proaspăt, niciodată în fantomă.
+                            val np = u.get("nowPlaying") as? Map<*, *>
+                            val npTitle = (np?.get("title") as? String)?.trim().orEmpty()
+                            val npArtist = (np?.get("artist") as? String)?.trim().orEmpty()
+                            val npAt = (np?.get("at") as? Number)?.toLong() ?: 0L
+                            val npFresh = !ghost && npTitle.isNotEmpty() &&
+                                System.currentTimeMillis() - npAt < NOW_PLAYING_FRESH_MS
                             cache[uid] = Friend(
                                 uid = uid,
                                 name = u.getString("name") ?: "Prieten",
@@ -178,7 +196,9 @@ class FriendsRepository(
                                 family = uid in myFamily,
                                 exploreCells = (u.getLong("exploreCells") ?: 0L).toInt(),
                                 placesCount = (u.getLong("placesCount") ?: 0L).toInt(),
-                                photoUrl = u.getString("photoUrl")?.takeIf { it.isNotBlank() }
+                                photoUrl = u.getString("photoUrl")?.takeIf { it.isNotBlank() },
+                                nowPlaying = if (npFresh) (if (npArtist.isNotEmpty()) "$npTitle · $npArtist" else npTitle) else null,
+                                nowPlayingAt = if (npFresh) npAt else 0L
                             )
                             trySend(cache.values.toList())
                         }

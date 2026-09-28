@@ -38,7 +38,10 @@ object MapMarkers {
         return d
     }
 
-    /** Bitmapul avatarului (52 dp + vârf 10 dp): foto rotundă sau inițiale; inel după stare; selectat = inel amber mai gros. */
+    /**
+     * Bitmapul avatarului (52 dp + vârf 10 dp): foto rotundă sau inițiale; inel după stare; selectat = inel amber mai gros;
+     * `music` = insigna cu nota muzicală (jos-dreapta) cât prietenul ascultă ceva (nowPlaying proaspăt).
+     */
     fun friendBitmap(
         context: Context,
         name: String,
@@ -47,8 +50,9 @@ object MapMarkers {
         me: Boolean,
         state: String,
         family: Boolean,
-        selected: Boolean
-    ): Bitmap = drawFriend(context, name, photo, ghost, me, state, family, selected)
+        selected: Boolean,
+        music: Boolean = false
+    ): Bitmap = drawFriend(context, name, photo, ghost, me, state, family, selected, music)
 
     /** Bitmapul pinului de loc (34 dp + vârf 8 dp); selectat = puțin mai mare și cu inel mai gros. */
     fun placeBitmap(context: Context, stars: Int, mine: Boolean, selected: Boolean): Bitmap =
@@ -93,7 +97,7 @@ object MapMarkers {
 
     private fun drawFriend(
         context: Context, name: String, photo: Bitmap?, ghost: Boolean, me: Boolean, state: String, family: Boolean,
-        selected: Boolean
+        selected: Boolean, music: Boolean = false
     ): Bitmap {
         val density = context.resources.displayMetrics.density
         val size = (52 * density).toInt()
@@ -201,7 +205,40 @@ object MapMarkers {
             c.drawText("♥", bx, hy, heart)
         }
 
+        // Insigna „♪” — ascultă muzică acum (jos-dreapta, în afara vârfului; nu atinge punctul de stare sau inima).
+        if (music) drawMusicBadge(c, size - 10 * density, size - 11 * density, density)
+
         return bmp
+    }
+
+    /** Disc jar (#FFB35C) cu contur închis și o notă optime desenată vectorial (cap oval, tijă, steag). */
+    private fun drawMusicBadge(c: Canvas, bx: Float, by: Float, density: Float) {
+        val br = 7.5f * density
+        c.drawCircle(bx, by, br + 1.5f * density, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#0A0A0B") })
+        c.drawCircle(bx, by, br, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FFB35C") })
+        val ink = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#0A0A0B") }
+        // Capul notei: oval înclinat, jos-stânga.
+        val hx = bx - 1.3f * density
+        val hy = by + 2.3f * density
+        val save = c.save()
+        c.rotate(-22f, hx, hy)
+        c.drawOval(android.graphics.RectF(hx - 2.3f * density, hy - 1.65f * density, hx + 2.3f * density, hy + 1.65f * density), ink)
+        c.restoreToCount(save)
+        // Tija și steagul.
+        val stem = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#0A0A0B")
+            style = Paint.Style.STROKE
+            strokeWidth = 1.3f * density
+            strokeCap = Paint.Cap.ROUND
+        }
+        val sx = hx + 2.0f * density
+        val top = by - 4.4f * density
+        c.drawLine(sx, hy - 0.4f * density, sx, top, stem)
+        val flag = Path().apply {
+            moveTo(sx, top)
+            quadTo(sx + 3.4f * density, top + 1.2f * density, sx + 2.6f * density, top + 4.0f * density)
+        }
+        c.drawPath(flag, stem)
     }
 
     private fun drawPlace(context: Context, stars: Int, mine: Boolean, selected: Boolean): Bitmap {

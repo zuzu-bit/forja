@@ -145,6 +145,24 @@
                 android:resource="@xml/forja_guard_config" />
         </service>
 
+        <!-- Muzica ta: permisul care arată sesiunile media (ce cântă, în ce aplicație). Notificările NU se citesc:
+             sistemul nu trimite niciun tip de notificare (default = 0, toate tipurile dezactivate). -->
+        <service
+            android:name=".core.music.MusicListenerService"
+            android:exported="false"
+            android:label="FORJA · Muzica ta"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.notification.default_filter_types"
+                android:value="0" />
+            <meta-data
+                android:name="android.service.notification.disabled_filter_types"
+                android:value="conversations|alerting|ongoing|silent" />
+        </service>
+
         <service
             android:name=".core.focus.FocusMonitorService"
             android:exported="false"
