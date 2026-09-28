@@ -135,29 +135,27 @@ object ExploreSync {
     /**
      * O celulă nouă a fost cucerită: harta de pe site o primește în cel mult 5 minute, fără să trimitem la fiecare
      * celulă. Prima celulă după o pauză pleacă imediat; cele din următoarele 5 minute așteaptă o singură rulare,
-     * programată la capătul ferestrei. Ieftin și sigur din orice fir.
+     * programată la capătul ferestrei. Se așteaptă din tracker (și din receptorul de fundal, care ține procesul viu
+     * până la capăt); nu face nimic cu „Și pe site” oprit.
      */
-    fun kickSoon(context: Context) {
-        val app = ForjaApp.from(context)
-        app.appScope.launch {
-            try {
-                if (!app.prefs.exploreSyncSite.first() || app.auth.currentUid == null) return@launch
-                val store = SiteSyncStore.of(app)
-                val now = System.currentTimeMillis()
-                val delay = synchronized(kickGuard) {
-                    val d = KickThrottle.delayMs(now, store.getLong(SiteSyncStore.EXPLORE_CELL_KICK_AT, 0L), CELL_KICK_GAP_MS)
-                        ?: return@launch
-                    store.edit().putLong(SiteSyncStore.EXPLORE_CELL_KICK_AT, now + d).apply()
-                    d
-                }
-                val req = OneTimeWorkRequestBuilder<ExploreSyncWorker>()
-                    .setConstraints(connected())
-                    .setInitialDelay(delay, TimeUnit.MILLISECONDS)
-                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
-                    .build()
-                WorkManager.getInstance(app).enqueueUniqueWork(WORK_CELL, ExistingWorkPolicy.KEEP, req)
-            } catch (_: Exception) { }
-        }
+    suspend fun kickSoon(app: ForjaApp) {
+        try {
+            if (!app.prefs.exploreSyncSite.first() || app.auth.currentUid == null) return
+            val store = SiteSyncStore.of(app)
+            val now = System.currentTimeMillis()
+            val delay = synchronized(kickGuard) {
+                val d = KickThrottle.delayMs(now, store.getLong(SiteSyncStore.EXPLORE_CELL_KICK_AT, 0L), CELL_KICK_GAP_MS)
+                    ?: return
+                store.edit().putLong(SiteSyncStore.EXPLORE_CELL_KICK_AT, now + d).apply()
+                d
+            }
+            val req = OneTimeWorkRequestBuilder<ExploreSyncWorker>()
+                .setConstraints(connected())
+                .setInitialDelay(delay, TimeUnit.MILLISECONDS)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
+                .build()
+            WorkManager.getInstance(app).enqueueUniqueWork(WORK_CELL, ExistingWorkPolicy.KEEP, req)
+        } catch (_: Exception) { }
     }
 
     /**
