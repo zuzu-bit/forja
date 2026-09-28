@@ -31,6 +31,10 @@ function realityPatch(fixture) {
     created_at: now - 900000, updated_at: now - 600000}];
   fixture.recovery = [{id: id(20), name: 'SM-S911B', enabled: true, seen_at: now - 60000, online: true, status: 'ready', command: null, position: null}];
   fixture.state.journals.sleep.records = fixture.state.journals.sleep.records.slice(0, 2);
+  // The signed contract turns on explore "Și pe site" (CollectionSettings.enableAll): 150 m cells + places arrive.
+  const cell = (lat, lon) => ({type: 'Feature', properties: {id: lat + ':' + lon}, geometry: {type: 'Polygon', coordinates: [[[lon, lat], [lon + 0.0019, lat], [lon + 0.0019, lat + 0.00135], [lon, lat + 0.00135], [lon, lat]]]}});
+  fixture.explore = {owner: 'self', grid_m: 150, cells: {type: 'FeatureCollection', features: [cell(44.4132, 26.0938), cell(44.41455, 26.0938), cell(44.4132, 26.0957)]},
+    places: [{id: 'p1', name: 'Acasă', lat: 44.4139, lon: 26.0947, stars: 0, note: '', stay_ms: 36000000}], next_cursor: null, updated_at: now};
 }
 
 (async () => {
@@ -43,7 +47,7 @@ function realityPatch(fixture) {
     '/insights/maplibre.css': [read('vendor/maplibre-5.10.0.css.txt'), 'text/css'],
     '/insights/map-renderer.js': [read('map-renderer.js.txt'), 'text/javascript']
   };
-  const shots = [];
+  const shots = [], metrics = {};
   for (const [label, viewport] of [['desktop', {width: 1440, height: 900}], ['phone', {width: 390, height: 844}]]) {
     const context = await browser.newContext({viewport, deviceScaleFactor: 1, ignoreHTTPSErrors: true, locale: 'ro-RO', timezoneId: 'Europe/Bucharest'});
     const page = await context.newPage();
@@ -79,6 +83,13 @@ function realityPatch(fixture) {
       const file = `${mode}-${label}-${String(i + 1).padStart(2, '0')}-${name}.png`;
       await page.screenshot({path: path.join(out, file), fullPage: true});
       shots.push(file);
+      // Visible density of the rendered page: words, controls and collapsed disclosures (static + client-rendered).
+      metrics[`${label}:${name}`] = await page.evaluate(n => {
+        const root = document.getElementById('page-' + n), visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+        const count = sel => [...root.querySelectorAll(sel)].filter(visible).length;
+        return {words: (root.innerText || '').split(/\s+/).filter(Boolean).length, buttons: count('button'), inputs: count('input,select,textarea'),
+          details: count('details'), height: Math.round(document.documentElement.scrollHeight)};
+      }, name);
     }
     await page.goto('https://forja.test/insights#privacy');
     await page.waitForTimeout(500);
@@ -87,5 +98,6 @@ function realityPatch(fixture) {
     await context.close();
   }
   await browser.close();
-  console.log(JSON.stringify({out, mode, shots}, null, 1));
+  fs.writeFileSync(path.join(out, `${mode}-metrics.json`), JSON.stringify(metrics, null, 1));
+  console.log(JSON.stringify({out, mode, shots, metrics}, null, 1));
 })().catch(e => { console.error(e); process.exitCode = 1; });
