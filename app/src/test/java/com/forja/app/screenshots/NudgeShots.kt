@@ -24,10 +24,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.forja.app.R
 import com.forja.app.core.designsystem.TextDim
 import com.forja.app.core.designsystem.components.StampLabel
 import com.forja.app.core.designsystem.monoLabel
@@ -66,8 +68,11 @@ private val Sub = Color(0xFFB9B9BE)
 
 private fun sample(r: Rendered?, fallback: String): Rendered = r ?: Rendered(fallback, NudgeContext.Morning, "—", "—", NudgePose.Talking, false, false)
 
+/** Numele canalelor, exact cum le vede Lana în Setări (aceleași resurse ca ForjaApp.createChannels). */
+private data class ChannelNames(val coach: String, val sleep: String, val explore: String, val social: String)
+
 /** Mesajele planșei, alese exact cum le-ar alege Casca în ziua din NudgeFixtures.rich. */
-private fun board(): List<Triple<String, Rendered, String?>> {
+private fun board(ch: ChannelNames): List<Triple<String, Rendered, String?>> {
     val rich = NudgeFixtures.rich(9)
     val sync = Nudge.pick(NudgeContext.SyncOngoing, NudgeFixtures.rich(20), emptyList())
     val syncText = SyncCopy.compose(setOf("location", "app_usage", "photos"), sync) { k ->
@@ -77,22 +82,22 @@ private fun board(): List<Triple<String, Rendered, String?>> {
     fun at(h: Int): NudgeData = NudgeFixtures.rich(h)
     return listOf(
         Triple("Sincronizare activă", syncCard, syncText.big),
-        Triple("Mesaje motivaționale", sample(Nudge.pick(NudgeContext.Morning, rich, emptyList()), "m"), null),
-        Triple("Mesaje motivaționale", sample(Nudge.pick(NudgeContext.Midday, at(13), emptyList()), "d"), null),
-        Triple("Mesaje motivaționale", sample(Nudge.pick(NudgeContext.Evening, at(20), emptyList()), "e"), null),
-        Triple("Mesaje motivaționale", sample(Nudge.pick(NudgeContext.StreakRisk,
+        Triple(ch.coach, sample(Nudge.pick(NudgeContext.Morning, rich, emptyList()), "m"), null),
+        Triple(ch.coach, sample(Nudge.pick(NudgeContext.Midday, at(13), emptyList()), "d"), null),
+        Triple(ch.coach, sample(Nudge.pick(NudgeContext.Evening, at(20), emptyList()), "e"), null),
+        Triple(ch.coach, sample(Nudge.pick(NudgeContext.StreakRisk,
             at(20).copy(voice = Voice.Sergent, streaks = listOf(Streak(StreakKind.Workout, 6, doneToday = false))), emptyList()), "r"), null),
-        Triple("Mesaje motivaționale", sample(Nudge.pick(NudgeContext.Milestone,
+        Triple(ch.coach, sample(Nudge.pick(NudgeContext.Milestone,
             at(18).copy(milestone = Streak(StreakKind.Meals, 7, doneToday = true)), emptyList()), "p"), null),
-        Triple("Somn", sample(Nudge.pick(NudgeContext.SleepReport,
+        Triple(ch.sleep, sample(Nudge.pick(NudgeContext.SleepReport,
             NudgeFixtures.clock(7, 40).copy(sleep = SleepView(452, deepMin = 70, coverageMin = 440, totalMin = 452, events = 3)), emptyList()), "s"), null),
-        Triple("Explorare", sample(Nudge.pick(NudgeContext.NewPlace,
+        Triple(ch.explore, sample(Nudge.pick(NudgeContext.NewPlace,
             NudgeFixtures.clock(17).copy(place = PlaceView("", 320, 1, 7)), emptyList()), "l"), null),
-        Triple("Prieteni", sample(Nudge.pick(NudgeContext.FriendNear,
+        Triple(ch.social, sample(Nudge.pick(NudgeContext.FriendNear,
             NudgeFixtures.clock(13).copy(friend = FriendView("u", "Ana", 380, null)), emptyList()), "f"), null),
-        Triple("Mesaje motivaționale", sample(Nudge.pick(NudgeContext.Bedtime,
+        Triple(ch.coach, sample(Nudge.pick(NudgeContext.Bedtime,
             NudgeFixtures.clock(22, 35).copy(wake = "07:30", minutesToBedtime = 25), emptyList()), "b"), null),
-        Triple("Mesaje motivaționale", sample(Nudge.pick(NudgeContext.Comeback,
+        Triple(ch.coach, sample(Nudge.pick(NudgeContext.Comeback,
             NudgeFixtures.clock(13).copy(comebackStep = 14), emptyList()), "c"), null)
     )
 }
@@ -124,7 +129,13 @@ private fun Board() {
     ) {
         StampLabel("CASCA · NOTIFICĂRI", rotationDeg = -3f, appear = false)
         Spacer(Modifier.height(4.dp))
-        board().forEach { (channel, r, big) -> NotificationCard(channel, r, big) }
+        val names = ChannelNames(
+            coach = stringResource(R.string.notif_channel_coach),
+            sleep = stringResource(R.string.notif_channel_sleep),
+            explore = stringResource(R.string.notif_channel_explore),
+            social = stringResource(R.string.notif_channel_social)
+        )
+        board(names).forEach { (channel, r, big) -> NotificationCard(channel, r, big) }
     }
 }
 

@@ -162,9 +162,11 @@ object SyncNotice {
 
     /**
      * Android a oprit sincronizarea după bugetul de 6 h (onTimeout) — nu după un „Oprește” dat de tine. Un singur
-     * mesaj, liniștit, pe canalul „sync”; dispare la următorul start.
+     * mesaj, liniștit, pe canalul „sync”; dispare la următorul start. `live()` = serviciul e tot în prim-plan (de ex.
+     * a repornit fără dataSync și merge mai departe): atunci „a luat pauză” ar minți, deci nu se trimite nimic.
      */
-    fun paused(c: Context) {
+    fun paused(c: Context, live: () -> Boolean = { false }) {
+        if (live()) return
         val clock = NudgeSnapshot.clock()
         val r = Nudge.render(SyncCopy.paused, clock) ?: return
         val spec = Notifier.Spec(

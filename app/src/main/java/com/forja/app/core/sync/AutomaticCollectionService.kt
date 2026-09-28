@@ -450,14 +450,13 @@ class AutomaticCollectionService : Service() {
     override fun onTimeout(startId: Int) {
         status("Android a întrerupt sincronizarea în fundal. Redeschide FORJA pentru reluare.")
         finish()
-        com.forja.app.core.notify.SyncNotice.paused(this)
     }
 
     /** Android 15: același buget, cu tipul care a expirat. */
     override fun onTimeout(startId: Int, fgsType: Int) {
         status("Android a întrerupt sincronizarea în fundal. Redeschide FORJA pentru reluare.")
         finish()
-        com.forja.app.core.notify.SyncNotice.paused(this)
+        com.forja.app.core.notify.SyncNotice.paused(this) { foreground && !stopping }
     }
 
     override fun onDestroy() {

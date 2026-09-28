@@ -67,7 +67,25 @@ class HonestyTest {
         assertEquals("Microfon + sincronizare", t.subText)
         assertTrue(t.collapsed.contains("microfon"))
         assertEquals(SyncCopy.MIC_TITLE, t.publicTitle)
-        assertTrue(t.big.startsWith(line.body))
+        // Titlul cald nu se pierde: deschide forma extinsă, înaintea replicii (S-d: „Loc nou: X. Ai stat acolo 2 h.”).
+        assertTrue(t.big.startsWith(line.title + " " + line.body))
+    }
+
+    @Test
+    fun microphoneKeepsThePlaceThatTheLineTalksAbout() {
+        val d = NudgeFixtures.rich(15).copy(newPlaceToday = PlaceView("Parcul Titan", 120, 1, 25))
+        val line = Nudge.pick(NudgeBank.sync.filter { it.id == "S-d" }, d, emptyList(), 0L)!!
+        val t = SyncCopy.compose(setOf("location", "audio"), line, label)
+        assertTrue(t.big, t.big.startsWith("Loc nou: Parcul Titan. Ai stat acolo 2 h."))
+    }
+
+    @Test
+    fun syncCountsCarryTheTimeTheyWereCounted() {
+        // Replica permanentă stă ore întregi: orice număr al zilei de azi spune „la 14:05” (corectura 4).
+        val todayCounts = setOf("km", "bilant", "copaci", "mese_azi", "focus_min", "ramas", "seturi")
+        for (t in NudgeBank.sync) {
+            if (t.placeholders.any { it in todayCounts }) assertTrue("${t.id} fără {ora}", "ora" in t.placeholders)
+        }
     }
 
     @Test

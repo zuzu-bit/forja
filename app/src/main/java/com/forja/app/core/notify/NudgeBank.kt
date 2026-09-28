@@ -46,25 +46,29 @@ object NudgeBank {
 
     private fun s(d: NudgeData) = slot(d.hour)
     /** Mesajele despre mese: niciodată după 21:30 (§D.13). */
-    private fun mealHours(d: NudgeData) = d.hour * 60 + d.minute < 21 * 60 + 30
+    private fun mealHours(d: NudgeData) = NudgeRules.mealTime(d.hour, d.minute)
+    /** Seria în pericol despre care avem voie să vorbim acum (cea de mese tace după 21:30). */
+    private fun riskNow(d: NudgeData): Streak? = d.risk?.takeIf { it.kind != StreakKind.Meals || mealHours(d) }
     private fun day(d: NudgeData) = s(d) in 1..3
 
     // ───────────── 1. Notificarea permanentă de sincronizare (titlu ≤ 28, fără „acum”, fără prieteni) ─────────────
     // Rândul onest (ce urcă, „Oprește”) NU e aici: îl pune SyncCopy în fiecare variantă, vizibil și restrâns.
+    // Replica stă ore întregi pe ecran (se rescrie cel mult o dată la 3 h): orice număr al zilei de azi poartă ora la
+    // care a fost numărat („la 14:05”), ca să rămână adevărat și după ce mai notezi ceva (corectura 4).
     val sync = listOf(
         Template("S-a", SyncOngoing, "Bună dimineața.", "Ai dormit {somn_h}, estimat. Primul pas de azi decide restul.", Happy) { s(it) == 1 },
         Template("S-b", SyncOngoing, "{serie_zile|zi|zile} la rând.", "Ieri ai ținut linia. Azi o ții cu un singur gest mic.", Happy) { s(it) == 1 },
         Template("S-m", SyncOngoing, "Ieri: {km_ieri} km.", "Corpul ține minte drumul. Azi mai e o stradă care te așteaptă.", Wink) { s(it) == 1 },
         Template("S-c", SyncOngoing, "{km} km azi, la {ora}.", "Mai ai {ramas} km din ținta săptămânii. Merge și pe jos, pe bucăți.", Happy) { s(it) == 2 },
         Template("S-c2", SyncOngoing, "{km} km azi, la {ora}.", "Fiecare bucată de drum rămâne pe hartă. Și asta contează.", Happy) { s(it) == 2 },
-        Template("S-h", SyncOngoing, "Pădurea: {copaci|copac|copaci} azi.", "{focus_min} min de focus. Atenția se ascute când o folosești.", Happy) { s(it) in 2..3 },
-        Template("S-i", SyncOngoing, "{mese_azi|masă|mese} notate azi.", "Sinceritatea din farfurie e tot antrenament. Tu îl faci.", Happy) { s(it) == 2 && it.mealsToday >= 2 },
+        Template("S-h", SyncOngoing, "{copaci|copac|copaci} azi, la {ora}.", "{focus_min} min de focus în pădurea ta. Atenția se ascute când o folosești.", Happy) { s(it) in 2..3 },
+        Template("S-i", SyncOngoing, "{mese_azi|masă notată|mese notate} azi, la {ora}.", "Sinceritatea din farfurie e tot antrenament. Tu îl faci.", Happy) { s(it) == 2 && it.mealsToday >= 2 },
         Template("S-d", SyncOngoing, "Loc nou: {loc}.", "Ai stat acolo {ore_stat}. Harta ta a crescut cu un punct.", Wink) { s(it) in 2..3 && it.newPlaceToday != null },
         Template("S-d2", SyncOngoing, "Un loc nou azi.", "Ai stat acolo {ore_stat}. Dă-i un nume când ai un minut.", Happy) {
             s(it) in 2..3 && it.newPlaceToday?.name.isNullOrBlank() && it.newPlaceToday != null
         },
-        Template("S-f", SyncOngoing, "Tura de seară, {nume}.", "Azi: {bilant}. Ziua s-a scris.", Happy) { s(it) == 3 },
-        Template("S-f2", SyncOngoing, "Tura de seară.", "Azi: {bilant}. Ziua s-a scris.", Happy) { s(it) == 3 },
+        Template("S-f", SyncOngoing, "Tura de seară, {nume}.", "Până la {ora}: {bilant}. Ziua se scrie.", Happy) { s(it) == 3 },
+        Template("S-f2", SyncOngoing, "Tura de seară.", "Până la {ora}: {bilant}. Ziua se scrie.", Happy) { s(it) == 3 },
         Template("S-j", SyncOngoing, "{serie_zile|zi|zile} la rând.", "Seria se ține cu un gest mic înainte de culcare. Unul ajunge.", Talking) {
             s(it) == 3 && (it.longest?.current ?: 0) >= 3
         },
@@ -129,7 +133,7 @@ object NudgeBank {
         Template("4.2", Evening, "Peste media ta.", "{km} km azi, media ta e {km_medie} km. Picioarele țin minte asta.", Happy) {
             it.kmAvg7 >= 0.5 && it.kmToday > it.kmAvg7 * 1.1
         },
-        Template("4.3", Evening, "Ziua nu s-a terminat.", "Mai e timp. Cinci minute de mers sau o masă notată o închid.", Thinking) { it.emptyDay && mealHours(it) },
+        Template("4.3", Evening, "Ziua nu s-a terminat.", "Mai e timp. Cinci minute de mers cu GO sau o masă notată o închid.", Thinking) { it.emptyDay && mealHours(it) },
         Template("4.4", Evening, "Azi: un loc nou pe hartă.", "{loc} e {locuri@m} loc de pe harta ta. Fiecare are o zi în spate.", Wink) { it.newPlaceToday != null },
         Template("4.6", Evening, "Seria: {serie_zile|zi|zile}.", "Încă o zi pusă în raft. Mâine se adaugă una, nu toate deodată.", Happy) {
             it.longest?.let { l -> l.current >= 3 && l.doneToday } == true
@@ -168,12 +172,14 @@ object NudgeBank {
         Template("R5", StreakRisk, "O poză ține seria.", "O farfurie fotografiată și seria de {serie_mese|zi|zile} merge mai departe.", Wink) {
             risk(StreakKind.Meals)(it) && mealHours(it)
         },
-        Template("R8", StreakRisk, "Un tur de bloc salvează tot.", "Seria de {serie_mers|zi|zile} nu cere kilometri. Cere doar să ieși din casă.", Thinking, cond = risk(StreakKind.Walk)),
-        Template("5.5", StreakRisk, "Drumul de azi e încă liber.", "Seria de mers: {serie_mers|zi|zile}. O tură scurtă până la stingere o ține.", Talking, cond = risk(StreakKind.Walk)),
+        // Seria de mers se face doar din turele înregistrate cu GO (ActivityEntity): textul nu promite mai mult.
+        Template("R8", StreakRisk, "Seria de mers cere puțin.", "{serie_mers|zi|zile} la rând. Un tur de bloc cu GO pornit o ține. Nu cere kilometri.", Thinking, cond = risk(StreakKind.Walk)),
+        Template("5.5", StreakRisk, "Drumul de azi e încă liber.", "Seria de mers: {serie_mers|zi|zile}. O tură scurtă cu GO, până la stingere, o ține.", Talking, cond = risk(StreakKind.Walk)),
+        // „Cinci minute” nu e despre mese; seria de mese are R4/R5 și tace după 21:30.
         Template("5.6", StreakRisk, "Seara ține seria.", "{serie_risc|zi|zile} nu se pierd pentru o seară. Cinci minute. Atât.", Thinking) {
-            (it.risk?.current ?: 0) >= 7 && it.hour >= 21
+            it.risk?.let { r -> r.kind != StreakKind.Meals && r.current >= 7 } == true && it.hour >= 21
         },
-        Template("5.7", StreakRisk, "Seria ta atârnă de un gest.", "Nu trebuie o zi mare. Trebuie o zi care contează. Una mică ajunge.", Thinking, reserve = true) { it.risk != null }
+        Template("5.7", StreakRisk, "Seria ta atârnă de un gest.", "Nu trebuie o zi mare. Trebuie o zi care contează. Una mică ajunge.", Thinking, reserve = true) { riskNow(it) != null }
     )
 
     // ───────────── 6. Praguri de serie (3/7/14/30/50/100/365; gradul doar în text) ─────────────

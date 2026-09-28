@@ -124,6 +124,30 @@ class NudgePickTest {
     }
 
     @Test
+    fun noMealStreakLineAfterHalfPastNine() {
+        val meals = listOf(Streak(StreakKind.Meals, 9, doneToday = false))
+        for (m in listOf(30, 35, 44)) {
+            val d = clock(21, m).copy(streaks = meals)
+            for (t in NudgeBank.streakRisk) assertNull("${t.id} la 21:$m", Nudge.render(t, d))
+        }
+        // „Cinci minute. Atât.” nu e despre mese, nici înainte de 21:30.
+        val five = NudgeBank.streakRisk.first { it.id == "5.6" }
+        assertNull(Nudge.render(five, clock(21, 10).copy(streaks = meals)))
+        assertNotNull(Nudge.render(five, clock(21, 10).copy(streaks = listOf(Streak(StreakKind.Workout, 9, doneToday = false)))))
+    }
+
+    @Test
+    fun walkStreakLinesSayTheTourIsRecordedWithGo() {
+        // Seria de mers se face doar din turele înregistrate cu GO: textul nu promite că ajunge „să ieși din casă”.
+        val d = clock(20).copy(streaks = listOf(Streak(StreakKind.Walk, 5, doneToday = false)))
+        for (id in listOf("R8", "5.5")) {
+            val r = Nudge.render(NudgeBank.streakRisk.first { it.id == id }, d)!!
+            assertTrue("$id: ${r.body}", r.body.contains("GO"))
+            assertFalse("$id: ${r.body}", r.body.contains("ieși din casă"))
+        }
+    }
+
+    @Test
     fun angryOnlyForTheWorkoutStreakWithTheSergeantVoice() {
         val angry = NudgeBank.all.filter { it.pose == NudgePose.Angry }
         assertEquals(listOf("5.2"), angry.map { it.id })

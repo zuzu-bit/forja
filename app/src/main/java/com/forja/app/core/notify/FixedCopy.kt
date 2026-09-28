@@ -68,8 +68,8 @@ object Groups {
 
 /** Textul notificării permanente de sincronizare, cu invariantele de onestitate (blocantele B1, B5, corectura 9). */
 object SyncCopy {
-    /** Ordinea categoriilor în text (aceeași ca în contract). */
-    val ORDER = listOf("location", "app_usage", "photos", "files", "audio")
+    /** Ordinea categoriilor în text (aceeași ca în contract); „finder” = găsirea telefonului (CollectionSettings.FINDER, P6). */
+    val ORDER = listOf("location", "app_usage", "photos", "files", "audio", "finder")
     const val STOP = "Oprește"
     const val SUB_ACTIVE = "Sincronizare activă"
     const val SUB_MIC = "Microfon + sincronizare"
@@ -104,7 +104,9 @@ object SyncCopy {
         val cats = categories(configured, label)
         val mic = "audio" in configured
         val warmTitle = line?.title ?: PUBLIC_TITLE
-        val warmBody = line?.body
+        // Cu microfonul pornit, titlul e cel fix: replica își aduce titlul în forma extinsă, altfel „Ai stat acolo 2 h”
+        // (S-d) n-ar mai avea „acolo”-ul la care să se refere.
+        val warmBody = line?.let { if (mic) "${it.title} ${it.body}" else it.body }
         return Text(
             // Microfonul nu se ascunde niciodată în spatele unei glume: titlul rămâne fix, rotația doar în text.
             title = if (mic) MIC_TITLE else warmTitle,

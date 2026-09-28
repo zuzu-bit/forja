@@ -106,6 +106,18 @@ class NudgeRulesTest {
         assertEquals(NudgeContext.Evening, NudgeRules.planCoach(NudgeState(), short, day)!!.context)
     }
 
+    @Test
+    fun theMealStreakIsNeverRaisedAfterHalfPastNine() {
+        val meals = listOf(Streak(StreakKind.Meals, 9, doneToday = false))
+        assertEquals(NudgeContext.StreakRisk, NudgeRules.planCoach(NudgeState(), clock(21, 29).copy(streaks = meals), day)!!.context)
+        // 21:30–21:45: fereastra de seară e încă deschisă, dar seria de mese tace — trece la bilanț.
+        assertEquals(NudgeContext.Evening, NudgeRules.planCoach(NudgeState(), clock(21, 30).copy(streaks = meals), day)!!.context)
+        assertEquals(NudgeContext.Evening, NudgeRules.planCoach(NudgeState(), clock(21, 40).copy(streaks = meals), day)!!.context)
+        // Seria de instrucție poate vorbi până la capătul ferestrei.
+        val workout = listOf(Streak(StreakKind.Workout, 9, doneToday = false))
+        assertEquals(NudgeContext.StreakRisk, NudgeRules.planCoach(NudgeState(), clock(21, 40).copy(streaks = workout), day)!!.context)
+    }
+
     // ───────────── Auto-reglarea ─────────────
 
     @Test
@@ -266,5 +278,58 @@ class NudgeRulesTest {
         val next = listOf(Streak(StreakKind.Walk, 15, true))
         s = NudgeRules.trackRuns(s, next, d + 2)
         assertNull(NudgeRules.recordDue(s, next))
+    }
+
+    @Test
+    fun comebackNamesTheLastStreakNotTheLongest() {
+        var s = NudgeState()
+        assertEquals(0, NudgeRules.oldStreak(s))
+        // O serie de mers de 30 de zile se încheie…
+        s = NudgeRules.trackRuns(s, listOf(Streak(StreakKind.Walk, 30, true)), day)
+        s = NudgeRules.trackRuns(s, listOf(Streak(StreakKind.Walk, 0, false)), day + 2)
+        assertEquals(30, NudgeRules.oldStreak(s))
+        // …apoi una de mese de 4 zile, mai târziu: „Ultima serie” e cea de 4, nu recordul de 30.
+        s = NudgeRules.trackRuns(s, listOf(Streak(StreakKind.Meals, 4, true)), day + 10)
+        assertEquals(30, NudgeRules.oldStreak(s))
+        s = NudgeRules.trackRuns(s, listOf(Streak(StreakKind.Meals, 0, false)), day + 12)
+        assertEquals(4, NudgeRules.oldStreak(s))
+        // O serie nouă văzută peste una încă vie (fără tură în ziua ruperii) o închide pe cea veche.
+        s = NudgeRules.trackRuns(s, listOf(Streak(StreakKind.Workout, 6, true)), day + 20)
+        s = NudgeRules.trackRuns(s, listOf(Streak(StreakKind.Workout, 2, true)), day + 30)
+        assertEquals(6, NudgeRules.oldStreak(s))
+        // Cea mai lungă de dinainte rămâne pentru record.
+        assertEquals(30, s.runs[StreakKind.Walk.name]!!.prevBest)
+    }
+
+    // ───────────── Culcarea: re-armarea nu anulează amintirea de diseară ─────────────
+
+    @Test
+    fun rearmingKeepsTonightsReminderUntilItFires() {
+        val zone = NudgeFixtures.zone
+        val bed = 23 * 60                                   // stingerea 23:00 → amintirea 22:30
+        val tonight = NudgeFixtures.at(22, 30)
+        // Înainte de 22:30: diseară.
+        assertEquals(tonight, Bedtime.nextTrigger(NudgeFixtures.at(21, 0), bed, zone))
+        // 22:33, amintirea armată n-a sunat încă (Doze): rămâne diseară (setWindow cu un moment trecut sună imediat).
+        assertEquals(tonight, Bedtime.nextTrigger(NudgeFixtures.at(22, 33), bed, zone, armed = tonight, fired = 0L))
+        // A sunat: mâine.
+        val tomorrow = NudgeFixtures.at(22, 30, day = 15)
+        assertEquals(tomorrow, Bedtime.nextTrigger(NudgeFixtures.at(22, 33), bed, zone, armed = tonight, fired = tonight))
+        // Prea târziu (după stingere + 15 min): mâine, chiar dacă n-a sunat.
+        assertEquals(tomorrow, Bedtime.nextTrigger(NudgeFixtures.at(23, 20), bed, zone, armed = tonight, fired = 0L))
+        // Neamânată niciodată (reminderul abia pornit la 22:33): nu sună pe loc, ci mâine.
+        assertEquals(tomorrow, Bedtime.nextTrigger(NudgeFixtures.at(22, 33), bed, zone))
+        // Ora s-a schimbat între timp: amintirea veche nu se păstrează.
+        assertEquals(NudgeFixtures.at(23, 30), Bedtime.nextTrigger(NudgeFixtures.at(22, 33), bed + 60, zone, armed = tonight, fired = 0L))
+    }
+
+    @Test
+    fun rearmingAcrossMidnightKeepsTheReminderOfTheNightBefore() {
+        val zone = NudgeFixtures.zone
+        val bed = 0 * 60 + 10                               // stingerea 00:10 → amintirea 23:40
+        val armed = NudgeFixtures.at(23, 40)
+        val now = NudgeFixtures.at(0, 5, day = 15)
+        assertEquals(armed, Bedtime.nextTrigger(now, bed, zone, armed = armed, fired = 0L))
+        assertEquals(NudgeFixtures.at(23, 40, day = 15), Bedtime.nextTrigger(now, bed, zone, armed = armed, fired = armed))
     }
 }

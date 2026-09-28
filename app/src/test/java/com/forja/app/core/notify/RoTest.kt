@@ -74,6 +74,11 @@ class RoTest {
         assertEquals("300 m", Ro.distance(260))
         assertEquals("100 m", Ro.distance(20))
         assertEquals("1,2 km", Ro.distance(1234))
+        // 950–999 m se rotunjesc la un kilometru: „1 km”, niciodată „1000 m”.
+        assertEquals("1 km", Ro.distance(960))
+        assertEquals("1 km", Ro.distance(999))
+        assertEquals("900 m", Ro.distance(949))
+        assertEquals("1 km", Ro.distance(1000))
     }
 
     @Test

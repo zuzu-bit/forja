@@ -30,7 +30,11 @@ data class RunRec(
     /** Ultimul prag anunțat pentru seria curentă. */
     val milestone: Int = 0,
     /** Recordul seriei curente a fost anunțat. */
-    val record: Boolean = false
+    val record: Boolean = false,
+    /** Lungimea ultimei serii încheiate (pentru „Ultima serie: 4 zile.” la revenire — nu cea mai lungă). */
+    val ended: Int = 0,
+    /** Ziua (epochDay) în care s-a văzut că ultima serie s-a încheiat. */
+    val endedDay: Long = 0L
 )
 
 /** Un mesaj reținut în orele de liniște (camarad nou), trimis după 08:00. */
@@ -98,6 +102,11 @@ object NudgeRules {
 
     // ───────────── Orele de liniște (22:00–08:00) ─────────────
 
+    /** Mesajele despre mese: niciodată după 21:30 (§D.13). */
+    const val MEAL_LAST_MIN = 21 * 60 + 30
+
+    fun mealTime(hour: Int, minute: Int): Boolean = hour * 60 + minute < MEAL_LAST_MIN
+
     fun isQuiet(hour: Int, minute: Int): Boolean {
         val m = hour * 60 + minute
         return m >= QUIET_FROM_MIN || m < QUIET_TO_MIN
@@ -157,7 +166,9 @@ object NudgeRules {
         if (d.absentDays >= 2) return null
         val w = window(d.hour, d.minute) ?: return null
         if (s.windows[w.key] == day) return null
-        if (w == Window.Evening && d.risk != null && contextDue(s, NudgeContext.StreakRisk, day)) {
+        // Seria de mese nu se pomenește după 21:30: seara trece la bilanț.
+        val risk = d.risk?.takeIf { it.kind != StreakKind.Meals || mealTime(d.hour, d.minute) }
+        if (w == Window.Evening && risk != null && contextDue(s, NudgeContext.StreakRisk, day)) {
             return CoachPlan(NudgeContext.StreakRisk, w.key)
         }
         if (w == Window.Midday && d.permission != null) return CoachPlan(NudgeContext.Permission, w.key)
@@ -173,19 +184,29 @@ object NudgeRules {
 
     // ───────────── Serii: praguri și record, o singură dată pe serie ─────────────
 
-    /** Ține seria curentă la zi (începutul ei, cea mai bună dinainte). */
+    /** Ține seria curentă la zi (începutul ei, cea mai bună dinainte, ultima încheiată). */
     fun trackRuns(s: NudgeState, streaks: List<Streak>, day: Long): NudgeState {
         val runs = s.runs.toMutableMap()
         for (st in streaks) {
             val key = st.kind.name
             val old = runs[key] ?: RunRec()
             if (st.current <= 0) {
-                if (old.last > 0) runs[key] = RunRec(start = 0L, prevBest = maxOf(old.prevBest, old.last))
+                if (old.last > 0) {
+                    runs[key] = RunRec(start = 0L, prevBest = maxOf(old.prevBest, old.last), ended = old.last, endedDay = day)
+                }
                 continue
             }
             val start = if (st.doneToday) day - st.current + 1 else day - st.current
             runs[key] = if (old.start != start || old.last == 0) {
-                RunRec(start = start, prevBest = maxOf(old.prevBest, if (old.start != start) old.last else 0), last = st.current)
+                // O serie nouă peste una văzută încă vie: cea veche s-a încheiat între două ture.
+                val closed = old.start != start && old.last > 0
+                RunRec(
+                    start = start,
+                    prevBest = maxOf(old.prevBest, if (closed) old.last else 0),
+                    last = st.current,
+                    ended = if (closed) old.last else old.ended,
+                    endedDay = if (closed) day else old.endedDay
+                )
             } else old.copy(last = st.current)
         }
         return s.copy(runs = runs)
@@ -210,8 +231,15 @@ object NudgeRules {
         return s.copy(runs = s.runs + (st.kind.name to upd))
     }
 
-    /** Cea mai lungă serie încheiată (pentru „Ultima serie: 12 zile.” la revenire). */
-    fun oldStreak(s: NudgeState): Int = s.runs.values.maxOfOrNull { maxOf(it.prevBest, it.last) } ?: 0
+    /**
+     * Ultima serie încheiată (pentru „Ultima serie: 12 zile.” la revenire): cea mai recent încheiată, din orice fel;
+     * la egalitate de zi, cea mai lungă dintre ele. 0 dacă nu am văzut încă nicio serie încheindu-se.
+     */
+    fun oldStreak(s: NudgeState): Int {
+        val closed = s.runs.values.filter { it.ended > 0 }
+        val lastDay = closed.maxOfOrNull { it.endedDay } ?: return 0
+        return closed.filter { it.endedDay == lastDay }.maxOf { it.ended }
+    }
 
     // ───────────── Prieteni: ≤ 1/prieten/zi, ≤ 2/zi ─────────────
 

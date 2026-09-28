@@ -66,10 +66,11 @@ object Ro {
     /** Ora ceasului: „07:30”. */
     fun clock(hour: Int, minute: Int): String = String.format(Locale.ROOT, "%02d:%02d", hour, minute)
 
-    /** Distanța până la un prieten, în trepte de 100 m: „300 m”, apoi „1,2 km”. */
+    /** Distanța până la un prieten, în trepte de 100 m: „300 m”, apoi „1 km”, „1,2 km” (950–999 m → „1 km”, nu „1000 m”). */
     fun distance(meters: Int): String {
-        if (meters < 1000) return "${((meters + 50) / 100).coerceAtLeast(1) * 100} m"
-        return "${km(meters / 1000.0)} km"
+        val rounded = ((meters + 50) / 100).coerceAtLeast(1) * 100
+        if (rounded < 1000) return "$rounded m"
+        return "${km(maxOf(meters, 1000) / 1000.0)} km"
     }
 
     /** Taie un text lung cu „…” (nume, locuri, planuri). */
