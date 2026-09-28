@@ -145,7 +145,7 @@ enum class ReasonFilter(val label: String, val reasons: Set<DeleteReason>) {
     Blur("Neclare", setOf(DeleteReason.Blurry)),
     Screens("Capturi", setOf(DeleteReason.OldScreenshot)),
     Tiny("Mici", setOf(DeleteReason.Tiny)),
-    Ai("AI", setOf(DeleteReason.AiSuggested, DeleteReason.Accidental)),
+    Ai("Sugerate", setOf(DeleteReason.AiSuggested, DeleteReason.Accidental)),
     Temp("Temporare", setOf(DeleteReason.TempFile));
 
     fun matches(r: DeleteReason?): Boolean = this == All || (r != null && r in reasons)
@@ -237,10 +237,10 @@ enum class DestIcon { Gallery, Pictures, Camera, Folder }
 @Immutable
 data class DestOption(val dest: InvDest, val label: String, val path: String, val selected: Boolean, val icon: DestIcon)
 
-/** Foaia „Locație”: rândurile + ultimul rând „Alt dosar…” (poze) / „Alt folder…” (documente). */
+/** Foaia „Locație”: rândurile + ultimul rând „Alt dosar…” (poze și documente: un singur cuvânt în tot fluxul). */
 @Immutable
 data class LocationUi(val kind: InvKind, val options: List<DestOption>) {
-    val otherLabel: String get() = if (kind == InvKind.Photos) "Alt dosar…" else "Alt folder…"
+    val otherLabel: String get() = "Alt dosar…"
 }
 
 /**

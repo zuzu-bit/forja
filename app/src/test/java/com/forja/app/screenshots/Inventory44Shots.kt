@@ -4,7 +4,10 @@ import android.app.Application
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import com.forja.app.feature.inventory.ApplyConfirmBody
 import com.forja.app.feature.inventory.ApplyConfirmUi
 import com.forja.app.feature.inventory.DoneActions
@@ -42,6 +45,12 @@ import org.robolectric.annotation.GraphicsMode
 class Inventory44Shots {
 
     // ───────────── S1: „Ultimele N” și placa DOCUMENTE ─────────────
+
+    /** Textul mărit din Setări (fontScale 1,3), fără să depindă de cum aplică Robolectric configurația. */
+    @Composable private fun LargeText(content: @Composable () -> Unit) {
+        val d = LocalDensity.current
+        CompositionLocalProvider(LocalDensity provides Density(d.density, fontScale = 1.3f)) { content() }
+    }
 
     @Composable private fun lastNScene(current: Int) = Box(Modifier.fillMaxSize()) {
         InventoryStartContent(InventorySamples.startLastN.copy(lastN = current), StartActions())
@@ -103,6 +112,14 @@ class Inventory44Shots {
 
     @Test @Config(qualifiers = PHONE_S23) fun startS23() = shot("inventory44_s1_start_s23") {
         InventoryStartContent(InventorySamples.start, StartActions())
+    }
+    /** Prima deschidere pe S23: „Dă acces” / „Alege dosar” ca cuvinte mari pe plăcile înguste. */
+    @Test @Config(qualifiers = PHONE_S23) fun startNoAccessS23() = shot("inventory44_s1_noaccess_s23") {
+        InventoryStartContent(InventorySamples.startNoAccess, StartActions())
+    }
+    /** Cel mai rău caz pentru plăci: S23 + text mărit 130 %; „2,1 GB” coboară întreg pe rândul doi, nu se taie. */
+    @Test @Config(qualifiers = PHONE_S23) fun startS23LargeText() = shot("inventory44_s1_start_s23_text130") {
+        LargeText { InventoryStartContent(InventorySamples.start, StartActions()) }
     }
     @Test @Config(qualifiers = PHONE_S23) fun foldersS23() = shot("inventory44_s4_folders_s23") {
         InventoryFoldersContent(InventorySamples.folders, FoldersActions())

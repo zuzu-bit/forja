@@ -52,7 +52,8 @@ class InventoryShots {
 
     @Test fun s5Trash() = shot("inventory_s5_trash") { InventoryFolderContent(InventorySamples.trash, FolderActions()) }
     @Test fun s5TrashSelected() = shot("inventory_s5_trash_selected") { InventoryFolderContent(InventorySamples.trashSelected, FolderActions()) }
-    @Test fun s5TrashEditing() = shot("inventory_s5_trash_editing") { InventoryFolderContent(InventorySamples.trashEditing, FolderActions()) }
+    /** Redenumirea pe loc: pe un dosar obișnuit („De aruncat” n-are creion). */
+    @Test fun s5FolderEditing() = shot("inventory_s5_folder_editing") { InventoryFolderContent(InventorySamples.folderEditing, FolderActions()) }
     @Test fun s5Folder() = shot("inventory_s5_folder") { InventoryFolderContent(InventorySamples.folder, FolderActions()) }
 
     @Test fun s6Apply() = shot("inventory_s6_apply") { InventoryApplyContent(InventorySamples.apply) }

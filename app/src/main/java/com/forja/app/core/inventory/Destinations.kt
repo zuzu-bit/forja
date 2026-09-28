@@ -156,10 +156,10 @@ internal object DestNames {
             else TreePaths.label(dest.tree).substringAfterLast('/')
     }
 
-    /** Numele rândului din „Locație”: „Galerie · FORJA”, „În folderul ales”, „Arhivă”. */
+    /** Numele rândului din „Locație”: „Galerie · FORJA”, „În dosarul ales”, „Arhivă”. */
     fun option(dest: InvDest): String = when (dest) {
         is InvDest.Media -> MediaRoots.optionLabel(dest.root)
-        is InvDest.Tree -> if (dest.tree == null) "În folderul ales" else short(dest)
+        is InvDest.Tree -> if (dest.tree == null) "În dosarul ales" else short(dest)
     }
 
     /** Calea (natural, fără majuscule): „Pictures/FORJA”, „Documents/Organizate”, „Documents/Arhivă”. */
