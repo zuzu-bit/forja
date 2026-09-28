@@ -126,7 +126,20 @@ data class Landing(
     }
 }
 
-data class ApplyResult(val moved: Int, val trashed: Int, val failed: Int, val freedBytes: Long, val landing: Landing? = null)
+/**
+ * O rundă de aplicare. [failed] = eșecurile rundei (unele se reîncearcă în runda următoare); [lost] = cele ieșite din
+ * plan fără să ajungă la loc în runda asta, [pending] = cele rămase în plan după ea (de reîncercat). Nemutatele unei
+ * aplicări cu mai multe runde = suma lui [lost] + [pending] din ultima rundă (ca `AppliedRec.failed` de pe site).
+ */
+data class ApplyResult(
+    val moved: Int,
+    val trashed: Int,
+    val failed: Int,
+    val freedBytes: Long,
+    val landing: Landing? = null,
+    val lost: Int = 0,
+    val pending: Int = 0
+)
 
 /** Eșec explicat utilizatorului (fără permisiune, galerie goală, folder inaccesibil). */
 internal class InvFailure(message: String) : Exception(message)
@@ -486,8 +499,8 @@ object Inventory {
                 _progress.value = readyProgress(s)
                 throw e
             }
-            val r = out.result
             val applied = tally(s, out)
+            val r = out.result.copy(lost = applied.lost - (s.meta.applied?.lost ?: 0), pending = applied.pending)
             if (applied.moved + applied.trashed + applied.failed > 0) summary = summaryOf(s, applied)
             val doc = PlanEdits.without(s.doc, s.items, out.removed)
             if (PlanEdits.count(doc) == 0) {

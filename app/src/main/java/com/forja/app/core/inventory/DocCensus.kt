@@ -65,7 +65,9 @@ internal object DocCounter {
         return try {
             val dest = DocDest.savedTree(ctx, app.prefs)?.takeUnless { TreePaths.same(it, tree) }
             val (docs, warnings) = organizer.inventory(tree, skipDirIds = DocDest.skips(tree, dest))
-            if (docs.isEmpty() && warnings.any { it.startsWith("Folderul nu mai e accesibil") }) return null
+            // Folderul șters sau acordul retras: interogarea rădăcinii aruncă („/: SecurityException”), nu
+            // getTreeDocumentId (care doar citește URI-ul). Fără fișiere și cu rădăcina necitită = inaccesibil, nu „Gol”.
+            if (docs.isEmpty() && warnings.any { it.startsWith("/:") || it.startsWith("Folderul nu mai e accesibil") }) return null
             val loose = docs.filter { it.isLoose() }
             val inTree = organizer.childDirId(tree, DocumentOrganizer.ROOT_FOLDER)
                 ?.let { id -> organizer.inventory(tree, startDocId = id, limit = 5_000).first } ?: emptyList()

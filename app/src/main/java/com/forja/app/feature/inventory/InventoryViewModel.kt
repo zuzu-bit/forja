@@ -115,11 +115,18 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
 
     private val organizer = DocumentOrganizer(app, forja.prefs)
 
+    // Numărătoarea folderului: ultima terminată și cea în curs. Declarate ÎNAINTEA lui init, care pornește prima
+    // numărătoare (un inițializator scris mai jos ar suprascrie docsJob după init).
+    private var docsAt = 0L
+    private var docsJob: Job? = null
+
     init {
         // Motorul face și muncă de CPU (plan, grupare) pe firul apelantului: nimic din el pe firul principal.
         viewModelScope.launch(Dispatchers.Default) { try { Inventory.load(ctx) } catch (e: CancellationException) { throw e } catch (_: Exception) { } }
         refreshPhotoStats()
-        viewModelScope.launch { loadDocTree(organizer.persistedTree()) }
+        // Prima numărătoare trece prin docsJob: revenirea în ecran (ON_RESUME imediat după compunere) nu mai pornește
+        // un al doilea BFS în paralel cu ea.
+        docsJob = viewModelScope.launch { loadDocTree(organizer.persistedTree()) }
         // „Ultimele N”: ultima alegere.
         viewModelScope.launch {
             val n = try { forja.prefs.inventoryLastN.first() } catch (e: CancellationException) { throw e } catch (_: Exception) { 0 }
@@ -149,7 +156,11 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
 
     private data class EstimateKey(val s: StartSelection, val access: Boolean, val photos: Int?, val tree: Uri?, val docs: Int?)
 
-    fun pickKind(kind: InvKind) { _selection.value = _selection.value.copy(kind = kind) }
+    fun pickKind(kind: InvKind) {
+        _selection.value = _selection.value.copy(kind = kind)
+        // Pe „Documente” cifrele din placă trebuie să fie proaspete (cel mult o dată la 30 s, ca la revenire).
+        if (kind == InvKind.Documents) refreshDocs(force = false)
+    }
 
     /**
      * „Ultimele N” din foaie: N ≥ câte poze are galeria înseamnă de fapt „Tot” (și nu se reține); altfel scopul trece
@@ -202,12 +213,10 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
             organizer.rememberTree(tree)
             docs.value = DocStats(tree, organizer.treeName(tree), null, null)
             if (startAfter && _selection.value.kind == InvKind.Documents && start()) onStarted()
-            loadDocTree(tree)
+            docsJob?.cancel()
+            docsJob = viewModelScope.launch { loadDocTree(tree) }
         }
     }
-
-    private var docsAt = 0L
-    private var docsJob: Job? = null
 
     /**
      * Numărătoarea folderului (fișiere libere + în dosare). La același folder cifrele vechi rămân pe placă până vin
@@ -230,10 +239,13 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         docsJob = viewModelScope.launch { loadDocTree(tree) }
     }
 
-    /** Ecranul revine în față: galeria și folderul se pot fi schimbat între timp. */
+    /**
+     * Ecranul revine în față: galeria și folderul se pot fi schimbat între timp. Folderul (BFS întreg) doar pe
+     * „Documente”; pe „Poze” îl recitim când omul trece pe „Documente” ([pickKind]).
+     */
     fun onResume() {
         refreshPhotoStats()
-        refreshDocs(force = false)
+        if (_selection.value.kind == InvKind.Documents) refreshDocs(force = false)
     }
 
     val hasDocTree: Boolean get() = docs.value.tree != null
@@ -394,6 +406,10 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         applyJob = viewModelScope.launch {
             var total = ApplyResult(0, 0, 0, 0L)
             var landing: Landing? = null
+            // Nemutatele: cele pierdute în fiecare rundă + cele încă în plan după ultima (un eșec reîncercat în runda
+            // următoare nu se numără de două ori; aceeași regulă ca rezumatul de pe site, AppliedRec.failed).
+            var lost = 0
+            var pending = 0
             var rounds = 0
             try {
                 while (rounds < 64) {
@@ -414,6 +430,8 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
                     if (rounds > 0 && w == null && t == null) break
                     val r = runApply()
                     total = ApplyResult(total.moved + r.moved, total.trashed + r.trashed, total.failed + r.failed, total.freedBytes + r.freedBytes)
+                    lost += r.lost
+                    pending = r.pending
                     landing = landing?.merge(r.landing) ?: r.landing
                     rounds++
                     if (w == null && t == null) break
@@ -426,7 +444,7 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
                     folders = confirm.folders,
                     items = total.moved + total.trashed,
                     freedBytes = if (total.freedBytes > 0) total.freedBytes else if (total.trashed > 0) confirm.trashBytes else 0L,
-                    failed = total.failed,
+                    failed = lost + pending,
                     musicStopped = stopped,
                     place = landing,
                     runId = p.runId,
