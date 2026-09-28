@@ -34,7 +34,8 @@ permissions:
   issues: write
 
 concurrency:
-  group: build-apk
+  # Fiecare mod are coada lui: Shorts / capturile / diagnosticul nu mai anulează un build sau un deploy în curs.
+  group: build-apk-${{ inputs.shorts && 'shorts' || inputs.ui_shots && 'ui' || inputs.diag_only && 'diag' || 'build' }}
   cancel-in-progress: true
 
 jobs:
