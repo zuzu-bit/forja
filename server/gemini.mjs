@@ -1,6 +1,19 @@
 /** Google Gemini adapter for the insights worker. Used only when GEMINI_API_KEY exists; callers fall back to Workers AI on any error. */
-export const GEMINI_MODEL = 'gemini-2.5-flash';
-export const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent';
+// 28.09: gemini-2.5-flash was retired (HTTP 404), so every insight silently fell back to Workers AI. The adapter now starts with
+// gemini-3.5-flash-lite (fast; accepts thinkingLevel "minimal") and walks the -latest aliases when a model is gone or refuses the call.
+export const GEMINI_MODEL = 'gemini-3.5-flash-lite';
+export const GEMINI_FALLBACK_MODELS = Object.freeze(['gemini-flash-lite-latest', 'gemini-flash-latest']);
+export const geminiEndpoint = model => 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent';
+export const GEMINI_ENDPOINT = geminiEndpoint(GEMINI_MODEL);
+/** Thinking per family (probe 28.09): 3.x flash-lite → minimal, other 3.x → low, 2.5 → budget 0, -latest aliases → provider default. */
+export function geminiThinking(model) {
+  if (/^gemini-3(\.\d+)?-flash-lite/.test(model)) return { thinkingLevel: 'minimal' };
+  if (/^gemini-3/.test(model)) return { thinkingLevel: 'low' };
+  if (/^gemini-2\.5/.test(model)) return { thinkingBudget: 0 };
+  return null;
+}
+// Only "model gone" (404) or "config refused" (400) tries the next model; busy/errors go straight to the Workers AI fallback.
+const NEXT_MODEL_STATUS = new Set([400, 404]);
 const TIMEOUT_MS = 45000;
 // The Gemini responseSchema accepts only this OpenAPI subset: const, oneOf and additionalProperties are rejected,
 // `enum` is a list of STRINGS (a boolean or number inside it is an HTTP 400) and `format` allows only a few named values.
@@ -76,17 +89,26 @@ export function inlineData(bytes, mimeType) {
 export async function geminiGenerate(env, input, fetcher = fetch) {
   if (!geminiAvailable(env)) throw new Error('gemini_key_missing');
   if (!object(input) || !Array.isArray(input.parts) || !input.parts.length) throw new Error('gemini_input_invalid');
-  const generationConfig = { temperature: Number.isFinite(input.temperature) ? input.temperature : 0.1, maxOutputTokens: Number.isSafeInteger(input.maxTokens) && input.maxTokens > 0 ? input.maxTokens : 2000,
-    // Gemini 2.5 Flash thinks by default and the thinking tokens count against maxOutputTokens; short budgets (250–500) would come back empty.
-    thinkingConfig: { thinkingBudget: 0 } };
-  if (input.schema) { generationConfig.responseMimeType = 'application/json'; generationConfig.responseSchema = geminiSchema(input.schema); }
-  const body = { ...(input.system ? { system_instruction: { parts: [{ text: String(input.system) }] } } : {}), contents: [{ role: 'user', parts: input.parts }], generationConfig };
-  const response = await fetcher(GEMINI_ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': geminiKey(env) }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS) });
-  if (!response.ok) { const error = new Error('gemini_http_' + response.status); error.httpStatus = response.status; throw error; }
-  const data = await response.json();
-  if (data?.promptFeedback?.blockReason) throw new Error('gemini_blocked');
-  const candidate = data?.candidates?.[0];
-  const text = (candidate?.content?.parts ?? []).filter(p => typeof p?.text === 'string').map(p => p.text).join('');
-  if (!text.trim()) throw new Error('gemini_empty_' + String(candidate?.finishReason ?? 'response').toLowerCase());
-  return { response: text, model: GEMINI_MODEL };
+  const base = { temperature: Number.isFinite(input.temperature) ? input.temperature : 0.1, maxOutputTokens: Number.isSafeInteger(input.maxTokens) && input.maxTokens > 0 ? input.maxTokens : 2000 };
+  const schema = input.schema ? { responseMimeType: 'application/json', responseSchema: geminiSchema(input.schema) } : {};
+  let lastError = null;
+  for (const model of [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS]) {
+    // Thinking tokens count against maxOutputTokens: keep thinking minimal/low so short budgets (250–500) never come back empty.
+    const thinking = geminiThinking(model);
+    const generationConfig = { ...base, ...(thinking ? { thinkingConfig: thinking } : {}), ...schema };
+    const body = { ...(input.system ? { system_instruction: { parts: [{ text: String(input.system) }] } } : {}), contents: [{ role: 'user', parts: input.parts }], generationConfig };
+    const response = await fetcher(geminiEndpoint(model), { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': geminiKey(env) }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (!response.ok) {
+      const error = new Error('gemini_http_' + response.status); error.httpStatus = response.status; lastError = error;
+      if (NEXT_MODEL_STATUS.has(response.status)) continue;
+      throw error;
+    }
+    const data = await response.json();
+    if (data?.promptFeedback?.blockReason) throw new Error('gemini_blocked');
+    const candidate = data?.candidates?.[0];
+    const text = (candidate?.content?.parts ?? []).filter(p => typeof p?.text === 'string').map(p => p.text).join('');
+    if (!text.trim()) throw new Error('gemini_empty_' + String(candidate?.finishReason ?? 'response').toLowerCase());
+    return { response: text, model };
+  }
+  throw lastError ?? new Error('gemini_unavailable');
 }

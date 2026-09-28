@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {analyzeOrganizerContent,prepareOrganizerEvidence,validateOrganizerProposal,organizerModelInput,organizerModel,geminiGenerate,ORGANIZER_MODELS,ORGANIZER_VISION_MODEL} from './organizer-analysis.mjs';
-import {GEMINI_ENDPOINT,geminiSchema} from './gemini.mjs';
+import {GEMINI_ENDPOINT,GEMINI_MODEL,geminiSchema} from './gemini.mjs';
 import {evaluateOrganizerModels} from './organizer-model-eval.mjs';
 import evaluationBridge from './organizer-eval-worker.mjs';
 
@@ -130,10 +130,10 @@ test('local evaluation bridge rejects public hosts and nonallowlisted models and
   assert.equal((await evaluationBridge.fetch(request(),env)).status,429);assert.equal(calls,12);
 });
 
-// ── Gemini 2.5 Flash adapter (fetch is mocked; no network) ──
+// ── Gemini adapter (fetch is mocked; no network) ──
 const geminiReply=(value,status=200)=>new Response(JSON.stringify(status===200?{candidates:[{content:{parts:[{text:JSON.stringify(value)}]},finishReason:'STOP'}]}:{error:{code:status}}),{status,headers:{'content-type':'application/json'}});
 const hasKeyword=(value,keys)=>JSON.stringify(value).split('"').some(s=>keys.includes(s));
-test('a Gemini key selects gemini-2.5-flash; without it the configured Workers AI model or Scout is used',()=>{
+test('a Gemini key selects the Gemini model; without it the configured Workers AI model or Scout is used',()=>{
   assert.equal(organizerModel({GEMINI_API_KEY:'k',ORGANIZER_ANALYSIS_MODEL:ORGANIZER_MODELS.kimi}),ORGANIZER_MODELS.gemini);
   assert.equal(organizerModel({ORGANIZER_ANALYSIS_MODEL:ORGANIZER_MODELS.kimi}),ORGANIZER_MODELS.kimi);
   assert.equal(organizerModel({}),ORGANIZER_MODELS.scout);assert.equal(organizerModel({GEMINI_API_KEY:''}),ORGANIZER_MODELS.scout);
@@ -142,7 +142,7 @@ test('Gemini receives the system rule, the evidence context, the real image byte
   const bytes=new Uint8Array(await readFile(new URL('./fixtures/organizer/invoice.png',import.meta.url))),f=source(bytes,'image/png'),requests=[];let aiCalls=0;
   t.mock.method(globalThis,'fetch',async(url,init)=>{requests.push({url,init});return geminiReply(proposal({destination:'Documente/Facturi',evidence:[{source_id:'image',quote:'',observation:'Se vede o factură tipărită cu un total în lei.'}]}));});
   const {result}=await analyze(f,{env:{GEMINI_API_KEY:'secret-key',ORGANIZER_ANALYSIS_MODEL:ORGANIZER_MODELS.scout,AI:{run:async()=>{aiCalls++;return {};}}}});
-  assert.equal(aiCalls,0);assert.equal(requests.length,1);assert.equal(requests[0].url,GEMINI_ENDPOINT);assert.equal(requests[0].url,'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
+  assert.equal(aiCalls,0);assert.equal(requests.length,1);assert.equal(requests[0].url,GEMINI_ENDPOINT);assert.equal(requests[0].url,'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent');
   assert.equal(requests[0].init.method,'POST');assert.equal(requests[0].init.headers['x-goog-api-key'],'secret-key');assert.equal(requests[0].init.headers['content-type'],'application/json');
   const body=JSON.parse(requests[0].init.body);
   assert.match(body.system_instruction.parts[0].text,/Clasifică numai conținutul furnizat/);
@@ -156,7 +156,7 @@ test('Gemini receives the system rule, the evidence context, the real image byte
   assert.equal(schema.properties.deletion_review.anyOf,undefined);assert.equal(schema.properties.deletion_review.properties.suggested.type,'boolean');assert.equal(schema.properties.deletion_review.properties.suggested.enum,undefined);
   assert.deepEqual(schema.properties.deletion_review.properties.basis.enum,['none','low_information']);
   assert.equal(JSON.stringify(schema).includes('"enum":[false]')||JSON.stringify(schema).includes('"enum":[""]')||JSON.stringify(schema).includes('"enum":[true]'),false);
-  assert.deepEqual(body.generationConfig.thinkingConfig,{thinkingBudget:0});
+  assert.deepEqual(body.generationConfig.thinkingConfig,{thinkingLevel:'minimal'});
   assert.equal(result.model,ORGANIZER_MODELS.gemini);assert.equal(result.vision_model,null);assert.equal(result.status,'complete');assert.equal(result.destination,'Documente/Facturi');
   assert.equal(result.evidence[0].representation,'original');assert.equal(result.applied,false);
 });
@@ -194,12 +194,12 @@ test('geminiGenerate never runs without a key and converts every schema keyword 
   assert.deepEqual(input.parts,[{text:'context'}]);assert.equal(input.system,'S');assert.deepEqual(input.schema.properties.evidence.items.properties.source_id.enum,['text']);
   assert.equal(hasKeyword(input.schema,['const','oneOf','additionalProperties']),false);
   const fetched=[];const r=await geminiGenerate({GEMINI_API_KEY:'k'},input,async(url,init)=>{fetched.push(init);return geminiReply({ok:true});});
-  assert.deepEqual(JSON.parse(r.response),{ok:true});assert.equal(r.model,'gemini-2.5-flash');assert.equal(JSON.parse(fetched[0].body).generationConfig.responseSchema.type,'object');
+  assert.deepEqual(JSON.parse(r.response),{ok:true});assert.equal(r.model,GEMINI_MODEL);assert.equal(JSON.parse(fetched[0].body).generationConfig.responseSchema.type,'object');
   assert.equal(text.file.bytes>0,true);
 });
-test('the evaluation allowlist accepts gemini-2.5-flash and routes it through the Gemini contract, not Workers AI',async()=>{
+test('the evaluation allowlist accepts the Gemini model and routes it through the Gemini contract, not Workers AI',async()=>{
   const seen=[];
   const report=await evaluateOrganizerModels(async(model,input)=>{seen.push({model,input});return {response:JSON.stringify(proposal({destination:'Documente/Facturi',evidence:[{source_id:'text',quote:'FACTURĂ.',observation:''}]}))};},{models:[ORGANIZER_MODELS.gemini],cases:['text_not_filename'],maxCalls:1});
-  assert.equal(report.calls,1);assert.equal(seen[0].model,'gemini-2.5-flash');assert.equal(Array.isArray(seen[0].input.parts),true);assert.equal(seen[0].input.messages,undefined);
+  assert.equal(report.calls,1);assert.equal(seen[0].model,GEMINI_MODEL);assert.equal(Array.isArray(seen[0].input.parts),true);assert.equal(seen[0].input.messages,undefined);
   assert.equal(report.summary[0].passed,1);
 });

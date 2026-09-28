@@ -393,7 +393,7 @@ test('runText prefers Gemini with the system rule, user text and a relaxed JSON 
   assert.equal(requests[0].url,GEMINI_ENDPOINT);assert.equal(requests[0].init.headers['x-goog-api-key'],'secret');
   const body=JSON.parse(requests[0].init.body);
   assert.deepEqual(body.system_instruction,{parts:[{text:'Regula.'}]});assert.deepEqual(body.contents,[{role:'user',parts:[{text:'{"brief":"x"}'}]}]);
-  assert.deepEqual(body.generationConfig,{temperature:0.3,maxOutputTokens:500,thinkingConfig:{thinkingBudget:0},responseMimeType:'application/json',responseSchema:{type:'object',required:['title','body'],properties:{title:{type:'string',maxLength:100},body:{type:'string',maxLength:500}}}});
+  assert.deepEqual(body.generationConfig,{temperature:0.3,maxOutputTokens:500,thinkingConfig:{thinkingLevel:'minimal'},responseMimeType:'application/json',responseSchema:{type:'object',required:['title','body'],properties:{title:{type:'string',maxLength:100},body:{type:'string',maxLength:500}}}});
 });
 test('runText falls back to Workers AI Llama on any Gemini error and uses it directly without a key',async(t)=>{
   const runs=[];const env={GEMINI_API_KEY:'k',AI:{run:async(model,input)=>{runs.push({model,input});return {response:'{"ok":1}'};}}};
@@ -433,4 +433,29 @@ test('campaign drafts and recommendations report the model actually used, Gemini
   const empty=await handleInsights(new Request('https://test/insights/api/recommendations',{method:'POST',headers,body:JSON.stringify({consent:true})}),env,'userA');
   const data=await empty.json();assert.deepEqual(data.recommendations,[]);assert.equal(data.model,GEMINI_MODEL);
   assert.equal(preferredModel({}),TEXT_MODEL);assert.equal(preferredModel({GEMINI_API_KEY:'k'}),GEMINI_MODEL);
+});
+
+test('Gemini adapter: a retired model (404) or a refused config (400) moves to the -latest aliases; a busy model does not', async () => {
+  const { geminiGenerate, GEMINI_MODEL, GEMINI_FALLBACK_MODELS, geminiThinking } = await import('./gemini.mjs');
+  assert.deepEqual(geminiThinking('gemini-3.5-flash-lite'), { thinkingLevel: 'minimal' });
+  assert.deepEqual(geminiThinking('gemini-3.8-flash'), { thinkingLevel: 'low' });
+  assert.deepEqual(geminiThinking('gemini-2.5-flash'), { thinkingBudget: 0 });
+  assert.equal(geminiThinking('gemini-flash-lite-latest'), null);
+  const ok = text => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] }, finishReason: 'STOP' }] }), { status: 200 });
+  const urls = [];
+  const r = await geminiGenerate({ GEMINI_API_KEY: 'k' }, { parts: [{ text: 'x' }] }, async (url, init) => {
+    urls.push(url);
+    const body = JSON.parse(init.body);
+    if (url.includes(GEMINI_MODEL)) return new Response('{}', { status: 404 });
+    assert.equal(body.generationConfig.thinkingConfig, undefined);
+    return ok('salut');
+  });
+  assert.deepEqual(r, { response: 'salut', model: GEMINI_FALLBACK_MODELS[0] });
+  assert.equal(urls.length, 2);
+  let calls = 0;
+  await assert.rejects(() => geminiGenerate({ GEMINI_API_KEY: 'k' }, { parts: [{ text: 'x' }] }, async () => { calls++; return new Response('{}', { status: 429 }); }), /gemini_http_429/);
+  assert.equal(calls, 1);
+  calls = 0;
+  await assert.rejects(() => geminiGenerate({ GEMINI_API_KEY: 'k' }, { parts: [{ text: 'x' }] }, async () => { calls++; return new Response('{}', { status: 404 }); }), /gemini_http_404/);
+  assert.equal(calls, 1 + GEMINI_FALLBACK_MODELS.length);
 });

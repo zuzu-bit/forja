@@ -77,31 +77,24 @@ jobs:
           echo "== modelele Groq disponibile (doar id-uri) =="
           curl -s --max-time 30 -H "Authorization: Bearer $GROQ_API_KEY" "https://api.groq.com/openai/v1/models" | jq -r '(.data // [])[] | .id' | sort | head -60 || true
           curl -sL --max-time 60 -o /tmp/meal.jpg "$URL/media/meal_dinner.jpg" || true
-          echo "== sonde Gemini directe (text scurt; status · ms · gândire) =="
-          for M in gemini-3.8-flash gemini-3.5-flash gemini-flash-latest gemini-3.5-flash-lite; do
-            for CFG in '{}' '{"thinkingConfig":{"thinkingBudget":0}}' '{"thinkingConfig":{"thinkingLevel":"minimal"}}' '{"thinkingConfig":{"thinkingLevel":"low"}}'; do
-              T0=$(date +%s%3N)
-              R=$(curl -s --max-time 90 -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' \
-                -d "{\"contents\":[{\"parts\":[{\"text\":\"Raspunde doar cu OK.\"}]}],\"generationConfig\":$CFG}" \
-                -w '\n%{http_code}' "https://generativelanguage.googleapis.com/v1beta/models/$M:generateContent" || true)
-              CODE=$(echo "$R" | tail -1); BODY=$(echo "$R" | sed '$d')
-              echo "$M $CFG -> $CODE $(( $(date +%s%3N) - T0 )) ms $(echo "$BODY" | jq -c '{t:(.candidates[0].content.parts[0].text // null), g:(.usageMetadata.thoughtsTokenCount // 0), e:(.error.message // null)}' 2>/dev/null | head -c 260)"
-            done
-          done
           ls -la /tmp/meal.jpg || true
           B64=$(base64 -w0 /tmp/meal.jpg)
-          echo "== sondă Gemini cu poza (JSON, 3.8-flash) =="
-          for CFG in '{"responseMimeType":"application/json","thinkingConfig":{"thinkingLevel":"low"}}' '{"responseMimeType":"application/json","thinkingConfig":{"thinkingLevel":"minimal"}}' '{"responseMimeType":"application/json"}'; do
-            printf '{"contents":[{"parts":[{"text":"Descompune farfuria pe componente. JSON: {\\"componente\\":[{\\"nume\\":\\"\\",\\"grame\\":0,\\"kcal\\":0}]}"},{"inline_data":{"mime_type":"image/jpeg","data":"%s"}}]}],"generationConfig":%s}' "$B64" "$CFG" > /tmp/gprobe.json
-            T0=$(date +%s%3N)
-            R=$(curl -s --max-time 120 -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' --data-binary @/tmp/gprobe.json \
-              -w '\n%{http_code}' "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent" || true)
-            CODE=$(echo "$R" | tail -1); BODY=$(echo "$R" | sed '$d')
-            echo "img $CFG -> $CODE $(( $(date +%s%3N) - T0 )) ms $(echo "$BODY" | jq -c '{t:((.candidates[0].content.parts[0].text // "")[0:160]), g:(.usageMetadata.thoughtsTokenCount // 0), p:(.usageMetadata.promptTokenCount // 0), e:(.error.message // null)}' 2>/dev/null | head -c 400)"
-          done
           printf '{"image":"%s"}' "$B64" > /tmp/meal.json
           T0=$(date +%s)
           curl -s --max-time 300 -X POST -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' --data-binary @/tmp/meal.json "$URL/v1/meal" -w '\nHTTP %{http_code}\n' | head -c 4000
+          echo "durata: $(( $(date +%s) - T0 )) s"
+          echo "== test cap-coadă /v1/organize/clusters (2 grupuri, miniaturi 384 px) =="
+          small() {  # $1 = cheia media → base64 JPEG 384 px (≤ 80 KB)
+            curl -sL --max-time 60 -o /tmp/src.jpg "$URL/media/$1" || return 0
+            if command -v convert >/dev/null 2>&1; then convert /tmp/src.jpg -resize 384x384 -quality 70 /tmp/th.jpg
+            else ffmpeg -loglevel error -y -i /tmp/src.jpg -vf "scale=384:-2" -q:v 7 /tmp/th.jpg; fi
+            base64 -w0 /tmp/th.jpg
+          }
+          T1=$(small meal_dinner.jpg); T2=$(small 471644726.jpg); T3=$(small 622385753.jpg)
+          printf '{"clusters":[{"id":"c1","count":12,"from":1691834400000,"to":1691949600000,"hints":["mâncare"],"thumbs":["%s","%s"]},{"id":"c2","count":8,"from":1693000000000,"to":1693010000000,"thumbs":["%s"]}],"locale":"ro"}' "$T1" "$T2" "$T3" > /tmp/clusters.json
+          ls -la /tmp/clusters.json
+          T0=$(date +%s)
+          curl -s --max-time 150 -X POST -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' --data-binary @/tmp/clusters.json "$URL/v1/organize/clusters" -w '\nHTTP %{http_code}\n' | head -c 3000
           echo "durata: $(( $(date +%s) - T0 )) s"
       - name: Deploy serverul central FORJA (dacă secretele există)
         if: ${{ !inputs.diag_only }}

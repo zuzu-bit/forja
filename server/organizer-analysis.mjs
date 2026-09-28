@@ -9,7 +9,7 @@ export const ORGANIZER_MODELS = Object.freeze({
   scout: '@cf/meta/llama-4-scout-17b-16e-instruct',
   gemini: GEMINI_MODEL,
 });
-/** Gemini 2.5 Flash when a key exists, otherwise the configured Workers AI model (Scout by default). */
+/** Gemini (GEMINI_MODEL, with alias fallbacks) when a key exists, otherwise the configured Workers AI model (Scout by default). */
 export function organizerModel(env) {
   return geminiAvailable(env)?ORGANIZER_MODELS.gemini:(env?.ORGANIZER_ANALYSIS_MODEL||ORGANIZER_MODELS.scout);
 }
