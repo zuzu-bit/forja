@@ -53,9 +53,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -73,6 +76,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.forja.app.core.designsystem.Accent2
 import com.forja.app.core.designsystem.Error
@@ -154,7 +158,7 @@ fun InventoryFoldersContent(state: FoldersUiState, actions: FoldersActions, modi
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                contentPadding = PaddingValues(start = 20.dp, top = 14.dp, end = 20.dp, bottom = 124.dp),
+                contentPadding = PaddingValues(start = 20.dp, top = 14.dp, end = 20.dp, bottom = BottomBarClear),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
@@ -175,16 +179,28 @@ fun InventoryFoldersContent(state: FoldersUiState, actions: FoldersActions, modi
                 }
             }
         }
-        // bara de jos, fixă, peste un gradient
-        Box(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .background(Brush.verticalGradient(0f to Surface0.copy(alpha = 0f), 0.34f to Surface0.copy(alpha = 0.92f), 1f to Surface0))
-                .padding(start = 20.dp, top = 30.dp, end = 20.dp, bottom = 24.dp)
-        ) {
+        // bara de jos, fixă: grila se stinge în ea, nu e tăiată de marginea butonului
+        BottomBar(Modifier.align(Alignment.BottomCenter)) {
             InvPrimaryButton("Aplică", actions.onApply, Modifier.coachTarget("inv_apply"), meta = fmtMinutes(state.applyEstimateSec))
         }
+    }
+}
+
+/** Cât stă fadeul deasupra barei de jos (grila se stinge în el până la marginea de sus a butonului). */
+private val BottomFade = 40.dp
+
+/** Spațiul de la capătul grilelor: fadeul + butonul (58) + marginea de jos (24) + 14 dp de aer, ca ultimul rând să iasă curat. */
+private val BottomBarClear = BottomFade + 58.dp + 24.dp + 14.dp
+
+/**
+ * Bara fixă de jos a S4/S5: un fade de [BottomFade] (Surface0 transparent → plin) și, dedesubt, fundal plin în spatele
+ * butoanelor. Conținutul care derulează pe sub ea se stinge, deci se citește „mai e”, nu „text tăiat”.
+ */
+@Composable
+private fun BottomBar(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Column(modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().height(BottomFade).background(Brush.verticalGradient(listOf(Surface0.copy(alpha = 0f), Surface0))))
+        Box(Modifier.fillMaxWidth().background(Surface0).padding(start = 20.dp, end = 20.dp, bottom = 24.dp)) { content() }
     }
 }
 
@@ -373,8 +389,11 @@ fun InventoryFolderContent(state: FolderUiState, actions: FolderActions, modifie
                 )
             }
             if (state.special && state.filters.size > 1) {
+                // Marginile se sting peste cei 20 dp de padding (acolo nu stă nimic când rândul e la capăt): un chip
+                // care trece de margine se vede că „continuă” — pe 360 dp „Neclare” se oprea fix la margine și nu
+                // lăsa să se vadă că mai sunt filtre.
                 LazyRow(
-                    Modifier.fillMaxWidth().padding(top = 12.dp),
+                    Modifier.fillMaxWidth().padding(top = 12.dp).edgeFades(20.dp),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 2.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -387,7 +406,7 @@ fun InventoryFolderContent(state: FolderUiState, actions: FolderActions, modifie
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                contentPadding = PaddingValues(start = 20.dp, top = 14.dp, end = 20.dp, bottom = 124.dp),
+                contentPadding = PaddingValues(start = 20.dp, top = 14.dp, end = 20.dp, bottom = BottomBarClear),
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
                 verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
@@ -419,19 +438,15 @@ fun InventoryFolderContent(state: FolderUiState, actions: FolderActions, modifie
             enter = fadeIn(tween(200)),
             exit = fadeOut(tween(160))
         ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(Brush.verticalGradient(0f to Surface0.copy(alpha = 0f), 0.34f to Surface0.copy(alpha = 0.92f), 1f to Surface0))
-                        .padding(start = 20.dp, top = 30.dp, end = 20.dp, bottom = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                if (state.special) {
-                    SelPrimary("Păstrează", state.selected.size, actions.onKeep, Modifier.weight(1f))
-                    SelSecondary("Mută în…", actions.onMove, Modifier.weight(1f))
-                } else {
-                    SelSecondary("Mută în…", actions.onMove, Modifier.weight(1f))
-                    SelSecondary("La gunoi", actions.onTrash, Modifier.weight(1f), color = Error)
+            BottomBar {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (state.special) {
+                        SelPrimary("Păstrează", state.selected.size, actions.onKeep, Modifier.weight(1f))
+                        SelSecondary("Mută în…", actions.onMove, Modifier.weight(1f))
+                    } else {
+                        SelSecondary("Mută în…", actions.onMove, Modifier.weight(1f))
+                        SelSecondary("La gunoi", actions.onTrash, Modifier.weight(1f), color = Error)
+                    }
                 }
             }
         }
@@ -445,13 +460,16 @@ private fun TitleRow(state: FolderUiState, actions: FolderActions) {
             Icon(InvIcons.TrashLined, null, tint = Error, modifier = Modifier.size(26.dp))
             Spacer(Modifier.width(10.dp))
         }
-        if (!state.editing) {
+        // „De aruncat” e un dosar al sistemului: nu se redenumește (fără creion, fără câmp).
+        if (!state.editing || state.special) {
             Text(state.name, style = cond(34, 36), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Box(
-                Modifier.size(40.dp).clip(R8).pressable(actions.onStartEdit).semantics { contentDescription = "Redenumește"; role = Role.Button },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(InvIcons.Pencil, null, tint = TextSecondary, modifier = Modifier.size(20.dp))
+            if (!state.special) {
+                Box(
+                    Modifier.size(40.dp).clip(R8).pressable(actions.onStartEdit).semantics { contentDescription = "Redenumește"; role = Role.Button },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(InvIcons.Pencil, null, tint = TextSecondary, modifier = Modifier.size(20.dp))
+                }
             }
         } else {
             var value by remember(state.id) { mutableStateOf(TextFieldValue(state.name, TextRange(state.name.length))) }
@@ -492,6 +510,21 @@ private fun TitleRow(state: FolderUiState, actions: FolderActions) {
             }
         }
     }
+}
+
+/** Stinge [width] la stânga și la dreapta (Surface0 → transparent), peste conținutul care derulează orizontal. */
+private fun Modifier.edgeFades(width: Dp): Modifier = drawWithContent {
+    drawContent()
+    val w = width.toPx().coerceAtMost(size.width / 2f)
+    drawRect(
+        Brush.horizontalGradient(listOf(Surface0, Surface0.copy(alpha = 0f)), startX = 0f, endX = w),
+        size = Size(w, size.height)
+    )
+    drawRect(
+        Brush.horizontalGradient(listOf(Surface0.copy(alpha = 0f), Surface0), startX = size.width - w, endX = size.width),
+        topLeft = Offset(size.width - w, 0f),
+        size = Size(w, size.height)
+    )
 }
 
 @Composable
