@@ -111,7 +111,7 @@ function createApi(fixture, assets, {fail = []} = {}) {
         return json({command: d.command, phone_online: d.online}, 202);
       }
       if (m[2] === 'command' && method === 'DELETE') { if (!d.command || d.command.id !== q.get('id')) return json({error: 'Cererea nu mai este activă.'}, 409); d.command = null; d.status = 'stopped'; return json({ok: true}); }
-      if (m[2] === 'extend' && method === 'POST') { if (!d.command || d.command.id !== data.command) return json({error: 'Cererea nu mai este activă.'}, 409); d.command.until = Math.min(d.command.created_at + 60 * 60000, d.command.until + (data.minutes || 10) * 60000); return json({command: d.command}); }
+      if (m[2] === 'extend' && method === 'POST') { if (!d.command || d.command.id !== data.command) return json({error: 'Cererea nu mai este activă.'}, 409); const add = data.minutes || 10; if ((d.command.minutes || 0) + add > 60) return json({error: 'O căutare ține cel mult 60 de minute.'}, 409); d.command.minutes = (d.command.minutes || 0) + add; d.command.until += add * 60000; return json({command: d.command}); }
       if (m[2] === 'grant' && method === 'DELETE') { f.devices = f.devices.filter(x => x !== d); return json({ok: true}); }
       if (!m[2] && method === 'PATCH') { if (typeof data.name !== 'string' || !data.name.trim() || data.name.length > 40) return json({error: 'Nume invalid.'}, 400); d.name = data.name.trim(); return json({ok: true, name: d.name}); }
     }

@@ -373,7 +373,8 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     [...p.$('sheet-body').querySelectorAll('button')].find(b => /Scoate telefonul/.test(b.textContent)).click(); await tick(30);
     [...p.$('sheet-body').querySelectorAll('button')].find(b => b.textContent === 'Scoate telefonul').click(); await tick(60);
     assert(p.call('/grant', 'DELETE'));
-    await until(() => /Semnează contractul în FORJA\. Telefonul apare aici singur\./.test(p.$('gasire-panel').textContent), 'empty state');
+    // Contract signed, phone removed: it comes back only from the phone („Probă”), never by itself.
+    await until(() => /Deschide FORJA → Profil → Telefonul meu → Probă\./.test(p.$('gasire-panel').textContent), 'empty state');
     clean(p);
   });
 

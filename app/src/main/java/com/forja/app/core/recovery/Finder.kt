@@ -72,8 +72,10 @@ object Finder {
     suspend fun run(c: Context, latestFix: () -> SyncFix?, alive: () -> Boolean) {
         LostPhoneRecovery.ensureChannel(c)
         while (currentCoroutineContext().isActive && alive()) {
-            val fix = latestFix()?.let { FinderFix(it.latitude, it.longitude, it.accuracy, it.at) }
-            if (fix != null) serviceFix = fix
+            latestFix()?.let { serviceFix = FinderFix(it.latitude, it.longitude, it.accuracy, it.at) }
+            // Fără locația sincronizării (categoria oprită, notificările oprite) serviciul nu are poziții proprii:
+            // ultima poziție cunoscută de Android ține telefonul găsibil. `sent_fix_at` oprește retrimiterea aceluiași punct.
+            val fix = bestFix(c)
             val next = try { beat(c, fix)?.nextMs } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
                 ?: FinderLogic.nextBeatMillis(null)
             arm(c, next)

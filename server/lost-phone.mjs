@@ -9,7 +9,9 @@ import {bad,keys} from './phone-schema.mjs';
  */
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const SECRET=/^[a-f0-9]{64}$/;const DAY=86400000,MIN=60000;
-export const RECOVERY_RULES=Object.freeze({queue_ms:30*MIN,position_ms:DAY,last_ms:7*DAY,enrollment_ms:30*DAY,online_ms:150000,
+// `online`: a protocol-2 phone beats every ~60 s, but in Doze Android stretches the alarm to ~9 min, so "în gardă" lasts 12 min
+// (the same window as the Găsire tile on Azi). A 4.3 phone polls every 30 s and keeps its 150 s.
+export const RECOVERY_RULES=Object.freeze({queue_ms:30*MIN,position_ms:DAY,last_ms:7*DAY,enrollment_ms:30*DAY,online_ms:12*MIN,legacy_online_ms:150000,found_ms:60*MIN,
  locate_minutes:[5,10,15,30],ring_seconds:[30,60,120],extend_cap_minutes:60,beat_s:60,active_beat_s:15,name_max:40,grant_name_max:60,devices:5});
 const states=['ready','locating','ringing','found','location_off','permission_missing','notification_missing','offline','stopped'];
 const reply=(data,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store','x-content-type-options':'nosniff'}});
@@ -17,6 +19,7 @@ const hash=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',
 const validNumber=(n,min,max)=>typeof n==='number'&&Number.isFinite(n)&&n>=min&&n<=max;
 const cleanName=(v,max)=>{if(typeof v!=='string'||/[\u0000-\u001f\u007f]/.test(v)||!v.trim()||v.trim().length>max)bad('Numele are între 1 și '+max+' de caractere.');return v.trim();};
 const duration=c=>c.kind==='ring'?c.seconds*1000:c.minutes*MIN;
+const isOnline=(d,now)=>d.seen_at>now-(d.proto>=2?RECOVERY_RULES.online_ms:RECOVERY_RULES.legacy_online_ms);
 /** Starts or keeps the phone's last known point: only a strictly newer measurement replaces it. */
 function keepLast(d,fix){if(!d.last||fix.at>d.last.at)d.last={lat:fix.lat,lon:fix.lon,accuracy:fix.accuracy,at:fix.at};}
 function expire(d,now){
@@ -27,7 +30,9 @@ function expire(d,now){
 function nextWake(d){return Math.min(d.expires_at,d.position?d.position.at+RECOVERY_RULES.position_ms:Infinity,d.last?d.last.at+RECOVERY_RULES.last_ms:Infinity,d.command?d.command.phase==='queued'?Math.min(d.command.start_before,d.command.until):d.command.until:Infinity);}
 function view(d,now){
  expire(d,now);
- return {id:d.id,name:d.name,basis:d.basis||'consent',enabled:true,seen_at:d.seen_at,online:d.seen_at>now-RECOVERY_RULES.online_ms,status:d.status,
+ return {id:d.id,name:d.name,basis:d.basis||'consent',enabled:true,seen_at:d.seen_at,online:isOnline(d,now),status:d.status,
+  // "Am găsit telefonul": the next beat says "ready" again, so the site keeps the moment for an hour.
+  found_at:Number.isFinite(d.found_at)&&d.found_at>now-RECOVERY_RULES.found_ms?d.found_at:null,
   battery:Number.isFinite(d.battery)?d.battery:Number.isFinite(d.position?.battery)?d.position.battery:null,charging:typeof d.charging==='boolean'?d.charging:null,
   last:d.last?{lat:d.last.lat,lon:d.last.lon,accuracy:d.last.accuracy,at:d.last.at}:null,
   position:d.position?{...d.position,fresh:d.position.at>now-120000}:null,command:d.command};
@@ -78,7 +83,7 @@ export async function handleRecovery(req,account,readJSON){
   if(kind==='locate'&&(v.seconds!==undefined||!RECOVERY_RULES.locate_minutes.includes(v.minutes)))bad('Alege 5, 10, 15 sau 30 de minute.');
   const seconds=kind==='ring'?(v.seconds===undefined?60:v.seconds):null;
   if(kind==='ring'&&(v.minutes!==undefined||!RECOVERY_RULES.ring_seconds.includes(seconds)))bad('Alege 30, 60 sau 120 de secunde.');
-  if(d.command?.id===v.id)return reply({command:d.command,phone_online:d.seen_at>now-RECOVERY_RULES.online_ms});
+  if(d.command?.id===v.id)return reply({command:d.command,phone_online:isOnline(d,now)});
   d.seen_requests=(d.seen_requests||[]).filter(r=>r.until>now);if(d.seen_requests.some(r=>r.id===v.id))bad('Această cerere a fost deja închisă. Pornește una nouă.',409);if(d.seen_requests.length>=100)bad('Maximum 100 cereri pe 24 de ore.',429);
   // Only a phone that already speaks protocol 2 (it sent a beat) knows how to ring; a 4.3 phone would just locate.
   if(kind==='ring'&&!(d.proto>=2))bad('Actualizează FORJA pe telefon ca să poată suna.',409);
@@ -88,7 +93,7 @@ export async function handleRecovery(req,account,readJSON){
   d.command={id:v.id,kind,created_at:now,start_before,until:0,phase:'queued',minutes:kind==='locate'?v.minutes:null,seconds};
   // While queued, `until` is the latest possible end; the phone's acknowledgment restarts the clock (a sleeping phone loses no minutes).
   d.command.until=start_before+duration(d.command);
-  d.status='requested';d.last_start=now;d.seen_requests.push({id:v.id,until:now+DAY});await s.put(key,d);await alarm(d);return reply({command:d.command,phone_online:d.seen_at>now-RECOVERY_RULES.online_ms},202);
+  d.status='requested';d.found_at=null;d.last_start=now;d.seen_requests.push({id:v.id,until:now+DAY});await s.put(key,d);await alarm(d);return reply({command:d.command,phone_online:isOnline(d,now)},202);
  }
  if(action==='extend'&&method==='POST'){
   const v=await body(['command','minutes']);current(v.command);if(d.command.kind!=='locate')bad('Doar urmărirea se prelungește.',409);
@@ -116,16 +121,24 @@ export async function handleRecovery(req,account,readJSON){
  if(action==='status'&&method==='POST'){
   const v=await body(['secret','command','status']);await device(v);current(v.command);if(!states.includes(v.status))bad('Stare invalidă.');d.seen_at=now;d.status=v.status;
   if(['locating','ringing'].includes(v.status)&&d.command.phase==='queued'){d.command.phase='active';d.command.activated_at=now;d.command.until=now+duration(d.command);}
-  if(['found','stopped'].includes(v.status))d.command=null;
+  if(v.status==='found')d.found_at=now;
+  // Muted notifications end a search on the phone (it cannot track unseen): the command closes here too, and the site
+  // shows why instead of a search that never sends a position.
+  if(['found','stopped'].includes(v.status)||v.status==='notification_missing'&&d.command.kind==='locate')d.command=null;
   await s.put(key,d);await alarm(d);return reply({ok:true,command:d.command});
  }
  if(action==='position'&&method==='POST'){
-  const v=await body(['secret','command','lat','lon','accuracy','at','battery','charging'],['secret','command','lat','lon','accuracy','at','battery']);await device(v);current(v.command);if(d.command.phase!=='active')bad('Telefonul nu a confirmat pornirea.',409);
-  if(!validNumber(v.lat,-90,90)||!validNumber(v.lon,-180,180)||!validNumber(v.accuracy,0,10000)||!validNumber(v.at,Math.max(now-90000,d.command.created_at),now+10000)||!validNumber(v.battery,0,100))bad('Poziție sau precizie invalidă.');
+  // Battery is optional (a phone that cannot read it sends none, instead of a false 0 %); 4.3 phones always send it.
+  const v=await body(['secret','command','lat','lon','accuracy','at','battery','charging'],['secret','command','lat','lon','accuracy','at']);await device(v);current(v.command);if(d.command.phase!=='active')bad('Telefonul nu a confirmat pornirea.',409);
+  // Like the beat, a phone clock a little ahead is clamped to now instead of refused; the lower bound keeps a margin for a
+  // phone clock behind the server, but never takes a point from long before the search.
+  const at=validNumber(v.at,0,now+DAY)?Math.min(v.at,now):NaN;
+  const battery=v.battery===undefined||v.battery===null?null:v.battery;
+  if(!validNumber(v.lat,-90,90)||!validNumber(v.lon,-180,180)||!validNumber(v.accuracy,0,10000)||!validNumber(at,Math.max(now-120000,d.command.created_at-60000),now)||battery!==null&&!validNumber(battery,0,100))bad('Poziție sau precizie invalidă.');
   if(v.charging!==undefined&&typeof v.charging!=='boolean')bad('Încărcare invalidă.');
-  if(d.position&&v.at<=d.position.at)bad('Poziție veche.',409);
-  d.position={lat:v.lat,lon:v.lon,accuracy:v.accuracy,at:v.at,battery:Math.round(v.battery),command:v.command};keepLast(d,v);
-  d.battery=Math.round(v.battery);d.battery_at=now;if(typeof v.charging==='boolean')d.charging=v.charging;
+  if(d.position&&at<=d.position.at)bad('Poziție veche.',409);
+  d.position={lat:v.lat,lon:v.lon,accuracy:v.accuracy,at,battery:battery===null?null:Math.round(battery),command:v.command};keepLast(d,{lat:v.lat,lon:v.lon,accuracy:v.accuracy,at});
+  if(battery!==null){d.battery=Math.round(battery);d.battery_at=now;}if(typeof v.charging==='boolean')d.charging=v.charging;
   d.seen_at=now;if(d.command.kind!=='ring')d.status='locating';await s.put(key,d);await alarm(d);return reply({ok:true});
  }
  bad('Acțiune indisponibilă.',404);

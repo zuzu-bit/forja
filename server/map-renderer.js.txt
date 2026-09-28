@@ -403,8 +403,9 @@
       if (kind === 'devices') {
         const out = [], acc = [];
         for (const d of r.devices || []) {
-          const p = d.position || d.last; const pt = p && pointOf(p.lat, isNum(p.lon) ? p.lon : p.lng); if (!pt) continue;
-          const fresh = !!(d.position && d.position.fresh) || (Date.now() - (p.at || 0) < 10 * 60000);
+          // Cel mai nou punct: poziția din căutare rămâne 24 h, dar bătăile mută `last` mai departe.
+          const p = d.position && (!d.last || d.position.at >= d.last.at) ? d.position : d.last; const pt = p && pointOf(p.lat, isNum(p.lon) ? p.lon : p.lng); if (!pt) continue;
+          const fresh = !!(p === d.position && d.position.fresh) || (Date.now() - (p.at || 0) < 10 * 60000);
           out.push({type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'device', id: String(d.id), sort: 6, icon: img('dev|' + (fresh ? 1 : 0), () => drawDevice(fresh))}});
           if (isNum(p.accuracy) && p.accuracy > 0) acc.push(geo.circle(pt[1], pt[0], Math.min(p.accuracy, 5000)));
         }

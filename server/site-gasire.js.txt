@@ -50,7 +50,7 @@ const Gasire = {
     const r = MapHost.renderer; if (!r?.ready || Site.current !== 'gasire') return;
     r.setMode('gasire');
     r.setData({devices: Gasire.devices || [], me: Circle.data?.me || null});
-    const d = (Gasire.devices || [])[0], p = d && (d.position || d.last);
+    const d = (Gasire.devices || [])[0], p = d && newest(d);
     const sig = p ? [p.lat, p.lon, p.at].join('|') : '';
     if (p && (!Gasire.fitted || (d.command && sig !== Gasire.lastSig))) { r.fitDevices(Gasire.padding()); Gasire.fitted = true; }
     Gasire.lastSig = sig;
@@ -62,7 +62,9 @@ const Gasire = {
     if (hidden && list.length) requestAnimationFrame(() => MapHost.renderer?.resize()); // harta ascunsă până acum își ia mărimea
     if (!list.length) {
       setChip('gasire', {state: 'off'}, 'FĂRĂ TELEFON');
-      fill(Gasire.panel, h('div', {class: 'panel-pad'}, emptyState('Niciun telefon în gardă.', 'Semnează contractul în FORJA. Telefonul apare aici singur.', null, 'idle')));
+      // Contractul semnat (Azi → Livret) și totuși niciun telefon: a fost scos de aici, iar „Probă” îl readuce.
+      const signed = Site.links?.cont?.state === 'on';
+      fill(Gasire.panel, h('div', {class: 'panel-pad'}, emptyState('Niciun telefon în gardă.', signed ? 'Deschide FORJA → Profil → Telefonul meu → Probă.' : 'Semnează contractul în FORJA. Telefonul apare aici singur.', null, 'idle')));
       return;
     }
     const main = deviceView(list[0]);
@@ -78,6 +80,8 @@ const Gasire = {
   },
   reset() { Gasire.devices = null; Gasire.fitted = false; Gasire.lastActive = false; Gasire.lastSig = ''; if (Gasire.panel) delete Gasire.panel.dataset.loaded; Gasire.off = null; }
 };
+/** Cel mai nou punct al telefonului: poziția din căutare rămâne 24 h, dar bătăile mută `last` mai departe. */
+function newest(d) { return d.position && (!d.last || d.position.at >= d.last.at) ? d.position : d.last || null; }
 /** Starea în cuvinte (lost-phone §5.3): o linie mono, un ton, un text de cip. */
 function deviceView(d, now = Date.now()) {
   const c = d.command, online = !!d.online;
@@ -85,7 +89,8 @@ function deviceView(d, now = Date.now()) {
   if (c && c.phase === 'queued') return {tone: 'warn', line: 'CERERE TRIMISĂ', chip: 'CERERE TRIMISĂ', sub: 'Răspunde la următoarea trezire, de obicei sub 10 minute.'};
   if (c && c.kind === 'ring') return {tone: 'ember', line: 'SUNĂ · ' + Math.ceil(left / 1000) + ' S', chip: 'SUNĂ'};
   if (c) return {tone: 'live', line: 'URMĂRIRE · ' + Math.max(1, Math.ceil(left / MIN)) + ' MIN', chip: 'URMĂRIRE'};
-  if (d.status === 'found') return {tone: 'on', line: 'GĂSIT · ' + fmt.time(d.seen_at), chip: 'GĂSIT'};
+  // „Am găsit telefonul”: următoarea bătaie spune din nou „ready”, dar serverul ține momentul o oră (found_at).
+  if (d.status === 'found' || num(d.found_at) !== null && now - d.found_at < HOUR) return {tone: 'on', line: 'GĂSIT · ' + fmt.time(d.found_at || d.seen_at), chip: 'GĂSIT'};
   if (d.status === 'location_off') return {tone: 'ember', line: 'LOCAȚIA ANDROID E OPRITĂ', chip: 'LOCAȚIA E OPRITĂ'};
   if (d.status === 'permission_missing') return {tone: 'ember', line: 'FĂRĂ PERMISIUNEA DE LOCAȚIE', chip: 'FĂRĂ PERMISIUNE'};
   if (d.status === 'notification_missing') return {tone: 'ember', line: 'NOTIFICĂRILE FORJA SUNT OPRITE', chip: 'NOTIFICĂRI OPRITE'};
@@ -93,12 +98,13 @@ function deviceView(d, now = Date.now()) {
   return {tone: 'off', line: d.seen_at ? 'TĂCUT DIN ' + (now - d.seen_at < DAY ? fmt.time(d.seen_at) : fmt.day(d.seen_at).toUpperCase()) : 'ÎNCĂ NU S-A CONECTAT', chip: 'TĂCUT', sub: 'Descărcat, închis sau fără internet. Ultima poziție rămâne pe hartă.'};
 }
 function deviceCard(d) {
-  const v = deviceView(d), c = d.command, p = d.position || d.last;
-  const used = c && c.kind !== 'ring' && c.created_at ? (c.until - c.created_at) / MIN : 0;
+  const v = deviceView(d), c = d.command, p = newest(d);
+  // Plafonul serverului (60 min) numără doar minutele urmărite, nu așteptarea în coadă până răspunde telefonul.
+  const used = c && c.kind !== 'ring' ? num(c.minutes) || 0 : 0;
   const meta = [];
   if (p) meta.push(h('span', null, icon('locate', 14), '±' + fmt.int(p.accuracy) + ' m'));
   if (num(d.battery) !== null || num(p?.battery) !== null) meta.push(h('span', {class: (d.battery ?? p.battery) <= 15 ? 'low' : ''}, icon('battery', 14), fmt.int(d.battery ?? p.battery) + '%' + (d.charging ? ' · se încarcă' : '')));
-  if (p) meta.push(h('span', null, (d.position?.fresh ? 'acum' : fmt.ago(p.at))));
+  if (p) meta.push(h('span', null, (p === d.position && d.position.fresh ? 'acum' : fmt.ago(p.at))));
   const actions = c
     ? [btn('Oprește', async () => {
         await api('/v2/recovery/devices/' + encodeURIComponent(d.id) + '/command?id=' + encodeURIComponent(c.id), {method: 'DELETE'});
@@ -107,7 +113,7 @@ function deviceCard(d) {
       c.kind !== 'ring' && c.phase !== 'queued' ? (() => { const b = btn('+10 min', async () => {
         await api('/v2/recovery/devices/' + encodeURIComponent(d.id) + '/extend', {method: 'POST', body: {command: c.id, minutes: 10}});
         toast('Încă 10 minute.', true); await Gasire.load();
-      }, 'btn btn-secondary', 'plus'); if (used >= 60) { b.disabled = true; b.title = 'Maximum 60 de minute'; } return b; })() : null]
+      }, 'btn btn-secondary', 'plus'); if (used + 10 > 60) { b.disabled = true; b.title = 'Maximum 60 de minute'; } return b; })() : null]
     : [btn('Sună', () => Gasire.command(d, {kind: 'ring', seconds: 60}).then(() => toast('Cererea a plecat. Telefonul sună la următoarea trezire.', true)), 'btn', 'bell'),
       btn('Urmărește 10 min', () => Gasire.command(d, {kind: 'locate', minutes: 10}).then(() => toast('Cererea a plecat.', true)), 'btn btn-secondary', 'radar')];
   return h('article', {class: 'card device tone-' + v.tone},
@@ -125,7 +131,7 @@ function deviceMenu(d) {
     h('button', {type: 'button', class: 'menu-row', onclick: () => { ref.close(); info('Ce vede site-ul', INFO.gasire); }}, icon('eye', 18), h('span', {text: 'Ce vede site-ul'})),
     h('button', {type: 'button', class: 'menu-row danger', onclick: async () => {
       ref.close();
-      if (!await confirmSheet('Scoți telefonul?', 'Site-ul uită ultima poziție. Revine singur cât contractul e semnat.', 'Scoate telefonul', true)) return;
+      if (!await confirmSheet('Scoți telefonul?', 'Site-ul uită ultima poziție. Revine din FORJA, Profil → Telefonul meu → Probă.', 'Scoate telefonul', true)) return;
       try { await api('/v2/recovery/devices/' + encodeURIComponent(d.id) + '/grant', {method: 'DELETE'}); toast('Telefonul a fost scos.'); await Gasire.load(); }
       catch (e) { if (e?.name !== 'AbortError') toast(e.message); }
     }}, icon('trash', 18), h('span', {text: 'Scoate telefonul'}))), {stamp: 'GĂSIRE'});

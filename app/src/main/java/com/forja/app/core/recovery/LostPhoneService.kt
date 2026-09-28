@@ -192,8 +192,9 @@ class LostPhoneService : Service(), LocationListener {
             while (isActive) {
                 delay(EXEC_BEAT_MS)
                 // Urmărirea nu merge nevăzută: notificările oprite între timp închid căutarea, iar site-ul află de ce.
+                // Comanda se închide și pe site (altfel ar arăta „URMĂRIRE” fără nicio poziție până la termen).
                 if (!ring && !LostPhoneRecovery.notices(this@LostPhoneService)) {
-                    finalStatus("notification_missing")
+                    finalStatus("notification_missing", thenStop = true)
                     endLocal(markHandled = true)
                     break
                 }
@@ -293,6 +294,9 @@ class LostPhoneService : Service(), LocationListener {
         lastSend = now
         lastFixElapsed = loc.elapsedRealtimeNanos
         val at = now - age / 1_000_000
+        // Bateria citită acum sau, dacă Android nu o dă, ultima din bătaie; niciodată un 0 % inventat.
+        val battery = Finder.battery(this)
+        val level = battery?.first ?: LostPhoneRecovery.prefs(this).getInt("battery", -1).takeIf { it in 0..100 }
         sending = scope.launch {
             try {
                 withTimeout(20_000) {
@@ -303,7 +307,8 @@ class LostPhoneService : Service(), LocationListener {
                         put("lon", loc.longitude)
                         put("accuracy", loc.accuracy.coerceIn(0f, 10_000f).toDouble())
                         put("at", at)
-                        put("battery", Finder.battery(this@LostPhoneService)?.first ?: 0)
+                        if (level != null) put("battery", level)
+                        if (battery != null) put("charging", battery.second)
                     })
                 }
                 // Soneria trimite o singură poziție: după ea, GPS-ul se oprește.
