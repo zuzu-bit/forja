@@ -74,6 +74,8 @@ class Prefs(private val context: Context) {
         // v4.2 — contractul de securitate (un singur acord în locul comutatoarelor de sincronizare)
         val contractSignedAt = longPreferencesKey("contract_signed_at")
         val contractVersion = intPreferencesKey("contract_version")
+        // v4.4 — foaia de re-semnare a apărut o dată pentru această versiune
+        val contractPromptVersion = intPreferencesKey("contract_prompt_version")
     }
 
     companion object {
@@ -81,8 +83,11 @@ class Prefs(private val context: Context) {
         const val INTRO_VERSION = 2
         /** „Echipare” (permisiunile): la fel, o dată per versiune. */
         const val GEAR_VERSION = 3
-        /** Versiunea textului contractului de securitate; o versiune nouă cere semnătură nouă. */
-        const val CONTRACT_VERSION = 2
+        /**
+         * Versiunea textului contractului de securitate; o versiune nouă cere semnătură nouă.
+         * v3 (4.4): găsirea telefonului, Inventarul pe site, muzica, antrenamentele și ținta, plus corecturile de text.
+         */
+        const val CONTRACT_VERSION = 3
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }
@@ -300,6 +305,13 @@ class Prefs(private val context: Context) {
     val contractSigned: Flow<Boolean> = context.dataStore.data.map {
         (it[K.contractSignedAt] ?: 0L) > 0L && (it[K.contractVersion] ?: 0) >= CONTRACT_VERSION
     }
+    /** Semnat, dar o versiune mai veche: contractul are rânduri noi; lucrul legat de contract stă până la re-semnare. */
+    val contractNeedsResign: Flow<Boolean> = context.dataStore.data.map {
+        (it[K.contractSignedAt] ?: 0L) > 0L && (it[K.contractVersion] ?: 0) in 1 until CONTRACT_VERSION
+    }
+    /** Versiunea pentru care foaia de re-semnare s-a arătat deja (o singură dată pe versiune). */
+    val contractPromptVersion: Flow<Int> = context.dataStore.data.map { it[K.contractPromptVersion] ?: 0 }
+    suspend fun setContractPromptSeen() = context.dataStore.edit { it[K.contractPromptVersion] = CONTRACT_VERSION }
     suspend fun setContractSigned(at: Long, version: Int = CONTRACT_VERSION) = context.dataStore.edit {
         it[K.contractSignedAt] = at
         it[K.contractVersion] = version
