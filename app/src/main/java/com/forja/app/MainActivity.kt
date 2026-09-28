@@ -208,6 +208,7 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 when (event) {
                     Lifecycle.Event.ON_START -> {
                         app.presence.start(uid) { app.presence.isGhostNow() }
+                        try { com.forja.app.core.notify.Nudges.onAppOpen(app) } catch (_: Exception) { }   // Casca: ultima deschidere
                         com.forja.app.core.location.BgLocation.registerIfReady(app)
                         com.forja.app.core.recovery.LostPhoneRecovery.resume(app)
                         // Sincronizarea în cont se reia doar dintr-o activitate vizibilă și doar dacă a fost pornită de utilizator.
