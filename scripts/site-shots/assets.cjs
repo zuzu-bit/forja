@@ -1,55 +1,58 @@
 // Offline stand-ins for everything the site loads from third parties or from the phone:
-//  - raster tiles for Leaflet (tile.openstreetmap.org)  → deterministic SVG "city" tiles
-//  - OpenFreeMap vector style + TileJSON + glyph ranges  → a small local MapLibre style (streets, parks, water,
-//    extruded blocks) built from GeoJSON, an empty vector tile source and empty glyph PBFs
-//  - photo thumbnails / previews                        → flat illustrated PNG scenes drawn once in Chromium
-//  - PDF / audio                                        → a tiny valid PDF, server/fixtures/two-minutes-silence.m4a
+//  - OpenFreeMap vector style + TileJSON + glyph ranges → a local MapLibre style for Bucharest built from GeoJSON, with the
+//    SAME layer ids as OpenFreeMap "liberty" (background, water, park, landuse_residential, building, building-3d, road_*,
+//    waterway_river…), so the site's ForjaStyle port recolours it exactly as it recolours liberty live
+//  - photo thumbnails / previews                         → flat illustrated PNG scenes drawn once in Chromium
+//  - PDF / audio                                         → a tiny valid PDF, server/fixtures/two-minutes-silence.m4a
 // Tile hosts are unreachable from the investigation container; the placeholders keep every map UI state renderable.
+// Labels of the base map do not render (empty glyph PBFs): the FORJA pins draw their own labels on canvas.
 const fs = require('node:fs');
 const path = require('node:path');
 
 const hash = (...n) => { let h = 2166136261; for (const v of n) { h ^= v & 0xffffffff; h = Math.imul(h, 16777619); h ^= h >>> 13; } return ((h >>> 0) % 10000) / 10000; };
 
-// ——— Leaflet raster tiles: a street grid in world-pixel space, so lines continue across tiles ———
-function rasterTile(z, x, y) {
-  const size = 256, step = z >= 15 ? 110 : z >= 13 ? 72 : z >= 10 ? 48 : 36, ox = x * size, oy = y * size;
-  const parts = [`<rect width="256" height="256" fill="#f1efe8"/>`];
-  const i0 = Math.floor(ox / step) - 1, i1 = Math.ceil((ox + size) / step) + 1, j0 = Math.floor(oy / step) - 1, j1 = Math.ceil((oy + size) / step) + 1;
-  for (let i = i0; i < i1; i++) for (let j = j0; j < j1; j++) {
-    const r = hash(z, i, j), bx = i * step - ox + 7, by = j * step - oy + 7, w = step - 14;
-    if (r < 0.1) parts.push(`<rect x="${bx}" y="${by}" width="${w}" height="${w}" rx="6" fill="#cfe5bf"/>`);
-    else if (r < 0.13) parts.push(`<rect x="${bx}" y="${by}" width="${w}" height="${w}" rx="18" fill="#b9d6ee"/>`);
-    else if (z >= 14) for (let k = 0; k < 4; k++) { const q = hash(z, i, j, k); parts.push(`<rect x="${bx + (k % 2) * w / 2 + 3}" y="${by + Math.floor(k / 2) * w / 2 + 3}" width="${w / 2 - 6}" height="${w / 2 - 6 - q * 8}" fill="#e3ddd2"/>`); }
-  }
-  for (let i = i0; i < i1; i++) { const major = ((i % 4) + 4) % 4 === 0, xw = i * step - ox; parts.push(`<rect x="${xw - (major ? 4 : 2)}" y="0" width="${major ? 8 : 4}" height="256" fill="${major ? '#fbe3a6' : '#ffffff'}"/>`); }
-  for (let j = j0; j < j1; j++) { const major = ((j % 4) + 4) % 4 === 0, yw = j * step - oy; parts.push(`<rect x="0" y="${yw - (major ? 4 : 2)}" width="256" height="${major ? 8 : 4}" fill="${major ? '#fbe3a6' : '#ffffff'}"/>`); }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">${parts.join('')}</svg>`;
-}
-
 // ——— MapLibre offline style (served in place of https://tiles.openfreemap.org/styles/liberty) ———
 function offlineStyle() {
-  const streets = [], blocks = [], parks = [], water = [];
-  const lat0 = 44.395, lat1 = 44.495, lon0 = 26.03, lon1 = 26.17, d = 0.0032;
-  for (let lon = lon0; lon <= lon1; lon += d) streets.push({type: 'Feature', properties: {major: Math.round((lon - lon0) / d) % 4 === 0}, geometry: {type: 'LineString', coordinates: [[lon, lat0], [lon, lat1]]}});
-  for (let lat = lat0; lat <= lat1; lat += d * 0.72) streets.push({type: 'Feature', properties: {major: Math.round((lat - lat0) / (d * 0.72)) % 4 === 0}, geometry: {type: 'LineString', coordinates: [[lon0, lat], [lon1, lat]]}});
+  const minor = [], secondary = [], primary = [], blocks = [], parks = [], residential = [];
+  const lat0 = 44.385, lat1 = 44.500, lon0 = 26.02, lon1 = 26.19, d = 0.0032, dl = d * 0.72;
+  const line = (coords, props = {}) => ({type: 'Feature', properties: props, geometry: {type: 'LineString', coordinates: coords}});
+  let i = 0;
+  for (let lon = lon0; lon <= lon1; lon += d, i++) { const f = line([[lon, lat0], [lon + 0.004 * Math.sin(i), lat1]]); (i % 6 === 0 ? primary : i % 3 === 0 ? secondary : minor).push(f); }
+  i = 0;
+  for (let lat = lat0; lat <= lat1; lat += dl, i++) { const f = line([[lon0, lat], [lon1, lat + 0.003 * Math.cos(i)]]); (i % 7 === 0 ? primary : i % 3 === 0 ? secondary : minor).push(f); }
+  // Two diagonal boulevards, like Kiseleff and Calea Victoriei.
+  primary.push(line([[26.0820, 44.4760], [26.0870, 44.4530], [26.0960, 44.4380], [26.1020, 44.4270], [26.1060, 44.4100]]));
+  secondary.push(line([[26.0600, 44.4450], [26.0930, 44.4400], [26.1300, 44.4480], [26.1700, 44.4260]]));
   let n = 0;
-  for (let lon = lon0; lon < lon1; lon += d) for (let lat = lat0; lat < lat1; lat += d * 0.72) {
-    const r = hash(Math.round(lon * 1e4), Math.round(lat * 1e4)), a = lon + d * 0.12, b = lat + d * 0.09, c = lon + d * 0.88, e = lat + d * 0.72 - d * 0.09;
+  for (let lon = lon0; lon < lon1; lon += d) for (let lat = lat0; lat < lat1; lat += dl) {
+    const r = hash(Math.round(lon * 1e4), Math.round(lat * 1e4)), a = lon + d * 0.1, b = lat + dl * 0.1, c = lon + d * 0.9, e = lat + dl * 0.9;
     const poly = [[[a, b], [c, b], [c, e], [a, e], [a, b]]];
-    if (r < 0.08) parks.push({type: 'Feature', properties: {}, geometry: {type: 'Polygon', coordinates: poly}});
-    else if (r < 0.1) water.push({type: 'Feature', properties: {}, geometry: {type: 'Polygon', coordinates: poly}});
-    else { const h = 9 + Math.round(hash(n++, 7) * 48); for (let k = 0; k < 2; k++) { const s = a + (c - a) * k / 2 + d * 0.03, t = s + (c - a) / 2 - d * 0.06; blocks.push({type: 'Feature', properties: {h: h + k * 6}, geometry: {type: 'Polygon', coordinates: [[[s, b], [t, b], [t, e], [s, e], [s, b]]]}}); } }
+    if (r < 0.07) { parks.push({type: 'Feature', properties: {}, geometry: {type: 'Polygon', coordinates: poly}}); continue; }
+    residential.push({type: 'Feature', properties: {}, geometry: {type: 'Polygon', coordinates: poly}});
+    for (let k = 0; k < 4; k++) {
+      const s0 = a + (c - a) * (k % 2) / 2 + d * 0.02, s1 = s0 + (c - a) / 2 - d * 0.05, t0 = b + (e - b) * Math.floor(k / 2) / 2 + dl * 0.02, t1 = t0 + (e - b) / 2 - dl * 0.05;
+      blocks.push({type: 'Feature', properties: {render_height: 8 + Math.round(hash(n++, 7) * 46), hide_3d: false}, geometry: {type: 'Polygon', coordinates: [[[s0, t0], [s1, t0], [s1, t1], [s0, t1], [s0, t0]]]}});
+    }
   }
+  const lake = {type: 'Feature', properties: {}, geometry: {type: 'Polygon', coordinates: [[[26.0760, 44.4735], [26.0830, 44.4790], [26.0930, 44.4800], [26.0990, 44.4755], [26.0930, 44.4715], [26.0820, 44.4712], [26.0760, 44.4735]]]}};
+  const park = pts => ({type: 'Feature', properties: {}, geometry: {type: 'Polygon', coordinates: [pts]}});
+  parks.push(park([[26.0735, 44.4690], [26.0990, 44.4700], [26.1000, 44.4830], [26.0740, 44.4820], [26.0735, 44.4690]]), park([[26.0905, 44.4365], [26.0960, 44.4365], [26.0960, 44.4400], [26.0905, 44.4400], [26.0905, 44.4365]]), park([[26.0930, 44.4130], [26.1000, 44.4130], [26.1000, 44.4185], [26.0930, 44.4185], [26.0930, 44.4130]]));
+  const river = line([[26.02, 44.4390], [26.06, 44.4330], [26.09, 44.4300], [26.105, 44.4290], [26.13, 44.4260], [26.19, 44.4180]]);
   const src = features => ({type: 'geojson', data: {type: 'FeatureCollection', features}});
-  return {version: 8, name: 'FORJA harness offline placeholder (not OpenFreeMap)', glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
-    sources: {streets: src(streets), blocks: src(blocks), parks: src(parks), water: src(water)},
+  const roadW = (a, b) => ['interpolate', ['exponential', 1.4], ['zoom'], 10, a, 18, b];
+  return {version: 8, name: 'FORJA harness offline placeholder (liberty layer ids, not OpenFreeMap)', glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+    sources: {minor: src(minor), secondary: src(secondary), primary: src(primary), blocks: src(blocks), parks: src(parks), residential: src(residential), water: src([lake]), river: src([river])},
     layers: [
-      {id: 'background', type: 'background', paint: {'background-color': '#f1efe8'}},
-      {id: 'water', type: 'fill', source: 'water', paint: {'fill-color': '#b9d6ee'}},
-      {id: 'parks', type: 'fill', source: 'parks', paint: {'fill-color': '#cfe5bf'}},
-      {id: 'blocks', type: 'fill-extrusion', source: 'blocks', paint: {'fill-extrusion-color': '#ddd6ca', 'fill-extrusion-height': ['get', 'h'], 'fill-extrusion-opacity': 0.9}},
-      {id: 'streets', type: 'line', source: 'streets', filter: ['!', ['get', 'major']], paint: {'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 16, 6]}},
-      {id: 'streets-major', type: 'line', source: 'streets', filter: ['get', 'major'], paint: {'line-color': '#fbe3a6', 'line-width': ['interpolate', ['linear'], ['zoom'], 11, 1.5, 16, 10]}}]};
+      {id: 'background', type: 'background', paint: {'background-color': '#f3efe6'}},
+      {id: 'landuse_residential', type: 'fill', source: 'residential', paint: {'fill-color': 'hsla(35,30%,90%,0.5)'}},
+      {id: 'park', type: 'fill', source: 'parks', paint: {'fill-color': '#d9e3c4'}},
+      {id: 'water', type: 'fill', source: 'water', paint: {'fill-color': '#b9cde4'}},
+      {id: 'waterway_river', type: 'line', source: 'river', paint: {'line-color': '#a9bfd9', 'line-width': roadW(3, 26)}},
+      {id: 'road_minor', type: 'line', source: 'minor', minzoom: 12, layout: {'line-cap': 'round'}, paint: {'line-color': '#ffffff', 'line-width': roadW(0.4, 9)}},
+      {id: 'road_secondary_tertiary', type: 'line', source: 'secondary', layout: {'line-cap': 'round'}, paint: {'line-color': '#f9edcb', 'line-width': roadW(0.8, 14)}},
+      {id: 'road_trunk_primary', type: 'line', source: 'primary', layout: {'line-cap': 'round'}, paint: {'line-color': '#f6e5b8', 'line-width': roadW(1.2, 20)}},
+      {id: 'building', type: 'fill', source: 'blocks', minzoom: 13, maxzoom: 14, paint: {'fill-color': '#e6e1d6', 'fill-outline-color': '#d5cfc2'}},
+      {id: 'building-3d', type: 'fill-extrusion', source: 'blocks', minzoom: 14, paint: {'fill-extrusion-color': '#ece7dc', 'fill-extrusion-height': ['get', 'render_height'], 'fill-extrusion-opacity': 0.9}}]};
 }
 const tileJson = () => ({tilejson: '3.0.0', name: 'harness-empty-planet', tiles: ['https://tiles.openfreemap.org/harness-empty/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14, vector_layers: [{id: 'building', fields: {render_height: 'Number'}}]});
 
@@ -101,7 +104,6 @@ async function createAssets(browser, server) {
     scene: name => png[name] || png.mountain, pdf, audio: () => audio,
     // Map hosts. Returns a route.fulfill() payload or null.
     thirdParty(u) {
-      if (u.hostname === 'tile.openstreetmap.org') { const m = /^\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(u.pathname); return m ? {status: 200, contentType: 'image/svg+xml', body: rasterTile(+m[1], +m[2], +m[3])} : {status: 404, body: ''}; }
       if (u.hostname === 'tiles.openfreemap.org') {
         if (u.pathname.startsWith('/styles/')) return {status: 200, contentType: 'application/json', body: style};
         if (u.pathname === '/planet') return {status: 200, contentType: 'application/json', body: tiles};
@@ -113,4 +115,4 @@ async function createAssets(browser, server) {
   };
 }
 
-module.exports = {createAssets, rasterTile, offlineStyle, pdf};
+module.exports = {createAssets, offlineStyle, pdf};
