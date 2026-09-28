@@ -1,0 +1,122 @@
+name: FORJA Shorts
+
+# Feed-ul vertical din aplicație (FRONT + RECRUȚI): clipuri construite aici și urcate în R2 (forja-media),
+# servite de forja-api la /media/short_<id>.mp4 · .jpg + /media/shorts_manifest.json. Detalii: scripts/shorts/build.sh.
+on:
+  workflow_dispatch:
+    inputs:
+      rotate_pct:
+        description: "Procentul de clipuri Pexels (cele mai vechi) înlocuite acum. 0 = doar completează feed-ul."
+        type: number
+        default: 0
+      burn_captions:
+        description: "Arde legenda și în video (drawtext). Implicit o desenează doar aplicația, ca în prototip."
+        type: boolean
+        default: false
+      dry_run:
+        description: "Probă: construiește fără să urce în R2; clipurile rămân ca artifact 7 zile."
+        type: boolean
+        default: false
+  schedule:
+    # Lunar, pe 1, la 04:23 UTC: o treime din clipuri se înlocuiește cu altele noi.
+    - cron: "23 4 1 * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forja-shorts
+  cancel-in-progress: false
+
+jobs:
+  shorts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+      ROTATE_PCT: ${{ github.event_name == 'schedule' && '33' || inputs.rotate_pct }}
+      BURN_CAPTIONS: ${{ inputs.burn_captions && '1' || '0' }}
+      DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+      MAX_MINUTES: "22"
+      OUT_DIR: ${{ github.workspace }}/shorts-out
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: ffmpeg cu drawtext
+        run: |
+          has_drawtext() { local f; f=$(ffmpeg -hide_banner -filters 2>/dev/null || true); grep -q ' drawtext ' <<< "$f"; }
+          if ! has_drawtext; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null
+          fi
+          if ! has_drawtext; then
+            # Din ffmpeg 6.1 drawtext cere libharfbuzz; dacă pachetul din apt nu îl are, luăm o versiune statică completă.
+            echo "ffmpeg din apt nu are drawtext; folosesc versiunea statică BtbN."
+            curl -fsSL --retry 3 -o /tmp/ffmpeg.tar.xz \
+              https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+            mkdir -p /tmp/ffmpeg-static
+            tar -xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg-static --strip-components=1
+            echo "/tmp/ffmpeg-static/bin" >> "$GITHUB_PATH"
+            export PATH="/tmp/ffmpeg-static/bin:$PATH"
+          fi
+          has_drawtext || { echo "::error::Nu am un ffmpeg cu drawtext."; exit 1; }
+          ffmpeg -hide_banner -version | head -n 1
+
+      - name: Construiește shorts
+        id: build
+        run: bash scripts/shorts/build.sh
+
+      - name: Rezumat
+        if: always()
+        env:
+          OUTCOME: ${{ steps.build.outcome }}
+          MODE: ${{ steps.build.outputs.mode }}
+          FRONT: ${{ steps.build.outputs.front }}
+          RECRUTI: ${{ steps.build.outputs.recruti }}
+          ADDED: ${{ steps.build.outputs.added }}
+          FAILED: ${{ steps.build.outputs.failed }}
+          RETIRED: ${{ steps.build.outputs.retired }}
+          MINUTES: ${{ steps.build.outputs.minutes }}
+          TIMED_OUT: ${{ steps.build.outputs.timed_out }}
+          MANIFEST: ${{ steps.build.outputs.manifest }}
+          ERR: ${{ steps.build.outputs.error }}
+          PEXELS_SET: ${{ secrets.PEXELS_API_KEY != '' && '1' || '' }}
+        run: |
+          {
+            echo "## FORJA Shorts"
+            if [ -z "$MODE" ]; then
+              echo "Construirea nu a ajuns la final (${OUTCOME:-necunoscut}). ${ERR}"
+            else
+              echo "| | |"
+              echo "|---|---|"
+              echo "| Sursă | $MODE |"
+              echo "| FRONT în feed | $FRONT |"
+              echo "| RECRUȚI în feed | $RECRUTI |"
+              echo "| Noi în rularea asta | $ADDED |"
+              echo "| Eșuate | $FAILED |"
+              echo "| Scoase prin rotație | $RETIRED |"
+              echo "| Durată | $MINUTES min |"
+              if [ "$DRY_RUN" = "1" ]; then
+                echo "| R2 | probă, nimic urcat (clipurile sunt în artifact) |"
+              else
+                echo "| Manifest | $MANIFEST |"
+              fi
+              [ "$TIMED_OUT" = "1" ] && echo "| Timp | limita de $MAX_MINUTES min atinsă; restul la rularea următoare |"
+            fi
+            if [ -z "$PEXELS_SET" ]; then
+              echo
+              echo "Fără cheia Pexels feed-ul are doar clipuri Ken Burns din pozele FLUX. Cheia e gratuită: pexels.com/api, apoi GitHub → Settings → Secrets and variables → Actions → secretul PEXELS_API_KEY."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clipurile probei
+        if: ${{ always() && inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: forja-shorts-proba-${{ github.run_number }}
+          path: shorts-out/
+          retention-days: 7
+          if-no-files-found: ignore
