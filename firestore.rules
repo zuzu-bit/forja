@@ -35,9 +35,11 @@ service cloud.firestore {
 
     // Coduri de invitație: citire pentru oricine conectat (așa adaugi un prieten), scriere doar pentru propriul cod.
     // Documentul are doar `uid`; numele prietenului se citește abia după ce prietenia există.
+    // Un cod existent nu poate fi preluat de altcineva (altfel prietenii noi ar ajunge la el).
     match /inviteCodes/{code} {
       allow read: if signedIn();
-      allow create, update: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if signedIn() && resource.data.uid == request.auth.uid && request.resource.data.uid == request.auth.uid;
       allow delete: if false;
     }
 

@@ -129,6 +129,8 @@ async function suite(name, rules, { tightened }) {
   await check('codul NU se citește fără cont', () => assertFails(getDoc(doc(anon, 'inviteCodes', 'ANA123'))));
   await check('eu îmi scriu codul', () => assertSucceeds(setDoc(doc(cristi, 'inviteCodes', 'CRI333'), { uid: CRISTI })));
   await check('nu scriu codul altcuiva', () => assertFails(setDoc(doc(cristi, 'inviteCodes', 'FALS00'), { uid: ANA })));
+  await check('eu îmi rescriu codul (profil recreat)', () => assertSucceeds(setDoc(doc(ana, 'inviteCodes', 'ANA123'), { uid: ANA })));
+  await check('nu preiau codul altcuiva (cu uid-ul meu)', () => denyWhenTight(setDoc(doc(cristi, 'inviteCodes', 'ANA123'), { uid: CRISTI })));
   await check('prietenia prin cod se creează', () => assertSucceeds(setDoc(doc(cristi, 'friendships', sortedId(CRISTI, ANA)),
     { members: [CRISTI, ANA].sort(), since: 5 })));
   await check('apoi numele prietenului nou se citește', () => assertSucceeds(getDoc(doc(cristi, 'users', ANA))));

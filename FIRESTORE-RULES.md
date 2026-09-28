@@ -39,7 +39,8 @@ anterioară din istoricul din stânga și apeși **Publish**.
 | `users/{uid}/…` (jurnale, antrenamente, rație, cont) | doar tu | doar tu (neschimbat) |
 | `energy/{id}` | doar destinatarul; trimiterea eșua | destinatarul și expeditorul; trimiterea merge |
 | `places/{id}` la actualizare | proprietarul, orice câmpuri | proprietarul, aceleași verificări ca la creare; locul nu poate fi dat altcuiva |
-| `inviteCodes`, `friendships`, `familyLoc` | — | neschimbate |
+| `inviteCodes/{cod}` | oricine putea rescrie un cod existent cu uid-ul lui | codul rămâne al celui care l-a creat |
+| `friendships`, `familyLoc` | — | neschimbate |
 
 Costul este mic. Când un prieten îți citește profilul, regula mai face o citire: verifică dacă prietenia există.
 Pentru familie, regula nu face nicio citire în plus.
@@ -66,8 +67,8 @@ RULES=$PWD/firestore.rules OLD_RULES=$PWD/firestore.rules.old \
 
 Rezultatul la 4.4:
 
-- 50 de verificări trecute cu regulile noi, dintre care 3 pentru citirile site-ului;
-- 47 de verificări trecute cu regulile vechi.
+- 52 de verificări trecute cu regulile noi, dintre care 3 pentru citirile site-ului;
+- 49 de verificări trecute cu regulile vechi.
 
 ### Ce trebuie să respecte serverul site-ului
 
