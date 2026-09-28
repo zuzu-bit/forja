@@ -23,7 +23,8 @@ sealed class AnalyzeOutcome {
     data class Ok(val report: MealReport) : AnalyzeOutcome() {
         val analysis get() = report.toAnalysis()
     }
-    data class Fail(val message: String) : AnalyzeOutcome()
+    /** `message` pentru om; `detail` = motivul exact al serverului (`detalii`), afișat mic dedesubt. */
+    data class Fail(val message: String, val detail: String? = null) : AnalyzeOutcome()
 }
 
 /**
@@ -67,11 +68,13 @@ object MealAnalyze {
     suspend fun analyzeJpeg(
         app: ForjaApp,
         bytes: ByteArray,
+        mealType: Int? = null,
         onStages: (AnalyzeStages) -> Unit = {}
     ): AnalyzeOutcome {
         onStages(AnalyzeStages(current = 0, done = 0))
+        val note = mealType?.let { mealTypeNames.getOrNull(it)?.lowercase() }
         val outcome: AnalyzeOutcome = if (app.forjaApi.available) {
-            when (val res = api(app).analyze(bytes) { stage ->
+            when (val res = api(app).analyze(bytes, note = note) { stage ->
                 when (stage) {
                     MealApi.Stage.UPLOADING -> onStages(AnalyzeStages(current = 0, done = 0))
                     MealApi.Stage.ANALYZING -> onStages(AnalyzeStages(current = 1, done = 1))
@@ -79,7 +82,7 @@ object MealAnalyze {
                 }
             }) {
                 is MealApi.Result.Ok -> AnalyzeOutcome.Ok(res.report)
-                is MealApi.Result.Fail -> AnalyzeOutcome.Fail(res.message)
+                is MealApi.Result.Fail -> AnalyzeOutcome.Fail(res.message, res.detail)
             }
         } else {
             val key = app.prefs.geminiKey.first()

@@ -1,5 +1,7 @@
 package com.forja.app.core.network
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.Base64
 import com.forja.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +26,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okio.BufferedSink
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -44,7 +47,9 @@ data class MealItem(
     val carbo: Int = 0,
     val grasimi: Int = 0,
     val fibre: Int? = null,
-    val incredere: String? = null
+    val incredere: String? = null,
+    /** Opțional (v2+): dreptunghiul componentei în poză, normalizat 0..1 — [x, y, lățime, înălțime]. */
+    val bbox: List<Float>? = null
 ) {
     fun toComponent() = FoodComponent(nume, grame, kcal, proteine, carbo, grasimi)
 
@@ -122,7 +127,8 @@ data class MealReport(
                     carbo = o.int("carbo") ?: 0,
                     grasimi = o.int("grasimi") ?: 0,
                     fibre = o.int("fibre"),
-                    incredere = o.str("incredere")
+                    incredere = o.str("incredere"),
+                    bbox = o.bbox("bbox")
                 )
             } ?: emptyList()
             val scor = (root["scor"] as? JsonObject)?.let { s ->
@@ -148,6 +154,20 @@ data class MealReport(
             val p = this[key] as? JsonPrimitive ?: return null
             if (p is JsonNull) return null
             return p.contentOrNull
+        }
+
+        /** `bbox` ca listă [x,y,w,h] sau obiect {x,y,w,h}; valori > 1 se consideră procente. Orice altceva → null. */
+        private fun JsonObject.bbox(key: String): List<Float>? {
+            val el = this[key] ?: return null
+            val nums: List<Float> = when (el) {
+                is JsonArray -> el.mapNotNull { (it as? JsonPrimitive)?.doubleOrNull?.toFloat() }
+                is JsonObject -> listOf("x", "y", "w", "h").map { k -> (el[k] as? JsonPrimitive)?.doubleOrNull?.toFloat() ?: return null }
+                else -> return null
+            }
+            if (nums.size != 4) return null
+            val scaled = if (nums.any { it > 1f }) nums.map { it / 100f } else nums
+            if (scaled.any { it < 0f || it > 1f } || scaled[2] <= 0f || scaled[3] <= 0f) return null
+            return scaled
         }
 
         private fun JsonObject.int(key: String): Int? {
@@ -181,7 +201,8 @@ class MealApi(private val forjaApi: ForjaApi) {
 
     sealed class Result {
         data class Ok(val report: MealReport) : Result()
-        data class Fail(val message: String) : Result()
+        /** `message` e pentru om; `detail` e motivul exact al serverului (câmpul `detalii`), afișat mic dedesubt. */
+        data class Fail(val message: String, val detail: String? = null) : Result()
     }
 
     private val client = OkHttpClient.Builder()
@@ -194,11 +215,17 @@ class MealApi(private val forjaApi: ForjaApi) {
     val available: Boolean get() = forjaApi.available
     private val base: String get() = BuildConfig.FORJA_API_URL.trimEnd('/')
 
-    suspend fun analyze(jpegBytes: ByteArray, onStage: (Stage) -> Unit = {}): Result = withContext(Dispatchers.IO) {
+    /**
+     * Trimite poza la `/v1/meal`. Poza e adusă la ≤ [MAX_SIDE] px, JPEG 80, înainte de plecare (mai puțini octeți,
+     * același rezultat); `note` = tipul mesei („mic dejun”, „prânz”…) — un indiciu pentru model, nu o regulă.
+     */
+    suspend fun analyze(jpegBytes: ByteArray, note: String? = null, onStage: (Stage) -> Unit = {}): Result = withContext(Dispatchers.IO) {
         val auth = forjaApi.authHeader() ?: return@withContext Result.Fail("Intră în cont ca să folosești analiza cu model.")
         try {
+            val bytes = shrink(jpegBytes)
             val payload = buildJsonObject {
-                put("image", Base64.encodeToString(jpegBytes, Base64.NO_WRAP))
+                put("image", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                if (!note.isNullOrBlank()) put("note", note)
             }.toString().toByteArray()
             onStage(Stage.UPLOADING)
             val body = NotifyingBody(payload, "application/json".toMediaType()) { onStage(Stage.ANALYZING) }
@@ -210,10 +237,22 @@ class MealApi(private val forjaApi: ForjaApi) {
             client.newCall(req).execute().use { resp ->
                 val text = resp.body?.string() ?: ""
                 if (!resp.isSuccessful) {
-                    val msg = try {
-                        json.parseToJsonElement(text).jsonObject["error"]?.jsonPrimitive?.contentOrNull
-                    } catch (_: Exception) { null }
-                    return@withContext Result.Fail(msg ?: "Serverul FORJA a răspuns cu ${resp.code}.")
+                    val body = try { json.parseToJsonElement(text).jsonObject } catch (_: Exception) { null }
+                    val msg = body?.get("error")?.let { (it as? JsonPrimitive)?.contentOrNull }
+                    val detail = body?.get("detalii")?.let { d ->
+                        when (d) {
+                            is JsonPrimitive -> d.contentOrNull
+                            is JsonObject -> d.entries.joinToString(" · ") { (k, v) -> "$k: ${(v as? JsonPrimitive)?.contentOrNull ?: v}" }
+                            else -> d.toString()
+                        }
+                    }?.trim()?.takeIf { it.isNotEmpty() }
+                    val human = when {
+                        !msg.isNullOrBlank() -> msg
+                        resp.code == 422 -> "N-am putut citi masa din poza asta."
+                        resp.code in 500..599 -> "Serverul FORJA a avut o problemă. Nu e de la poza ta."
+                        else -> "Serverul FORJA n-a acceptat cererea."
+                    }
+                    return@withContext Result.Fail(human, detail)
                 }
                 val root: JsonElement = json.parseToJsonElement(text)
                 val report = MealReport.parse(root.jsonObject)
@@ -227,9 +266,40 @@ class MealApi(private val forjaApi: ForjaApi) {
             Result.Fail(
                 if (e is java.io.InterruptedIOException || e is java.net.SocketTimeoutException)
                     "Analiza durează prea mult acum. Serverul e aglomerat. Mai încearcă o dată."
-                else "Serverul FORJA nu răspunde. Verifică internetul."
+                else "Serverul FORJA nu răspunde. Verifică internetul.",
+                e.message?.takeIf { it.isNotBlank() }
             )
         }
+    }
+
+    /** Latura mare ≤ [MAX_SIDE] px, JPEG calitate [JPEG_QUALITY]. Dacă decodarea pică, pleacă octeții originali. */
+    private fun shrink(bytes: ByteArray): ByteArray = try {
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        val w = opts.outWidth; val h = opts.outHeight
+        if (w <= 0 || h <= 0) bytes
+        else {
+            var sample = 1
+            while (w / (sample * 2) >= MAX_SIDE && h / (sample * 2) >= MAX_SIDE) sample *= 2
+            val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+            if (decoded == null) bytes
+            else {
+                val scale = MAX_SIDE.toFloat() / maxOf(decoded.width, decoded.height)
+                val bmp = if (scale < 1f) {
+                    Bitmap.createScaledBitmap(decoded, (decoded.width * scale).roundToInt().coerceAtLeast(1), (decoded.height * scale).roundToInt().coerceAtLeast(1), true)
+                        .also { if (it !== decoded) decoded.recycle() }
+                } else decoded
+                val out = ByteArrayOutputStream()
+                bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+                bmp.recycle()
+                out.toByteArray()
+            }
+        }
+    } catch (_: Exception) { bytes }
+
+    companion object {
+        const val MAX_SIDE = 1280
+        const val JPEG_QUALITY = 80
     }
 
     /** Corp de cerere care anunță când ultimul octet a plecat — de aici începe cu adevărat analiza. */
