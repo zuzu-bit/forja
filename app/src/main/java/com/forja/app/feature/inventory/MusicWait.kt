@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -29,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -134,7 +136,7 @@ data class MusicUiState(
     val musicActive: Boolean = false,
     val start: StartUi = StartUi.Idle,
     val other: OtherUi? = null,
-    /** „Titlu · Artist” al piesei tale de top (7 zile), pentru cipul „TOP 1”. */
+    /** Titlul piesei tale de top (7 zile), pentru cipul „TOP 1” (un singur rând, fără artist: nu se taie în cuvânt). */
     val topChip: String? = null
 )
 
@@ -165,7 +167,8 @@ private val MUZICA_STEPS = listOf(
 internal fun StartState.toUi(): StartUi = when (this) {
     is StartState.Starting -> StartUi.Starting
     is StartState.NeedsTap -> StartUi.NeedsTap(if (step.pkg == MusicKind.SPOTIFY) "Deschide Spotify" else "Deschide playerul")
-    is StartState.Failed -> StartUi.Failed("Deschide playerul")
+    // Același nume ca la NeedsTap când pasul de deschidere e cunoscut (butonul deschide chiar playerul acela).
+    is StartState.Failed -> StartUi.Failed(if (open?.pkg == MusicKind.SPOTIFY) "Deschide Spotify" else "Deschide playerul")
     else -> StartUi.Idle
 }
 
@@ -245,7 +248,7 @@ fun InventoryMusicScreen(onOpenInventory: (InvPage) -> Unit) {
                     musicActive = !access && audible,
                     start = if (origin == MusicSource.INVENTORY) start.toUi() else StartUi.Idle,
                     other = other?.let { OtherUi(it.title, it.kind, it.playing) },
-                    topChip = topRef?.let { TrackKey.label(it.title, it.artist) }
+                    topChip = topRef?.title
                 ),
                 MusicActions(
                     onPill = { onOpenInventory(if (progress?.stage == InvStage.Ready) InvPage.Folders else InvPage.Run) },
@@ -279,12 +282,19 @@ fun InventoryMusicScreen(onOpenInventory: (InvPage) -> Unit) {
 
 /**
  * S3c (Muzica.dc.html): fundal radial cald, pastila + egalizatorul mic, eroul, piesa, comenzile, comutatoarele.
- * Pe ecrane joase (S23: 696 dp utili) eroul se strânge la 200 dp, ca totul să încapă fără derulare.
+ * Pe ecrane joase (S23: 696 dp utili) eroul se strânge la 200 dp, ca totul să încapă fără derulare. Cu piesa arătată,
+ * fiecare rând în plus sub comenzi („Nu a pornit.” / „Deschide Spotify”, cartea care cântă) ia 24 dp din inel, ca
+ * rândul de jos să nu se lipească de comutatoare (și pe S23, și pe 393 × 851).
  */
 @Composable
 fun MusicWaitContent(state: MusicUiState, actions: MusicActions, modifier: Modifier = Modifier) {
     val known = state.access && state.title != null
     val starting = state.start == StartUi.Starting
+    val reduced = LocalReducedMotion.current
+    val extraRows = if (!known) 0 else listOf(
+        state.start is StartUi.Failed || state.start is StartUi.NeedsTap,
+        state.other?.playing == true
+    ).count { it }
     BoxWithConstraints(
         modifier
             .fillMaxSize()
@@ -300,14 +310,21 @@ fun MusicWaitContent(state: MusicUiState, actions: MusicActions, modifier: Modif
             }
     ) {
         val compact = maxHeight < 760.dp
-        val gap = if (compact) 12.dp else 14.dp
+        // Pe S23, cu piesa arătată, coloana e plină: spații de 10 dp (altfel 12; pe ecranele înalte 14).
+        val gap = when {
+            !compact -> 14.dp
+            known -> 10.dp
+            else -> 12.dp
+        }
+        val ringTarget = (if (compact) 200.dp else 300.dp) - 24.dp * extraRows
+        val ringSize by animateDpAsState(ringTarget, if (reduced) snap() else tween(300), label = "musicRingSize")
         TopBottomColumn(
-            padding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 24.dp),
+            padding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = if (compact) 20.dp else 24.dp),
             gap = gap,
             top = {
                 WaitHeader(state.pill, actions.onPill) { EqualizerMini(state.playing || starting) }
                 Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
-                    CoverRing(state, if (compact) 200.dp else 300.dp)
+                    CoverRing(state, ringSize)
                 }
                 if (known) {
                     Column(
@@ -351,7 +368,12 @@ fun MusicWaitContent(state: MusicUiState, actions: MusicActions, modifier: Modif
     }
 }
 
-/** Inelul (progresul inventarului, punct amber la capăt) și coperta care bate pe ritm; la pornire, un arc care se rotește. */
+/**
+ * Inelul (progresul inventarului, punct amber la capăt) și coperta care bate pe ritm; la pornire, un arc care se rotește.
+ * Coperta e rotundă, 82 % din inel (ca discul din Antrenament): un pătrat de 244/300 își scotea colțurile peste inel și
+ * ascundea arcul și punctul. Raza copertei e 41 % din inel, aura punctului începe la 43,7 %: rămâne loc liber
+ * (19 dp până la inel pe 300 dp, 12 dp pe 200 dp), iar inelul se desenează oricum deasupra.
+ */
 @Composable
 private fun CoverRing(state: MusicUiState, ringSize: Dp) {
     val reduced = LocalReducedMotion.current
@@ -362,8 +384,31 @@ private fun CoverRing(state: MusicUiState, ringSize: Dp) {
     val beat = if (state.playing) inf?.animateFloat(1f, 1.018f, infiniteRepeatable(tween(250), RepeatMode.Reverse), label = "beat") else null
     val spin = if (starting) inf?.animateFloat(0f, 360f, infiniteRepeatable(tween(1_400, easing = LinearEasing)), label = "spin") else null
     val known = state.access && state.title != null
-    val cover = ringSize * (244f / 300f)
+    val cover = ringSize * 0.82f
     Box(Modifier.size(ringSize).semantics { contentDescription = "Progresul inventarului, ${(p * 100).toInt()} la sută" }, contentAlignment = Alignment.Center) {
+        Box(
+            Modifier
+                .size(cover)
+                .graphicsLayer {
+                    val s = beat?.value ?: 1f
+                    scaleX = s; scaleY = s
+                }
+                .shadow(40.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
+                .clip(CircleShape)
+                .background(MediaBg),
+            contentAlignment = Alignment.Center
+        ) {
+            val art = state.art
+            if (art != null && known) {
+                Image(art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                // Fără muzică arătată: egalizatorul (nu coperta unei cărți). În repaus, cu bare fixe.
+                Box(Modifier.graphicsLayer { val k = 1.6f * (cover / 244.dp); scaleX = k; scaleY = k }) {
+                    Equalizer5(animate = state.playing || starting)
+                }
+            }
+        }
+        // Inelul, peste copertă și peste umbra ei: arcul și punctul amber nu sunt acoperite niciodată.
         Canvas(Modifier.fillMaxSize()) {
             val u = size.width / 300f
             val r = 144f * u
@@ -379,28 +424,6 @@ private fun CoverRing(state: MusicUiState, ringSize: Dp) {
                 val dot = ringPoint(center, r, p)
                 drawCircle(Amber.copy(alpha = 0.18f), 13f * u, dot)
                 drawCircle(Amber.copy(alpha = glow?.value ?: 1f), 7f * u, dot)
-            }
-        }
-        Box(
-            Modifier
-                .size(cover)
-                .graphicsLayer {
-                    val s = beat?.value ?: 1f
-                    scaleX = s; scaleY = s
-                }
-                .shadow(40.dp, R8, ambientColor = Color.Black, spotColor = Color.Black)
-                .clip(R8)
-                .background(MediaBg),
-            contentAlignment = Alignment.Center
-        ) {
-            val art = state.art
-            if (art != null && known) {
-                Image(art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            } else {
-                // Fără muzică arătată: egalizatorul (nu coperta unei cărți). În repaus, cu bare fixe.
-                Box(Modifier.graphicsLayer { val k = 1.6f * (cover / 244.dp); scaleX = k; scaleY = k }) {
-                    Equalizer5(animate = state.playing || starting)
-                }
             }
         }
     }
@@ -437,12 +460,15 @@ private fun TrackBar(positionMs: Long, durationMs: Long) {
     }
 }
 
-/** ⏮ ⏯ ⏭. Discul arată Pauză doar când sesiunea chiar cântă; cât pornește, un arc se rotește în jurul lui. */
+/**
+ * ⏮ ⏯ ⏭. Discul arată Pauză doar când sesiunea chiar cântă; cât pornește, un arc se rotește în jurul lui. Rândul are
+ * mereu înălțimea discului (80 dp): arcul de 92 dp iese în afară fără să mute ⏮ ⏭ de sub deget.
+ */
 @Composable
 private fun Controls(playing: Boolean, busy: Boolean, actions: MusicActions) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(30.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
         GhostButton(MusicIcons.Previous, "Piesa anterioară", actions.onPrevious)
-        Box(contentAlignment = Alignment.Center) {
+        Box(Modifier.size(80.dp), contentAlignment = Alignment.Center) {
             Box(
                 Modifier
                     .then(if (busy) Modifier else Modifier.pressable(actions.onToggle))
@@ -463,7 +489,7 @@ private fun Controls(playing: Boolean, busy: Boolean, actions: MusicActions) {
             ) {
                 Icon(if (playing) MusicIcons.Pause else MusicIcons.Play, null, tint = Surface0.copy(alpha = if (busy) 0.35f else 1f), modifier = Modifier.size(30.dp))
             }
-            if (busy) Spinner(Modifier.size(92.dp), Amber, 3.dp)
+            if (busy) Spinner(Modifier.requiredSize(92.dp), Amber, 3.dp)
         }
         GhostButton(MusicIcons.Next, "Piesa următoare", actions.onNext)
     }
@@ -494,7 +520,7 @@ private fun Spinner(modifier: Modifier, color: Color, stroke: Dp) {
 
 /**
  * Butonul mare când nu e nicio muzică arătată: „Pornește muzica” → „Pornește…” (ocupat) → „Deschide Spotify” (o atingere
- * face saltul) sau „Nu a pornit.” + „Deschide playerul”.
+ * face saltul) sau „Nu a pornit.” + „Deschide Spotify” / „Deschide playerul”.
  */
 @Composable
 private fun StartArea(start: StartUi, actions: MusicActions) {
@@ -555,7 +581,10 @@ private fun StartButton(
     }
 }
 
-/** Cipul „TOP 1”: piesa ta cea mai ascultată în 7 zile, pornită direct (autoplay-ul playerului continuă). */
+/**
+ * Cipul „TOP 1”: piesa ta cea mai ascultată în 7 zile, pornită direct (autoplay-ul playerului continuă). Doar titlul,
+ * pe un rând (music-start.md §6.6): cu artistul alături, pe 360 dp rândul tăia numele în mijlocul unui cuvânt.
+ */
 @Composable
 private fun TopChip(label: String, onClick: () -> Unit) {
     Row(
@@ -651,7 +680,7 @@ private fun AccessLink(onClick: () -> Unit) {
 
 @Composable
 private fun TogglesCard(state: MusicUiState, actions: MusicActions, compact: Boolean) {
-    val h = if (compact) 52.dp else 56.dp
+    val h = if (compact) 48.dp else 56.dp
     Column(
         Modifier
             .fillMaxWidth()
@@ -703,7 +732,7 @@ object MusicWaitSamples {
     /** Nicio muzică arătată; ultima sesiune e o carte audio (nu devine eroul): „Pornește muzica”, TOP 1, rândul „Reia”. */
     val idleBook = MusicUiState(
         pill = pill, ring = 0.34f, access = true,
-        topChip = "Marș de dimineață · Fanfara FORJA",
+        topChip = "Marș de dimineață",
         other = OtherUi("Fetele care ard", MediaKind.SPOKEN, playing = false)
     )
 
@@ -712,10 +741,23 @@ object MusicWaitSamples {
 
     val starting = idleBook.copy(start = StartUi.Starting)
     val needsTap = idleBook.copy(start = StartUi.NeedsTap("Deschide Spotify"))
-    val failed = idleBook.copy(start = StartUi.Failed("Deschide playerul"))
+    /** „Pornește muzica” n-a pornit, iar pasul de deschidere e în Spotify (același nume ca la „Deschide Spotify”). */
+    val failed = idleBook.copy(start = StartUi.Failed("Deschide Spotify"))
+
+    /** Nu a pornit și nu se știe playerul: „Deschide playerul” (17 caractere, cel mai lung buton). */
+    val failedUnknown = idleBook.copy(start = StartUi.Failed("Deschide playerul"))
 
     /** Play pe piesa arătată n-a pornit (Resume): „Nu a pornit.” sub comenzi. */
-    val resumeFailed = paused.copy(start = StartUi.Failed("Deschide playerul"))
+    val resumeFailed = paused.copy(start = StartUi.Failed("Deschide Spotify"))
+
+    /** Cel mai plin caz obișnuit: piesa de top, pe pauză, Play n-a pornit (eticheta TOP + „Nu a pornit.”). */
+    val resumeFailedTop = resumeFailed.copy(top = true)
+
+    /** Și mai plin: pe lângă „Deschide Spotify”, cartea audio cântă alături (inelul se strânge de două ori). */
+    val pausedNeedsTapBook = paused.copy(
+        start = StartUi.NeedsTap("Deschide Spotify"),
+        other = OtherUi("Fetele care ard", MediaKind.SPOKEN, playing = true)
+    )
 
     /** „Pornește muzica” a trezit Spotify (piesa lui, pe pauză), iar pasul următor e saltul în Spotify. */
     val pausedNeedsTap = paused.copy(start = StartUi.NeedsTap("Deschide Spotify"))
@@ -725,7 +767,7 @@ object MusicWaitSamples {
 
     /** Cartea audio cântă (ea a pornit-o): rămâne alături, cu „Pauză”; eroul e egalizatorul. */
     val bookPlaying = MusicUiState(
-        pill = pill, ring = 0.34f, access = true, topChip = "Marș de dimineață · Fanfara FORJA",
+        pill = pill, ring = 0.34f, access = true, topChip = "Marș de dimineață",
         other = OtherUi("Fetele care ard", MediaKind.SPOKEN, playing = true)
     )
 
