@@ -312,6 +312,8 @@ private const val LINE_Y = 52f
 private const val THUMB = 56f
 private const val BIN_ICON_W = 58f
 private const val BIN_ICON_H = 44f
+/** Mărimea numelui din cutie: cond(14, 15). */
+private const val BIN_NAME_SP = 14
 /** Cutia numelui: două rânduri cond(14, 15) întregi (≈ 32 sp cu ascendentul și descendentul), nu unul și „…”. */
 private const val BIN_NAME_H = 34f
 private const val BIN_COUNT_H = 12f
@@ -349,9 +351,11 @@ internal fun SortingBelt(
         val t0 = withFrameMillis { it } - clock.longValue
         while (true) withFrameMillis { clock.longValue = it - t0 }
     }
-    // numele și contorul cresc cu fontul din sistem; cutiile stau jos, deci ținta căderii urcă odată cu ele
+    // numele și contorul cresc cu fontul din sistem; cutiile stau jos, deci ținta căderii urcă odată cu ele.
+    // Cutia numelui pornește de la mărimea textului (14 sp), păstrând raportul 34/14 (≈ 2,43 em pentru două rânduri):
+    // de la Android 14 fontul mărit crește neliniar, iar un sp mai mare (ex. 17) crește mai puțin decât 14 sp.
     val density = LocalDensity.current
-    val nameH = with(density) { maxOf(BIN_NAME_H.dp, 17.sp.toDp() * 2) }
+    val nameH = with(density) { maxOf(BIN_NAME_H.dp, BIN_NAME_SP.sp.toDp() * (BIN_NAME_H / BIN_NAME_SP)) }
     val countH = with(density) { maxOf(BIN_COUNT_H.dp, 12.sp.toDp()) }
     val iconCenterY = BELT_H - BIN_BOTTOM - (BIN_ICON_H + 4f + nameH.value + 4f + countH.value) + BIN_ICON_H / 2f
     BoxWithConstraints(
@@ -531,7 +535,7 @@ private fun Bin(bin: BinTick, width: Dp, nameH: Dp, countH: Dp, sealed: Boolean,
         Box(Modifier.fillMaxWidth().height(nameH), contentAlignment = Alignment.TopCenter) {
             Text(
                 bin.name?.let(::binLabel) ?: "…",
-                style = cond(14, 15),
+                style = cond(BIN_NAME_SP, BIN_NAME_SP + 1),
                 textAlign = TextAlign.Center,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis

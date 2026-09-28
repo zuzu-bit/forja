@@ -55,7 +55,10 @@ class GameShots {
     /** Cele mai lungi nume de dosar din probe (două părți cu „ · ”), ca pe banda aplicării. */
     private val longBins = InventorySamples.photoFolderNames.take(4).map { BinTick(it.first, it.second) }
 
-    /** Fontul din sistem mărit (Setări → Afișaj → Mărime font), peste densitatea profilului. */
+    /**
+     * Fontul din sistem mărit (Setări → Afișaj → Mărime font), peste densitatea profilului. `Density(d, scale)` din
+     * Compose 1.7 convertește sp-ul neliniar peste 1,03 (tabelele din Android 14), deci captura crește ca pe S23.
+     */
     @Composable
     private fun FontScale(scale: Float, content: @Composable () -> Unit) {
         val d = LocalDensity.current
