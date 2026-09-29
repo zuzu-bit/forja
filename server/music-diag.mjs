@@ -13,6 +13,9 @@ export const MUSIC_DIAG = Object.freeze({
 });
 const PREFIX = '_admin/music/';
 const DAY = 86400000;
+// Rândurile de context din 4.4.1 stau în jurnal lângă încercări, dar nu sunt încercări de pornire: ENV = ce vedea telefonul
+// înaintea pornirii, RET = întoarcerea din player, QUEUE = coada FORJA la final. Antetul lui `music [n]` le numără separat.
+const CONTEXT_RUNGS = new Map([['ENV', 'env'], ['RET', 'ret'], ['QUEUE', 'coadă']]);
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const plain = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max) : null);
 
@@ -103,10 +106,14 @@ export async function musicReport(env, n = 30, which = 'music') {
   if (!pick.length) return consent ? 'Niciun rând de acord primit încă.' : 'Nicio încercare de muzică primită încă.' + (aside ? ' Acord Inventar: ' + count(other, 'rând', 'rânduri') + ' («consent»).' : '');
   pick.sort((a, b) => a.at - b.at);
   const last = pick.slice(-Math.min(Math.max(n, 1), MUSIC_DIAG.keep));
-  const ok = last.filter(e => e.result === 'ok').length;
+  // Rândurile de context (ENV, RET, QUEUE) nu sunt încercări de pornire: se numără separat.
+  const tries = last.filter(e => !CONTEXT_RUNGS.has(e.rung));
+  const ok = tries.filter(e => e.result === 'ok').length;
+  const context = consent ? '' : [...CONTEXT_RUNGS].map(([rung, label]) => [label, last.filter(e => e.rung === rung).length]).filter(([, k]) => k > 0)
+    .map(([label, k]) => ` · ${label}: ${k}`).join('');
   const head = consent
     ? `Acord Inventar: ${count(last.length, 'rând', 'rânduri')} (ora României) · ${count(last.filter(e => e.rung === 'APPLY_START').length, 'aplicare', 'aplicări')}`
-    : `Muzică: ${count(last.length, 'încercare', 'încercări')} (ora României) · ${count(ok, 'reușită', 'reușite')}` + aside;
+    : `Muzică: ${count(tries.length, 'încercare', 'încercări')} (ora României) · ${count(ok, 'reușită', 'reușite')}${context}${aside}`;
   return [
     head,
     ...last.map(e => '  ' + [clock.format(new Date(e.at)).replace(',', ''), 'u' + e.u, e.want.padEnd(7), e.rung.padEnd(14), String(e.pkg || '—').padEnd(24), String(e.kind || '—').padEnd(7),

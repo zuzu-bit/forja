@@ -4,6 +4,18 @@ package com.forja.app.core.music
  * Sesiuni și playere false pentru testele motorului de muzică (Kotlin pur, fără Android).
  */
 
+/** Ziua ei de pe 29.09: un video YouTube (pe pauză) ține tasta media, Spotify e închis, detecția n-a găsit nimic. */
+fun lanaSnap(
+    preferred: String? = null,
+    top: TrackRef? = null,
+    learned: LearnedTable = LearnedTable.EMPTY,
+    history: Set<String> = emptySet()
+) = snap(
+    sessions = listOf(session("yt", YOUTUBE, kind = MediaKind.VIDEO, state = PState.PAUSED, title = "Un video", artist = "Un canal")),
+    keyTarget = YOUTUBE, preferred = preferred, installed = emptySet(), searchable = emptySet(), top = top,
+    learned = learned, history = history
+)
+
 const val SPOTIFY = "com.spotify.music"
 const val STORYTEL = "grit.storytel.app"
 const val YOUTUBE = "com.google.android.youtube"
@@ -35,11 +47,14 @@ fun snap(
     fg: Boolean = true,
     configs: List<ConfigView> = emptyList(),
     learned: LearnedTable = LearnedTable.EMPTY,
-    now: Long = 1_700_000_000_000L
+    now: Long = 1_700_000_000_000L,
+    /** Playere dovedite lipsă (4.4.1): doar așa dispare Spotify din plan. */
+    absent: Set<String> = emptySet(),
+    history: Set<String> = setOf(SPOTIFY)
 ) = Snapshot(
     access = access, sdk = 35, fg = fg, sessions = sessions, configs = configs, keyTarget = keyTarget,
     keyTokenOutside = keyTokenOutside, preferredPkg = preferred, top = top, installed = installed, searchable = searchable,
-    historyPkgs = setOf(SPOTIFY), learned = learned, versions = mapOf(SPOTIFY to "9.0.62"), now = now
+    historyPkgs = history, absent = absent, learned = learned, versions = mapOf(SPOTIFY to "9.0.62"), now = now
 )
 
 /**

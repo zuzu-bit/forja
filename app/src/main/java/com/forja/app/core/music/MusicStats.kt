@@ -106,6 +106,9 @@ internal object MusicStats {
         context.musicStore.edit { if (it[LAST_MUSIC_PKG] != pkg) it[LAST_MUSIC_PKG] = pkg }
     }
 
+    /** Ultimul player văzut cântând muzică (4.4.1: un player văzut cântând e „instalat”, orice ar spune detecția). */
+    suspend fun lastMusicPkg(context: Context): String? = context.musicStore.data.first()[LAST_MUSIC_PKG]
+
     // ───────────────────────────── Inventar: „Oprește la final”, „Pe hartă” ─────────────────────────────
 
     suspend fun stopWhenDone(context: Context): Boolean = context.musicStore.data.first()[STOP_WHEN_DONE] ?: true

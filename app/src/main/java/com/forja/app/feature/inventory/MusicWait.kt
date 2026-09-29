@@ -109,8 +109,8 @@ sealed interface StartUi {
     data object Starting : StartUi
     /** Următorul pas aduce playerul în față: îl face o atingere. */
     data class NeedsTap(val label: String) : StartUi
-    /** Nu a pornit; butonul deschide playerul. */
-    data class Failed(val label: String) : StartUi
+    /** Nu a pornit; butonul [label] deschide playerul. null = nimic de deschis: rămâne doar „Încearcă din nou”. */
+    data class Failed(val label: String?) : StartUi
 }
 
 /** Sesiunea de alături care nu e muzică (carte audio, podcast, video): „Reia” sau „Pauză”. */
@@ -167,8 +167,9 @@ private val MUZICA_STEPS = listOf(
 internal fun StartState.toUi(): StartUi = when (this) {
     is StartState.Starting -> StartUi.Starting
     is StartState.NeedsTap -> StartUi.NeedsTap(if (step.pkg == MusicKind.SPOTIFY) "Deschide Spotify" else "Deschide playerul")
-    // Același nume ca la NeedsTap când pasul de deschidere e cunoscut (butonul deschide chiar playerul acela).
-    is StartState.Failed -> StartUi.Failed(if (open?.pkg == MusicKind.SPOTIFY) "Deschide Spotify" else "Deschide playerul")
+    // Același nume ca la NeedsTap când pasul de deschidere e cunoscut (butonul deschide chiar playerul acela); fără pas
+    // de deschidere (niciun player de deschis), niciun buton de deschis.
+    is StartState.Failed -> StartUi.Failed(open?.let { if (it.pkg == MusicKind.SPOTIFY) "Deschide Spotify" else "Deschide playerul" })
     else -> StartUi.Idle
 }
 
@@ -340,7 +341,10 @@ fun MusicWaitContent(state: MusicUiState, actions: MusicActions, modifier: Modif
                     }
                     TrackBar(state.positionMs, state.durationMs)
                     Controls(state.playing, busy = starting, actions)
-                    (state.start as? StartUi.Failed)?.let { FailLine("Nu a pornit.", it.label, actions.onOpen) }
+                    (state.start as? StartUi.Failed)?.let { f ->
+                        val label = f.label
+                        if (label != null) FailLine("Nu a pornit.", label, actions.onOpen) else FailLine("Nu a pornit.", "Încearcă din nou", actions.onRetry)
+                    }
                     // Pornirea a trezit playerul (piesa lui e arătată, pe pauză), iar pasul următor aduce playerul în față.
                     (state.start as? StartUi.NeedsTap)?.let { FailLine(null, it.label, actions.onOpen) }
                     state.other?.takeIf { it.playing }?.let { OtherRow(it, actions.onOther) }
@@ -524,7 +528,8 @@ private fun Spinner(modifier: Modifier, color: Color, stroke: Dp) {
 
 /**
  * Butonul mare când nu e nicio muzică arătată: „Pornește muzica” → „Pornește…” (ocupat) → „Deschide Spotify” (o atingere
- * face saltul) sau „Nu a pornit.” + „Deschide Spotify” / „Deschide playerul”.
+ * face saltul) sau „Nu a pornit.” + „Deschide Spotify” / „Deschide playerul” + „Încearcă din nou”. Fără nimic de deschis
+ * (niciun player), butonul de deschis lipsește și rămâne doar „Încearcă din nou”.
  */
 @Composable
 private fun StartArea(start: StartUi, actions: MusicActions) {
@@ -534,14 +539,17 @@ private fun StartArea(start: StartUi, actions: MusicActions) {
         is StartUi.NeedsTap -> StartButton(start.label, busy = false, stateText = null, onClick = actions.onOpen, icon = MusicIcons.Open)
         is StartUi.Failed -> Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Nu a pornit.", style = body(15, TextSecondary), textAlign = TextAlign.Center)
-            StartButton(start.label, busy = false, stateText = "nu a pornit", onClick = actions.onOpen, icon = MusicIcons.Open)
+            start.label?.let { StartButton(it, busy = false, stateText = "nu a pornit", onClick = actions.onOpen, icon = MusicIcons.Open) }
             Text(
                 "Încearcă din nou",
                 style = body(14, Accent2),
                 modifier = Modifier
                     .pressable(actions.onRetry, haptic = false)
                     .clip(R6)
-                    .semantics { role = Role.Button }
+                    .semantics {
+                        role = Role.Button
+                        if (start.label == null) stateDescription = "nu a pornit"
+                    }
                     .padding(horizontal = 12.dp, vertical = 14.dp)
             )
         }
@@ -750,6 +758,12 @@ object MusicWaitSamples {
 
     /** Nu a pornit și nu se știe playerul: „Deschide playerul” (17 caractere, cel mai lung buton). */
     val failedUnknown = idleBook.copy(start = StartUi.Failed("Deschide playerul"))
+
+    /** Nu a pornit și nu e nimic de deschis (niciun player; Spotify dovedit lipsă): doar „Încearcă din nou”. */
+    val failedNothing = idleBook.copy(start = StartUi.Failed(null))
+
+    /** Play pe piesa arătată n-a pornit și nu e nimic de deschis: „Nu a pornit.” + „Încearcă din nou” sub comenzi. */
+    val resumeFailedNothing = paused.copy(start = StartUi.Failed(null))
 
     /** Play pe piesa arătată n-a pornit (Resume): „Nu a pornit.” sub comenzi. */
     val resumeFailed = paused.copy(start = StartUi.Failed("Deschide Spotify"))

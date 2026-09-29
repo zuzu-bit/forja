@@ -148,12 +148,21 @@ data class Snapshot(
     val preferredPkg: String? = null,
     /** Piesa ta de top (7 zile), cu pachetul și ID-ul media dacă sunt știute. */
     val top: TrackRef? = null,
-    /** Playere de muzică instalate. */
+    /**
+     * Playere de muzică văzute pe telefon: cele pe care PackageManager le găsește (intrarea de lansare SAU informațiile
+     * pachetului) plus cele pe care FORJA le-a văzut cântând muzică (istoric, ultimul player, sesiunile de acum).
+     * Spotify nu depinde de ea: un salt în Spotify nu cere vizibilitatea pachetului ([absent] îl oprește).
+     */
     val installed: Set<String> = emptySet(),
     /** Pachete care răspund la MEDIA_PLAY_FROM_SEARCH. */
     val searchable: Set<String> = emptySet(),
     /** Pachete folosite pentru muzică în istoric. */
     val historyPkgs: Set<String> = emptySet(),
+    /**
+     * Playere dovedite lipsă până la repornirea aplicației: un link Spotify a întors „no-activity”, iar ambele întrebări
+     * către PackageManager spuneau „nu e”. Doar așa dispare Spotify din plan (4.4.1: detecția singură nu-l mai ascunde).
+     */
+    val absent: Set<String> = emptySet(),
     val learned: LearnedTable = LearnedTable.EMPTY,
     /** versionName per pachet (tabelul învățat se leagă de versiune). */
     val versions: Map<String, String> = emptyMap(),
@@ -198,7 +207,7 @@ sealed interface StartState {
     data class NeedsTap(val step: Step, val want: Want) : StartState
     /** Playerul a fost deschis (terminal); la întoarcere: cântă sau înapoi la început. */
     data class InPlayer(val pkg: String?) : StartState
-    /** „Nu a pornit.” — `open` deschide playerul. */
+    /** „Nu a pornit.” — `open` deschide playerul; null = nimic de deschis (o atingere încearcă din nou). */
     data class Failed(val reason: FailReason, val open: Step?) : StartState
 }
 

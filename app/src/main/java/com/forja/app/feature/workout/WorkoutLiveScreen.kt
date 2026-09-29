@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.forja.app.core.designsystem.*
@@ -59,7 +60,9 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
         }
     }
     // Înapoi = „Încheie”: hubul nu are „continuă sesiunea”, deci muzica FORJA (coada, împrumutul) se încheie odată cu ea.
+    // Afară de Înapoi-ul ei pentru ecranul Spotify, ajuns chiar după ce FORJA l-a închis singură: sesiunea continuă.
     BackHandler {
+        if (MusicStarter.swallowBack()) return@BackHandler
         if (!live.finished) vm.endEarly()
         onExit()
     }
@@ -107,12 +110,23 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
     val position = track?.let { it.positionMs + if (it.playing) (clock - anchor).coerceAtLeast(0L) else 0L } ?: 0L
     val disc = discUi(start, origin == MusicSource.WORKOUT, track, artBitmap, position, queue != null, audible = !music.access && audible)
     val showMusic = music.on || track != null || disc.phase != DiscPhase.IDLE
+    // „Nu a pornit.” fără nimic de deschis: atingerea încearcă din nou (nu mai deschide un player care nu există).
+    val retry = disc.phase == DiscPhase.FAILED && disc.action == null
     val onDisc: () -> Unit = {
         when (disc.phase) {
-            DiscPhase.NEEDS_TAP, DiscPhase.FAILED -> MusicStarter.tap(context)
+            DiscPhase.NEEDS_TAP -> MusicStarter.tap(context)
+            DiscPhase.FAILED -> if (retry) vm.startMusicNow() else MusicStarter.tap(context)
             DiscPhase.IDLE -> vm.startMusicNow()
             DiscPhase.STARTING -> Unit
             DiscPhase.PLAYING, DiscPhase.PAUSED -> MusicStarter.toggle(context, MusicSource.WORKOUT) { vm.startMusicNow() }
+        }
+    }
+    // Spotify n-a primit piesele cerute azi: un singur rând pe antrenament, când ecranul chiar se vede.
+    val notice by MusicStarter.notice.collectAsStateWithLifecycle()
+    LaunchedEffect(notice) {
+        notice?.let {
+            toast.show(it)
+            MusicStarter.noticeShown()
         }
     }
 
@@ -131,7 +145,7 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
             onOpenPlayer = { MusicStarter.openPlayer(context) },
             onNext = { MusicStarter.next(context) },
             onPrevious = { MusicStarter.previous(context) },
-            onOpen = { MusicStarter.tap(context) }
+            onOpen = { if (retry) vm.startMusicNow() else MusicStarter.tap(context) }
         )
     )
 }

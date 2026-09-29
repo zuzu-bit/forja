@@ -14,6 +14,9 @@ object Planner {
 
     private val SPOTIFY = MusicKind.SPOTIFY
 
+    /** Linkurile VIEW spotify: la care un Spotify instalat răspunde mereu ([provesSpotifyMissing]). */
+    private val MISSING_PROOF = setOf(Rung.V_TRACK, Rung.V_LIKED_PLAY, Rung.O_LIKED_PAGE)
+
     fun plan(want: Want, s: Snapshot): List<Step> = when (want) {
         is Want.Resume -> resume(want, s)
         Want.MyMusic -> myMusic(s)
@@ -136,17 +139,51 @@ object Planner {
         return out
     }
 
-    /** Playerul în care sare o treaptă vizibilă: al tău, altfel Spotify, altfel primul instalat. */
+    /**
+     * Playerul în care sare o treaptă vizibilă: al tău (instalat sau din istoric); altfel Spotify, cât nu s-a dovedit
+     * că lipsește (startActivity nu cere vizibilitatea pachetului: o detecție care minte nu mai ascunde Spotify, 29.09);
+     * altfel primul player de muzică știut. null = nimic de deschis.
+     */
     private fun visiblePlayer(s: Snapshot): String? =
-        s.preferredPkg?.takeIf { it in s.installed }
-            ?: SPOTIFY.takeIf { it in s.installed }
-            ?: s.installed.firstOrNull { MusicKind.isMusicPlayer(it, s.historyPkgs) }
+        s.preferredPkg?.takeIf { (it in s.installed || it in s.historyPkgs) && it !in s.absent }
+            ?: SPOTIFY.takeIf { it !in s.absent }
+            ?: s.installed.firstOrNull { MusicKind.isMusicPlayer(it, s.historyPkgs) && it !in s.absent }
 
-    /** Ultima soluție: deschide playerul (Melodii apreciate în Spotify), apăsarea pe play rămâne a ei. */
-    private fun terminal(s: Snapshot): List<Step> {
-        val pkg = visiblePlayer(s)
-        return if (pkg == SPOTIFY) listOf(Step(Rung.O_LIKED_PAGE, SPOTIFY)) else listOf(Step(Rung.O_LAUNCH, pkg))
+    /**
+     * Ultima soluție: deschide playerul (Melodii apreciate în Spotify, altfel aplicația playerului), apăsarea pe play
+     * rămâne a ei. Fără niciun player nu există pas final: încercarea se termină „Nu a pornit.” fără nimic de deschis
+     * (nu mai există O_LAUNCH fără pachet — selectorul de muzică al sistemului nu răspundea pe S23).
+     */
+    private fun terminal(s: Snapshot): List<Step> = when (val pkg = visiblePlayer(s)) {
+        null -> emptyList()
+        SPOTIFY -> listOf(Step(Rung.O_LIKED_PAGE, SPOTIFY))
+        else -> listOf(Step(Rung.O_LAUNCH, pkg))
     }
+
+    /**
+     * „Deschide playerul” fără o încercare în așteptare (apăsarea lungă pe disc, o atingere după final): sesiunea de
+     * muzică pe care o vede; altfel playerul ei din istoric, când nu e Spotify; altfel Spotify la Melodii apreciate
+     * (cât nu s-a dovedit că lipsește). Niciodată un video sau o carte audio (Music.other): pentru muzică, YouTube nu e
+     * un răspuns. null = nimic de deschis. [preferred] = playerul ei văzut cântând (istoric / ultimul), nu o presupunere.
+     */
+    fun openStep(now: SessionView?, preferred: String?, absent: Set<String>): Step? {
+        if (now != null && now.kind != MediaKind.SPOKEN && now.kind != MediaKind.VIDEO && now.pkg !in absent) {
+            return Step(Rung.O_SESSION, now.pkg, now.id)
+        }
+        val own = preferred?.takeIf { it != SPOTIFY && it !in absent && it !in MusicKind.SPOKEN_APPS && it !in MusicKind.VIDEO_APPS }
+        if (own != null) return Step(Rung.O_LAUNCH, own)
+        if (SPOTIFY !in absent) return Step(Rung.O_LIKED_PAGE, SPOTIFY)
+        return null
+    }
+
+    /**
+     * Un „no-activity” la pasul ăsta dovedește că Spotify lipsește, când nici PackageManager nu-l vede ([probedAny] =
+     * nu)? Doar la linkurile VIEW spotify:, la care un Spotify instalat răspunde mereu (V_TRACK, V_LIKED_PLAY, pagina
+     * finală). O căutare (V_PFS_*) poate rămâne fără răspuns și cu Spotify pe telefon (filtrul lui poate să nu declare
+     * forma cu date), deci nu ascunde Spotify.
+     */
+    fun provesSpotifyMissing(step: Step, probedAny: Boolean): Boolean =
+        !probedAny && step.pkg == SPOTIFY && step.rung in MISSING_PROOF
 
     // ───────────────────────────── TOP 1 ─────────────────────────────
 
@@ -166,7 +203,7 @@ object Planner {
             }
         }
         val pkg = top.pkg ?: visiblePlayer(s)
-        if (pkg == SPOTIFY && SPOTIFY in s.installed && MusicKind.spotifyTrackId(top.mediaId) != null) {
+        if (pkg == SPOTIFY && SPOTIFY !in s.absent && MusicKind.spotifyTrackId(top.mediaId) != null) {
             out += Step(Rung.V_TRACK, SPOTIFY, track = top)
         }
         if (pkg != null && pkg in s.searchable) out += Step(Rung.V_PFS_TOP, pkg, track = top)
@@ -179,9 +216,11 @@ object Planner {
     // ───────────────────────────── Antrenament ─────────────────────────────
 
     /**
-     * Pornirea automată odată cu sesiunea: piesa 1 din lista FORJA pe sesiunea playerului (S_TOP), altfel Melodii
-     * apreciate (S_LIKED), altfel reia muzica pusă pe pauză; fără sesiune, tasta media (doar spre un player de muzică).
-     * Treptele vizibile rămân pentru o atingere pe disc.
+     * Pornirea odată cu sesiunea: piesa 1 din lista FORJA pe sesiunea playerului (S_TOP), altfel Melodii apreciate
+     * (S_LIKED), altfel reia muzica pusă pe pauză; fără sesiune, tasta media (doar spre un player de muzică). Apoi
+     * treptele vizibile: din 4.4.1 „Începe sesiunea” e chiar atingerea, deci cel mult un salt, în 1,5 s de la ea.
+     * Fără listă (rece, sau ea a ales Apreciate: hubul spune „APRECIATE”), saltul duce la Melodii apreciate, nu la
+     * piesa ei de top (o singură piesă, apoi radioul lui Spotify); TOP 1 și „Pornește muzica” o păstrează.
      */
     private fun workout(want: Want.Workout, s: Snapshot): List<Step> {
         val out = ArrayList<Step>()
@@ -202,7 +241,7 @@ object Planner {
         } else {
             out += keyNoAccess(s)
         }
-        out += visibleMusic(s, first ?: s.top)
+        out += visibleMusic(s, first)
         out += terminal(s)
         return filterLearned(out.distinctBy { it.key }, s)
     }

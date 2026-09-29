@@ -41,6 +41,8 @@ import com.forja.app.core.designsystem.components.ForjaTabBar
 import com.forja.app.core.designsystem.components.LocalToast
 import com.forja.app.core.designsystem.components.ToastHost
 import com.forja.app.core.designsystem.components.ToastState
+import com.forja.app.core.music.MusicRungs
+import com.forja.app.core.music.MusicStarter
 import com.forja.app.feature.auth.AuthScreens
 import com.forja.app.feature.dashboard.DashboardScreen
 import com.forja.app.feature.focus.FocusScreen
@@ -58,6 +60,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.lang.ref.WeakReference
 
 class MainActivity : ComponentActivity() {
     /** Crește la fiecare intent nou (notificare atinsă cât activitatea trăiește) — MainNav recitește extra-urile. */
@@ -66,6 +69,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Saltul muzicii în Spotify pleacă din activitatea asta, pentru rezultat și fără task nou: așa FORJA poate
+        // închide singură ecranul Spotify după ce muzica e confirmată (RET_SUB, 4.4.1).
+        MusicStarter.host = WeakReference(this)
         enableEdgeToEdge()
         setContent {
             ForjaTheme { ForjaRoot() }
@@ -76,6 +82,18 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         intentTick++
+    }
+
+    /** Rezultatul saltului în player (întotdeauna anulat): îl vrea doar jurnalul RET; restul trece mai departe. */
+    @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == MusicRungs.REQ_HOP) MusicStarter.onHopResult()
+    }
+
+    override fun onDestroy() {
+        if (MusicStarter.host?.get() === this) MusicStarter.host = null
+        super.onDestroy()
     }
 }
 

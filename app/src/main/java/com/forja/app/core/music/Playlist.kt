@@ -42,7 +42,9 @@ data class FPlaylist(
     /** Următoarele cele mai bune, pentru când sesiunea durează mai mult decât lista. */
     val reserve: List<PlayItem>,
     val playerPkg: String?,
-    val counts: TierCounts
+    val counts: TierCounts,
+    /** Durata sesiunii (minute) pentru care s-a clădit lista; 0 = necunoscută (nu se refolosește la pornire). */
+    val targetMin: Int = 0
 ) {
     /** Fără listă FORJA: Melodii apreciate (sau ce reia playerul). */
     val liked: Boolean get() = items.isEmpty()
@@ -74,6 +76,13 @@ object Playlist {
     }
 
     fun epochDay(now: Long): Long = Math.floorDiv(now, DAY)
+
+    /**
+     * „Începe sesiunea”: lista clădită de hub la deschidere ([ready]), dacă e pentru aceeași alegere și aceeași durată —
+     * pornirea n-o mai clădește a doua oară în cele 1,5 s ale saltului (și e chiar lista arătată pe hub); altfel [build].
+     */
+    inline fun readyOr(ready: FPlaylist?, mix: Mix, targetMin: Int, build: () -> FPlaylist?): FPlaylist? =
+        ready?.takeIf { it.mix == mix && it.targetMin > 0 && it.targetMin == targetMin } ?: build()
 
     private class Cand(
         val key: String,
@@ -171,7 +180,7 @@ object Playlist {
     ): FPlaylist {
         val (newT, oldT, steadyT) = tiers(rows, library, now)
         val counts = TierCounts(newT.size, oldT.size, steadyT.size)
-        val empty = FPlaylist(mix, emptyList(), emptyList(), null, counts)
+        val empty = FPlaylist(mix, emptyList(), emptyList(), null, counts, targetMin)
         if (mix == Mix.LIKED || counts.cold) return empty
         // „Noi” fără piese noi sau „Vechi” fără piese vechi nu se umplu pe ascuns cu altceva.
         if (mix == Mix.NEW && counts.new == 0 || mix == Mix.OLD && counts.old == 0) return empty
@@ -237,7 +246,7 @@ object Playlist {
         val reserve = fallbacks(Tier.NEW).flatMap { pools.getValue(it) }.distinctBy { it.c.key }.take(20)
         val items = picked.map { it.item() }
         val player = items.mapNotNull { it.pkg }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
-        return FPlaylist(mix, items, reserve.map { it.item() }, player, counts)
+        return FPlaylist(mix, items, reserve.map { it.item() }, player, counts, targetMin)
     }
 
     private fun Scored.item() = PlayItem(c.key, c.title, c.artist, c.pkg, c.mediaId, c.uri, c.durS, tier)

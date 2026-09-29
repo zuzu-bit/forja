@@ -2,6 +2,7 @@ package com.forja.app.core.music
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -97,6 +98,27 @@ class PlaylistTest {
         val lib = HistoryCodec.fold(rows)
         assertEquals(0, Playlist.counts(rows, lib, now).old)
         assertTrue("Vechi fără piese vechi nu se umple cu altele", Playlist.build(rows, lib, Mix.OLD, 40, now).liked)
+    }
+
+    @Test fun theStartReusesTheHubsListInsteadOfBuildingItAgain() {
+        // Hubul a clădit listele la deschidere; „Începe sesiunea” o ia pe cea arătată, fără s-o clădească din nou în cele
+        // 1,5 s ale saltului.
+        val (rows, lib) = history()
+        val hub = Playlist.build(rows, lib, Mix.MIX, targetMin = 40, now = now)
+        assertEquals(40, hub.targetMin)
+        var built = 0
+        assertSame(hub, Playlist.readyOr(hub, Mix.MIX, 40) { built++; null })
+        // Apreciate (lista goală a hubului): la fel, nimic de clădit.
+        val liked = Playlist.build(rows, lib, Mix.LIKED, targetMin = 40, now = now)
+        assertSame(liked, Playlist.readyOr(liked, Mix.LIKED, 40) { built++; null })
+        assertEquals("lista de pe hub nu se mai clădește la atingere", 0, built)
+        // Altă alegere, altă durată (planul s-a schimbat între timp), o listă fără durată sau nimic gata: se clădește acum.
+        val rebuilt = Playlist.build(rows, lib, Mix.NEW, targetMin = 40, now = now)
+        assertSame(rebuilt, Playlist.readyOr(hub, Mix.NEW, 40) { built++; rebuilt })
+        assertSame(rebuilt, Playlist.readyOr(hub, Mix.MIX, 55) { built++; rebuilt })
+        assertSame(rebuilt, Playlist.readyOr(hub.copy(targetMin = 0), Mix.MIX, 0) { built++; rebuilt })
+        assertSame(rebuilt, Playlist.readyOr(null, Mix.MIX, 40) { built++; rebuilt })
+        assertEquals(4, built)
     }
 
     @Test fun targetMinutesFromSetsAndReps() {

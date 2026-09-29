@@ -298,6 +298,242 @@ class StartMachineTest {
         assertEquals(listOf("K_PLAY:ok", "S_TOP:ok"), p.results())
     }
 
+    // ── 4.4.1: „Începe sesiunea” e atingerea; un singur salt; saltul spre Apreciate doar trezește Spotify ──
+
+    @Test fun workoutStartIsTheTapAndHopsOnce() {
+        // 29.09 cu 4.4.1: tasta media la YouTube, nicio sesiune Spotify, lista încă rece.
+        val p = machine(lanaSnap())
+        p.machine.start(Want.Workout(null), MusicSource.WORKOUT, tap = true)
+        assertEquals(listOf(Rung.V_LIKED_PLAY), p.sent.map { it.rung })
+        assertTrue(p.results().contains("K_PLAY:skipped"))
+        // Spotify nu cântă: după 16 s pasul următor așteaptă o atingere („Deschide Spotify”); tot un singur salt.
+        p.advance(16_000)
+        val st = p.last as StartState.NeedsTap
+        assertEquals(Rung.V_PFS_DATA, st.step.rung)
+        assertEquals(1, p.sent.count { it.rung.visible })
+        assertTrue(p.results().contains("V_LIKED_PLAY:timeout"))
+    }
+
+    @Test fun slowPreparationParksTheHop() {
+        // Lista și detecția au durat 2 s: fereastra se măsoară de la atingerea reală, deci nimic nu sare târziu.
+        val p = machine(lanaSnap())
+        p.machine.start(Want.Workout(null), MusicSource.WORKOUT, tapAt = p.clock - 2_000)
+        assertTrue(p.sent.isEmpty())
+        val st = p.last as StartState.NeedsTap
+        assertEquals(Rung.V_LIKED_PLAY, st.step.rung)
+        // Atingerea pe disc face exact saltul acela.
+        assertTrue(p.machine.tap())
+        assertEquals(listOf(Rung.V_LIKED_PLAY), p.sent.map { it.rung })
+    }
+
+    @Test fun aFailedJumpNeverLeadsToASecondOne() {
+        // Saltul a pornit un podcast (oprit pe loc): următorul link așteaptă o atingere nouă, deși 1,5 s nu au trecut.
+        val p = machine(lanaSnap())
+        p.onSend = { step ->
+            if (step.rung == Rung.V_LIKED_PLAY) {
+                p.add(session("sp", SPOTIFY, kind = MediaKind.SPOKEN, state = PState.PLAYING, title = "Episodul 4", mediaId = "spotify:episode:1"))
+            }
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(null), MusicSource.WORKOUT, tap = true)
+        p.advance(100)
+        assertTrue(p.results().contains("V_LIKED_PLAY:wrong_kind"))
+        assertEquals(UndoTarget.Session("sp"), p.undone.single())
+        assertEquals(listOf(Rung.V_LIKED_PLAY), p.sent.map { it.rung })
+        assertEquals(Rung.V_PFS_DATA, (p.last as StartState.NeedsTap).step.rung)
+        // O atingere nouă = un salt nou.
+        assertTrue(p.machine.tap())
+        assertEquals(listOf(Rung.V_LIKED_PLAY, Rung.V_PFS_DATA), p.sent.map { it.rung })
+    }
+
+    @Test fun aLinkThatOpenedNothingIsNotTheHop() {
+        // V_TRACK fără activitate (nimic nu s-a deschis): următorul link pleacă tot din atingerea asta.
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY, "spotify:track:1")
+        val p = machine(lanaSnap(preferred = SPOTIFY))
+        p.onSend = { step -> if (step.rung == Rung.V_TRACK) SendResult.Skipped("no-activity") else SendResult.Sent() }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = true)
+        assertEquals(listOf(Rung.V_TRACK, Rung.V_LIKED_PLAY), p.sent.map { it.rung })
+        assertTrue(p.results().contains("V_TRACK:skipped"))
+    }
+
+    @Test fun likedHopWakesSpotifyThenTheListTakesOver() {
+        // Lista e gata, dar piesa 1 n-are ID Spotify: saltul spre Melodii apreciate doar trezește Spotify, apoi S_TOP cere piesa 1.
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY)
+        val p = machine(lanaSnap(preferred = SPOTIFY))
+        p.onSend = { step ->
+            when (step.rung) {
+                Rung.V_LIKED_PLAY -> p.add(session("sp", SPOTIFY, state = PState.PLAYING, title = "Altceva"))
+                Rung.S_TOP -> p.setState("sp", PState.PLAYING, title = "Piesa 1")
+                else -> Unit
+            }
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = true)
+        assertEquals(listOf(Rung.V_LIKED_PLAY, Rung.S_TOP), p.sent.map { it.rung })
+        assertEquals(first, p.sent[1].track)
+        assertEquals("ce a ales Spotify tace", UndoTarget.Session("sp"), p.undone.single())
+        p.advance(3_000)
+        val st = p.last as StartState.Playing
+        assertEquals(Rung.S_TOP, st.route)
+        assertEquals(Badge.FORJA, st.badge)
+        assertEquals(listOf("V_LIKED_PLAY:ok", "S_TOP:ok"), p.results().filter { !it.endsWith(":skipped") })
+        // Reușita e pe S_TOP: MusicStarter pornește coada FORJA.
+        assertEquals(Rung.S_TOP, p.successes.single().rung)
+    }
+
+    @Test fun aSlowWakeStillGivesSTopItsOwnTwelveSeconds() {
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY)
+        val p = machine(lanaSnap(preferred = SPOTIFY))
+        p.onSend = { step ->
+            if (step.rung == Rung.S_TOP) p.setState("sp", PState.BUFFERING, title = "Piesa 1")
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = true)
+        // Spotify apare abia după 9 s.
+        p.advance(9_000)
+        p.add(session("sp", SPOTIFY, state = PState.BUFFERING, title = "Altceva"))
+        p.advance(100)
+        assertEquals(listOf(Rung.V_LIKED_PLAY, Rung.S_TOP), p.sent.map { it.rung })
+        // Piesa 1 se încarcă 7 s: S_TOP are propriile 12 s, nu doar restul celor 15 s de la început.
+        p.advance(7_000)
+        p.setState("sp", PState.PLAYING)
+        p.advance(3_000)
+        assertEquals(Rung.S_TOP, (p.last as StartState.Playing).route)
+        assertEquals(listOf("V_LIKED_PLAY:ok", "S_TOP:ok"), p.results().filter { !it.endsWith(":skipped") })
+    }
+
+    @Test fun aJumpNeverSilencesASessionThatSTopAlreadyTried() {
+        // Spotify avea o sesiune, dar n-a ascultat de S_TOP / S_LIKED / S_PLAY. Ea atinge „Deschide Spotify”, iar saltul
+        // pornește Melodii apreciate pe aceeași sesiune: aceea e muzica (S_TOP a fost deja încercat), nu tace.
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY)
+        val p = machine(snap(sessions = listOf(session("sp", SPOTIFY, title = "Altceva")), keyTarget = SPOTIFY))
+        p.onSend = { step ->
+            if (step.rung == Rung.V_LIKED_PLAY) p.setState("sp", PState.PLAYING, title = "O piesă apreciată")
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = false)
+        p.advance(40_000)
+        assertEquals(Rung.V_LIKED_PLAY, (p.last as StartState.NeedsTap).step.rung)
+        assertTrue(p.sent.any { it.rung == Rung.S_TOP && it.sessionId == "sp" })
+        assertTrue(p.machine.tap())
+        p.advance(3_000)
+        assertEquals(Rung.V_LIKED_PLAY, (p.last as StartState.Playing).route)
+        assertTrue("muzica pornită de salt nu tace", p.undone.isEmpty())
+    }
+
+    @Test fun afterTheJumpSpotifyIsCommandedEvenWithForjaBehindIt() {
+        // Ecranul Spotify acoperă FORJA (fg = nu), iar sesiunea lui apare oprită: S_TOP pleacă totuși (Spotify e în față).
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY)
+        val p = machine(lanaSnap(preferred = SPOTIFY))
+        p.onSend = { step ->
+            when (step.rung) {
+                Rung.V_LIKED_PLAY -> p.world = p.world.copy(fg = false)
+                Rung.S_TOP -> p.setState("sp", PState.PLAYING, title = "Piesa 1")
+                else -> Unit
+            }
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = true)
+        p.advance(500)
+        p.add(session("sp", SPOTIFY, state = PState.STOPPED, title = "Altceva"))
+        p.advance(2_000)
+        assertEquals(listOf(Rung.V_LIKED_PLAY, Rung.S_TOP), p.sent.map { it.rung })
+        assertTrue(p.events.none { it.err == "background" })
+        p.advance(3_000)
+        assertEquals(Rung.S_TOP, (p.last as StartState.Playing).route)
+        // Fără salt, regula de fundal rămâne: niciodată o comandă către un player oprit (backgroundNeverCommandsAStoppedPlayer).
+    }
+
+    @Test fun aJumpThatOnlyShowedSpotifyPausedTeachesNothingAboutAutoplay() {
+        // Saltul spre Melodii apreciate a adus sesiunea Spotify, dar pe pauză (linkul nu pornește singur muzica): S_TOP
+        // cere piesa 1 și merge. Tabelul învățat nu află că linkul „pornește muzica” (el ordonează linkurile după asta).
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY)
+        val p = machine(lanaSnap(preferred = SPOTIFY))
+        p.onSend = { step ->
+            when (step.rung) {
+                Rung.V_LIKED_PLAY -> p.add(session("sp", SPOTIFY, state = PState.PAUSED, title = "Altceva"))
+                Rung.S_TOP -> p.setState("sp", PState.PLAYING, title = "Piesa 1")
+                else -> Unit
+            }
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = true)
+        p.advance(1_600)
+        assertEquals(listOf(Rung.V_LIKED_PLAY, Rung.S_TOP), p.sent.map { it.rung })
+        p.advance(3_000)
+        assertEquals(Rung.S_TOP, (p.last as StartState.Playing).route)
+        assertTrue(p.learned.none { it.second == Rung.V_LIKED_PLAY })
+        assertTrue(p.learned.contains(Triple<String?, Rung, LearnedTable.Outcome>(SPOTIFY, Rung.S_TOP, LearnedTable.Outcome.OK)))
+        // Jurnalul spune că Spotify doar a apărut, nu că a cântat.
+        assertEquals("woke idle", p.events.first { it.rung == "V_LIKED_PLAY" }.err)
+    }
+
+    @Test fun aJumpThatStartedSpotifyPlayingIsLearnedAsAutoplay() {
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY)
+        val p = machine(lanaSnap(preferred = SPOTIFY))
+        p.onSend = { step ->
+            when (step.rung) {
+                Rung.V_LIKED_PLAY -> p.add(session("sp", SPOTIFY, state = PState.PLAYING, title = "Altceva"))
+                Rung.S_TOP -> p.setState("sp", PState.PLAYING, title = "Piesa 1")
+                else -> Unit
+            }
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = true)
+        p.advance(3_000)
+        assertEquals(Triple<String?, Rung, LearnedTable.Outcome>(SPOTIFY, Rung.V_LIKED_PLAY, LearnedTable.Outcome.OK), p.learned.first())
+        assertEquals("woke", p.events.first { it.rung == "V_LIKED_PLAY" }.err)
+    }
+
+    @Test fun likedHopIsANormalStartWhenSpotifyIgnoresTheList() {
+        // Spotify a ignorat de două ori piesele cerute (tracksLand = nu): saltul e o pornire obișnuită, Apreciate cântă.
+        val now = 1_700_000_000_000L
+        val refused = LearnedTable.EMPTY
+            .record(SPOTIFY, "9.0.62", Rung.S_TOP, LearnedTable.Outcome.MISS, now - 2_000)
+            .record(SPOTIFY, "9.0.62", Rung.S_TOP, LearnedTable.Outcome.MISS, now - 1_000)
+        val p = machine(lanaSnap(preferred = SPOTIFY, learned = refused))
+        p.onSend = { step ->
+            if (step.rung == Rung.V_LIKED_PLAY) p.add(session("sp", SPOTIFY, state = PState.PLAYING, title = "Altceva"))
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(TrackRef("Piesa 1", "Artist", SPOTIFY)), MusicSource.WORKOUT, tap = true)
+        p.advance(3_000)
+        val st = p.last as StartState.Playing
+        assertEquals(Rung.V_LIKED_PLAY, st.route)
+        assertEquals(Badge.LIKED, st.badge)
+        assertTrue("nimic nu tace", p.undone.isEmpty())
+        assertEquals(listOf(Rung.V_LIKED_PLAY), p.sent.map { it.rung })
+    }
+
+    @Test fun trackHopGetsTheForjaBadge() {
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY, "spotify:track:1")
+        val p = machine(lanaSnap(preferred = SPOTIFY))
+        p.onSend = { step ->
+            if (step.rung == Rung.V_TRACK) p.add(session("sp", SPOTIFY, state = PState.PLAYING, title = "Piesa 1", mediaId = "spotify:track:1"))
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = true)
+        assertEquals(listOf(Rung.V_TRACK), p.sent.map { it.rung })
+        p.advance(3_000)
+        val st = p.last as StartState.Playing
+        assertEquals(Rung.V_TRACK, st.route)
+        assertEquals(Badge.FORJA, st.badge)
+        // Reușita e pe V_TRACK: coada FORJA pornește de la piesa 2; V_TRACK nu trezește, deci nimic nu tace.
+        assertEquals(Rung.V_TRACK, p.successes.single().rung)
+        assertTrue(p.undone.isEmpty())
+    }
+
+    @Test fun nothingToOpenFailsWithoutAnOpenStep() {
+        val p = machine(
+            snap(sessions = emptyList(), keyTarget = null, preferred = null, installed = emptySet(), searchable = emptySet(), top = null,
+                absent = setOf(SPOTIFY), history = emptySet())
+        )
+        p.machine.start(Want.Workout(null), MusicSource.WORKOUT, tap = true)
+        assertTrue(p.sent.isEmpty())
+        assertEquals(StartState.Failed(FailReason.NO_PLAYER, null), p.last)
+        assertFalse("nimic nu așteaptă o atingere", p.machine.tap())
+    }
+
     @Test fun myMusicKeyThatWakesSpotifyMusicIsDoneWithoutMoreCommands() {
         val p = machine(snap(sessions = emptyList(), keyTarget = SPOTIFY))
         p.onSend = { step ->

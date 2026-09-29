@@ -35,8 +35,11 @@ interface StartPort {
  *             a pornit ceva vorbit/video → îl oprește (UNDO) → următoarea treaptă
  *             a cântat și s-a oprit singură < 3 s → refuzat → următoarea
  *             termen depășit / eroare → următoarea
- *     următoarea invizibilă → TRY; vizibilă → TRY doar dacă atingerea a fost acum < 1,5 s, altfel NEEDS_TAP;
- *     doar terminale rămase → FAILED (cu „Deschide playerul”); nimic → FAILED.
+ *     următoarea invizibilă → TRY; vizibilă → TRY doar dacă atingerea (momentul ei real, nu pornirea mașinii) a fost
+ *     acum < 1,5 s și nicio altă treaptă vizibilă n-a plecat după ea (o atingere = cel mult un salt), altfel NEEDS_TAP;
+ *     doar terminale rămase → FAILED (cu „Deschide playerul”); nimic → FAILED fără nimic de deschis.
+ *   Un salt în Spotify când se cere o piesă anume (lista FORJA, TOP 1) doar trezește Spotify, ca tasta: cât apare
+ *   sesiunea lui, ce a ales el tace și S_TOP cere piesa 1 (4.4.1, „S_TOP #1”).
  *
  * O singură încercare odată: o atingere nouă, o pauză sau ieșirea din ecran o anulează.
  */
@@ -52,14 +55,18 @@ class StartMachine(private val port: StartPort) {
 
     private var attempt: Attempt? = null
 
-    private class Attempt(val want: Want, val source: MusicSource, now: Long, tap: Boolean) {
-        var tapAt: Long? = if (tap) now else null
+    private class Attempt(val want: Want, val source: MusicSource, now: Long, tapAt: Long?) {
+        var tapAt: Long? = tapAt
         var phaseAt: Long = now
         val tried = HashSet<String>()
         var verify: Verify? = null
         var waiting: Step? = null
         var lastFail: FailReason? = null
         var inPlayer: Step? = null
+        /** O treaptă vizibilă a plecat după ultima atingere: următoarea așteaptă o atingere nouă (un salt pe atingere). */
+        var hopped = false
+        /** Playerul în care a sărit FORJA: ecranul lui e în față, deci îl poate comanda și cât FORJA e în fundal. */
+        var hopPkg: String? = null
     }
 
     private class Verify(
@@ -98,11 +105,18 @@ class StartMachine(private val port: StartPort) {
 
     // ───────────────────────────── Intrări ─────────────────────────────
 
-    /** O intenție nouă. `tap` = pornită de o atingere acum (saltul vizibil e permis 1,5 s). */
-    fun start(want: Want, source: MusicSource, tap: Boolean) {
+    /** O intenție nouă. `tap` = pornită de o atingere chiar acum (teste, proba): saltul vizibil e permis 1,5 s. */
+    fun start(want: Want, source: MusicSource, tap: Boolean) = start(want, source, tapAt = if (tap) port.now() else null)
+
+    /**
+     * O intenție nouă. [tapAt] = momentul real al atingerii (ceasul monoton), dinaintea pregătirii (lista, detecția):
+     * fereastra de 1,5 s a saltului se măsoară de acolo, deci o pregătire lentă duce la „Deschide Spotify”, nu la un
+     * salt târziu. null = pornire fără atingere (niciun salt).
+     */
+    fun start(want: Want, source: MusicSource, tapAt: Long?) {
         attempt = null
         val now = port.now()
-        val a = Attempt(want, source, now, tap)
+        val a = Attempt(want, source, now, tapAt)
         attempt = a
         val snap = port.snapshot()
         if (Planner.alreadyPlaying(want, snap)) {
@@ -143,19 +157,26 @@ class StartMachine(private val port: StartPort) {
             is Outcome.Woke -> {
                 a.verify = null
                 val w = o.session
-                // Ce a pornit tasta e contextul ei vechi (altă listă, alt podcast): tace cât pornește piesa cerută —
-                // afară de cazul în care chiar piesa cerută cântă deja.
+                // Ce a pornit tasta (sau saltul) e contextul lui (altă listă, Melodii apreciate): tace cât pornește
+                // piesa cerută — afară de cazul în care chiar piesa cerută cântă deja.
                 val track = wantedTrack(a.want, snap)
                 if (w.state.activeish && (track == null || !TrackKey.matches(track.title, w.title))) port.undo(UndoTarget.Session(w.id))
-                port.learn(v.step.pkg ?: w.pkg, v.step.rung, LearnedTable.Outcome.OK)
-                log(a, v.step.copy(pkg = v.step.pkg ?: w.pkg), DiagResult.OK, port.now() - v.sentAt, w.kind, listOfNotNull(v.note, "woke").joinToString(" "), snap)
+                // Un salt (V_*) se învață ca reușit doar dacă Spotify chiar a pornit să cânte: o sesiune apărută pe pauză
+                // spune doar că linkul deschide Spotify, nu că pornește muzica (după asta se ordonează linkurile în zilele
+                // fără listă). Tasta media, ca înainte.
+                val idle = !w.state.activeish
+                if (!v.step.rung.visible || !idle) port.learn(v.step.pkg ?: w.pkg, v.step.rung, LearnedTable.Outcome.OK)
+                val note = listOfNotNull(v.note, "woke", "idle".takeIf { idle && v.step.rung.visible }).joinToString(" ")
+                log(a, v.step.copy(pkg = v.step.pkg ?: w.pkg), DiagResult.OK, port.now() - v.sentAt, w.kind, note, snap)
+                // După un salt, S_TOP #1 are propriile 12 s (saltul putea dura până aproape de plafon).
+                if (v.step.rung.visible) a.phaseAt = port.now()
                 // Planul se reface cu sesiunea acum prezentă: TOP 1 / lista FORJA → S_TOP (apoi S_LIKED, S_PLAY…).
                 advance(a, port.snapshot())
             }
         }
     }
 
-    /** Atingerea pe „Deschide Spotify” / „Deschide playerul”: face pasul care aștepta. */
+    /** Atingerea pe „Deschide Spotify” / „Deschide playerul”: face pasul care aștepta (o atingere nouă, un salt nou). */
     fun tap(): Boolean {
         val a = attempt ?: return false
         val w = a.waiting ?: return false
@@ -163,6 +184,7 @@ class StartMachine(private val port: StartPort) {
         a.waiting = null
         a.tapAt = now
         a.phaseAt = now
+        a.hopped = false
         run(a, w, port.snapshot())
         return true
     }
@@ -216,15 +238,17 @@ class StartMachine(private val port: StartPort) {
                 log(a, step, DiagResult.SKIPPED, 0L, null, "cap", snap)
                 continue
             }
-            if (!step.rung.visible && !snap.fg && stoppedTarget(step, snap)) {
-                // În fundal, niciodată o comandă nouă către un player oprit (nu primește voie de pornire).
+            if (!step.rung.visible && !snap.fg && stoppedTarget(step, snap) && !(a.hopped && step.pkg != null && step.pkg == a.hopPkg)) {
+                // În fundal, niciodată o comandă nouă către un player oprit (nu primește voie de pornire) — afară de
+                // playerul în care tocmai a sărit FORJA: acum el e în față (S_TOP #1 după salt).
                 a.tried += step.key
                 log(a, step, DiagResult.SKIPPED, 0L, null, "background", snap)
                 continue
             }
             if (step.rung.visible) {
                 val tapAt = a.tapAt
-                val allowed = snap.fg && tapAt != null && now - tapAt <= TAP_WINDOW_MS
+                // Doar ca rezultat direct al atingerii: FORJA în față, la cel mult 1,5 s de ea, și primul salt de atunci.
+                val allowed = snap.fg && tapAt != null && now - tapAt <= TAP_WINDOW_MS && !a.hopped
                 if (!allowed) {
                     a.waiting = step
                     if (step.rung.terminal) {
@@ -267,6 +291,10 @@ class StartMachine(private val port: StartPort) {
                 advance(a, port.snapshot())
             }
             is SendResult.Sent -> {
+                if (step.rung.visible) {
+                    a.hopped = true
+                    a.hopPkg = step.pkg
+                }
                 if (step.rung.terminal) {
                     log(a, step, DiagResult.OK, port.now() - now, null, result.note ?: "opened", snap)
                     a.inPlayer = step
@@ -311,7 +339,8 @@ class StartMachine(private val port: StartPort) {
     }
 
     private fun badgeFor(want: Want, step: Step, wrongTrack: Boolean): Badge = when {
-        want is Want.Workout && want.first != null && step.rung == Rung.S_TOP && !wrongTrack -> Badge.FORJA
+        // Piesa 1 a listei FORJA: cerută pe sesiune (S_TOP) sau prin saltul spotify:track (V_TRACK).
+        want is Want.Workout && want.first != null && (step.rung == Rung.S_TOP || step.rung == Rung.V_TRACK) && !wrongTrack -> Badge.FORJA
         step.rung == Rung.S_LIKED || step.rung == Rung.V_LIKED_PLAY || step.rung == Rung.V_PFS_DATA || step.rung == Rung.O_LIKED_PAGE -> Badge.LIKED
         else -> Badge.NONE
     }
@@ -342,10 +371,15 @@ class StartMachine(private val port: StartPort) {
             v.appearedAt = now
             v.deadline = minOf(maxOf(v.deadline, now + KEY_PLAY_MS), v.cap)
         }
-        // 2b) Treaptă de trezire (TOP 1, lista FORJA): tasta nu duce piesa cerută, doar aduce sesiunea playerului. Cât ea
-        //     apare (sau începe să cânte), treapta s-a făcut; se așteaptă puțin să pornească, ca pauza să prindă contextul vechi.
+        // 2b) Treaptă de trezire (TOP 1, lista FORJA): tasta (sau saltul spre Melodii apreciate) nu duce piesa cerută, doar
+        //     aduce sesiunea playerului. Cât ea apare (sau începe să cânte), treapta s-a făcut; se așteaptă puțin să
+        //     pornească, ca pauza să prindă contextul vechi. Un salt trezește doar o sesiune pe care S_TOP n-a încercat-o
+        //     încă în încercarea asta (altfel pauza ar opri muzica fără nimic după ea).
         if (wakeOnly(a.want, v.step, s)) {
-            val woke = targets.firstOrNull { !it.remote && (it.id !in v.baselineIds || it.state.activeish) }
+            val woke = targets.firstOrNull {
+                !it.remote && (it.id !in v.baselineIds || it.state.activeish) &&
+                    (!v.step.rung.visible || Step(Rung.S_TOP, it.pkg, it.id).key !in a.tried)
+            }
             if (woke != null) {
                 if (v.wokeAt == 0L) v.wokeAt = now
                 if (woke.state.activeish || now - v.wokeAt >= WAKE_SETTLE_MS || now >= v.deadline) return Outcome.Woke(woke)
@@ -443,12 +477,29 @@ class StartMachine(private val port: StartPort) {
     }
 
     /**
-     * Tasta media (K_TOKEN/K_PLAY), cu acces, când intenția cere o piesă anume: TOP 1 sau prima piesă din lista FORJA.
-     * Tasta pornește doar ultimul context al playerului, deci ea doar trezește sesiunea; piesa o cere S_TOP după
-     * (music-start.md §6.3 „K_TOKEN or K_PLAY, then S_TOP”; workout-music.md §3.8 treapta 2).
+     * Treapta doar trezește playerul, cu acces, când intenția cere o piesă anume (TOP 1 sau prima piesă din lista FORJA);
+     * piesa o cere S_TOP după, pe sesiunea acum prezentă:
+     * - tasta media (K_TOKEN/K_PLAY) pornește doar ultimul context al playerului (music-start.md §6.3 „K_TOKEN or
+     *   K_PLAY, then S_TOP”; workout-music.md §3.8 treapta 2);
+     * - saltul în Spotify spre Melodii apreciate (V_LIKED_PLAY, V_PFS_DATA) pornește ce alege Spotify (4.4.1, „S_TOP #1”):
+     *   doar cât tabelul învățat spune că Spotify pune piesele cerute (tracksLand, S_TOP nesărit) și cât S_TOP chiar
+     *   merge pe Spotify (piesa e din Spotify sau Spotify e playerul ei). Altfel saltul e o pornire obișnuită, iar
+     *   Melodii apreciate cântă mai departe. V_TRACK nu trezește: pornește chiar piesa 1.
      */
-    private fun wakeOnly(want: Want, step: Step, s: Snapshot): Boolean =
-        s.access && step.pkg != null && (step.rung == Rung.K_PLAY || step.rung == Rung.K_TOKEN) && wantedTrack(want, s) != null
+    private fun wakeOnly(want: Want, step: Step, s: Snapshot): Boolean {
+        if (!s.access || step.pkg == null) return false
+        val track = wantedTrack(want, s) ?: return false
+        return when (step.rung) {
+            Rung.K_PLAY, Rung.K_TOKEN -> true
+            Rung.V_LIKED_PLAY, Rung.V_PFS_DATA -> {
+                val sp = MusicKind.SPOTIFY
+                val ver = s.versions[sp]
+                step.pkg == sp && (track.pkg ?: s.preferredPkg) == sp &&
+                    s.learned.tracksLand(sp, ver) && !s.learned.skip(sp, ver, Rung.S_TOP, s.clock)
+            }
+            else -> false
+        }
+    }
 
     /** Piesa cerută de intenție (TOP 1: piesa ta de top; Antrenament: prima din lista FORJA). */
     private fun wantedTrack(want: Want, s: Snapshot): TrackRef? = when (want) {

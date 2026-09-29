@@ -28,6 +28,8 @@ object MusicKind {
     const val SPOTIFY = "com.spotify.music"
     const val YT_MUSIC = "com.google.android.apps.youtube.music"
     const val SAMSUNG_MUSIC = "com.sec.android.app.music"
+    /** YouTube (video): nu e un player de muzică, dar ține des tasta media (29.09). */
+    const val YOUTUBE = "com.google.android.youtube"
 
     /** Playerele de muzică cunoscute, cu numele afișat (fără să întrebăm sistemul). */
     val MUSIC_APPS: Map<String, String> = linkedMapOf(
@@ -65,7 +67,7 @@ object MusicKind {
 
     /** Video și browsere: sunetul lor nu e „muzica ta”. */
     val VIDEO_APPS: Set<String> = setOf(
-        "com.google.android.youtube",
+        YOUTUBE,
         "com.android.chrome",
         "com.sec.android.app.sbrowser",
         "org.mozilla.firefox",
