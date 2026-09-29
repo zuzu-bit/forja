@@ -279,7 +279,58 @@ function empty(now = NOW) {
   };
 }
 
-const profiles = {rich, lana, empty};
+// Mirror (pachetul C): Lana cu contractul v4 — oglinda galeriei și a documentelor, jocurile, mesele cu analiză și poză,
+// antrenamentele pe exerciții. Profilul „mirror”; celelalte rămân cum erau.
+function mirror(now = NOW) {
+  const f = lana(now), day0 = midnight(now), blobs = f.blobs;
+  const scenes = ['mountain', 'forest', 'sea', 'cake', 'food', 'city', 'cat', 'screenshot'];
+  const albums = [['Camera', 46], ['WhatsApp Images', 18], ['Munte · Sinaia', 12], ['Screenshots', 9], ['Pisica', 7]];
+  const items = [];
+  let n = 0;
+  for (const [album, count] of albums) for (let i = 0; i < count; i++, n++) {
+    const video = album === 'Camera' && i % 9 === 4, fid = id(500 + n), taken = now - (n * 7.3 + (album === 'Camera' ? 0 : 40)) * HOUR;
+    blobs['mirror:' + fid] = {scene: scenes[(n * 3) % scenes.length]};
+    items.push({id: fid, kind: video ? 'video' : 'photo', name: (video ? 'VID_' : 'IMG_') + dateKey(taken).replace(/-/g, '') + '_' + String(100000 + n * 713).slice(0, 6) + (video ? '.mp4' : '.jpg'), album, group: 'gallery',
+      media_type: video ? 'video/mp4' : 'image/jpeg', taken_at: taken, received_at: now - n * MIN, width: video ? 1920 : 2048, height: video ? 1080 : 1536, duration_ms: video ? 14000 + n * 1000 : null,
+      orig_bytes: video ? 48e6 : 3.1e6, bytes: video ? 420000 : 380000, file: !video, thumb: true, poster: video, preview: video ? 'poster' : 'image'});
+  }
+  for (const [i, [name, album]] of [['Factura Enel septembrie.pdf', 'Documents/Organizate/Facturi'], ['Factura Digi august.pdf', 'Documents/Organizate/Facturi'], ['Contract chirie 2026.pdf', 'Documents/Organizate/Contracte'], ['Lista de cumpărături.txt', 'Download'], ['Bilet CFR Sinaia.pdf', 'Documents/Organizate/Bilete']].entries()) {
+    const fid = id(900 + i);
+    blobs['mirror:' + fid] = name.endsWith('.txt') ? {text: 'Listă\n\n· apă\n· hartă\n· o carte bună'} : {pdf: ['FORJA · document', name, 'Copia exactă din telefon.']};
+    items.push({id: fid, kind: 'file', name, album, group: 'docs', media_type: name.endsWith('.txt') ? 'text/plain' : 'application/pdf', taken_at: now - (i + 2) * DAY, received_at: now - HOUR, width: null, height: null, duration_ms: null,
+      orig_bytes: 180000 + i * 40000, bytes: 180000 + i * 40000, file: true, thumb: false, poster: false, preview: name.endsWith('.txt') ? 'text' : 'pdf'});
+  }
+  const byAlbum = new Map();
+  for (const it of items) { const k = it.group + '/' + it.album; const a = byAlbum.get(k) || {album: it.album, group: it.group, count: 0, bytes: 0, latestAt: 0, cover: null, kinds: {photo: 0, video: 0, file: 0}}; a.count++; a.bytes += it.bytes; a.kinds[it.kind]++; if (it.taken_at > a.latestAt) { a.latestAt = it.taken_at; if (it.thumb) a.cover = it.id; } byAlbum.set(k, a); }
+  const count = {photo: items.filter(i => i.kind === 'photo').length, video: items.filter(i => i.kind === 'video').length, file: items.filter(i => i.kind === 'file').length};
+  f.mirrorItems = items.sort((a, b) => b.taken_at - a.taken_at);
+  f.profile = 'mirror';
+  f.inventar = {...f.inventar, runs: f.inventar.runs.map((r, i) => i === 0 ? {...r, state: 'done', provider: 'Gemini', updatedAt: r.finishedAt,
+    folders: r.folders.map((x, j) => ({...x, theme: ['facturi de utilități, 2025–2026', 'acte de identitate și contracte', 'bilete de tren și rezervări', 'cursuri și notițe'][j] || null})),
+    trash: {...r.trash, byReason: {duplicate: 4, temp: 2}}} : {...r, state: 'done', provider: 'Gemini', trash: {...r.trash, byReason: {duplicate: 31, similar: 18, blurry: 9, old_screenshot: 6}, expiresAt: r.finishedAt + 30 * DAY},
+    failures: {owned: 2}, folders: r.folders.map((x, j) => ({...x, theme: ['prieteni la terasă și la munte', 'farfurii de acasă', 'capturi de ecran cu bilete', 'pisica acasă', 'străzi din centru'][j], covers: ['c0', 'c1', 'c2', 'c3']}))}),
+    mirror: {stats: {items: items.length, bytes: items.reduce((a, i) => a + i.bytes, 0) + 3.1e9, count: {photo: count.photo + 7400, video: count.video + 88, file: count.file + 91}, latestAt: now - MIN, updatedAt: now - MIN},
+      albums: [...byAlbum.values()].sort((a, b) => b.latestAt - a.latestAt), meter: {used: items.reduce((a, i) => a + i.bytes, 0) + 3.1e9, cap: 8e9, free_tier: 1e10}, consent: {on: true, at: now - DAY}},
+    storage: {photos: {count: 12480, bytes: 38e9}, videos: {count: 210, bytes: 9.4e9}, docs: {loose: 214, organized: 96, bytes: 2.1e8, folders: 7}, gallery: {total: 12690, mirrored: 7550, waiting: 5140, state: 'wifi', cellular: false, lastAt: now - 20 * MIN}, updatedAt: now - 20 * MIN},
+    games: [{id: 'zid', label: 'ZID', levels: 15, unlocked: 7, cleared: 6, starsTotal: 14, endlessBest: 0, stars: {1: 3, 2: 3, 3: 2, 4: 2, 5: 3, 6: 1}, playedS: 7680, playedToday: 900, lastAt: now - 3 * HOUR,
+      plays: [{at: now - 3 * HOUR, level: 6, outcome: 'won', stars: 1, score: 2140, durationS: 260}, {at: now - 3.2 * HOUR, level: 6, outcome: 'lost', stars: 0, score: 980, durationS: 190}, {at: now - DAY, level: 5, outcome: 'won', stars: 3, score: 3020, durationS: 240}]},
+      {id: 'asalt', label: 'ASALT', levels: 12, unlocked: 3, cleared: 2, starsTotal: 5, endlessBest: null, stars: {1: 3, 2: 2}, playedS: 1500, playedToday: 0, lastAt: now - 2 * DAY, plays: [{at: now - 2 * DAY, level: 3, outcome: 'lost', stars: 0, score: 410, durationS: 150}]}]};
+  blobs['cover:c0'] = {scene: 'city'}; blobs['cover:c1'] = {scene: 'food'}; blobs['cover:c2'] = {scene: 'cat'}; blobs['cover:c3'] = {scene: 'sea'};
+  const d0 = f.ratie.days[0];
+  d0.meals[1] = {...d0.meals[1], photo: true, items: [{name: 'Paste', grams: 250, kcal: 390, protein: 13, carbs: 72, fat: 4}, {name: 'Piept de pui', grams: 120, kcal: 200, protein: 29, carbs: 0, fat: 9}, {name: 'Sos de roșii', grams: 50, kcal: 100, protein: 0, carbs: 10, fat: 6}],
+    score: {value: 7, reason: 'Proteine bune, puține legume.'}, tip: 'Pune o salată lângă, data viitoare.'};
+  blobs['meal:' + d0.meals[1].id] = {scene: 'food'};
+  f.ratie.more = true; f.ratie.from = dateKey(now - 29 * DAY);
+  f.mars.workouts = [{id: 'wk-1', startAt: now - DAY, endAt: now - DAY + 2900000, durationS: 2900, title: 'Forță · tot corpul', kind: 'forta', sets: 11, volumeKg: 3860, kcal: null, source: 'instructie', completed: false, plannedSets: 12,
+    exercises: [{name: 'Genuflexiuni', sets: [8, 8, 8].map((r, i) => ({reps: r, load: '62,5', kg: 62.5, at: now - DAY + (i + 1) * 180000}))}, {name: 'Împins la piept', sets: [10, 10, 8].map((r, i) => ({reps: r, load: '40', kg: 40, at: now - DAY + 900000 + i * 150000}))},
+      {name: 'Ramat cu gantera', sets: [12, 12, 12].map((r, i) => ({reps: r, load: '2×14', kg: 28, at: now - DAY + 1600000 + i * 120000}))}, {name: 'Flotări', sets: [15, 12].map((r, i) => ({reps: r, load: 'corp', kg: null, at: now - DAY + 2300000 + i * 90000}))}],
+    music: [{title: 'Anotimpul', artist: 'Subcarpați', at: now - DAY + 60000}, {title: 'Fetele care ard', artist: 'Carla’s Dreams', at: now - DAY + 300000}, {title: 'Tot ce vreau', artist: 'Holograf', at: now - DAY + 600000}]},
+    ...f.mars.workouts.map(w => ({...w, completed: true, source: 'instructie'}))];
+  f.mars.more = true; f.mars.from = now - 30 * DAY;
+  return f;
+}
+
+const profiles = {rich, lana, empty, mirror};
 function buildFixture(profile = 'rich', now = NOW) {
   const make = profiles[profile];
   if (!make) throw Error('Unknown profile ' + profile + ' (known: ' + Object.keys(profiles).join(', ') + ')');

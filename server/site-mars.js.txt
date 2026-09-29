@@ -1,10 +1,39 @@
 // JURNAL DE MARȘ · Mișcare — totalurile săptămânii, turele cu mini-traseu (desenat din polilinie) și antrenamentele,
 // prin /insights/api/mars?days=30. „Pe hartă” deschide Teren cu traseul evidențiat.
+// Mirror (pachetul C): un antrenament se deschide în exerciții și serii, cu muzica de atunci; „Mai vechi” aduce ce e
+// dinainte de 30 de zile (?before=). Caloriile unei ture sunt estimate pe telefon (după distanță): „≈”.
 const SPORT = {walk: ['Mers', 'walk'], run: ['Alergare', 'run'], ride: ['Ciclism', 'ride']};
+document.head.append(h('style', {text: `
+.work-wrap{display:flex;flex-direction:column}
+.work.open-able{cursor:pointer}
+.work.open-able:hover{border-color:var(--stroke3)}
+.work.open{border-bottom-left-radius:0;border-bottom-right-radius:0}
+.work .work-chev{color:var(--dim);transition:transform .15s}
+.work.open .work-chev{transform:rotate(90deg)}
+.work-more{display:flex;flex-direction:column;gap:14px;padding:14px 16px;border:1px solid var(--stroke2);border-top:0;border-radius:0 0 var(--r-card) var(--r-card);background:var(--s2)}
+.work-more[hidden]{display:none}
+.ex-table{width:100%;border-collapse:collapse;font-size:13.5px}
+.ex-table td{padding:7px 0;border-bottom:1px solid var(--stroke);vertical-align:top;color:var(--text2)}
+.ex-table td:first-child{color:var(--text);font-weight:600;padding-right:12px;width:38%}
+.ex-table td:last-child{text-align:right;font:500 11px/1.4 var(--mono);color:var(--dim);white-space:nowrap;padding-left:10px}
+.ex-sets{display:flex;flex-wrap:wrap;gap:4px}
+.ex-set{display:inline-flex;padding:3px 6px;border-radius:3px;background:var(--s1);border:1px solid var(--stroke);font:600 11px/1 var(--mono);color:var(--text2)}
+.music-chips{display:flex;flex-wrap:wrap;gap:6px}
+.music-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:5px 9px;border-radius:var(--r-chip);background:var(--s1);border:1px solid var(--stroke);font-size:12.5px;color:var(--text2)}
+.music-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mars-more{display:flex;justify-content:center}`}));
 const Mars = {
-  data: null, body: null,
+  data: null, body: null, open: new Set(),
   mount(body) { Mars.body = body; },
   enter() { loadInto('mars', Mars.body, () => api('/insights/api/mars?days=30'), d => { Mars.data = d; Mars.render(d); }, {replaceOnError: !Mars.data}); },
+  async loadOlder() {
+    const d = await api('/insights/api/mars?days=30&before=' + encodeURIComponent(Mars.data.from));
+    const ids = new Set([...(Mars.data.activities || []), ...(Mars.data.workouts || [])].map(x => x.id));
+    Mars.data.activities.push(...(d?.activities || []).filter(a => !ids.has(a.id)));
+    Mars.data.workouts.push(...(d?.workouts || []).filter(w => !ids.has(w.id)));
+    Mars.data.from = d?.from ?? Mars.data.from; Mars.data.more = !!d?.more;
+    Mars.render(Mars.data);
+  },
   render(d) {
     const acts = [...(d.activities || [])].sort((a, b) => (b.startAt || 0) - (a.startAt || 0));
     const works = [...(d.workouts || [])].sort((a, b) => (b.startAt || 0) - (a.startAt || 0));
@@ -17,9 +46,10 @@ const Mars = {
       acts.length ? h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Ture'}), monoLabel(plural(acts.length, 'tură', 'ture'))) : null,
       acts.length ? h('div', {class: 'act-grid'}, acts.map(activityCard)) : null,
       works.length ? h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Instrucție'}), monoLabel(plural(works.length, 'antrenament', 'antrenamente'))) : null,
-      works.length ? h('div', {class: 'work-list'}, works.map(workoutRow)) : null);
+      works.length ? h('div', {class: 'work-list'}, works.map(workoutRow)) : null,
+      d.more && d.from ? h('div', {class: 'mars-more'}, btn('Mai vechi', () => Mars.loadOlder(), 'btn btn-secondary btn-more')) : null);
   },
-  reset() { Mars.data = null; if (Mars.body) delete Mars.body.dataset.loaded; }
+  reset() { Mars.data = null; Mars.open = new Set(); if (Mars.body) delete Mars.body.dataset.loaded; }
 };
 function activityCard(a) {
   const [label, ic] = SPORT[a.type] || SPORT.run;
@@ -32,7 +62,7 @@ function activityCard(a) {
     h('div', {class: 'act-body'},
       h('div', {class: 'act-top'}, h('span', {class: 'act-kind ' + ic}, icon(ic, 16), label), monoLabel(fmt.day(a.startAt).toUpperCase() + ' · ' + fmt.time(a.startAt))),
       h('div', {class: 'act-stats'}, h('span', null, h('b', {text: fmt.dec(km, km < 10 ? 2 : 1)}), ' km'), h('span', null, h('b', {text: fmt.dur(minutes)})), h('span', null, h('b', {text: pace}))),
-      h('div', {class: 'act-foot'}, num(a.kcal) ? h('span', {class: 'muted', text: fmt.int(a.kcal) + ' kcal'}) : h('span'),
+      h('div', {class: 'act-foot'}, num(a.kcal) ? h('span', {class: 'muted', title: 'Estimate pe telefon, după distanță', text: '≈ ' + fmt.int(a.kcal) + ' kcal'}) : h('span'),
         mid ? h('a', {href: '#teren/' + mid[0].toFixed(5) + ',' + mid[1].toFixed(5), class: 'chip-btn', onclick: () => { Teren.focusRoute = {id: a.id, type: a.type, polyline: a.polyline}; Teren.fitted = true; }}, icon('teren', 14), 'Pe hartă') : null)));
 }
 function paceText(minPerKm) { if (!Number.isFinite(minPerKm) || minPerKm <= 0) return '—'; const m = Math.floor(minPerKm), s = Math.round((minPerKm - m) * 60); return m + ':' + String(s === 60 ? 59 : s).padStart(2, '0'); }
@@ -66,13 +96,37 @@ function routeSketch(pts, type) {
 }
 /** Felul antrenamentului vine ca slug ASCII de la telefon (SitePayloads.kt); pe site, cu diacritice. */
 const WORK_KIND = {forta: 'forță', acasa: 'acasă', intervale: 'intervale'};
+const WORK_SOURCE = {asteptare: 'Cât aștepți'};
 function workoutRow(w) {
-  return h('div', {class: 'work'},
+  const rich = !!(w.exercises?.length || w.music?.length), open = Mars.open.has(w.id);
+  const done = w.completed === false && num(w.plannedSets) ? 'oprit la ' + fmt.int(w.sets) + ' din ' + fmt.int(w.plannedSets) + ' serii' : w.completed === true ? 'dus la capăt' : null;
+  const row = h('div', {class: 'work' + (rich ? ' open-able' : '') + (open ? ' open' : ''), ...(rich ? {role: 'button', tabindex: '0', 'aria-expanded': String(open)} : {})},
     h('span', {class: 'work-ic'}, icon('lift', 20)),
-    h('div', {class: 'work-body'}, h('span', {class: 'work-title', text: w.title || 'Antrenament'}), h('span', {class: 'work-meta', text: [fmt.day(w.startAt), WORK_KIND[w.kind] || w.kind, num(w.sets) ? plural(w.sets, 'serie', 'serii') : null].filter(Boolean).join(' · ')})),
+    h('div', {class: 'work-body'}, h('span', {class: 'work-title', text: w.title || 'Antrenament'}), h('span', {class: 'work-meta', text: [fmt.day(w.startAt), WORK_KIND[w.kind] || w.kind, num(w.sets) ? plural(w.sets, 'serie', 'serii') : null, WORK_SOURCE[w.source], done].filter(Boolean).join(' · ')})),
     h('div', {class: 'work-stats'},
       h('span', null, h('b', {text: fmt.dur((w.durationS || 0) / 60)})),
       num(w.volumeKg) ? h('span', null, h('b', {text: fmt.int(w.volumeKg)}), ' kg') : null,
-      num(w.kcal) ? h('span', null, h('b', {text: fmt.int(w.kcal)}), ' kcal') : null));
+      num(w.kcal) ? h('span', null, h('b', {text: fmt.int(w.kcal)}), ' kcal') : null,
+      rich ? icon('next', 16, 'work-chev') : null));
+  if (!rich) return row;
+  const more = h('div', {class: 'work-more', hidden: !open});
+  const draw = () => {
+    const vol = e => { let v = 0; for (const x of e.sets) if (num(x.kg) && x.reps > 0) v += x.kg * x.reps; return v; };
+    fill(more,
+      w.exercises?.length ? h('table', {class: 'ex-table'}, h('tbody', null, w.exercises.map(e => h('tr', null, h('td', {text: e.name}),
+        h('td', null, h('span', {class: 'ex-sets'}, e.sets.map(x => h('span', {class: 'ex-set', text: x.reps + (x.load ? ' × ' + x.load : '')})))),
+        h('td', {text: vol(e) ? fmt.int(vol(e)) + ' kg' : plural(e.sets.length, 'serie', 'serii')}))))) : null,
+      w.music?.length ? h('div', null, monoLabel('PE MUZICA'), h('div', {class: 'music-chips', style: {marginTop: '8px'}}, w.music.map(t => h('span', {class: 'music-chip', title: [t.title, t.artist].filter(Boolean).join(' · ')}, icon('muzica', 14), h('span', {text: t.title + (t.artist ? ' · ' + t.artist : '')}))))) : null);
+  };
+  const toggle = () => {
+    const now = !Mars.open.has(w.id);
+    if (now) Mars.open.add(w.id); else Mars.open.delete(w.id);
+    row.classList.toggle('open', now); row.setAttribute('aria-expanded', String(now)); more.hidden = !now;
+    if (now && !more.childNodes.length) draw();
+  };
+  row.addEventListener('click', toggle);
+  row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  if (open) draw();
+  return h('div', {class: 'work-wrap'}, row, more);
 }
 Site.register('mars', Mars);

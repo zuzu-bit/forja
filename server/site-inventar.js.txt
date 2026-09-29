@@ -1,43 +1,359 @@
 // INVENTAR · Poze și documente — rezumatele rulărilor Inventar din telefon (users/{uid}/inventory, prin /insights/api/inventar):
 // dosarele, „De aruncat”, unde s-au mutat; plus copiile din galerie din ultimele 24 h (/v2/files) cu previzualizare.
+// Mirror (contract v4): Oglinda — pozele, video-urile și documentele însele, cât ai contul, în albumele din telefon
+// (/v2/mirror), cu vizualizator pe tot ecranul, descărcare și contorul de spațiu; plus jocurile din „Cât aștepți”.
+const INV_CSS = `
+.mir-head{display:flex;flex-direction:column;gap:16px}
+.mir-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.mir-counts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.mir-meter{display:flex;flex-direction:column;gap:8px}
+.mir-meter .bar{height:8px}
+.mir-meter .bar.full i{background:linear-gradient(90deg,var(--ember-warm),var(--ember))}
+.mir-meter-row{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font:600 13px/1.3 var(--body);color:var(--text2)}
+.mir-meter-row b{color:var(--text);font-weight:700}
+.mir-phone{font-size:13px;color:var(--text2);line-height:1.45}
+.mir-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:22px 0 4px}
+.mir-tools .seg{flex-wrap:wrap}
+.mir-search{flex:1;min-width:160px;max-width:320px;min-height:36px;padding:8px 12px;font-size:14px}
+.album-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.album{display:flex;flex-direction:column;gap:0;border-radius:var(--r-card);background:var(--s1);border:1px solid var(--stroke2);overflow:hidden;text-align:left;min-width:0;color:inherit;padding:0}
+.album:hover{border-color:var(--stroke3)}
+.album-cover{display:flex;align-items:center;justify-content:center;aspect-ratio:1;background:#101113;overflow:hidden;color:var(--dim2)}
+.album-cover img{width:100%;height:100%;object-fit:cover;display:block}
+.album-text{display:flex;flex-direction:column;gap:5px;padding:10px 12px 12px;min-width:0}
+.album-name{font:600 17px/1.1 var(--display);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.album-meta{font:500 10px/1.2 var(--mono);color:var(--dim);letter-spacing:.06em}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:4px}
+.mgrid-month{grid-column:1/-1;display:flex;justify-content:space-between;align-items:baseline;margin:14px 0 4px}
+.mgrid-month:first-child{margin-top:2px}
+.mtile{position:relative;aspect-ratio:1;border:0;padding:0;border-radius:3px;background:#101113;overflow:hidden;color:var(--dim2);display:flex;align-items:center;justify-content:center}
+.mtile img{width:100%;height:100%;object-fit:cover;display:block}
+.mtile:focus-visible{outline:2px solid var(--olive2);outline-offset:1px}
+.mtile-badge{position:absolute;right:5px;bottom:5px;display:inline-flex;align-items:center;gap:3px;padding:3px 5px;border-radius:3px;background:rgba(10,10,11,.72);color:var(--text);font:600 9.5px/1 var(--mono)}
+.mtile.doc{flex-direction:column;gap:8px;padding:10px;background:var(--s2);border:1px solid var(--stroke)}
+.mtile.doc .mtile-name{font:600 11.5px/1.25 var(--body);color:var(--text2);text-align:center;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;word-break:break-word}
+.mtile.doc.has-img{padding:0}
+.mtile.doc.has-img .mtile-name{display:none}
+.mir-more{display:flex;justify-content:center;margin-top:14px}
+.mir-album-head{display:flex;flex-direction:column;gap:6px;margin:6px 0 16px}
+.mir-album-head h2{font:600 30px/1.05 var(--display);word-break:break-word}
+.mviewer{position:fixed;inset:0;width:100vw;height:100svh;max-width:none;max-height:none;margin:0;padding:0;border:0;background:#050506;color:var(--text)}
+.mviewer::backdrop{background:#050506}
+.mviewer[open]{display:flex;flex-direction:column}
+.mv-top,.mv-bottom{display:flex;align-items:center;gap:10px;padding:10px 16px;background:linear-gradient(180deg,rgba(5,5,6,.95),rgba(5,5,6,.6));z-index:2}
+.mv-bottom{background:linear-gradient(0deg,rgba(5,5,6,.95),rgba(5,5,6,.6));justify-content:space-between}
+.mv-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.mv-title b{font:600 15px/1.2 var(--body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mv-stage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;touch-action:pan-y;user-select:none}
+.mv-stage img,.mv-stage video{max-width:100%;max-height:100%;object-fit:contain;display:block}
+.mv-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:64px;border:0;border-radius:6px;background:rgba(18,18,20,.55);color:var(--text);display:flex;align-items:center;justify-content:center}
+.mv-nav.prev{left:10px}.mv-nav.next{right:10px}
+.mv-nav:disabled{opacity:.2}
+.mv-note{position:absolute;left:16px;right:16px;bottom:16px;text-align:center;color:var(--text2);font-size:13px}
+.mv-actions{display:flex;gap:8px}
+.run-state{display:inline-flex;align-items:center;gap:6px}
+.run-state .badge.amber{color:var(--amber);border-color:rgba(243,185,82,.35)}
+.run-state .badge.ember{color:var(--ember);border-color:rgba(255,107,87,.35)}
+.run-reasons{display:flex;flex-wrap:wrap;gap:6px}
+.folder-theme{font-size:12px;color:var(--dim);line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.folder-covers{display:grid;grid-template-columns:1fr 1fr;gap:2px;aspect-ratio:1;border-radius:3px;overflow:hidden;background:#101113;margin-bottom:6px}
+.folder-covers span{display:block;background:#15161a;overflow:hidden}
+.folder-covers img{width:100%;height:100%;object-fit:cover;display:block}
+.games{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
+.game{display:flex;flex-direction:column;gap:14px}
+.game-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.game-name{font:700 26px/1 var(--display);letter-spacing:.04em}
+.game-levels{display:flex;flex-wrap:wrap;gap:4px}
+.game-level{width:26px;height:26px;border-radius:3px;background:var(--s2);border:1px solid var(--stroke);display:flex;flex-direction:column;align-items:center;justify-content:center;font:600 9px/1 var(--mono);color:var(--dim2)}
+.game-level.open{color:var(--text2)}
+.game-level.won{border-color:rgba(243,185,82,.4);color:var(--amber)}
+.game-level i{font-style:normal;font-size:7px;letter-spacing:-.5px;margin-top:2px}
+.game-plays{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--text2)}
+.game-play{display:flex;justify-content:space-between;gap:10px}
+@media (max-width:560px){
+ .mgrid{grid-template-columns:repeat(3,minmax(0,1fr));gap:3px}
+ .album-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .mir-counts{gap:8px}.mir-counts .stat .hero b{font-size:30px}
+ .mir-search{max-width:none;min-width:0;flex-basis:100%}
+ .mv-nav{display:none}
+ .mv-top,.mv-bottom{padding:8px 12px}
+ .mv-bottom{flex-wrap:wrap;gap:8px}
+ .mv-actions{width:100%}
+ .mv-actions .btn{flex:1;min-height:40px;padding:0 10px}
+}`;
+document.head.append(h('style', {text: INV_CSS}));
+
+/** Motivele din „De aruncat” și ale mutărilor care nu au mers, cum le scrie telefonul (DeleteReason / MoveReason). */
+const TRASH_REASONS = {duplicate: 'dubluri', similar: 'asemănătoare', blurry: 'neclare', tiny: 'foarte mici', old_screenshot: 'capturi vechi', accidental: 'din greșeală', ai: 'sugerate de analiză', temp: 'temporare', manual: 'alese de tine'};
+const FAIL_REASONS = {owned: 'în dosarul altei aplicații', dir: 'dosar nepermis', volume: 'pe alt card', denied: 'fără drept de scriere', gone: 'șterse între timp', mismatch: 'nu au ajuns la loc', error: 'eroare'};
+const MIR_KINDS = [['albums', 'Albume'], ['all', 'Toate'], ['photo', 'Poze'], ['video', 'Video'], ['file', 'Documente']];
+
 const Inventar = {
-  data: null, body: null, runsBox: null, vaultBox: null, vault: {items: [], cursor: null, total: 0, loading: false}, thumbs: new Map(), preview: null, observer: null,
+  data: null, body: null, runsBox: null, mirrorBox: null, vaultBox: null, gamesBox: null,
+  vault: {items: [], cursor: null, total: 0, loading: false}, thumbs: new Map(), preview: null, observer: null,
+  mirror: {mode: 'albums', q: '', key: '', items: [], next: null, total: 0, loading: false, token: 0}, viewer: null,
   mount(body) {
     Inventar.body = body;
+    Inventar.mirrorBox = h('div', {class: 'inv-mirror', id: 'inventar-mirror'});
     Inventar.runsBox = h('div', {class: 'inv-runs', id: 'inventar-runs'});
+    Inventar.gamesBox = h('div', {class: 'inv-games', id: 'inventar-games'});
     Inventar.vaultBox = h('div', {class: 'inv-vault', id: 'inventar-vault'});
-    body.append(Inventar.runsBox, Inventar.vaultBox);
-    Inventar.observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => { for (const e of entries) if (e.isIntersecting) { Inventar.observer.unobserve(e.target); Inventar.thumb(e.target); } }, {rootMargin: '300px'}) : null;
+    body.append(Inventar.mirrorBox, Inventar.runsBox, Inventar.gamesBox, Inventar.vaultBox);
+    Inventar.observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => { for (const e of entries) if (e.isIntersecting) { Inventar.observer.unobserve(e.target); Inventar.thumb(e.target); } }, {rootMargin: '400px'}) : null;
   },
   enter(detail, changed) {
     const draw = () => Inventar.render(Inventar.data, Site.detail);
     if (Inventar.data && !changed) draw();
     loadInto('inventar', Inventar.runsBox, () => api('/insights/api/inventar'), d => { Inventar.data = d; draw(); }, {replaceOnError: !Inventar.data});
-    if (!Inventar.vault.loaded) Inventar.loadVault(false);
   },
+  /** Cu oglinda (v4) seiful de 24 h nu mai e nevoie; fără ea, rămâne ca înainte. */
+  hasMirror(d) { return !!d?.mirror; },
   render(d, detail) {
     const runs = [...(d?.runs || [])].sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
-    const box = Inventar.runsBox;
+    const box = Inventar.runsBox, mirror = Inventar.hasMirror(d);
+    if (!mirror) { fill(Inventar.mirrorBox); if (!Inventar.vault.loaded) Inventar.loadVault(false); }
+    else fill(Inventar.vaultBox);
+    if (detail && detail.startsWith('album:')) {
+      const rest = detail.slice(6), i = rest.indexOf(':');
+      fill(box); fill(Inventar.gamesBox); setLine('inventar', '');
+      if (!mirror || i < 0) { fill(Inventar.mirrorBox, h('a', {href: '#inventar', class: 'back-link'}, icon('back', 16), 'Inventar'), emptyState('Albumul nu e aici.', 'Oglinda pornește după contractul v4.', null, 'sorry')); return; }
+      Inventar.renderAlbum(rest.slice(0, i), rest.slice(i + 1));
+      return;
+    }
+    if (mirror) Inventar.renderMirror(d);
+    Inventar.renderGames(d?.games || []);
     if (detail) {
       const run = runs.find(r => String(r.id) === detail);
       setLine('inventar', '');
+      fill(Inventar.mirrorBox); fill(Inventar.gamesBox);
       if (!run) { fill(box, h('a', {href: '#inventar', class: 'back-link'}, icon('back', 16), 'Inventar'), emptyState('Rularea nu mai e aici.', 'Site-ul păstrează ultimele 20 de rulări.', null, 'sorry')); return; }
       fill(box, h('a', {href: '#inventar', class: 'back-link'}, icon('back', 16), 'Toate rulările'), runCard(run, true));
       return;
     }
     if (!runs.length) {
-      setLine('inventar', '');
-      fill(box, emptyState('Niciun inventar încă.', 'Pornește Inventarul în FORJA. Dosarele apar aici.', null, 'idle'));
+      setLine('inventar', mirror ? Inventar.mirrorLine(d) : '');
+      fill(box, mirror ? h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Rulări Inventar'}), monoLabel('NICIUNA ÎNCĂ')) : emptyState('Niciun inventar încă.', 'Pornește Inventarul în FORJA. Dosarele apar aici.', null, 'idle'));
       return;
     }
-    setLine('inventar', plural(runs.length, 'rulare', 'rulări') + ' · ultima ' + fmt.ago(runs[0].finishedAt));
-    fill(box, runCard(runs[0], false),
+    setLine('inventar', mirror ? Inventar.mirrorLine(d) : plural(runs.length, 'rulare', 'rulări') + ' · ultima ' + fmt.ago(runs[0].finishedAt));
+    fill(box, mirror ? h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Rulări Inventar'}), monoLabel(plural(runs.length, 'rulare', 'rulări').toUpperCase())) : null,
+      runCard(runs[0], false),
       runs.length > 1 ? h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Rulări anterioare'})) : null,
       runs.length > 1 ? h('div', {class: 'run-list'}, runs.slice(1).map(r => h('a', {href: '#inventar/' + encodeURIComponent(r.id), class: 'run-row'},
         h('span', {class: 'run-ic'}, icon(r.kind === 'docs' ? 'doc' : 'photo', 18)),
-        h('span', {class: 'run-text'}, h('b', {text: (r.kind === 'docs' ? 'Documente' : 'Poze') + ' · ' + plural((r.folders || []).length, 'dosar', 'dosare')}), h('span', {class: 'muted', text: fmt.ago(r.finishedAt) + ' · ' + (r.dest?.label || '')})),
+        h('span', {class: 'run-text'}, h('b', {text: (r.kind === 'docs' ? 'Documente' : 'Poze') + ' · ' + plural((r.folders || []).length, 'dosar', 'dosare')}), h('span', {class: 'muted', text: fmt.ago(r.finishedAt) + ' · ' + (runStateText(r) || r.dest?.label || '')})),
         h('span', {class: 'run-num', text: fmt.int(r.moved)}), icon('next', 16, 'dimmed')))) : null);
   },
+  mirrorLine(d) {
+    const c = d?.mirror?.stats?.count || {};
+    const parts = [c.photo ? plural(c.photo, 'poză', 'poze') : null, c.video ? plural(c.video, 'video', 'video') : null, c.file ? plural(c.file, 'document', 'documente') : null].filter(Boolean);
+    return parts.length ? 'Pe site: ' + parts.join(' · ') : '';
+  },
+
+  // ───────────── Oglinda ─────────────
+  renderMirror(d) {
+    const m = d.mirror, st = m.stats || {}, c = st.count || {}, meter = m.meter || {}, used = num(meter.used) || 0, cap = num(meter.cap) || 0;
+    const phone = d.storage, g = phone?.gallery;
+    const full = cap && used >= cap * 0.98;
+    const phoneText = phone ? [
+      'Pe telefon: ' + [phone.photos?.count !== null && phone.photos?.count !== undefined ? plural(phone.photos.count, 'poză', 'poze') + (phone.photos.bytes ? ' (' + fmt.bytes(phone.photos.bytes) + ')' : '') : null,
+        phone.videos?.count ? plural(phone.videos.count, 'video', 'video') : null,
+        phone.docs ? plural((phone.docs.loose || 0) + (phone.docs.organized || 0), 'document', 'documente') + (phone.docs.organized ? ', ' + fmt.int(phone.docs.organized) + ' în dosare' : '') : null].filter(Boolean).join(' · ') + '.',
+      g && num(g.waiting) ? `Mai urcă ${fmt.int(g.waiting)}` + (g.state === 'wifi' ? ', pe Wi-Fi.' : g.state === 'full' ? ': oglinda e plină.' : g.state === 'permission' ? ': lipsește permisiunea pozelor.' : '.') : g && g.total ? 'Totul e urcat.' : null
+    ].filter(Boolean).join(' ') : null;
+    const head = h('article', {class: 'card mir-head'},
+      h('div', {class: 'mir-top'}, h('span', {class: 'run-kind'}, icon('photo', 20), monoLabel('OGLINDA · CÂT AI CONTUL')),
+        infoDot('Oglinda', 'Pozele urcă ca JPEG de până la 2048 px, cu data făcută păstrată. Video-urile de cel mult 25 MB urcă întregi; celelalte, doar posterul. Documentele din dosarele alese urcă octet cu octet. Stau cât ai contul și se șterg la revocare. Spațiul gratuit Cloudflare R2 e 10 GB pentru tot serverul FORJA, cu tot cu nopțile; oglinda se oprește la ' + gbText(cap) + '.')),
+      h('div', {class: 'mir-counts'}, statBlock('POZE', fmt.int(c.photo || 0)), statBlock('VIDEO', fmt.int(c.video || 0)), statBlock('DOCUMENTE', fmt.int(c.file || 0))),
+      h('div', {class: 'mir-meter'}, h('div', {class: 'mir-meter-row'}, h('span', null, h('b', {text: gbText(used)}), ' din ' + gbText(cap)), monoLabel('R2 GRATUIT ' + gbText(num(meter.free_tier) || 1e10), 'dim')),
+        bar(cap ? used / cap : 0, full ? 'full' : ''), full ? h('p', {class: 'panel-warn', text: 'Oglinda e plină. Pozele noi rămân pe telefon până se face loc.'}) : null),
+      phoneText ? h('p', {class: 'mir-phone', text: phoneText}) : null);
+    const seg = h('div', {class: 'seg', role: 'tablist'}, MIR_KINDS.map(([k, label]) => h('button', {type: 'button', class: 'seg-btn' + (Inventar.mirror.mode === k ? ' active' : ''), role: 'tab', 'aria-selected': String(Inventar.mirror.mode === k), onclick: () => { Inventar.mirror.mode = k; Inventar.renderMirror(Inventar.data); }}, label)));
+    let timer = null;
+    const search = h('input', {class: 'field mir-search', type: 'search', placeholder: 'Caută după nume sau album', value: Inventar.mirror.q, 'aria-label': 'Caută în oglindă',
+      oninput: e => { clearTimeout(timer); timer = setTimeout(() => { Inventar.mirror.q = e.target.value.trim(); if (Inventar.mirror.q && Inventar.mirror.mode === 'albums') Inventar.mirror.mode = 'all'; Inventar.renderMirrorBody(); }, 350); }});
+    Inventar.mirrorContent = h('div', {class: 'mir-content'});
+    fill(Inventar.mirrorBox, head, h('div', {class: 'mir-tools'}, seg, search), Inventar.mirrorContent);
+    Inventar.renderMirrorBody();
+  },
+  renderMirrorBody() {
+    const m = Inventar.data?.mirror, box = Inventar.mirrorContent; if (!m || !box) return;
+    for (const b of Inventar.mirrorBox.querySelectorAll('.seg-btn')) b.classList.toggle('active', b.textContent === (MIR_KINDS.find(k => k[0] === Inventar.mirror.mode) || [])[1]);
+    if (!(m.stats?.items)) {
+      fill(box, emptyState(m.consent?.on ? 'Oglinda se umple.' : 'Oglinda așteaptă telefonul.', m.consent?.on ? 'Pozele urcă treptat, pe Wi-Fi. Primele apar aici în câteva minute.' : 'Semnează contractul v4 în FORJA. Pozele și documentele urcă singure.', null, 'idle'));
+      return;
+    }
+    if (Inventar.mirror.mode === 'albums' && !Inventar.mirror.q) {
+      const albums = m.albums || [], gallery = albums.filter(a => a.group === 'gallery'), docs = albums.filter(a => a.group === 'docs');
+      fill(box,
+        gallery.length ? h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Galeria'}), monoLabel(plural(gallery.length, 'album', 'albume').toUpperCase())) : null,
+        gallery.length ? h('div', {class: 'album-grid'}, gallery.map(albumTile)) : null,
+        docs.length ? h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Documente'}), monoLabel(plural(docs.length, 'dosar', 'dosare').toUpperCase())) : null,
+        docs.length ? h('div', {class: 'album-grid'}, docs.map(albumTile)) : null);
+      return;
+    }
+    const kind = Inventar.mirror.mode === 'albums' ? 'all' : Inventar.mirror.mode;
+    Inventar.list(box, {kind, q: Inventar.mirror.q});
+  },
+  renderAlbum(group, album) {
+    const m = Inventar.data.mirror, a = (m.albums || []).find(x => x.group === group && x.album === album);
+    const box = h('div', {class: 'mir-content'});
+    Inventar.mirrorContent = box;
+    fill(Inventar.mirrorBox, h('a', {href: '#inventar', class: 'back-link'}, icon('back', 16), 'Oglinda'),
+      h('div', {class: 'mir-album-head'}, monoLabel(group === 'docs' ? 'DOSAR DE DOCUMENTE' : 'ALBUM'), h('h2', {text: album}),
+        a ? monoLabel(plural(a.count, group === 'docs' ? 'document' : 'element', group === 'docs' ? 'documente' : 'elemente').toUpperCase() + ' · ' + fmt.bytes(a.bytes) + (a.latestAt ? ' · ULTIMA ' + fmt.day(a.latestAt).toUpperCase() : ''), 'dim') : null),
+      box);
+    Inventar.list(box, {group, album});
+  },
+  /** O listă din /v2/mirror: grila cu luni ca titluri, pagini de 60, „Mai multe” la capăt. */
+  async list(box, params, more = false) {
+    const st = Inventar.mirror, key = JSON.stringify(params);
+    if (!more || st.key !== key) { st.key = key; st.items = []; st.next = null; st.total = 0; }
+    const token = ++st.token;
+    if (!more) fill(box, h('div', {class: 'mgrid'}, Array.from({length: 12}, () => h('div', {class: 'sk sk-thumb'}))));
+    st.loading = true;
+    try {
+      const q = new URLSearchParams({limit: '60'});
+      if (params.kind && params.kind !== 'all') q.set('kind', params.kind);
+      if (params.q) q.set('q', params.q);
+      if (params.group) q.set('group', params.group);
+      if (params.album !== undefined) q.set('album', params.album);
+      if (more && st.next) q.set('after', st.next);
+      const d = await api('/v2/mirror?' + q);
+      if (token !== st.token) return;
+      st.items.push(...(d?.items || [])); st.next = d?.next || null; st.total = d?.total ?? st.items.length;
+      Inventar.drawList(box, params);
+    } catch (e) {
+      if (e?.name === 'AbortError' || token !== st.token) return;
+      fill(box, errorState(e?.message, () => Inventar.list(box, params)));
+    } finally { if (token === st.token) st.loading = false; }
+  },
+  drawList(box, params) {
+    const st = Inventar.mirror, items = st.items;
+    if (!items.length) { fill(box, h('p', {class: 'panel-empty', text: params.q ? 'Nimic cu „' + params.q + '”.' : 'Nimic aici încă.'})); return; }
+    const grid = h('div', {class: 'mgrid'});
+    let month = '';
+    const counts = new Map();
+    for (const it of items) { const k = monthKey(it.taken_at); counts.set(k, (counts.get(k) || 0) + 1); }
+    items.forEach((it, i) => {
+      const k = monthKey(it.taken_at);
+      if (k !== month) { month = k; grid.append(h('div', {class: 'mgrid-month'}, h('span', {class: 'block-title', style: {fontSize: '18px'}, text: monthLabel(it.taken_at)}), monoLabel(fmt.int(counts.get(k)) + (st.next && i + counts.get(k) >= items.length ? '+' : '')))); }
+      grid.append(mirrorTile(it, () => Inventar.openItem(i)));
+    });
+    fill(box, grid, st.next ? h('div', {class: 'mir-more'}, btn('Mai multe', () => Inventar.list(box, params, true), 'btn btn-secondary btn-more')) : null,
+      monoLabel(st.total ? fmt.int(items.length) + ' DIN ' + fmt.int(st.total) : '', 'dim'));
+  },
+  async thumb(cover) {
+    const id = cover.dataset.id, path = cover.dataset.src || ('/v2/files/' + encodeURIComponent(id) + '/thumbnail');
+    try {
+      let url = Inventar.thumbs.get(path);
+      if (!url) {
+        const blob = await api(path, {blob: true}); url = URL.createObjectURL(new Blob([blob], {type: blob.type || 'image/jpeg'})); Inventar.thumbs.set(path, url);
+        // Memoria browserului: cel mult 800 de miniaturi; cele vechi se eliberează (grila le recere dacă revin în vedere).
+        if (Inventar.thumbs.size > 800) { const [old, u] = Inventar.thumbs.entries().next().value; Inventar.thumbs.delete(old); URL.revokeObjectURL(u); }
+      }
+      // Imaginea ia locul iconiței; insigna unui video și numele unui document rămân.
+      if (cover.isConnected) { cover.querySelectorAll(':scope > .ic, :scope > img').forEach(n => n.remove()); cover.prepend(h('img', {src: url, alt: '', loading: 'lazy', decoding: 'async'})); cover.classList.add('has-img'); }
+    } catch { /* rămâne iconița */ }
+  },
+  /** Poză sau video: vizualizatorul pe tot ecranul; document: previzualizarea (PDF, text, DOCX) sau descărcarea. */
+  openItem(i) {
+    const it = Inventar.mirror.items[i]; if (!it) return;
+    if (it.kind === 'file' && it.preview !== 'image') {
+      Inventar.open({...it, received_at: it.received_at, preview: it.preview}, {path: '/v2/mirror/' + encodeURIComponent(it.id), meta: fmt.bytes(it.bytes) + ' · ' + it.album + (it.taken_at ? ' · ' + fmt.day(it.taken_at) : ''), mirror: true});
+      return;
+    }
+    Inventar.view(i);
+  },
+  // ───────────── Vizualizatorul ─────────────
+  viewerDialog() {
+    if (Inventar.viewer) return Inventar.viewer;
+    const d = h('dialog', {class: 'mviewer', id: 'mirror-viewer', 'aria-label': 'Poza, pe tot ecranul'});
+    const title = h('div', {class: 'mv-title'}), stage = h('div', {class: 'mv-stage'}), counter = monoLabel(''), actions = h('div', {class: 'mv-actions'});
+    const prev = h('button', {type: 'button', class: 'mv-nav prev', 'aria-label': 'Precedenta', onclick: () => Inventar.step(-1)}, icon('back', 24));
+    const next = h('button', {type: 'button', class: 'mv-nav next', 'aria-label': 'Următoarea', onclick: () => Inventar.step(1)}, icon('next', 24));
+    d.append(h('div', {class: 'mv-top'}, title, h('button', {type: 'button', class: 'icon-btn', 'aria-label': 'Închide', onclick: () => closeDialog(d)}, icon('close', 18))),
+      stage, h('div', {class: 'mv-bottom'}, counter, actions));
+    stage.append(prev, next);
+    let x0 = null;
+    stage.addEventListener('pointerdown', e => { x0 = e.clientX; });
+    stage.addEventListener('pointerup', e => { if (x0 === null) return; const dx = e.clientX - x0; x0 = null; if (Math.abs(dx) > 50) Inventar.step(dx < 0 ? 1 : -1); });
+    d.addEventListener('keydown', e => { if (e.key === 'ArrowRight') Inventar.step(1); if (e.key === 'ArrowLeft') Inventar.step(-1); });
+    d.addEventListener('close', () => Inventar.releaseView());
+    d.addEventListener('click', e => { if (e.target === stage) closeDialog(d); });
+    document.body.append(d);
+    Inventar.viewer = {d, title, stage, counter, actions, prev, next, at: -1, urls: [], token: 0};
+    return Inventar.viewer;
+  },
+  releaseView() { const v = Inventar.viewer; if (!v) return; v.token++; v.urls.forEach(u => URL.revokeObjectURL(u)); v.urls = []; v.stage.querySelector('video')?.pause(); },
+  step(delta) {
+    const v = Inventar.viewer, st = Inventar.mirror; if (!v) return;
+    let i = v.at + delta;
+    while (i >= 0 && i < st.items.length && st.items[i].kind === 'file' && st.items[i].preview !== 'image') i += delta;
+    if (i < 0 || i >= st.items.length) return;
+    Inventar.view(i);
+  },
+  async view(i) {
+    const v = Inventar.viewerDialog(), st = Inventar.mirror, it = st.items[i];
+    Inventar.releaseView();
+    const token = v.token; v.at = i;
+    openDialog(v.d);
+    fill(v.title, h('b', {text: it.name}), monoLabel([it.taken_at ? fmt.dayLong(it.taken_at) + ', ' + fmt.time(it.taken_at) : null, it.album].filter(Boolean).join(' · ').toUpperCase(), 'dim'));
+    fill(v.counter, `${fmt.int(i + 1)} / ${fmt.int(st.total || st.items.length)}` + (it.width && it.height ? ` · ${it.width}×${it.height}` : '') + ' · ' + fmt.bytes(it.orig_bytes || it.bytes));
+    v.prev.disabled = i <= 0; v.next.disabled = i >= st.items.length - 1 && !st.next;
+    fill(v.actions,
+      it.file ? btn('Descarcă', () => Inventar.downloadMirror(it), 'btn btn-secondary', 'download') : null,
+      btn('Șterge copia', async () => {
+        if (!await confirmSheet('Ștergi copia de pe site?', 'Originalul rămâne pe telefon și nu mai urcă.', 'Șterge copia', true)) return;
+        await api('/v2/mirror/' + encodeURIComponent(it.id), {method: 'DELETE'});
+        st.items.splice(i, 1); st.total = Math.max(0, st.total - 1);
+        toast('Copia a fost ștearsă.');
+        if (!st.items.length) { closeDialog(v.d); } else Inventar.view(Math.min(i, st.items.length - 1));
+        const box = Inventar.mirrorContent; if (box) Inventar.drawList(box, JSON.parse(st.key || '{}'));
+      }, 'btn btn-ghost-danger', 'trash'));
+    const media = [...v.stage.children].filter(n => !n.classList.contains('mv-nav'));
+    media.forEach(n => n.remove());
+    const put = n => { [...v.stage.children].filter(x => !x.classList.contains('mv-nav')).forEach(x => x.remove()); v.stage.prepend(n); };
+    // Întâi miniatura (e deja în memorie de la grilă), apoi fișierul întreg.
+    const thumbUrl = Inventar.thumbs.get(thumbPath(it));
+    if (thumbUrl) put(h('img', {src: thumbUrl, alt: it.name, style: {filter: 'blur(2px)'}}));
+    else put(h('div', {class: 'sk', style: {width: '60%', height: '50%'}}));
+    // Vecinii: miniaturile lor intră în memorie pentru o trecere fără pauză.
+    for (const j of [i - 1, i + 1]) { const n = st.items[j]; if (n?.thumb && !Inventar.thumbs.has(thumbPath(n))) api(thumbPath(n), {blob: true}).then(b => { if (!Inventar.thumbs.has(thumbPath(n))) Inventar.thumbs.set(thumbPath(n), URL.createObjectURL(b)); }).catch(() => {}); }
+    if (i >= st.items.length - 3 && st.next && !st.loading && Inventar.mirrorContent) Inventar.list(Inventar.mirrorContent, JSON.parse(st.key || '{}'), true);
+    try {
+      if (it.kind === 'video' && !it.file) {
+        const b = await api('/v2/mirror/' + encodeURIComponent(it.id) + '/poster', {blob: true}); if (token !== v.token) return;
+        const u = URL.createObjectURL(b); v.urls.push(u);
+        put(h('img', {src: u, alt: it.name}));
+        v.stage.append(h('p', {class: 'mv-note', text: 'Video de ' + fmt.bytes(it.orig_bytes) + (it.duration_ms ? ', ' + fmt.dur(it.duration_ms / 60000) : '') + '. Pe site stă posterul; fișierul rămâne pe telefon.'}));
+        return;
+      }
+      const b = await api('/v2/mirror/' + encodeURIComponent(it.id), {blob: true}); if (token !== v.token) return;
+      const u = URL.createObjectURL(new Blob([b], {type: it.media_type || 'application/octet-stream'})); v.urls.push(u);
+      if (it.kind === 'video') put(h('video', {src: u, controls: true, playsinline: true, preload: 'metadata', 'aria-label': it.name}));
+      else put(h('img', {src: u, alt: it.name}));
+    } catch (e) {
+      if (e?.name === 'AbortError' || token !== v.token) return;
+      v.stage.append(h('p', {class: 'mv-note', text: e?.message || 'Copia nu se poate deschide acum.'}));
+    }
+  },
+  async downloadMirror(it) {
+    const blob = await api('/v2/mirror/' + encodeURIComponent(it.id), {blob: true});
+    // Poza pe site e JPEG (HEIC-ul telefonului a fost convertit): numele primește .jpg.
+    const name = it.kind === 'photo' && !/\.jpe?g$/i.test(it.name) ? it.name.replace(/\.[^.]{1,5}$/, '') + '.jpg' : it.name;
+    const url = URL.createObjectURL(blob), a = h('a', {href: url, download: name});
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+  },
+
+  // ───────────── Cât aștepți: ZID și ASALT ─────────────
+  renderGames(games) {
+    if (!games.length) { fill(Inventar.gamesBox); return; }
+    fill(Inventar.gamesBox, h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Cât aștepți'}), monoLabel('JOCURILE')),
+      h('div', {class: 'games'}, games.map(gameCard)));
+  },
+
+  // ───────────── Seiful de 24 h (contract v3) ─────────────
   async loadVault(more) {
     const v = Inventar.vault;
     if (v.loading) return; v.loading = true;
@@ -47,7 +363,7 @@ const Inventar = {
       const d = await api('/v2/files?' + q);
       if (!more) v.items = [];
       v.items.push(...(d?.items || [])); v.cursor = d?.next_cursor || null; v.total = d?.total ?? v.items.length; v.bytes = d?.bytes || 0; v.offset = (d?.server_at || Date.now()) - Date.now(); v.loaded = true;
-      Inventar.renderVault();
+      if (!Inventar.hasMirror(Inventar.data)) Inventar.renderVault();
     } catch (e) {
       if (e?.name === 'AbortError') return;
       fill(Inventar.vaultBox, h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Copii din galerie'})), errorState(e?.message, () => Inventar.loadVault(false)));
@@ -68,33 +384,32 @@ const Inventar = {
     }));
     fill(Inventar.vaultBox, head, grid, v.cursor ? btn('Mai multe', () => Inventar.loadVault(true), 'btn btn-secondary btn-more') : null);
   },
-  async thumb(cover) {
-    const id = cover.dataset.id;
-    try {
-      let url = Inventar.thumbs.get(id);
-      if (!url) { const blob = await api('/v2/files/' + encodeURIComponent(id) + '/thumbnail', {blob: true}); url = URL.createObjectURL(new Blob([blob], {type: blob.type || 'image/jpeg'})); Inventar.thumbs.set(id, url); }
-      if (cover.isConnected) fill(cover, h('img', {src: url, alt: '', loading: 'lazy', decoding: 'async'}));
-    } catch { /* rămâne iconița */ }
-  },
-  /** Previzualizare: imagine, PDF (pdf.js), text, DOCX (doar textul). Fără HTML din fișier. */
-  async open(item) {
+  /** Previzualizare: imagine, PDF (pdf.js), text, DOCX (doar textul). Fără HTML din fișier. `opts.path` = copia din oglindă. */
+  async open(item, opts = {}) {
     Inventar.closePreview();
     const d = $('preview-dialog'), body = $('preview-body'), state = {id: item.id, urls: [], task: null};
+    const path = opts.path || '/v2/files/' + encodeURIComponent(item.id);
     Inventar.preview = state;
     $('preview-title').textContent = item.name;
-    $('preview-meta').textContent = fmt.bytes(item.bytes) + ' · primit ' + fmt.ago(item.received_at) + (item.expires_at ? ' · expiră la ' + fmt.time(item.expires_at) : '');
+    $('preview-meta').textContent = opts.meta || (fmt.bytes(item.bytes) + ' · primit ' + fmt.ago(item.received_at) + (item.expires_at ? ' · expiră la ' + fmt.time(item.expires_at) : ''));
     fill(body, h('div', {class: 'sk sk-preview'}));
-    fill($('preview-actions'), 
-      btn('Descarcă', () => Inventar.download(item), 'btn', 'download'),
+    fill($('preview-actions'),
+      btn('Descarcă', () => Inventar.download(item, path), 'btn', 'download'),
       btn('Șterge copia', async () => {
         if (!await confirmSheet('Ștergi copia?', 'Originalul rămâne pe telefon.', 'Șterge copia', true)) return;
-        await api('/v2/files/' + encodeURIComponent(item.id), {method: 'DELETE'});
-        Inventar.vault.items = Inventar.vault.items.filter(x => x.id !== item.id); Inventar.vault.total = Math.max(0, Inventar.vault.total - 1);
-        closeDialog(d); Inventar.renderVault(); toast('Copia a fost ștearsă.');
+        await api(path, {method: 'DELETE'});
+        closeDialog(d); toast('Copia a fost ștearsă.');
+        if (opts.mirror) {
+          const st = Inventar.mirror; st.items = st.items.filter(x => x.id !== item.id); st.total = Math.max(0, st.total - 1);
+          if (Inventar.mirrorContent) Inventar.drawList(Inventar.mirrorContent, JSON.parse(st.key || '{}'));
+        } else {
+          Inventar.vault.items = Inventar.vault.items.filter(x => x.id !== item.id); Inventar.vault.total = Math.max(0, Inventar.vault.total - 1);
+          Inventar.renderVault();
+        }
       }, 'btn btn-ghost-danger', 'trash'));
     openDialog(d);
     try {
-      const blob = await api('/v2/files/' + encodeURIComponent(item.id), {blob: true});
+      const blob = await api(path, {blob: true});
       if (Inventar.preview !== state) return;
       const type = item.media_type || blob.type || '';
       if (item.preview === 'image' && /^image\/(jpeg|png|webp|gif|avif|bmp)$/.test(type)) {
@@ -138,8 +453,8 @@ const Inventar = {
       fill(body, h('p', {class: 'preview-error', text: e?.message || 'Previzualizarea nu a mers. Poți descărca fișierul.'}));
     }
   },
-  async download(item) {
-    const blob = await api('/v2/files/' + encodeURIComponent(item.id), {blob: true});
+  async download(item, path) {
+    const blob = await api(path || '/v2/files/' + encodeURIComponent(item.id), {blob: true});
     const url = URL.createObjectURL(blob), a = h('a', {href: url, download: item.name});
     document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
   },
@@ -153,32 +468,106 @@ const Inventar = {
   },
   reset() {
     Inventar.closePreview(); Inventar.data = null; Inventar.observer?.disconnect();
+    if (Inventar.viewer) { closeDialog(Inventar.viewer.d); Inventar.releaseView(); }
     for (const u of Inventar.thumbs.values()) URL.revokeObjectURL(u);
     Inventar.thumbs.clear(); Inventar.vault = {items: [], cursor: null, total: 0, loading: false};
+    Inventar.mirror = {mode: 'albums', q: '', key: '', items: [], next: null, total: 0, loading: false, token: Inventar.mirror.token + 1};
     if (Inventar.runsBox) delete Inventar.runsBox.dataset.loaded;
   }
 };
 $('preview-dialog')?.addEventListener('close', () => Inventar.closePreview());
 $('preview-close')?.addEventListener('click', () => closeDialog($('preview-dialog')));
+
+/** Contorul în GB zecimali, ca facturarea Cloudflare (10 GB gratuiți = 10 000 000 000 de octeți). */
+function gbText(b) { const n = num(b) || 0; return n < 1e9 ? fmt.int(n / 1e6) + ' MB' : fmt.dec(n / 1e9, 1) + ' GB'; }
+const thumbPath = it => '/v2/mirror/' + encodeURIComponent(it.id) + '/thumb';
+const monthKey = ms => { const d = new Date(ms || 0); return d.getFullYear() + '-' + d.getMonth(); };
+const RO_MONTHS_LONG = ['ianuarie', 'februarie', 'martie', 'aprilie', 'mai', 'iunie', 'iulie', 'august', 'septembrie', 'octombrie', 'noiembrie', 'decembrie'];
+function monthLabel(ms) { const d = new Date(ms || 0); const m = RO_MONTHS_LONG[d.getMonth()]; return (m[0].toUpperCase() + m.slice(1)) + (d.getFullYear() !== new Date().getFullYear() ? ' ' + d.getFullYear() : ''); }
+function albumTile(a) {
+  const cover = h('span', {class: 'album-cover'}, icon(a.group === 'docs' ? 'folder' : 'photo', 30, 'dimmed'));
+  if (a.cover && Inventar.observer) { cover.dataset.id = a.cover; cover.dataset.src = thumbPath({id: a.cover}); Inventar.observer.observe(cover); }
+  const k = a.kinds || {}, parts = [k.photo ? plural(k.photo, 'poză', 'poze') : null, k.video ? plural(k.video, 'video', 'video') : null, k.file ? plural(k.file, 'document', 'documente') : null].filter(Boolean);
+  const short = a.group === 'docs' ? String(a.album).split('/').filter(Boolean).pop() || a.album : a.album;
+  return h('a', {class: 'album', href: '#inventar/' + encodeURIComponent('album:' + a.group + ':' + a.album), title: a.album}, cover,
+    h('span', {class: 'album-text'}, h('span', {class: 'album-name', text: short}), h('span', {class: 'album-meta', text: (parts.join(' · ') || plural(a.count, 'element', 'elemente')).toUpperCase() + ' · ' + fmt.bytes(a.bytes)})));
+}
+function mirrorTile(it, onclick) {
+  const doc = it.kind === 'file';
+  const t = h('button', {type: 'button', class: 'mtile' + (doc ? ' doc' : ''), 'aria-label': (doc ? 'Deschide ' : 'Vezi ') + it.name, title: it.name, onclick},
+    doc ? icon('doc', 26, 'dimmed') : icon(it.kind === 'video' ? 'play' : 'photo', 22, 'dimmed'), doc ? h('span', {class: 'mtile-name', text: it.name}) : null);
+  if (it.thumb && Inventar.observer) { t.dataset.id = it.id; t.dataset.src = thumbPath(it); Inventar.observer.observe(t); }
+  if (it.kind === 'video') t.append(h('span', {class: 'mtile-badge'}, icon('play', 10), it.duration_ms ? clock(it.duration_ms) : 'VIDEO'));
+  return t;
+}
+function played(sec) { const m = Math.round((num(sec) || 0) / 60); return m < 60 ? {value: fmt.int(m), unit: 'min'} : {value: fmt.dec(m / 60, 1), unit: 'h'}; }
+function clock(ms) { const s = Math.round(ms / 1000), m = Math.floor(s / 60); return m >= 60 ? Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0') : m + ':' + String(s % 60).padStart(2, '0'); }
+function gameCard(g) {
+  const levels = Math.max(1, Math.min(20, g.levels || 1));
+  const cells = Array.from({length: levels}, (_, i) => {
+    const n = i + 1, stars = g.stars?.[n] || 0, open = n <= (g.unlocked || 1);
+    return h('span', {class: 'game-level' + (stars ? ' won' : open ? ' open' : ''), title: 'Nivelul ' + n + (stars ? ' · ' + stars + ' stele' : open ? ' · deschis' : '')}, String(n), stars ? h('i', {text: '★'.repeat(stars)}) : null);
+  });
+  const plays = (g.plays || []).slice(0, 5);
+  return h('article', {class: 'card game'},
+    h('div', {class: 'game-top'}, h('span', {class: 'game-name', text: g.label}), monoLabel(g.lastAt ? 'ULTIMA ' + fmt.ago(g.lastAt).toUpperCase() : '')),
+    h('div', {class: 'mir-counts'}, statBlock('NIVEL', fmt.int(Math.min(g.unlocked || 1, levels)), '/ ' + levels), statBlock('STELE', fmt.int(g.starsTotal || 0), '/ ' + levels * 3), statBlock('JUCAT', played(g.playedS).value, played(g.playedS).unit, g.playedToday ? 'azi ' + fmt.dur(g.playedToday / 60) : null)),
+    h('div', {class: 'game-levels'}, cells),
+    num(g.endlessBest) && g.endlessBest > 0 ? monoLabel('FĂRĂ SFÂRȘIT · RECORD ' + fmt.int(g.endlessBest)) : null,
+    plays.length ? h('div', {class: 'game-plays'}, plays.map(p => h('div', {class: 'game-play'},
+      h('span', {text: (p.level === 16 ? 'Fără sfârșit' : 'Nivelul ' + p.level) + ' · ' + (p.outcome === 'won' ? 'câștigat' : p.outcome === 'quit' ? 'lăsat' : 'pierdut') + (p.stars ? ' · ' + '★'.repeat(p.stars) : '')}),
+      h('span', {class: 'muted', text: [fmt.int(p.score), p.durationS ? fmt.dur(p.durationS / 60) : null, fmt.agoShort(p.at)].filter(Boolean).join(' · ')})))) : null);
+}
+/** Starea rulării, cum o scrie telefonul (InvSummaryDoc): în analiză, gata (așteaptă acordul), se aplică, aplicată, oprită. */
+function runStateText(run) {
+  const p = run.progress, pct = p && p.total ? Math.round(100 * Math.min(1, (p.done || 0) / p.total)) : null;
+  switch (run.state) {
+    case 'scanning': case 'grouping': case 'naming': return 'în analiză' + (pct !== null ? ' · ' + pct + '%' : '');
+    case 'ready': return 'gata, așteaptă acordul';
+    case 'applying': return 'se aplică' + (p?.total ? ' · ' + fmt.int(p.done) + ' din ' + fmt.int(p.total) : '');
+    case 'failed': return 'oprită';
+    default: return '';
+  }
+}
+function runStateBadge(run) {
+  const text = runStateText(run); if (!text) return run.state === 'done' ? badge('APLICAT', 'pos') : null;
+  return h('span', {class: 'run-state'}, badge(text, run.state === 'failed' ? 'ember' : 'amber'));
+}
+function coverCollage(run, f) {
+  const keys = (Array.isArray(f.covers) ? f.covers : []).slice(0, 4).filter(k => /^[A-Za-z0-9_-]{1,40}$/.test(k));
+  if (!keys.length) return null;
+  return h('span', {class: 'folder-covers'}, [0, 1, 2, 3].map(i => {
+    const cell = h('span');
+    if (keys[i] && Inventar.observer) { cell.dataset.id = keys[i]; cell.dataset.src = '/v2/mirror/cover/' + encodeURIComponent(run.id) + '/' + encodeURIComponent(keys[i]); Inventar.observer.observe(cell); }
+    return cell;
+  }));
+}
 function runCard(run, full) {
   const folders = [...(run.folders || [])].sort((a, b) => (b.count || 0) - (a.count || 0));
   const shown = full ? folders : folders.slice(0, 8), max = Math.max(1, ...folders.map(f => f.count || 0));
   const docs = run.kind === 'docs', trash = run.trash || {count: 0, bytes: 0};
+  const reasons = Object.entries(trash.byReason || {}).filter(([, n]) => num(n) && n > 0).sort((a, b) => b[1] - a[1]);
+  const fails = Object.entries(run.failures || {}).filter(([, n]) => num(n) && n > 0).sort((a, b) => b[1] - a[1]);
+  const recover = num(trash.expiresAt) && trash.expiresAt > Date.now() ? 'se recuperează până la ' + fmt.day(trash.expiresAt) : num(trash.expiresAt) ? 'fereastra de recuperare s-a închis' : 'se recuperează 30 de zile';
   return h('article', {class: 'card run-card'},
     h('div', {class: 'run-head'},
       h('span', {class: 'run-kind'}, icon(docs ? 'doc' : 'photo', 20), monoLabel((docs ? 'DOCUMENTE' : 'POZE') + (run.scope?.label ? ' · ' + String(run.scope.label).toUpperCase() : ''))),
-      monoLabel(fmt.dayLong(run.finishedAt).toUpperCase() + ' · ' + fmt.time(run.finishedAt))),
+      h('span', {class: 'run-state'}, runStateBadge(run), monoLabel(fmt.dayLong(run.finishedAt).toUpperCase() + ' · ' + fmt.time(run.finishedAt)))),
     h('div', {class: 'run-stats' + (num(run.freedBytes) ? '' : ' three')},
       statBlock('DOSARE', fmt.int(folders.length)),
       statBlock('MUTATE', fmt.int(run.moved)),
       statBlock('DE ARUNCAT', fmt.int(trash.count), null, trash.bytes ? fmt.bytes(trash.bytes) : null),
       num(run.freedBytes) ? statBlock('ELIBERAT', fmt.bytes(run.freedBytes)) : null),
     h('div', {class: 'run-dest'}, icon('folder', 18), h('span', {class: 'run-dest-label', text: run.dest?.label || 'Destinație'}), run.dest?.path ? h('code', {class: 'run-dest-path', text: run.dest.path}) : null),
-    run.failed > 0 ? h('p', {class: 'run-failed'}, icon('info', 16), plural(run.failed, 'fișier nu s-a mutat', 'fișiere nu s-au mutat') + '. Rămân la locul lor.') : null,
+    run.provider ? monoLabel('NUMELE DOSARELOR · ' + String(run.provider).toUpperCase(), 'dim') : null,
+    run.error ? h('p', {class: 'run-failed'}, icon('info', 16), run.error) : null,
+    run.failed > 0 ? h('p', {class: 'run-failed'}, icon('info', 16), plural(run.failed, 'fișier nu s-a mutat', 'fișiere nu s-au mutat') + (fails.length ? ': ' + fails.map(([k, n]) => fmt.int(n) + ' ' + (FAIL_REASONS[k] || 'altele')).join(', ') : '') + '. Rămân la locul lor.') : null,
+    reasons.length ? h('div', {class: 'run-reasons'}, reasons.map(([k, n]) => badge(fmt.int(n) + ' ' + (TRASH_REASONS[k] || k)))) : null,
     h('div', {class: 'folder-grid'},
       trash.count > 0 ? h('div', {class: 'folder trash'}, h('span', {class: 'folder-ic'}, icon('trash', 20)), h('span', {class: 'folder-name', text: 'De aruncat'}),
-        h('span', {class: 'folder-meta', text: fmt.int(trash.count) + ' · ' + fmt.bytes(trash.bytes)}), h('span', {class: 'folder-note', text: docs ? 'în „De aruncat (FORJA)”' : 'se recuperează 30 de zile'})) : null,
-      shown.map(f => h('div', {class: 'folder'}, h('span', {class: 'folder-ic'}, icon('folder', 20)), h('span', {class: 'folder-name', text: f.name || 'Dosar'}),
+        h('span', {class: 'folder-meta', text: fmt.int(trash.count) + ' · ' + fmt.bytes(trash.bytes)}), h('span', {class: 'folder-note', text: docs ? 'în „De aruncat (FORJA)”' : recover})) : null,
+      shown.map(f => h('div', {class: 'folder'}, coverCollage(run, f) || h('span', {class: 'folder-ic'}, icon('folder', 20)), h('span', {class: 'folder-name', text: f.name || 'Dosar'}),
+        f.theme ? h('span', {class: 'folder-theme', text: f.theme}) : null,
         h('span', {class: 'folder-meta', text: fmt.int(f.count) + (num(f.bytes) ? ' · ' + fmt.bytes(f.bytes) : '')}), bar((f.count || 0) / max)))),
     !full && folders.length > shown.length ? h('a', {href: '#inventar/' + encodeURIComponent(run.id), class: 'panel-link'}, 'Toate cele ' + plural(folders.length, 'dosar', 'dosare'), icon('next', 16)) : null,
     full && run.appVersion ? monoLabel('FORJA ' + run.appVersion + ' · ÎNCEPUT ' + fmt.time(run.startedAt), 'dim') : null);

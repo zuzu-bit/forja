@@ -1,10 +1,33 @@
 // RAȚIE · Nutriție — inelele zilei față de țintă, mesele cu eticheta sursei (EXACT · COD DE BARE / ESTIMAT / MANUAL,
 // exact ca în aplicație) și ultimele 30 de zile, prin /insights/api/ratie?days=30.
+// Mirror (pachetul C): o masă se deschide în ce a găsit analiza (componente, scor, sfat, încredere) și poza farfuriei
+// (/insights/api/ratie/photo/<id>, contract v4); „Zile mai vechi” aduce istoria de dinainte de 30 de zile (?before=).
 const MEAL_TYPES = ['MIC DEJUN', 'PRÂNZ', 'CINĂ', 'GUSTARE'];
+document.head.append(h('style', {text: `
+.meal-wrap{display:flex;flex-direction:column}
+.meal.open-able{cursor:pointer}
+.meal.open-able:hover{border-color:var(--stroke3)}
+.meal.open{border-bottom-left-radius:0;border-bottom-right-radius:0}
+.meal-chev{color:var(--dim);transition:transform .15s}
+.meal.open .meal-chev{transform:rotate(90deg)}
+.meal-more{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;padding:14px 16px;border:1px solid var(--stroke2);border-top:0;border-radius:0 0 var(--r-card) var(--r-card);background:var(--s2)}
+.meal-more[hidden]{display:none}
+.meal-photo{width:132px;height:132px;border:0;padding:0;border-radius:4px;overflow:hidden;background:#101113;display:flex;align-items:center;justify-content:center;color:var(--dim2)}
+.meal-photo img{width:100%;height:100%;object-fit:cover;display:block}
+.meal-parts{display:flex;flex-direction:column;gap:10px;min-width:0}
+.meal-items{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
+.meal-items li{display:flex;justify-content:space-between;gap:10px;font-size:13.5px;color:var(--text2)}
+.meal-items li b{color:var(--text);font-weight:600}
+.meal-score{display:flex;align-items:baseline;gap:10px}
+.meal-score b{font:800 30px/1 var(--display);color:var(--amber)}
+.meal-tip{font-size:13px;color:var(--text2);line-height:1.45}
+.ratie-older{display:flex;flex-direction:column;gap:6px}
+.ratie-older .run-row{cursor:pointer}
+@media (max-width:560px){.meal-more{grid-template-columns:1fr}.meal-photo{width:100%;height:180px}}`}));
 const Ratie = {
-  data: null, body: null, day: null,
+  data: null, body: null, day: null, olderDates: new Set(), open: new Set(),
   mount(body) { Ratie.body = body; },
-  enter() { loadInto('ratie', Ratie.body, () => api('/insights/api/ratie?days=30'), d => { Ratie.data = d; Ratie.render(); }, {replaceOnError: !Ratie.data}); },
+  enter() { loadInto('ratie', Ratie.body, () => api('/insights/api/ratie?days=30'), d => { Ratie.data = d; Ratie.olderDates = new Set(); Ratie.render(); }, {replaceOnError: !Ratie.data}); },
   days() { return [...(Ratie.data?.days || [])].filter(d => fmt.dateKey(d.date) !== null).sort((a, b) => b.date.localeCompare(a.date)); },
   render() {
     const days = Ratie.days(), targets = Ratie.data?.targets || null, todayKey = fmt.keyOf(Date.now());
@@ -23,17 +46,29 @@ const Ratie = {
           macroBar('Proteine', day.protein, targets?.protein, 'p'), macroBar('Carbohidrați', day.carbs, targets?.carbs, 'c'), macroBar('Grăsimi', day.fat, targets?.fat, 'f'),
           left !== null ? h('p', {class: 'ratie-left ' + (left < 0 ? 'over' : ''), text: left >= 0 ? 'Mai ai ' + fmt.int(left) + ' kcal' : 'Peste țintă cu ' + fmt.int(-left) + ' kcal'}) : h('p', {class: 'ratie-left', text: 'Ținta se setează în FORJA.'}))));
     const meals = [...(day.meals || [])].sort((a, b) => (a.at || 0) - (b.at || 0));
-    const list = meals.length ? h('div', {class: 'meal-list'}, meals.map(m => h('div', {class: 'meal'},
-      h('div', {class: 'meal-when'}, monoLabel(MEAL_TYPES[m.mealType] || 'MASĂ'), h('span', {class: 'meal-time', text: fmt.time(m.at)})),
-      h('div', {class: 'meal-what'}, h('span', {class: 'meal-name', text: m.name || 'Masă'}),
-        h('span', {class: 'meal-macros'}, `P ${fmt.int(m.protein)} · C ${fmt.int(m.carbs)} · G ${fmt.int(m.fat)}` + (num(m.grams) ? ` · ${fmt.int(m.grams)} g` : ''))),
-      h('div', {class: 'meal-side'}, h('b', {class: 'meal-kcal', text: fmt.int(m.kcal)}), h('span', {class: 'meal-unit', text: 'kcal'})),
-      m.source ? badge(m.source, String(m.source).toUpperCase().startsWith('EXACT') ? 'pos' : '') : null)))
+    const list = meals.length ? h('div', {class: 'meal-list'}, meals.map(mealRow))
       : h('p', {class: 'panel-empty', text: isToday ? 'Nicio masă azi.' : 'Nicio masă în ziua asta.'});
     fill(Ratie.body, 
-      h('div', {class: 'ratie-grid'}, heroCard, Ratie.chart(days, targets, key)),
+      h('div', {class: 'ratie-grid'}, heroCard, Ratie.chart(days.filter(d => !Ratie.olderDates.has(d.date)), targets, key)),
       h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: isToday ? 'Mesele de azi' : 'Mesele zilei'}), monoLabel(plural(meals.length, 'masă', 'mese'))),
-      list);
+      list, Ratie.olderBlock(days, key));
+  },
+  /** Zilele de dinainte de fereastra graficului: o listă, plus „Zile mai vechi” cât serverul spune că mai există. */
+  olderBlock(days, selected) {
+    const older = days.filter(d => Ratie.olderDates.has(d.date));
+    if (!older.length && !Ratie.data?.more) return null;
+    return h('div', null, h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Zile mai vechi'}), older.length ? monoLabel(plural(older.length, 'zi', 'zile')) : null),
+      older.length ? h('div', {class: 'ratie-older'}, older.map(d => h('a', {class: 'run-row' + (d.date === selected ? ' sel' : ''), href: '#ratie', onclick: e => { e.preventDefault(); Ratie.day = d.date; Ratie.render(); window.scrollTo({top: 0, behavior: 'smooth'}); }},
+        h('span', {class: 'run-ic'}, icon('ratie', 18)), h('span', {class: 'run-text'}, h('b', {text: fmt.dayLong(fmt.dateKey(d.date))}), h('span', {class: 'muted', text: plural((d.meals || []).length, 'masă', 'mese')})),
+        h('span', {class: 'run-num', text: fmt.int(d.kcal)}), icon('next', 16, 'dimmed')))) : null,
+      Ratie.data?.more ? btn('Zile mai vechi', () => Ratie.loadOlder(), 'btn btn-secondary btn-more') : null);
+  },
+  async loadOlder() {
+    const d = await api('/insights/api/ratie?days=30&before=' + encodeURIComponent(Ratie.data.from));
+    const have = new Set((Ratie.data.days || []).map(x => x.date));
+    for (const x of d?.days || []) if (!have.has(x.date)) { Ratie.data.days.push(x); Ratie.olderDates.add(x.date); }
+    Ratie.data.from = d?.from || Ratie.data.from; Ratie.data.more = !!d?.more;
+    Ratie.render();
   },
   chart(days, targets, selected) {
     const byKey = new Map(days.map(d => [d.date, d])), cols = [];
@@ -52,8 +87,63 @@ const Ratie = {
       h('div', {class: 'tl-axis'}, h('span', {text: fmt.day(cols[0].t)}), h('span', {text: 'azi'})));
     return chart;
   },
-  reset() { Ratie.data = null; Ratie.day = null; if (Ratie.body) delete Ratie.body.dataset.loaded; }
+  reset() { Ratie.data = null; Ratie.day = null; Ratie.olderDates = new Set(); Ratie.open = new Set(); for (const u of mealPhotos.values()) URL.revokeObjectURL(u); mealPhotos.clear(); if (Ratie.body) delete Ratie.body.dataset.loaded; }
 };
+const mealPhotos = new Map();
+/** Încrederea analizei, cum o scrie telefonul: text („ridicată”, „medie”) sau număr între 0 și 1. */
+function confidenceText(c) {
+  if (typeof c === 'number') return c >= 0.99 ? null : 'încredere ' + (c >= 0.75 ? 'ridicată' : c >= 0.5 ? 'medie' : 'scăzută');
+  const t = String(c || '').trim();
+  return t && t !== '—' && !/^exact/i.test(t) ? 'încredere ' + t.toLowerCase() : null;
+}
+function mealRow(m) {
+  const rich = !!(m.items?.length || m.score || m.tip || m.photo), conf = confidenceText(m.confidence), open = Ratie.open.has(m.id);
+  const more = rich ? h('div', {class: 'meal-more', hidden: !open}) : null;
+  const row = h('div', {class: 'meal' + (rich ? ' open-able' : '') + (open ? ' open' : ''), ...(rich ? {role: 'button', tabindex: '0', 'aria-expanded': String(open)} : {})},
+    h('div', {class: 'meal-when'}, monoLabel(MEAL_TYPES[m.mealType] || 'MASĂ'), h('span', {class: 'meal-time', text: fmt.time(m.at)})),
+    h('div', {class: 'meal-what'}, h('span', {class: 'meal-name', text: m.name || 'Masă'}),
+      h('span', {class: 'meal-macros'}, `P ${fmt.int(m.protein)} · C ${fmt.int(m.carbs)} · G ${fmt.int(m.fat)}` + (num(m.grams) ? ` · ${fmt.int(m.grams)} g` : '') + (conf ? ' · ' + conf : ''))),
+    h('div', {class: 'meal-side'}, m.photo ? icon('photo', 16, 'dimmed') : null, h('b', {class: 'meal-kcal', text: fmt.int(m.kcal)}), h('span', {class: 'meal-unit', text: 'kcal'}), rich ? icon('next', 16, 'meal-chev') : null),
+    m.source ? badge(m.source, String(m.source).toUpperCase().startsWith('EXACT') ? 'pos' : '') : null);
+  if (!rich) return h('div', {class: 'meal-wrap'}, row);
+  const toggle = () => {
+    const now = !Ratie.open.has(m.id);
+    if (now) Ratie.open.add(m.id); else Ratie.open.delete(m.id);
+    row.classList.toggle('open', now); row.setAttribute('aria-expanded', String(now)); more.hidden = !now;
+    if (now && !more.childNodes.length) fillMealMore(more, m);
+  };
+  row.addEventListener('click', toggle);
+  row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  if (open) fillMealMore(more, m);
+  return h('div', {class: 'meal-wrap'}, row, more);
+}
+function fillMealMore(box, m) {
+  const photo = m.photo ? h('button', {type: 'button', class: 'meal-photo', 'aria-label': 'Poza mesei, mare'}, icon('photo', 28, 'dimmed')) : null;
+  if (photo) {
+    const path = '/insights/api/ratie/photo/' + encodeURIComponent(m.id);
+    (async () => {
+      try {
+        let url = mealPhotos.get(m.id);
+        if (!url) { const b = await api(path, {blob: true}); url = URL.createObjectURL(new Blob([b], {type: 'image/jpeg'})); mealPhotos.set(m.id, url); }
+        fill(photo, h('img', {src: url, alt: m.name || 'Masă'}));
+        photo.onclick = () => {
+          const d = $('preview-dialog');
+          $('preview-title').textContent = m.name || 'Masă';
+          $('preview-meta').textContent = fmt.dayLong(m.at) + ', ' + fmt.time(m.at) + ' · ' + fmt.int(m.kcal) + ' kcal';
+          fill($('preview-body'), h('img', {class: 'preview-img', src: url, alt: m.name || 'Masă'}));
+          fill($('preview-actions'));
+          openDialog(d);
+        };
+      } catch { photo.disabled = true; }
+    })();
+  }
+  const items = (m.items || []).map(it => h('li', null, h('span', null, h('b', {text: it.name}), num(it.grams) ? ' · ' + fmt.int(it.grams) + ' g' : ''),
+    h('span', {class: 'muted', text: [num(it.kcal) !== null ? fmt.int(it.kcal) + ' kcal' : null, num(it.protein) !== null ? 'P ' + fmt.int(it.protein) : null].filter(Boolean).join(' · ')})));
+  fill(box, photo || h('span'), h('div', {class: 'meal-parts'},
+    items.length ? h('ul', {class: 'meal-items'}, items) : null,
+    m.score ? h('div', {class: 'meal-score'}, h('b', {text: m.score.value + '/10'}), m.score.reason ? h('span', {class: 'meal-tip', text: m.score.reason}) : null) : null,
+    m.tip ? h('p', {class: 'meal-tip', text: m.tip}) : null));
+}
 function macroBar(label, value, target, cls) {
   const v = num(value) || 0, t = num(target);
   return h('div', {class: 'macro-line'}, h('div', {class: 'macro-top'}, h('span', {text: label}), h('span', {class: 'macro-val'}, h('b', {text: fmt.int(v)}), t ? ' / ' + fmt.int(t) + ' g' : ' g')), bar(t ? v / t : 0, 'm-' + cls));
