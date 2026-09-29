@@ -3,7 +3,7 @@
 // cine te vede acum (fantoma, locația în fundal, familia), punctul tău privat în fantomă, tura GO în desfășurare, energia
 // primită și trimisă, agenda (fără nume din agendă, fără numere), locurile pe care le-ai recomandat și ziua pe hartă (24 h).
 import { SITE_RULES, num, int, str, time, where, recall, remember, account, isGhost, nowPlaying, initials, position, byName, simplifyPolyline, contractGate } from './shared.mjs';
-import { localDate } from '../site-time.mjs';
+import { localDate, localMidnight, DAY } from '../site-time.mjs';
 
 // Tot ce scrie aplicația în users/{uid} și văd prietenii în FriendsSheet: poziția, starea, muzica, km-ii săptămânii,
 // ultima tură (GoTrackService la final) și teritoriul (ExploreTracker.publishCounts). Masca nu costă citiri în plus.
@@ -11,7 +11,7 @@ const FRIEND_FIELDS = ['name', 'lat', 'lng', 'locUpdatedAt', 'state', 'ghostUnti
   'weekKm', 'lastActivityType', 'lastActivityKm', 'lastActivityDurS', 'lastActivityAt'];
 const ME_FIELDS = [...FRIEND_FIELDS, 'inviteCode', 'familyUids', 'contract', 'speedMps'];
 const UID = /^[A-Za-z0-9_-]{1,128}$/;
-export const CERC_RULES = Object.freeze({ energy_query: 100, energy_kept: 30, agenda_max: 50, go_points: 500, go_stale_ms: 10 * 60000, mine_max: 100 });
+export const CERC_RULES = Object.freeze({ energy_query: 300, energy_days: 7, energy_kept: 30, go_check_ms: 60000, agenda_max: 50, go_points: 500, go_stale_ms: 10 * 60000, mine_max: 100 });
 async function friendUids(fs, uid) {
   const rows = await fs.query('', 'friendships', { filters: [where('members', 'ARRAY_CONTAINS', uid)], select: ['members', 'since'], limit: 200 });
   if (!rows) return null;
@@ -42,7 +42,15 @@ function liveGo(doc, now) {
   if (!doc || !at || !startedAt || now - at > CERC_RULES.go_stale_ms) return null;
   return { sport: str(doc.sport, 20) || 'walk', startedAt, distanceM: num(doc.distanceM), at, polyline: simplifyPolyline(doc.polyline, CERC_RULES.go_points) };
 }
-async function cercLive(fs, uid, friends, now) {
+/** Luni, 00:00 ora României: km-ii săptămânii (users/{uid}.weekKm) scriși înainte de ea sunt ai altei săptămâni. */
+export function weekStart(now) {
+  const date = localDate(now), back = (new Date(date + 'T00:00:00Z').getUTCDay() + 6) % 7;
+  return localMidnight(localMidnight(now) - back * DAY + 3 * 3600000);
+}
+/** weekKm e scris doar la finalul unei ture (GoTrackService, cu lastActivityAt): fără tură săptămâna asta, e 0. */
+const weekKmOf = (u, now) => { const km = num(u?.weekKm); return km === null ? null : (time(u.lastActivityAt) || 0) >= weekStart(now) ? km : 0; };
+const SPORTS = ['run', 'walk', 'ride'];
+async function cercLive(fs, uid, friends, now, prev = null) {
   const [meDoc, docs, familyRows] = await Promise.all([
     fs.get(`users/${uid}`, ME_FIELDS),
     fs.batchGet(friends.map(f => `users/${f}`), FRIEND_FIELDS),
@@ -52,11 +60,17 @@ async function cercLive(fs, uid, friends, now) {
   const familyLoc = new Map((familyRows || []).filter(r => position(r)).map(r => [r.id, r]));
   const myFamily = new Set((Array.isArray(meDoc?.familyUids) ? meDoc.familyUids : []).filter(x => typeof x === 'string' && UID.test(x)));
   const signed = contractGate(meDoc?.contract, 3), ghostMe = !!meDoc && isGhost(meDoc, now);
-  // Al doilea rând de citiri, doar când au sens: punctul trimis familiei (în fantomă e singura ta poziție) și tura GO.
-  const [ownFamily, goDoc] = await Promise.all([
-    meDoc && ghostMe ? fs.get(`familyLoc/${uid}`, ['lat', 'lng', 'locUpdatedAt']) : null,
-    meDoc && signed && (ghostMe || ['run', 'walk', 'ride'].includes(meDoc.state)) ? fs.get(`users/${uid}/live/go`, ['sport', 'startedAt', 'distanceM', 'polyline', 'updatedAt']) : null,
-  ]);
+  // Al doilea rând de citiri, doar când au sens. Punctul trimis familiei (în fantomă e singura ta poziție): doar în fantomă
+  // și cu cineva în familie (fără familie telefonul nu scrie familyLoc și îl șterge).
+  const ownFamily = meDoc && ghostMe && myFamily.size ? await fs.get(`familyLoc/${uid}`, ['lat', 'lng', 'locUpdatedAt', 'state']) : null;
+  // Tura GO: starea publică (sau, în fantomă, cea din familyLoc) spune dacă te miști. „run”/„ride” sau o tură găsită data
+  // trecută: la fiecare reîmprospătare; „walk” (și mersul obișnuit, 0,4 m/s) sau fantoma fără familie: cel mult o dată pe minut.
+  // O stare veche (serviciu oprit fără final) nu mai e „în mișcare”.
+  const src = ghostMe ? ownFamily : meDoc, fresh = now - (time(src?.locUpdatedAt) || 0) <= CERC_RULES.go_stale_ms;
+  const moving = src?.state, checkedAt = num(prev?.goAt) || 0;
+  const goDue = !!meDoc && signed && ((fresh && ['run', 'ride'].includes(moving)) || !!prev?.me?.go ||
+    ((SPORTS.includes(moving) || (ghostMe && !myFamily.size)) && now - checkedAt >= CERC_RULES.go_check_ms));
+  const goDoc = goDue ? await fs.get(`users/${uid}/live/go`, ['sport', 'startedAt', 'distanceM', 'polyline', 'updatedAt']) : null;
   const out = [], family = [];
   for (const f of friends) {
     const u = docs.get(`users/${f}`);
@@ -67,7 +81,7 @@ async function cercLive(fs, uid, friends, now) {
     if (!ghost && fam && (time(fam.locUpdatedAt) || 0) > (at || 0)) { p = position(fam); at = time(fam.locUpdatedAt); viaFamily = true; }
     out.push({ uid: f, name, initials: initials(name), lat: p?.lat ?? null, lng: p?.lng ?? null, at, state: ghost ? 'ghost' : str(u.state, 20),
       ghost, viaFamily, nowPlaying: ghost ? null : nowPlaying(u.nowPlaying, now), exploreCells: int(u.exploreCells), placesCount: int(u.placesCount),
-      weekKm: num(u.weekKm), last: lastActivity(u), inMyFamily: myFamily.has(f), hasMeInFamily: hasMe.has(f) });
+      weekKm: weekKmOf(u, now), last: lastActivity(u), inMyFamily: myFamily.has(f), hasMeInFamily: hasMe.has(f) });
     // Ghost for everyone else, visible to you as family (MapScreen.kt:138-147): the position comes only through familyLoc.
     if (ghost && fam) family.push({ uid: f, name, initials: initials(name), lat: fam.lat, lng: fam.lng, at: time(fam.locUpdatedAt) });
   }
@@ -78,15 +92,15 @@ async function cercLive(fs, uid, friends, now) {
     me = { lat: p?.lat ?? null, lng: p?.lng ?? null, at: p ? time(meDoc.locUpdatedAt) : null, ghost,
       ghostUntil: meDoc.ghostUntil === -1 || (num(meDoc.ghostUntil) !== null && meDoc.ghostUntil > now) ? meDoc.ghostUntil : null,
       state: ghost ? 'ghost' : str(meDoc.state, 20), nowPlaying: ghost ? null : nowPlaying(meDoc.nowPlaying, now), exploreCells: int(meDoc.exploreCells),
-      placesCount: int(meDoc.placesCount), weekKm: num(meDoc.weekKm), last: lastActivity(meDoc), speedMps: ghost ? null : num(meDoc.speedMps),
+      placesCount: int(meDoc.placesCount), weekKm: weekKmOf(meDoc, now), last: lastActivity(meDoc), speedMps: ghost ? null : num(meDoc.speedMps),
       // Cine te vede și în fantomă: familia ta (users/{me}.familyUids), cu numele din lista prietenilor.
       family: [...myFamily].map(f => ({ uid: f, name: names.get(f) || 'Camarad' })).sort(byName),
       familyAt: time(ownFamily?.locUpdatedAt),
       // În fantomă, prietenii nu te văd, dar tu da: ultimul punct trimis familiei (familyLoc/{tu}, doar al tău și al familiei).
       private: ghost && own ? { lat: own.lat, lng: own.lng, at: time(ownFamily.locUpdatedAt), source: 'family' } : null,
-      go: liveGo(goDoc, now) };
+      go: goDue ? liveGo(goDoc, now) : null };
   }
-  return { me, friends: out.sort(byName), family: family.sort(byName), inviteCode: str(meDoc?.inviteCode, 40), signed };
+  return { me, friends: out.sort(byName), family: family.sort(byName), inviteCode: str(meDoc?.inviteCode, 40), signed, goAt: goDue ? now : checkedAt || null };
 }
 const ROUTE_FIELDS = ['type', 'startAt', 'distanceM', 'durationS', 'polyline'];
 /**
@@ -166,22 +180,31 @@ async function myRecommendations(fs, uid) {
   return rows.filter(p => position(p)).sort((a, b) => (num(b.at) || 0) - (num(a.at) || 0))
     .map(p => ({ id: p.id, name: str(p.name, 80) || '', stars: int(p.stars) || 0, lat: p.lat, lng: p.lng, seenBy: Array.isArray(p.visibleTo) ? p.visibleTo.filter(x => x !== uid).length : 0, at: time(p.at) }));
 }
+/** Ultimele `n` zile locale, „YYYY-MM-DD”, de azi înapoi (ca `day` din documentele energiei). */
+export function lastDays(now, n = CERC_RULES.energy_days) {
+  const out = [];
+  for (let i = 0, at = now; i < n; i++, at = localMidnight(at) - 3600000) out.push(localDate(at));
+  return out;
+}
 /**
- * Energia (⚡): primită (to = tu) și trimisă (from = tu; regula din P0). Un index pe un singur câmp, deci fără orderBy:
- * sortarea se face aici. Păstrăm cele mai noi 30 din fiecare parte.
+ * Energia (⚡): primită (to = tu) și trimisă (from = tu; regula din P0), doar din ultimele 7 zile: `day IN [...]` lângă
+ * egalitate, deci fără index compus (ca energyFlow din aplicație), și documentele vechi (nu se șterg niciodată) nu mai
+ * împing ziua de azi afară din limită. Sortarea se face aici; numărătorile se fac înainte de tăierea la 30.
  */
-async function energyOf(fs, uid) {
-  const fields = ['to', 'from', 'fromName', 'day', 'at'];
+async function energyOf(fs, uid, now) {
+  const fields = ['to', 'from', 'fromName', 'day', 'at'], days = lastDays(now), today = days[0];
   const [got, gave] = await Promise.all([
-    fs.query('', 'energy', { filters: [where('to', 'EQUAL', uid)], select: fields, limit: CERC_RULES.energy_query }),
-    fs.query('', 'energy', { filters: [where('from', 'EQUAL', uid)], select: fields, limit: CERC_RULES.energy_query }),
+    fs.query('', 'energy', { filters: [where('to', 'EQUAL', uid), where('day', 'IN', days)], select: fields, limit: CERC_RULES.energy_query }),
+    fs.query('', 'energy', { filters: [where('from', 'EQUAL', uid), where('day', 'IN', days)], select: fields, limit: CERC_RULES.energy_query }),
   ]);
   if (!got || !gave) return null;
-  const clean = (rows, other) => rows.filter(r => time(r.at) && typeof r[other] === 'string' && UID.test(r[other]) && r[other] !== uid)
-    .sort((a, b) => b.at - a.at).slice(0, CERC_RULES.energy_kept);
+  const clean = (rows, other) => rows.filter(r => time(r.at) && days.includes(r.day) && typeof r[other] === 'string' && UID.test(r[other]) && r[other] !== uid)
+    .sort((a, b) => b.at - a.at);
+  const received = clean(got, 'from'), sent = clean(gave, 'to');
   return {
-    received: clean(got, 'from').map(r => ({ uid: r.from, name: str(r.fromName, 60) || 'Un camarad', at: r.at, day: str(r.day, 10) })),
-    sent: clean(gave, 'to').map(r => ({ uid: r.to, at: r.at, day: str(r.day, 10) })),
+    received: received.slice(0, CERC_RULES.energy_kept).map(r => ({ uid: r.from, name: str(r.fromName, 60) || 'Un camarad', at: r.at, day: str(r.day, 10) })),
+    sent: sent.slice(0, CERC_RULES.energy_kept).map(r => ({ uid: r.to, at: r.at, day: str(r.day, 10) })),
+    counts: { today, day: received.filter(r => r.day === today).length, week: received.length, sentToday: [...new Set(sent.filter(r => r.day === today).map(r => r.to))] },
   };
 }
 /** settings/presence (doar tu): „Locație în fundal” pornită sau oprită, scrisă de telefon când se schimbă. */
@@ -211,8 +234,10 @@ function energyView(e, friends, now) {
   if (!e) return null;
   const names = new Map(friends.map(f => [f.uid, f.name])), today = localDate(now), week = now - 7 * 86400000;
   const received = e.received || [], sent = (e.sent || []).map(r => ({ ...r, name: names.get(r.uid) || 'Un camarad' }));
-  return { received, sent, today: received.filter(r => r.day === today).length, week: received.filter(r => r.at > week).length,
-    sentToday: sent.filter(r => r.day === today).map(r => r.uid) };
+  // Numărătorile din toate documentele celor 7 zile (nu doar din cele 30 păstrate), cât timp e aceeași zi.
+  const c = e.counts?.today === today ? e.counts : null;
+  return { received, sent, today: c ? c.day : received.filter(r => r.day === today).length, week: c ? c.week : received.filter(r => r.at > week).length,
+    sentToday: c ? c.sentToday : sent.filter(r => r.day === today).map(r => r.uid) };
 }
 export async function cerc(ctx) {
   const { env, fs, uid, now } = ctx;
@@ -227,7 +252,7 @@ export async function cerc(ctx) {
     const friends = await cachedFriends(env, fs, uid, now, cache);
     if (friends.write) writes.friends = friends.write;
     since = friends.since || since;
-    const fresh = await cercLive(fs, uid, friends.uids, now);
+    const fresh = await cercLive(fs, uid, friends.uids, now, live);
     // Any failed read (friend list, own doc, friends' batchGet, familyLoc) makes the refresh incomplete: get/batchGet answer
     // null for a document they could not read, so friends or family would silently vanish from the map.
     liveFailed = fs.failedSince(mark);
@@ -235,7 +260,7 @@ export async function cerc(ctx) {
     // Older than that it is not served, so a friend who has since turned ghost cannot reappear from the cache.
     if (liveFailed && live && now - live.at <= SITE_RULES.stale_max_ms) ctx.stale = true;
     else {
-      live = { at: now, me: fresh.me, friends: fresh.friends, family: fresh.family, inviteCode: fresh.inviteCode, signed: fresh.signed, day: live?.day ?? null };
+      live = { at: now, me: fresh.me, friends: fresh.friends, family: fresh.family, inviteCode: fresh.inviteCode, signed: fresh.signed, goAt: fresh.goAt, day: live?.day ?? null };
       refreshed = true;
       // Nothing to fall back on: the partial answer is served once, but neither the DO nor the memory keeps it.
       if (liveFailed) ctx.partial = true;
@@ -249,7 +274,7 @@ export async function cerc(ctx) {
     let extra = null, extraFailed = false;
     if (due) {
       const mark = fs.mark();
-      const [mine, energy, presence, agenda, names] = await Promise.all([myRecommendations(fs, uid), energyOf(fs, uid), presenceOf(fs, uid),
+      const [mine, energy, presence, agenda, names] = await Promise.all([myRecommendations(fs, uid), energyOf(fs, uid, now), presenceOf(fs, uid),
         live?.signed ? agendaOf(fs, uid) : null, placeNames(env, uid)]);
       extraFailed = fs.failedSince(mark);
       extra = { mine: mine ?? slow?.mine ?? [], energy: energy ?? slow?.energy ?? null, presence: extraFailed ? slow?.presence ?? presence : presence,

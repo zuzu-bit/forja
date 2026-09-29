@@ -30,6 +30,8 @@ function encode(v) {
   if (Number.isSafeInteger(v)) return { integerValue: String(v) };
   if (typeof v === 'number') return { doubleValue: v };
   if (typeof v === 'boolean') return { booleanValue: v };
+  // `IN` / `ARRAY_CONTAINS_ANY`: o listă de valori simple.
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(encode) } };
   return { nullValue: null };
 }
 // The document id is authoritative (s123, a45, m7, runId…), even if a field is also called `id`.

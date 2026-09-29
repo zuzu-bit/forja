@@ -389,7 +389,21 @@ class FriendsRepository(
         val result = (doc.get("familyUids") as? List<*>)?.mapNotNull { it as? String }?.toSet()
             ?: (if (on) setOf(otherUid) else emptySet())
         try { prefs?.setFamilyUids(result) } catch (_: Exception) { }
+        syncFamilyAllowed(myUid, result)
         return result
+    }
+
+    /**
+     * familyLoc/{me} urmează familia imediat, nu la următoarea poziție: fără nimeni în familie documentul se șterge (altfel
+     * ultimul punct rămânea citibil de cel scos și site-ul îl arăta „Te au în familia lor”); altfel `allowed` = setul nou.
+     */
+    suspend fun syncFamilyAllowed(myUid: String, family: Set<String>) {
+        val ref = db.collection("familyLoc").document(myUid)
+        try {
+            withTimeoutOrNull(8_000L) {
+                if (family.isEmpty()) ref.delete().await() else ref.update("allowed", family.toList()).await()
+            }
+        } catch (_: Exception) { }   // update pe un document lipsă: nu era nimic de ascuns
     }
 
     /** Pozițiile prietenilor care m-au pus în familia lor — vin și când ei sunt fantomă. */

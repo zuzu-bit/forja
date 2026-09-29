@@ -117,7 +117,10 @@ test('cerc: one read budget — 20 s memory, DO tiers, and a 30 s poll for an ho
   resetSiteCache(); before = f.fs.reads;
   await f.call('/insights/api/cerc', { now: NOW + 25000 });
   const live = f.fs.reads - before;
-  assert.equal(live, 1 + 10 + 1 + 1, 'after 20 s only the live tier: me + 10 friends (one batchGet) + familyLoc + the live GO doc (she is walking)');
+  assert.equal(live, 1 + 10 + 1, 'after 20 s only the live tier: me + 10 friends (one batchGet) + familyLoc; walking re-checks the GO doc once a minute');
+  resetSiteCache(); before = f.fs.reads;
+  await f.call('/insights/api/cerc', { now: NOW + 65000 });
+  assert.equal(f.fs.reads - before, 1 + 10 + 1 + 1, 'a minute later the live GO doc is read again');
   assert(!f.fs.requests.slice(-3).some(r => r.body?.structuredQuery?.from?.[0]?.collectionId === 'friendships'), 'friend list comes from the 10-minute tier');
   // One hour of the site open on Teren, polling every 30 s, each poll on a cold isolate (worst case).
   before = f.fs.reads;
@@ -237,11 +240,14 @@ test('cerc: a run that reaches Firestore late, with an older date, joins "Străz
 test('cerc mirror: friend activity (km, last run, places), since, family both ways and a flagged familyLoc point', async () => {
   const f = fixture();
   seedCircle(f.fs);
-  f.fs.set('users/bob', { ...f.fs.docs.get('users/bob'), weekKm: 12.4, lastActivityType: 'run', lastActivityKm: 5.02, lastActivityDurS: 1740, lastActivityAt: NOW - DAY, placesCount: 7, exploreCells: 120 });
+  f.fs.set('users/bob', { ...f.fs.docs.get('users/bob'), weekKm: 12.4, lastActivityType: 'run', lastActivityKm: 5.02, lastActivityDurS: 1740, lastActivityAt: NOW - 3 * HOUR, placesCount: 7, exploreCells: 120 });
+  // Carol ran last Sunday and has not run since: her weekKm is last week's.
+  f.fs.set('users/carol', { ...f.fs.docs.get('users/carol'), weekKm: 30, lastActivityType: 'run', lastActivityKm: 8, lastActivityDurS: 2400, lastActivityAt: NOW - DAY });
   f.fs.set('familyLoc/carol', { lat: 44.5, lng: 26.2, locUpdatedAt: NOW - MIN, state: 'idle', allowed: ['alice'] });
   const b = (await f.call('/insights/api/cerc')).body;
   const bob = b.friends.find(x => x.uid === 'bob'), carol = b.friends.find(x => x.uid === 'carol');
-  assert.equal(bob.weekKm, 12.4); assert.deepEqual(bob.last, { type: 'run', km: 5.02, durS: 1740, at: NOW - DAY }); assert.equal(bob.placesCount, 7);
+  assert.equal(bob.weekKm, 12.4); assert.deepEqual(bob.last, { type: 'run', km: 5.02, durS: 1740, at: NOW - 3 * HOUR }); assert.equal(bob.placesCount, 7);
+  assert.equal(carol.weekKm, 0, 'weekKm written before Monday 00:00 (Bucharest) belongs to last week'); assert.equal(carol.last.at, NOW - DAY);
   assert.equal(bob.since, NOW - 30 * DAY, 'friendships.since, the date on the card');
   assert.equal(bob.inMyFamily, true); assert.equal(bob.hasMeInFamily, false);
   assert.equal(carol.inMyFamily, false); assert.equal(carol.hasMeInFamily, true); assert.equal(carol.viaFamily, true); assert.equal(carol.lat, 44.5);
@@ -289,7 +295,7 @@ test('cerc mirror: energy received and sent (newest first, names, today), my rec
   f.fs.set('users/alice/settings/contacts', { syncedAt: NOW - 2 * HOUR, status: 'ok', compared: 312, found: 2, mutual: 1,
     matches: [{ uid: 'bob', forjaName: 'Bogdan I.', mutual: true, verified: true }, { uid: 'eve', forjaName: 'Eva', mutual: false, verified: false }, { uid: 'bad uid!', forjaName: 'x' }] });
   const b = (await f.call('/insights/api/cerc')).body;
-  assert.deepEqual(b.energy.received.map(r => r.uid), ['bob', 'dan', 'carol'], 'newest first, sorted in the worker');
+  assert.deepEqual(b.energy.received.map(r => r.uid), ['bob', 'dan'], 'newest first, sorted in the worker; only the last 7 local days');
   assert.deepEqual(b.energy.received[0], { uid: 'bob', name: 'Bogdan', at: NOW - HOUR, day: today });
   assert.equal(b.energy.today, 1); assert.equal(b.energy.week, 2);
   assert.deepEqual(b.energy.sent, [{ uid: 'bob', at: NOW - 10 * MIN, day: today, name: 'Bogdan Ionescu' }], 'only what she sent, named from the friend list');
@@ -388,4 +394,62 @@ test('day view: a gap over 10 minutes cuts the line (no straight line through mi
   assert.equal(v.track.length, 2, 'two pieces of line');
   assert.equal(v.gaps.length, 1); assert(v.gaps[0].to - v.gaps[0].from > LOC_RULES.gap_ms);
   assert(v.km > 1.9 && v.km < 2.3, 'only the real walk counts: ' + v.km);
+});
+
+test('cerc mirror: energy stays right with hundreds of old documents (ids sort oldest first) and counts past the 30 kept', async () => {
+  const f = fixture();
+  seedCircle(f.fs, 40);
+  const today = localDate(NOW);
+  // 400 old energies (never deleted): the oldest ids come first in __name__ order.
+  for (let i = 0; i < 400; i++) { const day = localDate(NOW - (10 + (i % 300)) * DAY); f.fs.set(`energy/alice_${day}_f${i % 40}`, { to: 'alice', from: 'f' + (i % 40), fromName: 'F', day, at: NOW - (10 + (i % 300)) * DAY }); }
+  for (let i = 0; i < 400; i++) { const day = localDate(NOW - (10 + (i % 300)) * DAY); f.fs.set(`energy/f${i % 40}_${day}_alice`, { to: 'f' + (i % 40), from: 'alice', fromName: 'Lana', day, at: NOW - (10 + (i % 300)) * DAY }); }
+  for (let i = 0; i < 35; i++) f.fs.set(`energy/alice_${today}_f${i}`, { to: 'alice', from: 'f' + i, fromName: 'F' + i, day: today, at: NOW - i * MIN });
+  f.fs.set(`energy/alice_${localDate(NOW - 3 * DAY)}_f1`, { to: 'alice', from: 'f1', fromName: 'F1', day: localDate(NOW - 3 * DAY), at: NOW - 3 * DAY });
+  f.fs.set(`energy/zz_${today}_alice`, { to: 'zz', from: 'alice', fromName: 'Lana', day: today, at: NOW - MIN });
+  f.fs.set(`energy/f39_${today}_alice`, { to: 'f39', from: 'alice', fromName: 'Lana', day: today, at: NOW - 2 * MIN });
+  const before = f.fs.reads;
+  const b = (await f.call('/insights/api/cerc')).body;
+  assert.equal(b.energy.today, 35, 'every energy of today counts, not only the 30 kept');
+  assert.equal(b.energy.week, 36);
+  assert.equal(b.energy.received.length, 30); assert.equal(b.energy.received[0].uid, 'f0');
+  assert.deepEqual(b.energy.sentToday.sort(), ['f39', 'zz'], 'a friend with a high uid is not dropped');
+  const q = f.fs.requests.filter(r => r.body?.structuredQuery?.from?.[0]?.collectionId === 'energy');
+  assert.equal(q.length, 2);
+  for (const r of q) assert.equal(r.body.structuredQuery.where.compositeFilter.filters[1].fieldFilter.op, 'IN', 'bounded by day, equality only (no composite index)');
+  assert(f.fs.reads - before < 200, 'old energy is never read: ' + (f.fs.reads - before));
+});
+
+test('cerc mirror: ghost without family reads no familyLoc and checks the GO doc at most once a minute', async () => {
+  const f = fixture();
+  seedCircle(f.fs, 1);
+  f.fs.set('users/alice', { ...f.fs.docs.get('users/alice'), ghostUntil: -1, familyUids: [], state: 'idle' });
+  // A stale familyLoc left from an old app version: never read, never shown as her point.
+  f.fs.set('familyLoc/alice', { lat: 44.401, lng: 26.051, locUpdatedAt: NOW - HOUR, state: 'idle', allowed: ['bob'] });
+  const paths = () => f.fs.requests.filter(r => !r.body).map(r => decodeURIComponent(new URL(r.url).pathname));
+  let b = (await f.call('/insights/api/cerc')).body;
+  assert.equal(b.me.private, null);
+  assert(!paths().some(p => p.endsWith('familyLoc/alice')), 'no familyLoc read without family');
+  const go = () => paths().filter(p => p.endsWith('live/go')).length;
+  assert.equal(go(), 1);
+  resetSiteCache(); await f.call('/insights/api/cerc', { now: NOW + 25000 });
+  resetSiteCache(); await f.call('/insights/api/cerc', { now: NOW + 50000 });
+  assert.equal(go(), 1, 'not every 20 s');
+  resetSiteCache(); await f.call('/insights/api/cerc', { now: NOW + 75000 });
+  assert.equal(go(), 2, 'once a minute');
+  // A run found: followed on every refresh until it ends.
+  f.fs.set('users/alice/live/go', { sport: 'run', startedAt: NOW, distanceM: 500, polyline: '44.4,26.1;44.41,26.11', updatedAt: NOW + 70000 });
+  resetSiteCache(); await f.call('/insights/api/cerc', { now: NOW + 140000 });
+  resetSiteCache(); b = (await f.call('/insights/api/cerc', { now: NOW + 161000 })).body;
+  assert.equal(go(), 4); assert.equal(b.me.go.sport, 'run');
+});
+
+test('day view: a day on one spot with network-fix jitter (±80 m, 100 m accuracy) adds about 0 km', async () => {
+  const s = new Storage();
+  const pts = [];
+  for (let i = 0; i < 2800; i++) pts.push({ at: NOW - 23 * HOUR + i * 29000, latitude: 44.43 + (i % 2 ? 0.0007 : -0.0007), longitude: 26.1 + (i % 3 ? 0.0004 : -0.0004), accuracy_m: 100 });
+  await applyLocationRollup(s, 's1', { locations: pts, visits: [] }, NOW);
+  assert((await dayView(s, NOW)).km < 0.3, 'jitter without a stop row');
+  const s2 = new Storage();
+  await applyLocationRollup(s2, 's1', { locations: pts.map(p => ({ ...p, accuracy_m: 30 })), visits: [{ first_seen: NOW - 23 * HOUR, last_seen: NOW, latitude: 44.43, longitude: 26.1, samples: 2800 }] }, NOW);
+  assert((await dayView(s2, NOW)).km < 0.3, 'inside a stop nothing counts');
 });

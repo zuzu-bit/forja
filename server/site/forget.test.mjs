@@ -19,6 +19,8 @@ test('site forget: usage-day, loc-day, gallery copies and inventory covers go; o
   for (const date of [today, yesterday]) await storage.put('usage-day:' + date, { date, updated_at: NOW - HOUR, apps: { 'com.x': { label: 'X', ms: 600000, opens: 2 } } });
   await storage.put('usage-last:sess', { at: NOW });
   await storage.put(LOC_DAY_PREFIX + today, { date: today, track: [] });
+  await storage.put('site-cache:cerc-live', { at: NOW, day: { track: [] } }); await storage.put('site-cache:cerc-slow', { at: NOW, agenda: {}, placeNames: [] });
+  await storage.put('site-cache:friends', { at: NOW, uids: [] });
   await storage.put('cloud-file:1', { id: '1', key: '_insights/alice/files/1', received_at: NOW - HOUR, expires_at: NOW + 23 * HOUR, bytes: 10 });
   await storage.put('file-staging:2', { id: '2', key: '_insights/alice/files/2', expires_at: NOW + HOUR });
   await f.records.put('_insights/alice/files/1', 'a'); await f.records.put('_insights/alice/files/1.thumb', 't');
@@ -32,15 +34,15 @@ test('site forget: usage-day, loc-day, gallery copies and inventory covers go; o
   assert.equal((await f.doCall('alice', '/v2/site/forget')).status, 405, 'POST only');
   const r = await f.doCall('alice', '/v2/site/forget', 'POST');
   assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { forgotten: { usageDays: 2, locDays: 1, files: 1, objects: 1 } });
-  for (const prefix of ['usage-day:', 'usage-last:', LOC_DAY_PREFIX, 'cloud-file:', 'file-staging:']) assert.equal((await storage.list({ prefix })).size, 0, prefix);
+  assert.deepEqual(await r.json(), { forgotten: { usageDays: 2, locDays: 1, caches: 2, files: 1, objects: 1 } });
+  for (const prefix of ['usage-day:', 'usage-last:', LOC_DAY_PREFIX, 'site-cache:cerc-', 'cloud-file:', 'file-staging:']) assert.equal((await storage.list({ prefix })).size, 0, prefix);
   assert.ok(await storage.get('file-gone:1'), 'a delayed retry cannot bring the copy back');
   assert.ok(await storage.get('file-gone:2'));
   assert.deepEqual([...f.records.files.keys()].sort(), ['_insights/alice/sess/item', '_insights/bob/files/9'], 'sessions go through their own DELETE; other accounts untouched');
   resetSiteCache();
   assert.deepEqual((await f.call('/insights/api/paza')).body, { updated_at: null, days: [] });
   assert.deepEqual((await f.call('/insights/api/inventar')).body.vault, { total: 0, latestAt: null });
-  assert.deepEqual(await (await f.doCall('alice', '/v2/site/forget', 'POST')).json(), { forgotten: { usageDays: 0, locDays: 0, files: 0, objects: 0 } }, 'idempotent');
+  assert.deepEqual(await (await f.doCall('alice', '/v2/site/forget', 'POST')).json(), { forgotten: { usageDays: 0, locDays: 0, caches: 0, files: 0, objects: 0 } }, 'idempotent');
   assert.equal((await f.doCall('bob', '/v2/site/forget', 'POST')).status, 200, 'each account forgets only its own DO');
 });
 

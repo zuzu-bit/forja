@@ -30,6 +30,7 @@ class PresenceRepository(
     private val client = LocationServices.getFusedLocationProviderClient(context)
     private var callback: LocationCallback? = null
     private var lastPublish = 0L
+    @Volatile private var familyCleared = false
     private var presenceJob: Job? = null
     private var presenceUid: String? = null
 
@@ -117,7 +118,12 @@ class PresenceRepository(
         a.appScope.launch {
             try {
                 val fam = a.prefs.familyUids.first()
-                if (fam.isEmpty()) return@launch
+                if (fam.isEmpty()) {
+                    // O dată pe proces: un familyLoc rămas de dinainte (ultimul membru scos pe o versiune veche) pleacă.
+                    if (!familyCleared) { familyCleared = true; db.collection("familyLoc").document(uid).delete() }
+                    return@launch
+                }
+                familyCleared = false
                 db.collection("familyLoc").document(uid).set(
                     mapOf(
                         "lat" to lat, "lng" to lng,

@@ -127,12 +127,18 @@ export async function dayView(storage, now = Date.now(), places = []) {
   if (!pts.length && !stops.length) return null;
   const segments = [], gaps = [];
   let km = 0, current = [], anchor = null;
+  // În timpul unei opriri nu se adună nimic (fix-urile Wi-Fi/celulă sar 50-150 m pe loc); în rest, un pas contează doar
+  // peste 40 m și peste suma preciziilor celor două fix-uri (p[3]), ca zgomotul să nu devină kilometri.
+  const inStop = t => stops.some(s => t >= s.from && t <= s.to);
   for (let i = 0; i < pts.length; i++) {
     const p = pts[i], prev = pts[i - 1];
     if (prev && p[0] - prev[0] > LOC_RULES.gap_ms) { if (current.length) segments.push(current); current = []; anchor = null; gaps.push({ from: prev[0], to: p[0] }); }
     current.push(p);
-    if (!anchor) anchor = p;
-    else { const d = metres(anchor[1], anchor[2], p[1], p[2]); if (d >= LOC_RULES.move_m) { km += d / 1000; anchor = p; } }
+    if (!anchor || inStop(p[0])) anchor = p;
+    else {
+      const d = metres(anchor[1], anchor[2], p[1], p[2]);
+      if (d >= Math.max(LOC_RULES.move_m, (fin(anchor[3]) ? anchor[3] : 0) + (fin(p[3]) ? p[3] : 0))) { km += d / 1000; anchor = p; }
+    }
   }
   if (current.length) segments.push(current);
   // Cel mult 1 500 de puncte în tot răspunsul, împărțite pe bucăți după lungimea lor.

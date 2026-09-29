@@ -31,6 +31,7 @@ export class FakeFirestore {
     if (op === 'ARRAY_CONTAINS') return Array.isArray(v) && v.includes(want);
     if (v === undefined) return false;
     if (op === 'EQUAL') return v === want;
+    if (op === 'IN') return Array.isArray(want) && want.includes(v);
     if (op === 'GREATER_THAN_OR_EQUAL') return v >= want;
     if (op === 'GREATER_THAN') return v > want;
     if (op === 'LESS_THAN') return v < want;

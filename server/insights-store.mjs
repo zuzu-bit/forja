@@ -79,7 +79,7 @@ export class InsightsAccount {
    * șterg separat (DELETE /v2/sessions/{id}). Idempotent: a doua cerere întoarce zerouri.
    */
   async forgetSite(uid) {
-    const s = this.ctx.storage, bucket = this.env.RECORDS, out = { usageDays: 0, locDays: 0, files: 0, objects: 0 };
+    const s = this.ctx.storage, bucket = this.env.RECORDS, out = { usageDays: 0, locDays: 0, caches: 0, files: 0, objects: 0 };
     const drop = async prefix => {
       const keys = [...(await s.list({ prefix })).keys()];
       for (let i = 0; i < keys.length; i += 128) await s.delete(keys.slice(i, i + 128));
@@ -88,6 +88,8 @@ export class InsightsAccount {
     out.usageDays = await drop('usage-day:');
     await drop('usage-last:');
     out.locDays = await drop(LOC_DAY_PREFIX);
+    // Copiile Cercului: ziua pe hartă (cerc-live.day), agenda, numele locurilor, energia; altfel un răspuns „stale” le-ar mai servi.
+    out.caches = await drop('site-cache:cerc-');
     for (const item of (await s.list({ prefix: 'cloud-file:' })).values()) {
       if (bucket) await eraseFile(s, bucket, item); else await s.delete('cloud-file:' + item.id);
       out.files++;
