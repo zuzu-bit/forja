@@ -63,6 +63,33 @@ test('diag/music: device metadata cannot smuggle long text; invalid events are d
   assert.equal(cleanEvent(event({ ms: 9e9 })).ms, 600000);
 });
 
+test('diag/music: the 4.4.1 ENV, RET and QUEUE rows pass the existing validator, are stored as sent and are not counted as attempts', async () => {
+  const media = new Bucket(), env = { MEDIA: media, ADMIN_KEY: 'k' };
+  const env1 = 'v1 la:0 pi:1 inst:sp ses:yt key:yt hist:sp last:sp pref:sp top:q idsh:spotify:track:22 fg:1 ex:-';
+  const rows = [
+    event({ at: NOW - 9000, want: 'workout', rung: 'ENV', pkg: null, ver: null, kind: null, result: 'skipped', ms: 212, err: env1 }),
+    event({ at: NOW - 8000, want: 'workout', rung: 'V_LIKED_PLAY', kind: 'music', result: 'ok', ms: 1450, err: 'sub woke' }),
+    event({ at: NOW - 7000, want: 'workout', rung: 'RET', kind: null, result: 'ok', ms: 4600, err: 'auto' }),
+    event({ at: NOW - 6000, want: 'workout', rung: 'RET', kind: null, result: 'timeout', ms: 3900, err: 'none cancel:60' }),
+    event({ at: NOW - 5000, want: 'mymusic', rung: 'RET', kind: null, result: 'ok', ms: 15200, err: 'back' }),
+    event({ at: NOW - 4000, want: 'workout', rung: 'QUEUE', kind: 'music', result: 'refused', ms: 0, err: 'n:4 refused' }),
+    event({ at: NOW - 3000, want: 'workout', rung: 'QUEUE', kind: 'music', result: 'ok', ms: 0, err: 'n:12 workout-end' }),
+  ];
+  assert(env1.length <= 120, 'the ENV line fits the app limit');
+  const r = await call(env, '/v1/diag/music', { body: { device: 'samsung SM-S911B · sdk 36 · oneui 170500', app: '4.4.1 (67)', events: rows } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { ok: true, stored: rows.length, dropped: 0 });
+  const doc = await stored(media);
+  assert.deepEqual(doc.events.map(e => [e.rung, e.pkg, e.result, e.ms, e.err]), rows.map(e => [e.rung, e.pkg, e.result, e.ms, e.err]));
+  // The admin report (`music 150`) shows them, with the ENV codes intact.
+  const out = (await (await route(new Request('https://api.forja.test/admin/api/cmd', { method: 'POST', headers: { 'X-Admin': 'k' }, body: 'music 10' }), env, new URL('https://api.forja.test/admin/api/cmd'))).json()).out;
+  // The header counts start attempts only; the context rows are counted apart.
+  assert.equal(out.split('\n')[0], 'Muzică: 1 încercare (ora României) · 1 reușită · env: 1 · ret: 3 · coadă: 2');
+  assert.match(out, /workout ENV .*skipped .*· v1 la:0 pi:1 inst:sp ses:yt key:yt .*ex:-$/m);
+  assert.match(out, /RET .*timeout .*· none cancel:60$/m);
+  assert.match(out, /QUEUE .*refused .*· n:4 refused$/m);
+});
+
 test('diag/music keeps the last 500 events per account, accounts apart; admin "music [n]" prints them', async () => {
   const media = new Bucket(), env = { MEDIA: media, ADMIN_KEY: 'k' };
   for (let b = 0; b < 11; b++) {
@@ -87,29 +114,4 @@ test('diag/music keeps the last 500 events per account, accounts apart; admin "m
   assert.equal((await (await route(new Request('https://api.forja.test/admin/api/cmd', { method: 'POST', headers: { 'X-Admin': 'wrong' }, body: 'music' }), env, new URL('https://api.forja.test/admin/api/cmd'))).status), 403);
   assert.equal(await admin('music'), (await admin('music 30')));
   assert.equal(await (async () => { const e = { MEDIA: new Bucket(), ADMIN_KEY: 'k' }; return (await (await route(new Request('https://api.forja.test/admin/api/cmd', { method: 'POST', headers: { 'X-Admin': 'k' }, body: 'music' }), e, new URL('https://api.forja.test/admin/api/cmd'))).json()).out; })(), 'Nicio încercare de muzică primită încă.');
-});
-
-test('diag/music: the 4.4.1 ENV, RET and QUEUE rows pass the existing validator and are stored as sent (no server change)', async () => {
-  const media = new Bucket(), env = { MEDIA: media, ADMIN_KEY: 'k' };
-  const env1 = 'v1 la:0 pi:1 inst:sp ses:yt key:yt hist:sp last:sp pref:sp top:q idsh:spotify:track:22 fg:1 ex:-';
-  const rows = [
-    event({ at: NOW - 9000, want: 'workout', rung: 'ENV', pkg: null, ver: null, kind: null, result: 'skipped', ms: 212, err: env1 }),
-    event({ at: NOW - 8000, want: 'workout', rung: 'V_LIKED_PLAY', kind: 'music', result: 'ok', ms: 1450, err: 'sub woke' }),
-    event({ at: NOW - 7000, want: 'workout', rung: 'RET', kind: null, result: 'ok', ms: 4600, err: 'auto' }),
-    event({ at: NOW - 6000, want: 'workout', rung: 'RET', kind: null, result: 'timeout', ms: 3900, err: 'none cancel:60' }),
-    event({ at: NOW - 5000, want: 'mymusic', rung: 'RET', kind: null, result: 'ok', ms: 15200, err: 'back' }),
-    event({ at: NOW - 4000, want: 'workout', rung: 'QUEUE', kind: 'music', result: 'refused', ms: 0, err: 'n:4 refused' }),
-    event({ at: NOW - 3000, want: 'workout', rung: 'QUEUE', kind: 'music', result: 'ok', ms: 0, err: 'n:12 workout-end' }),
-  ];
-  assert(env1.length <= 120, 'the ENV line fits the app limit');
-  const r = await call(env, '/v1/diag/music', { body: { device: 'samsung SM-S911B · sdk 36 · oneui 170500', app: '4.4.1 (67)', events: rows } });
-  assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { ok: true, stored: rows.length, dropped: 0 });
-  const doc = await stored(media);
-  assert.deepEqual(doc.events.map(e => [e.rung, e.pkg, e.result, e.ms, e.err]), rows.map(e => [e.rung, e.pkg, e.result, e.ms, e.err]));
-  // The admin report (`music 150`) shows them, with the ENV codes intact.
-  const out = (await (await route(new Request('https://api.forja.test/admin/api/cmd', { method: 'POST', headers: { 'X-Admin': 'k' }, body: 'music 10' }), env, new URL('https://api.forja.test/admin/api/cmd'))).json()).out;
-  assert.match(out, /workout ENV .*skipped .*· v1 la:0 pi:1 inst:sp ses:yt key:yt .*ex:-$/m);
-  assert.match(out, /RET .*timeout .*· none cancel:60$/m);
-  assert.match(out, /QUEUE .*refused .*· n:4 refused$/m);
 });

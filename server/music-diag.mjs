@@ -11,6 +11,9 @@ export const MUSIC_DIAG = Object.freeze({
 });
 const PREFIX = '_admin/music/';
 const DAY = 86400000;
+// Rândurile de context din 4.4.1 stau în jurnal lângă încercări, dar nu sunt încercări de pornire: ENV = ce vedea telefonul
+// înaintea pornirii, RET = întoarcerea din player, QUEUE = coada FORJA la final. Antetul lui `music [n]` le numără separat.
+const CONTEXT_RUNGS = new Map([['ENV', 'env'], ['RET', 'ret'], ['QUEUE', 'coadă']]);
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const plain = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max) : null);
 
@@ -92,9 +95,12 @@ export async function musicReport(env, n = 30) {
   if (!rows.length) return 'Nicio încercare de muzică primită încă.';
   rows.sort((a, b) => a.at - b.at);
   const last = rows.slice(-Math.min(Math.max(n, 1), MUSIC_DIAG.keep));
-  const ok = last.filter(e => e.result === 'ok').length;
+  const tries = last.filter(e => !CONTEXT_RUNGS.has(e.rung));
+  const ok = tries.filter(e => e.result === 'ok').length;
+  const context = [...CONTEXT_RUNGS].map(([rung, label]) => [label, last.filter(e => e.rung === rung).length]).filter(([, k]) => k > 0)
+    .map(([label, k]) => ` · ${label}: ${k}`).join('');
   return [
-    `Muzică: ${count(last.length, 'încercare', 'încercări')} (ora României) · ${count(ok, 'reușită', 'reușite')}`,
+    `Muzică: ${count(tries.length, 'încercare', 'încercări')} (ora României) · ${count(ok, 'reușită', 'reușite')}${context}`,
     ...last.map(e => '  ' + [clock.format(new Date(e.at)).replace(',', ''), 'u' + e.u, e.want.padEnd(7), e.rung.padEnd(14), String(e.pkg || '—').padEnd(24), String(e.kind || '—').padEnd(7),
       e.result.padEnd(11), (e.ms + 'ms').padEnd(8), e.ver || '', deviceText(e.device), e.err ? '· ' + e.err : ''].join(' ').trimEnd()),
   ].join('\n');
