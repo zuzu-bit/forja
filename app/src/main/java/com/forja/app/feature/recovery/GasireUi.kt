@@ -197,7 +197,12 @@ fun GasireSheetContent(ui: FinderUi, probing: Boolean, actions: GasireActions, n
         val probe = if (probing) Modifier else Modifier.semantics { role = Role.Button }.pressable(actions.onProbe)
         Box(Modifier.fillMaxWidth().heightIn(min = 48.dp).then(probe), contentAlignment = Alignment.Center) {
             if (probing) {
-                CircularProgressIndicator(color = Accent2, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                // Sub „mișcare redusă” (și în capturi) cercul stă pe loc: cel nedeterminat e o animație fără sfârșit.
+                if (LocalReducedMotion.current) {
+                    CircularProgressIndicator(progress = { 0.3f }, color = Accent2, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                } else {
+                    CircularProgressIndicator(color = Accent2, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                }
             } else {
                 Text("Probă", style = BodyStrong.copy(color = Accent2, fontSize = 15.sp))
             }
