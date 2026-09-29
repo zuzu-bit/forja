@@ -84,6 +84,9 @@ class Prefs(private val context: Context) {
         val contractUid = stringPreferencesKey("contract_uid")
         // mirror (contract v4) — cuvintele de care te lași și scrisoarea, pe site: acord separat, oprit implicit
         val detoxWordsOnSite = booleanPreferencesKey("detox_words_on_site")
+        // mirror D — istoriile zilnice: pădurea („zi:crescuți:uscați;…”) și opririle paznicului pe pachete („zi:pachet:n;…”)
+        val focusForestHistory = stringPreferencesKey("focus_forest_history")
+        val detoxHits = stringPreferencesKey("detox_hits")
     }
 
     companion object {
@@ -250,6 +253,7 @@ class Prefs(private val context: Context) {
             p[K.focusGrown] = grown
             p[K.focusWithered] = withered
             p[K.focusPartialSecs] = partial
+            p[K.focusForestHistory] = forestHistoryWith(p[K.focusForestHistory], today, grown, withered)
         }
     }
     /** Oprire manuală: copacul început (≥1 min) se ofilește, cronometrul pleacă de la zero. */
@@ -264,6 +268,7 @@ class Prefs(private val context: Context) {
             p[K.focusGrown] = grown
             p[K.focusWithered] = withered
             p[K.focusPartialSecs] = 0
+            p[K.focusForestHistory] = forestHistoryWith(p[K.focusForestHistory], today, grown, withered)
         }
     }
 
@@ -278,10 +283,24 @@ class Prefs(private val context: Context) {
             p[K.focusGrown] = grown
             p[K.focusWithered] = withered
             p[K.focusPartialSecs] = partial
+            p[K.focusForestHistory] = forestHistoryWith(p[K.focusForestHistory], today, grown, withered)
         }
     }
 
-    // ── Detox de adicție — totul pe telefon, nimic pe server ──
+    private fun forestHistoryWith(old: String?, today: Long, grown: Int, withered: Int): String =
+        com.forja.app.core.focus.MindDocs.forestEncode(com.forja.app.core.focus.MindDocs.forestDecode(old) + (today to (grown to withered)), today)
+
+    /** Pădurea pe zile (epochDay → crescuți, uscați), ultimele 40 de zile — pentru site (FocusMirror). */
+    val focusForestHistory: Flow<Map<Long, Pair<Int, Int>>> = context.dataStore.data.map { com.forja.app.core.focus.MindDocs.forestDecode(it[K.focusForestHistory]) }
+
+    /** Opririle paznicului pe zile și pachete (epochDay → cod → n). Doar numărători, niciodată textul prins. */
+    val detoxHits: Flow<Map<Long, Map<String, Int>>> = context.dataStore.data.map { com.forja.app.core.focus.MindDocs.hitsDecode(it[K.detoxHits]) }
+    suspend fun addDetoxHit(pack: String) {
+        val today = java.time.LocalDate.now().toEpochDay()
+        context.dataStore.edit { it[K.detoxHits] = com.forja.app.core.focus.MindDocs.addPackHit(it[K.detoxHits], today, pack) }
+    }
+
+    // ── Detox de adicție — pe telefon; pe site doar numărătorile (contract v4), cuvintele doar cu detoxWordsOnSite ──
     val detoxOn: Flow<Boolean> = context.dataStore.data.map { it[K.detoxOn] ?: false }
     suspend fun setDetoxOn(v: Boolean) = context.dataStore.edit {
         it[K.detoxOn] = v
@@ -296,11 +315,11 @@ class Prefs(private val context: Context) {
         it[K.detoxSlips] = (it[K.detoxSlips] ?: 0) + 1
     }
 
-    /** Scrisoarea către mine — de ce vreau să scap. Rămâne pe telefon. */
+    /** Scrisoarea către mine — de ce vreau să scap. Rămâne pe telefon, în afară de acordul separat [detoxWordsOnSite]. */
     val detoxLetter: Flow<String> = context.dataStore.data.map { it[K.detoxLetter] ?: "" }
     suspend fun setDetoxLetter(v: String) = context.dataStore.edit { it[K.detoxLetter] = v }
 
-    /** Cuvintele-declanșator, setate de el. NU pleacă niciodată de pe telefon. */
+    /** Cuvintele-declanșator, setate de ea. Pleacă pe site doar cu contractul v4 și acordul separat [detoxWordsOnSite]. */
     val detoxWords: Flow<String> = context.dataStore.data.map { it[K.detoxWords] ?: "" }
     suspend fun setDetoxWords(v: String) = context.dataStore.edit { it[K.detoxWords] = v }
 

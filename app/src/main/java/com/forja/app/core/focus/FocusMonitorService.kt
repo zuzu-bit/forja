@@ -35,17 +35,26 @@ class FocusMonitorService : Service() {
     /** Începutul sesiunii și copacii de azi de la început — pentru „Postul de pază s-a încheiat” (Casca). */
     private var sessionStart = 0L
     private var grownAtStart = -1
+    /** Copacii de azi la deschiderea sesiunii „focus” din jurnal (a crescut unul nou?). */
+    private var grownAtFocusOpen = -1
+    private var monitoring = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            // Oprit de ea (Oprește Focus): sesiunile deschise se închid acum; copacul început s-a uscat.
+            val app = ForjaApp.from(this)
+            app.appScope.launch {
+                try { FocusJournal.end(app, "focus", "user", withered = true); FocusJournal.end(app, "detox", "user") } catch (_: Exception) { }
+            }
             stopSelf()
             return START_NOT_STICKY
         }
         startForeground(NOTIF_ID, buildNotification())
-        if (sessionStart == 0L) sessionStart = System.currentTimeMillis()
-        monitor()
+        val fresh = sessionStart == 0L
+        if (fresh) sessionStart = System.currentTimeMillis()
+        if (!monitoring) { monitoring = true; monitor(fresh) }
         return START_STICKY
     }
 
@@ -71,10 +80,12 @@ class FocusMonitorService : Service() {
         return set
     }
 
-    private fun monitor() {
+    private fun monitor(fresh: Boolean) {
         val app = ForjaApp.from(this)
         val essentials = essentialPackages()
         scope.launch {
+            // Ce a rămas deschis de la un serviciu oprit de Android se închide la ultima clipă văzută.
+            if (fresh) try { FocusJournal.closeStale(app) } catch (_: Exception) { }
             if (grownAtStart < 0) grownAtStart = try { app.prefs.focusForest.first().first } catch (_: Exception) { 0 }
             while (true) {
                 delay(1200)
@@ -87,15 +98,18 @@ class FocusMonitorService : Service() {
                     val rules = app.db.focusDao().enabledRules()
                     val calNow = Calendar.getInstance()
                     val minNow = calNow.get(Calendar.HOUR_OF_DAY) * 60 + calNow.get(Calendar.MINUTE)
-                    val anyRuleActive = rules.any { minNow < it.untilHour * 60 + it.untilMinute }
+                    val active = rules.filter { minNow < it.untilHour * 60 + it.untilMinute }
+                    val anyRuleActive = active.isNotEmpty()
+                    journal(app, detoxOn, detoxUntil, active, minNow)
                     // Nimic activ (focus terminat, fără detox) → oprim serviciul; notificarea dispare.
-                    if (!detoxOn && !anyRuleActive) { sessionDone(app); stopSelf(); return@launch }
+                    if (!detoxOn && !anyRuleActive) { sessionDone(app); monitoring = false; stopSelf(); return@launch }
 
                     // Pădurea: copacul crește cât timp focus-ul e activ.
                     focusAccumMs += 1200
                     if (focusAccumMs >= 30_000) {
                         app.prefs.addFocusProgress((focusAccumMs / 1000).toInt())
                         focusAccumMs = 0
+                        FocusJournal.touch(this@FocusMonitorService)
                     }
 
                     val fg = foregroundPackage() ?: continue
@@ -103,6 +117,7 @@ class FocusMonitorService : Service() {
                     // Detox: totul în pauză, în afară de esențiale.
                     if (detoxOn && fg !in essentials && System.currentTimeMillis() - lastBlockShown > 4000) {
                         lastBlockShown = System.currentTimeMillis()
+                        try { FocusJournal.hit(app, "detox", fg) } catch (_: Exception) { }
                         startActivity(
                             Intent(this@FocusMonitorService, FocusBlockActivity::class.java).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -120,6 +135,7 @@ class FocusMonitorService : Service() {
                     }
                     if (rule != null && System.currentTimeMillis() - lastBlockShown > 4000) {
                         lastBlockShown = System.currentTimeMillis()
+                        try { FocusJournal.hit(app, "focus", fg) } catch (_: Exception) { }
                         val i = Intent(this@FocusMonitorService, FocusBlockActivity::class.java).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             putExtra("label", rule.label)
@@ -130,6 +146,28 @@ class FocusMonitorService : Service() {
                 } catch (_: Exception) { }
             }
         }
+    }
+
+    /**
+     * Jurnalul (mirror D): o sesiune „detox” cât detoxul digital ține, una „focus” cât o regulă e activă. Închiderea:
+     * „timer” când ora s-a împlinit, „user” când detoxul a fost oprit din ecran (detoxUntil = 0).
+     */
+    private suspend fun journal(app: ForjaApp, detoxOn: Boolean, detoxUntil: Long, active: List<com.forja.app.core.data.db.FocusRuleEntity>, minNow: Int) {
+        try {
+            val now = System.currentTimeMillis()
+            if (detoxOn) FocusJournal.ensureOpen(app, "detox", ((detoxUntil - now) / 60_000L).toInt() + 1, emptyList())
+            else if (FocusJournal.openId(this, "detox") != 0L) FocusJournal.end(app, "detox", if (detoxUntil == 0L) "user" else "timer")
+            if (active.isNotEmpty()) {
+                if (FocusJournal.openId(this, "focus") == 0L) {
+                    grownAtFocusOpen = app.prefs.focusForest.first().first
+                    val planned = (active.maxOf { it.untilHour * 60 + it.untilMinute } - minNow).coerceAtLeast(0)
+                    FocusJournal.ensureOpen(app, "focus", planned, active.map { it.packageName })
+                }
+            } else if (FocusJournal.openId(this, "focus") != 0L) {
+                val grownNow = app.prefs.focusForest.first().first
+                FocusJournal.end(app, "focus", "timer", grown = grownAtFocusOpen >= 0 && grownNow > grownAtFocusOpen)
+            }
+        } catch (_: Exception) { }
     }
 
     private fun foregroundPackage(): String? {

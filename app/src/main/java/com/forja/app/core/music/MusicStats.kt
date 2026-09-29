@@ -60,6 +60,10 @@ internal object MusicStats {
 
     suspend fun rows(context: Context): List<PlayRow> = HistoryCodec.parse(context.musicStore.data.first()[PLAYS])
 
+    /** Ascultările, live (mirror D: ListenMirror le trimite pe zile cu contractul v4). */
+    fun rowsFlow(context: Context): Flow<List<PlayRow>> =
+        context.musicStore.data.map { it[PLAYS] }.distinctUntilChanged().map { HistoryCodec.parse(it) }
+
     suspend fun library(context: Context): Map<String, LibraryEntry> {
         val p = context.musicStore.data.first()
         return p[LIBRARY]?.let { HistoryCodec.parseLibrary(it) } ?: HistoryCodec.fold(HistoryCodec.parse(p[PLAYS]))

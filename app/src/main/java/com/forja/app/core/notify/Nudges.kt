@@ -72,6 +72,8 @@ object Nudges {
     /** Aplicația a fost deschisă (MainActivity, ON_START). */
     fun onAppOpen(app: ForjaApp) {
         val now = System.currentTimeMillis()
+        // Jurnalul Căștii: mesajul în așteptare (sub 3 h) a dus-o în aplicație.
+        NudgeStore.read(app).pending?.let { p -> if (now - p.at <= 3 * 3_600_000L) NudgeStore.logOutcome(app, "opened", id = p.id, ctx = p.ctx) }
         NudgeStore.update(app) { NudgeRules.onOpened(it, now) }
         // Mesajul „coach” și-a făcut treaba: ești în aplicație.
         Notifier.cancel(app, NotifIds.COACH)
@@ -121,6 +123,7 @@ object Nudges {
                     state = NudgeStore.update(app) {
                         NudgeRules.onMilestone(NudgeRules.onPosted(it, r, Channels.COACH, now, day), hit, record = rec != null)
                     }
+                    NudgeStore.logPosted(app, r, Channels.COACH, now)
                     posted = true
                 }
             }
@@ -138,6 +141,7 @@ object Nudges {
             )
             if (r != null && Notifier.post(app, r, spec)) {
                 state = NudgeStore.update(app) { NudgeRules.onFriend(NudgeRules.onPosted(it, r, Channels.SOCIAL, now, day), near.uid, day) }
+                NudgeStore.logPosted(app, r, Channels.SOCIAL, now)
                 posted = true
             }
         }
@@ -161,6 +165,7 @@ object Nudges {
             if (plan.context == NudgeContext.Permission) data.permission?.let { n = NudgeRules.onPermission(n, it, now) }
             n
         }
+        NudgeStore.logPosted(app, r, Channels.COACH, now)
     }
 
     private fun coachSpec(id: Int, ctx: NudgeContext, d: NudgeData, tracked: Boolean): Notifier.Spec {
@@ -252,7 +257,7 @@ object Nudges {
             return false
         }
         val ok = Notifier.post(c, r, if (quiet) spec.copy(silent = true) else spec)
-        if (ok) NudgeStore.update(c) { NudgeRules.onPosted(it, r, channel, now, NudgeSnapshot.dayOf(now)) }
+        if (ok) { NudgeStore.update(c) { NudgeRules.onPosted(it, r, channel, now, NudgeSnapshot.dayOf(now)) }; NudgeStore.logPosted(c, r, channel, now) }
         return ok
     }
 
@@ -345,17 +350,18 @@ object Nudges {
             NotifIds.BEDTIME, Channels.COACH, Groups.COACH, route = Route.SLEEP,
             publicTitle = pub?.title ?: "Noapte bună.", publicText = pub?.body
         )
-        if (Notifier.post(app, r, spec)) NudgeStore.update(app) { NudgeRules.onPosted(it, r, Channels.COACH, now, NudgeSnapshot.dayOf(now)) }
+        if (Notifier.post(app, r, spec)) { NudgeStore.update(app) { NudgeRules.onPosted(it, r, Channels.COACH, now, NudgeSnapshot.dayOf(now)) }; NudgeStore.logPosted(app, r, Channels.COACH, now) }
     }
 
     /** Mesajul a fost atins și Casca a apărut pe Panou (ecoul). */
     fun onTapped(c: Context, ctx: String) {
-        if (ctx.isNotBlank()) NudgeStore.update(c) { NudgeRules.onTapped(it, ctx) }
+        if (ctx.isNotBlank()) { NudgeStore.update(c) { NudgeRules.onTapped(it, ctx) }; NudgeStore.logOutcome(c, "tapped", ctx = ctx) }
     }
 
     /** Swipe pe un mesaj: ignorat (auto-reglarea). */
     fun onDismissed(c: Context, ctx: String, id: String) {
         NudgeStore.update(c) { NudgeRules.onDismissed(it, ctx, id) }
+        NudgeStore.logOutcome(c, "dismissed", id = id)
     }
 }
 
