@@ -73,6 +73,8 @@ jobs:
           curl -s --max-time 60 -H "X-Admin: $ACC" "$URL/admin/api/overview" | jq '.log // .' || true
           echo "== pornirile muzicii (fără titluri) =="
           curl -s --max-time 60 -H "X-Admin: $ACC" -d "music 150" "$URL/admin/api/cmd" | jq -r '.out // .' || true
+          echo "== acordul Inventarului (fără nume de fișiere) =="
+          curl -s --max-time 60 -H "X-Admin: $ACC" -d "consent 200" "$URL/admin/api/cmd" | jq -r '.out // .' || true
           echo "== jurnalul serverului (ultimele 200) =="
           curl -s --max-time 60 -H "X-Admin: $ACC" -d "log 200" "$URL/admin/api/cmd" | jq -r '.out // .' || true
           echo "== test cap-coadă /v1/meal (cont de diagnostic + poză publică) =="
