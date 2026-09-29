@@ -479,7 +479,9 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     assert.equal(p.$('body-muzica').querySelectorAll('.top-row').length, 10); assert.match(p.$('body-muzica').textContent, /Vama Veche/);
     assert(p.ux.Poll.jobs.has('muzica:data'));
     await open(p, 'paza'); await until(() => p.$('body-paza').querySelector('.app-row'), 'paza');
-    assert.equal(p.$('body-paza').querySelectorAll('.app-row').length, 7);
+    assert.equal(p.$('body-paza').querySelectorAll('.app-row').length, 6, 'FORJA is shown apart, not in the list');
+    assert.match(p.$('body-paza').textContent, /FORJA · \d+ min · separat/);
+    assert(p.$('body-paza').querySelector('.heat-cell'), 'the hours of the day');
     clean(p);
   });
 
@@ -533,7 +535,7 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
   await check('empty account: every section shows an honest empty state, never an error', async () => {
     const p = page({profile: 'empty'});
     await tick(20); await login(p);
-    const expect = {azi: /FĂRĂ SEMNAL|0 DIN 10/, camarazi: /Niciun camarad încă/, gasire: /Semnează contractul în FORJA\. Telefonul apare aici singur\./, inventar: /Niciun inventar încă/, somn: /Prima noapte apare aici/, ratie: /Prima masă apare aici/, mars: /Prima tură apare aici/, muzica: /Liniște pe post/, paza: /Niciun raport de pază/, concentrare: /Nicio sesiune de concentrare/, cont: /Nesemnat/};
+    const expect = {azi: /FĂRĂ SEMNAL|0 DIN 10/, camarazi: /Niciun camarad încă/, gasire: /Semnează contractul în FORJA\. Telefonul apare aici singur\./, inventar: /Niciun inventar încă/, somn: /Prima noapte apare aici/, ratie: /Prima masă apare aici/, mars: /Prima tură apare aici/, muzica: /Liniște pe post/, paza: /Pază oprită/, concentrare: /Concentrarea vine cu contractul v4/, cont: /Nesemnat/};
     for (const [id, re] of Object.entries(expect)) {
       await open(p, id);
       await until(() => re.test(p.$('s-' + id).textContent), id, 3000);

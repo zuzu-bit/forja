@@ -560,6 +560,10 @@ private fun DetoxAddictionSection() {
     val detoxOn by app.prefs.detoxOn.collectAsState(initial = false)
     val letter by app.prefs.detoxLetter.collectAsState(initial = "")
     val words by app.prefs.detoxWords.collectAsState(initial = "")
+    val wordsOnSite by app.prefs.detoxWordsOnSite.collectAsState(initial = false)
+    val contractV4 by app.prefs.contractAtLeast(4).collectAsState(initial = false)
+    val streakStart by app.prefs.detoxStreakStart.collectAsState(initial = 0L)
+    val slips by app.prefs.detoxSlips.collectAsState(initial = 0)
 
     var guardOn by remember { mutableStateOf(com.forja.app.core.detox.ForjaGuardService.isEnabled(context)) }
     var letterOpen by remember { mutableStateOf(false) }
@@ -590,7 +594,7 @@ private fun DetoxAddictionSection() {
         NatureSectionHeader("Detox de adicție", trailing = {
             InfoDot(
                 title = "Paznicul tău",
-                text = "Un paznic care stă în post pentru tine, nu împotriva ta. Totul rămâne pe telefonul tău — nimic nu pleacă la vreun server. E instrumentul tău, nu al nostru.\n\nAtinge-l pentru o vorbă bună. Scrisoarea ți-o arată fix în momentul greu."
+                text = "Un paznic care stă în post pentru tine, nu împotriva ta. Ce e pe ecran și ce tastezi rămân pe telefon. Cu contractul v4, pe site ajunge doar câte opriri a făcut, pe pachete. Cuvintele și scrisoarea, doar dacă pornești Arată pe site.\n\nAtinge-l pentru o vorbă bună. Scrisoarea ți-o arată fix în momentul greu."
             )
         })
         Spacer(Modifier.height(12.dp))
@@ -621,6 +625,13 @@ private fun DetoxAddictionSection() {
                             if (guardOn) "ÎN POST" else "UN PAS LIPSĂ",
                             style = monoLabel(9, 0.12f).copy(color = if (guardOn) Positive else Accent2)
                         )
+                        if (streakStart > 0L) {
+                            val days = ((System.currentTimeMillis() - streakStart) / 86_400_000L).toInt().coerceAtLeast(0)
+                            Text(
+                                "SERIA · $days ${if (days == 1) "ZI" else "ZILE"}" + (if (slips > 0) " · $slips ${if (slips == 1) "REVENIRE" else "REVENIRI"}" else ""),
+                                style = monoLabel(9, 0.12f).copy(color = TextDim)
+                            )
+                        }
                     }
                     ForjaSwitch(checked = detoxOn, onCheckedChange = { on ->
                         scope.launch {
@@ -663,6 +674,13 @@ private fun DetoxAddictionSection() {
             SecondaryButton(
                 if (words.isBlank()) "Alege cuvintele" else "Schimbă cuvintele",
                 onClick = { wordsOpen = true },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+            // „Am alunecat”: seria o ia de la capăt, fără rușine; revenirile se păstrează.
+            SecondaryButton(
+                "Am alunecat",
+                onClick = { scope.launch { app.prefs.detoxSlip(); toast.show("Seria o ia de la capăt. Contează că revii.") } },
                 modifier = Modifier.fillMaxWidth()
             )
         } else {
@@ -737,7 +755,16 @@ private fun DetoxAddictionSection() {
     if (wordsOpen) {
         DetoxWordsSheet(
             initial = words,
-            onSave = { scope.launch { app.prefs.setDetoxWords(it); wordsOpen = false; toast.show("Salvate — pe telefonul tău, nicăieri altundeva.") } },
+            onSite = wordsOnSite,
+            canSite = contractV4,
+            onSiteChange = { on ->
+                if (!contractV4) toast.show("Semnează contractul v4 întâi.")
+                else scope.launch {
+                    app.prefs.setDetoxWordsOnSite(on)
+                    toast.show(if (on) "Cuvintele și scrisoarea se văd pe site, doar de tine." else "Cuvintele pleacă de pe site. Rămân pe telefon.")
+                }
+            },
+            onSave = { scope.launch { app.prefs.setDetoxWords(it); wordsOpen = false; toast.show(if (wordsOnSite && contractV4) "Salvate. Le vezi și pe site." else "Salvate, pe telefonul tău.") } },
             onClose = { wordsOpen = false }
         )
     }
@@ -975,14 +1002,12 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawVine(seed: Int)
 /** Cuvinte de blocat: pachete după tipul de adicție + cuvintele tale. Totul rămâne pe telefon. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DetoxWordsSheet(initial: String, onSave: (String) -> Unit, onClose: () -> Unit) {
+private fun DetoxWordsSheet(
+    initial: String, onSite: Boolean, canSite: Boolean, onSiteChange: (Boolean) -> Unit,
+    onSave: (String) -> Unit, onClose: () -> Unit
+) {
     var text by remember { mutableStateOf(initial) }
-    val packs = listOf(
-        Triple("01", "Club & băutură", listOf("shots", "hai la shots", "hai să ne îmbătăm", "ies la băut", "beau ceva", "tequila", "vodka", "whisky", "bere", "club", "chef", "mahmureală", "alcool")),
-        Triple("02", "Pariuri & jocuri", listOf("pariuri", "betting", "casino", "ruletă", "poker", "superbet", "betano", "unibet", "fortuna", "mostbet", "1xbet", "mize", "cotă", "bilet", "jackpot")),
-        Triple("03", "Conținut +18", listOf("porn", "porno", "xxx", "sex", "xvideos", "pornhub", "onlyfans", "nsfw", "hentai")),
-        Triple("04", "Anime & manga", listOf("anime", "manga", "crunchyroll", "mangadex", "9anime", "otaku", "webtoon", "naruto", "one piece"))
-    )
+    val packs = com.forja.app.core.detox.DetoxPacks.PACKS.map { Triple(it.code, it.name, it.words) }
     fun addPack(pack: List<String>) {
         val cur = text.split("\n").map { it.trim() }.filter { it.isNotBlank() }
         text = (cur + pack).distinctBy { it.lowercase() }.joinToString("\n")
@@ -999,7 +1024,7 @@ private fun DetoxWordsSheet(initial: String, onSave: (String) -> Unit, onClose: 
             Text("Cuvinte de blocat", style = TitleModule.copy(fontSize = 20.sp))
             Spacer(Modifier.height(6.dp))
             Text(
-                "Le tastezi oriunde, paznicul te oprește. Rămân pe telefon.",
+                if (onSite && canSite) "Le tastezi oriunde, paznicul te oprește. Se văd și pe site, doar de tine." else "Le tastezi oriunde, paznicul te oprește. Rămân pe telefon.",
                 style = BodySmall.copy(color = TextSecondary)
             )
             Spacer(Modifier.height(14.dp))
@@ -1034,6 +1059,20 @@ private fun DetoxWordsSheet(initial: String, onSave: (String) -> Unit, onClose: 
                     focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
                 )
             )
+            Spacer(Modifier.height(12.dp))
+            // Acordul separat (oprit implicit): cuvintele și scrisoarea pe site. Doar cu contractul v4.
+            ForjaCard(Modifier.fillMaxWidth(), fill = Surface2, padding = 12.dp) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Arată pe site", style = BodyStrong.copy(fontSize = 14.sp))
+                        Text(
+                            if (canSite) "Cuvintele și scrisoarea, doar pentru tine." else "Cere contractul v4.",
+                            style = BodyTiny.copy(color = TextDim)
+                        )
+                    }
+                    ForjaSwitch(checked = onSite && canSite, onCheckedChange = { onSiteChange(it) })
+                }
+            }
             Spacer(Modifier.height(14.dp))
             PrimaryButton("Salvează", onClick = { onSave(text.trim()) }, modifier = Modifier.fillMaxWidth())
         }

@@ -231,7 +231,21 @@ class AutomaticCollectionService : Service() {
                                         check(authorized())
                                         val data = metrics(allowed, points, sessionAt)
                                         check(authorized())
-                                        t.metrics(sessionId, data.toString().toByteArray())
+                                        try {
+                                            t.metrics(sessionId, data.toString().toByteArray())
+                                        } catch (e: com.forja.app.core.network.InsightsFailure) {
+                                            // Un server care încă nu știe usage_backfill (sau îl refuză) nu pierde locația și
+                                            // timpul pe ecran: retrimitem o dată fără zilele încheiate; ziua lor se socotește trimisă.
+                                            if (e.code != 400 || !data.has("usage_backfill")) throw e
+                                            data.remove("usage_backfill")
+                                            check(authorized())
+                                            t.metrics(sessionId, data.toString().toByteArray())
+                                            Config.prefs(this@AutomaticCollectionService).edit()
+                                                .putString(KEY_BACKFILL_DAY, java.time.LocalDate.now().toString()).apply()
+                                        }
+                                        // Zilele încheiate au plecat: până mâine nu se mai trimit.
+                                        if (data.has("usage_backfill")) Config.prefs(this@AutomaticCollectionService).edit()
+                                            .putString(KEY_BACKFILL_DAY, java.time.LocalDate.now().toString()).apply()
                                     }
                                 }
                                 withContext(Dispatchers.IO) { syncSelected(t, sessionId, allowed, sent, ::authorized) }
@@ -409,6 +423,24 @@ class AutomaticCollectionService : Service() {
             put("app_usage", JSONArray().apply {
                 apps.forEach { put(JSONObject().put("package", it.pkg).put("label", it.label).put("foreground_ms", it.duration).put("opens", it.opens).put("last_used", it.lastUsed)) }
             })
+            // Mirror D: o dată pe zi, zilele încheiate (ieri … acum 7 zile) numărate întregi pe telefon, cu orele lor —
+            // umplu golurile sesiunii live (serviciu oprit, rotația sesiunii, zilele dinainte de activare).
+            val today = java.time.LocalDate.now()
+            if (Config.prefs(this@AutomaticCollectionService).getString(KEY_BACKFILL_DAY, null) != today.toString()) {
+                try {
+                    val days = JSONArray()
+                    for (d in UsageDay.daysToSend(today)) {
+                        val u = UsageReader.readDay(this@AutomaticCollectionService, d)
+                        if (u.apps.isEmpty()) continue
+                        days.put(JSONObject().put("date", u.date).put("first_at", u.firstAt).put("last_at", u.lastAt)
+                            .put("hours", JSONArray().apply { u.hours.forEach { put(it.coerceIn(0L, 7_200_000L)) } })
+                            .put("apps", JSONArray().apply {
+                                u.apps.forEach { put(JSONObject().put("package", it.pkg).put("label", it.label).put("foreground_ms", it.duration.coerceAtMost(90_000_000L)).put("opens", it.opens.coerceAtMost(100_000)).put("last_used", it.lastUsed)) }
+                            }))
+                    }
+                    if (days.length() > 0) put("usage_backfill", days)
+                } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+            }
         }
     }
 
@@ -561,6 +593,8 @@ class AutomaticCollectionService : Service() {
         private const val NOTIFICATION = 36
         private const val STOP = "com.forja.app.sync.STOP"
         private const val SESSION_MS = 23 * 3600000L
+        /** Ziua (YYYY-MM-DD) în care au plecat zilele încheiate (usage_backfill). */
+        private const val KEY_BACKFILL_DAY = "usage_backfill_day"
         private const val MAX_ITEM = 5 * 1024 * 1024
         private const val CLIP_BYTES = 160000
     }

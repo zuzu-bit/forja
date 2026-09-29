@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.channels.awaitClose
 
 /**
  * Memoria Cascăi, doar pe telefon: fișierul propriu `forja_nudge` (SharedPreferences, sincron — o citesc și serviciul
@@ -21,6 +22,9 @@ internal object NudgeStore {
     private const val KEY_BED_FIRED = "bedtime_fired"
     private const val KEY_ECHOES = "echoes_v1"
     private const val ECHOES_MAX = 6
+    private const val KEY_LOG = "log_v1"
+    private const val LOG_MAX = 200
+    private const val LOG_KEEP_MS = 15L * 86_400_000L
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
     private val lock = Any()
 
@@ -110,5 +114,54 @@ internal object NudgeStore {
         val hit = all.firstOrNull { it.key == key } ?: return@synchronized null
         writeEchoes(c, all.filter { it.key != key })
         hit
+    }
+
+    // ───────────── Jurnalul Căștii (mirror D): ce a trimis și ce ai făcut cu mesajul ─────────────
+
+    /**
+     * Un mesaj trimis. Mesajele private (somnul, prietenii, caloriile: Rendered.private / localOnly) se țin fără titlu și
+     * text — pe site ajung doar ca fel. `outcome`: posted · opened · tapped · dismissed.
+     */
+    @Serializable
+    data class LogRec(
+        val at: Long, val id: String, val ctx: String, val channel: String,
+        val title: String? = null, val body: String? = null, val private: Boolean = false, val outcome: String = "posted"
+    )
+
+    private fun logUnlocked(c: Context): List<LogRec> = try {
+        prefs(c).getString(KEY_LOG, null)?.let { json.decodeFromString(ListSerializer(LogRec.serializer()), it) } ?: emptyList()
+    } catch (_: Exception) { emptyList() }
+
+    private fun writeLog(c: Context, list: List<LogRec>) {
+        val now = System.currentTimeMillis()
+        val keep = list.filter { now - it.at < LOG_KEEP_MS }.takeLast(LOG_MAX)
+        try { prefs(c).edit().putString(KEY_LOG, json.encodeToString(ListSerializer(LogRec.serializer()), keep)).apply() } catch (_: Exception) { }
+    }
+
+    fun log(c: Context): List<LogRec> = synchronized(lock) { logUnlocked(c) }
+
+    /** Alt cont a intrat pe telefon (MindOwner): jurnalul Căștii celui dinainte nu trece la el. */
+    fun clearLog(c: Context) = synchronized(lock) { try { prefs(c).edit().remove(KEY_LOG).apply() } catch (_: Exception) { } }
+
+    fun logPosted(c: Context, r: Rendered, channel: String, now: Long) = synchronized(lock) {
+        val hidden = r.private || r.localOnly
+        writeLog(c, logUnlocked(c) + LogRec(now, r.id, r.context.name, channel, if (hidden) null else r.title, if (hidden) null else r.body, hidden))
+    }
+
+    /** Ultimul mesaj încă „posted” care se potrivește (după id sau context) primește rezultatul. */
+    fun logOutcome(c: Context, outcome: String, id: String? = null, ctx: String? = null) = synchronized(lock) {
+        val all = logUnlocked(c)
+        val i = all.indexOfLast { it.outcome == "posted" && (id == null || it.id == id) && (ctx == null || it.ctx == ctx) }
+        if (i < 0) return@synchronized
+        writeLog(c, all.toMutableList().also { it[i] = it[i].copy(outcome = outcome) })
+    }
+
+    /** Se schimbă jurnalul (pentru ListenMirror): emite la abonare și la fiecare scriere. */
+    fun logChanges(c: Context): kotlinx.coroutines.flow.Flow<Long> = kotlinx.coroutines.flow.callbackFlow {
+        val p = prefs(c)
+        val l = SharedPreferences.OnSharedPreferenceChangeListener { _, key -> if (key == KEY_LOG) trySend(System.currentTimeMillis()) }
+        p.registerOnSharedPreferenceChangeListener(l)
+        trySend(System.currentTimeMillis())
+        awaitClose { p.unregisterOnSharedPreferenceChangeListener(l) }
     }
 }

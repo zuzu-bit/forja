@@ -25,7 +25,7 @@
 //   ratie     1 (eu: contractul) + 1 (ținte) + mesele din `days` (≤ 800)                       ≈ 60–120 pe 30 de zile
 //   mars      1 (contractul) + activitățile (fără polilinii) + antrenamentele din max(`days`, 7) (≤ 200 + ≤ 200) + ≤ 8
 //             polilinii care nu sunt nici în traseele Teren, nici în memoria Marș din DO (păstrate acolo, citite o dată)
-//   muzica    2 · paza 0 · inventar 1 + ≤ 20 · cont 7
+//   muzica    2 (+ ≤ `days` zile de ascultări cu v4, 5 min în memorie) · paza 1 · concentrare 2 + ≤ 4 × `days` · inventar 1 + ≤ 20 · cont 7
 // Secțiunile în afară de Teren/Camarazi (și Azi, la 5 min) se citesc la deschidere, nu în buclă.
 // Ce a urcat doar cu contractul v3 (ținte, antrenamente, topul muzicii, rulările Inventarului) se arată doar cât contractul
 // e semnat cel puțin la v3 și nerevocat (contractGate(raw), min = 3; ce e nou în v4 cere contractGate(raw, 4)); jurnalele

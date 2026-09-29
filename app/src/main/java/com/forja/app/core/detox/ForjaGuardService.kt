@@ -19,9 +19,10 @@ import kotlinx.coroutines.launch
  * Paznicul „Detox de adicție" — accountability tool, ca Covenant Eyes/BlockerX.
  *
  * Diferența etică față de orice supraveghere: aici e telefonul TĂU, tu pornești
- * paznicul ca să te ajuți pe TINE, iar TOTUL rămâne pe telefon — cuvintele-declanșator
- * și conținutul ecranului NU pleacă nicăieri, nu ating niciun server. Consimțit,
- * local, terapeutic. Când prinde tentația, întâmpină cu blândețe, nu cu rușine.
+ * paznicul ca să te ajuți pe TINE. Conținutul ecranului și ce tastezi NU pleacă nicăieri și nici nu se păstrează:
+ * la o oprire se numără doar codul pachetului care a prins ([DetoxPacks.match]), pe zile (Prefs.addDetoxHit).
+ * Cu contractul v4, numărătorile ajung pe site (FocusMirror); cuvintele și scrisoarea doar cu acordul separat
+ * „Arată pe site” (Prefs.detoxWordsOnSite, oprit implicit). Când prinde tentația, întâmpină cu blândețe, nu cu rușine.
  */
 class ForjaGuardService : AccessibilityService() {
 
@@ -61,8 +62,12 @@ class ForjaGuardService : AccessibilityService() {
 
         val hay = texts.joinToString(" ").lowercase()
         if (hay.isBlank()) return
-        if (matches(hay)) {
+        val pack = DetoxPacks.match(hay, userWords)
+        if (pack != null) {
             lastIntervene = now
+            // Doar codul pachetului, niciodată textul.
+            val app = ForjaApp.from(this)
+            scope.launch { try { app.prefs.addDetoxHit(pack) } catch (_: Exception) { } }
             try { performGlobalAction(GLOBAL_ACTION_BACK) } catch (_: Exception) { }
             try {
                 startActivity(
@@ -71,13 +76,6 @@ class ForjaGuardService : AccessibilityService() {
                 )
             } catch (_: Exception) { }
         }
-    }
-
-    private fun matches(hay: String): Boolean {
-        for (d in DOMAINS) if (hay.contains(d)) return true
-        for (b in BUILT_IN) if (hay.contains(b)) return true
-        for (w in userWords) if (w.length >= 3 && hay.contains(w)) return true
-        return false
     }
 
     private fun collectText(node: AccessibilityNodeInfo, out: ArrayList<String>, depth: Int) {
@@ -113,15 +111,7 @@ class ForjaGuardService : AccessibilityService() {
     }
 
     companion object {
-        fun parseWords(s: String): List<String> =
-            s.split("\n", ",").map { it.trim().lowercase() }.filter { it.length >= 3 }
-
-        // Blocklist minimă, pe telefon. Cea mai mare parte o dau cuvintele setate de user.
-        private val DOMAINS = listOf(
-            "pornhub", "xvideos", "xnxx", "xhamster", "redtube", "youporn",
-            "onlyfans", "brazzers", "spankbang", "chaturbate", "stripchat", "fansly"
-        )
-        private val BUILT_IN = listOf("porn", "xxx", "nsfw", "hentai")
+        fun parseWords(s: String): List<String> = DetoxPacks.parseWords(s)
 
         /** E pornit serviciul de accesibilitate FORJA? (nu se poate porni programatic) */
         fun isEnabled(context: Context): Boolean {

@@ -378,10 +378,66 @@ function mirror(now = NOW) {
   return f;
 }
 
+// ── Mirror D (Mintea): Pază pe ore și 14 zile, jurnalul ascultărilor, Concentrare. `rich` are contractul v4; `lana` și
+// `empty` au v3 / nimic, deci Concentrarea și jurnalul spun că vin cu v4. Se aplică peste profil, în buildFixture.
+function mind(f, now) {
+  const v4 = f.profile === 'rich', day0 = midnight(now);
+  // Orele: dimineața 07–09, prânzul, seara lungă până după miezul nopții; o zi fără ore (dinainte de rollup).
+  const hoursFor = (total, i) => { const w = [0, 0, 0, 0, 0, 0, 0, 3, 6, 4, 2, 2, 5, 4, 2, 2, 3, 4, 6, 7, 9, 10, 8, 5 + (i % 3)], sum = w.reduce((a, b) => a + b, 0); return w.map(x => Math.round(total * x / sum)); };
+  const days = n => Array.from({length: n}, (_, i) => {
+    const date = dateKey(now - i * DAY), fct = 1 - (i % 7) * 0.07;
+    const apps = [['WhatsApp', 'com.whatsapp', 64, 41], ['FORJA', 'com.forja.app.research', 38, 12], ['Instagram', 'com.instagram.android', 52, 27], ['Spotify', 'com.spotify.music', 18, 6], ['Chrome', 'com.android.chrome', 31, 15], ['Maps', 'com.google.android.apps.maps', 12, 4], ['YouTube', 'com.google.android.youtube', 27, 5]]
+      .slice(0, f.profile === 'lana' ? 5 : 7)
+      .map(([label, pkg, m, o]) => ({label, pkg, minutes: Math.round(m * fct * (1 + ((i * pkg.length) % 5) / 10)), opens: Math.round(o * fct), lastAt: day0 - i * DAY + (21 + (pkg.length % 3)) * HOUR + (i * 7 % 50) * MIN, ...(pkg.startsWith('com.forja.app') ? {self: true} : {})}));
+    const other = apps.filter(a => !a.self), totalMin = other.reduce((a, x) => a + x.minutes, 0);
+    return {date, totalMin, forjaMin: apps.filter(a => a.self).reduce((a, x) => a + x.minutes, 0), firstAt: day0 - i * DAY + 7 * HOUR + (12 + i * 3) * MIN, lastAt: day0 - i * DAY + 23 * HOUR + (40 + i) * MIN,
+      hours: i === 9 ? null : hoursFor(totalMin, i), source: i === 1 ? 'day' : 'live', apps};
+  });
+  if (f.profile !== 'empty') {
+    const n0 = f.profile === 'lana' ? 3 : 7;
+    f.paza = {updated_at: f.paza.updated_at, window: 7, contract: true, days: days(n0)};
+    f.pazaDays = n => (n === 14 ? {...f.paza, window: 14, days: days(v4 ? 12 : n0)} : f.paza);
+  } else f.paza = {updated_at: null, days: [], window: 7, contract: false};
+  const at = (k, h, m = 0) => day0 - k * DAY + h * HOUR + m * MIN;
+  const song = (k, h, m, title, artist, durS, src = 'user', event = 'play') => ({at: at(k, h, m), title, artist, app: 'Spotify', durS, src, event, kind: 'music'});
+  const today = [song(0, 8, 2, 'Anotimpul', 'Subcarpați', 214), song(0, 8, 6, 'Vama Veche', 'Vama', 201), song(0, 8, 10, 'Omul negru', 'Phoenix', 11, 'user', 'skip'), song(0, 12, 40, 'Fetele care ard', 'Carla’s Dreams', 188, 'forja'),
+    song(0, 12, 43, 'Tot ce vreau', 'Holograf', 232, 'forja'), song(0, 17, 5, 'Nu e ușor', 'Șuie Paparude', 244, 'forja'), song(0, 17, 9, 'Marinarul', 'Timpuri Noi', 9, 'forja', 'skip'), song(0, 18, 30, 'Ploaia în luna lui Marte', 'Nicu Alifantis', 262), song(0, 19, 31, 'Vama Veche', 'Vama', 120)];
+  const sum = items => ({minutes: Math.round(items.filter(x => x.event === 'play').reduce((a, x) => a + x.durS, 0) / 60), plays: items.filter(x => x.event === 'play').length, skips: items.filter(x => x.event === 'skip').length, forja: items.filter(x => x.event === 'play' && x.src === 'forja').length, firstAt: items[0]?.at ?? null, lastAt: items.at(-1)?.at ?? null});
+  const yesterday = Array.from({length: 23}, (_, i) => song(1, 7 + Math.floor(i / 2), (i % 2) * 25, ['Anotimpul', 'Vama Veche', 'Fetele care ard', 'Tot ce vreau'][i % 4], ['Subcarpați', 'Vama', 'Carla’s Dreams', 'Holograf'][i % 4], i % 6 === 5 ? 14 : 210, i % 4 === 2 ? 'forja' : 'user', i % 6 === 5 ? 'skip' : 'play'));
+  f.muzica.listens = v4 ? {window: 7, updatedAt: now - 9 * MIN, days: [{date: dateKey(now), updatedAt: now - 9 * MIN, ...sum(today), items: today}, {date: dateKey(now - DAY), updatedAt: now - DAY, ...sum(yesterday), items: yesterday},
+    {date: dateKey(now - 3 * DAY), updatedAt: now - 3 * DAY, minutes: 38, plays: 11, skips: 2, forja: 0, firstAt: null, lastAt: null, items: []}]} : null;
+  if (!v4) { f.concentrare = {window: 7, contract: {on: false, version: f.profile === 'lana' ? 3 : null, needs: 4}, updatedAt: null, days: [], blocked: [], detox: null, breath: {minutes: 0, sessions: 0}, casca: []}; return f; }
+  const labels = {'com.instagram.android': 'Instagram', 'com.zhiliaoapp.musically': 'TikTok', 'com.google.android.youtube': 'YouTube'};
+  const apps = pk => pk.map(pkg => ({pkg, label: labels[pkg]}));
+  const sess = (k, h, m, min, kind, pk, extra) => ({startAt: at(k, h, m), endAt: at(k, h, m) + min * MIN, kind, plannedMin: min, minutes: min, grown: false, withered: false, apps: apps(pk), hits: [], endedBy: 'timer', ...extra});
+  const cDays = [
+    {date: dateKey(now), focusMin: 95, detoxMin: 30, grown: 6, withered: 1, hits: 9, breathMin: 4, interceptions: 2, screenMin: 212,
+      sessions: [sess(0, 9, 0, 60, 'focus', ['com.instagram.android', 'com.zhiliaoapp.musically'], {grown: true, hits: [{pkg: 'com.instagram.android', label: 'Instagram', n: 7}]}),
+        sess(0, 14, 10, 35, 'focus', ['com.instagram.android'], {withered: true, endedBy: 'user', plannedMin: 60, hits: [{pkg: 'com.instagram.android', label: 'Instagram', n: 2}]}),
+        sess(0, 18, 0, 30, 'detox', [], {})],
+      breath: [{startAt: at(0, 13, 20), durationS: 240, cycles: 15, pattern: '4-4-4-4', completed: true}]},
+    {date: dateKey(now - DAY), focusMin: 120, detoxMin: 0, grown: 8, withered: 0, hits: 3, breathMin: 0, interceptions: 0, screenMin: 188,
+      sessions: [sess(1, 8, 30, 120, 'focus', ['com.instagram.android', 'com.google.android.youtube'], {grown: true, hits: [{pkg: 'com.google.android.youtube', label: 'YouTube', n: 3}]})], breath: []},
+    {date: dateKey(now - 2 * DAY), focusMin: 45, detoxMin: 60, grown: 3, withered: 0, hits: 0, breathMin: 8, interceptions: 1, screenMin: 240,
+      sessions: [sess(2, 10, 0, 45, 'focus', ['com.zhiliaoapp.musically'], {grown: true}), sess(2, 20, 0, 60, 'detox', [], {})], breath: [{startAt: at(2, 22, 40), durationS: 480, cycles: 30, pattern: '4-4-4-4', completed: true}]},
+    {date: dateKey(now - 4 * DAY), focusMin: 30, detoxMin: 0, grown: 2, withered: 2, hits: 5, breathMin: 0, interceptions: 3, screenMin: 301, sessions: [sess(4, 16, 0, 30, 'focus', ['com.instagram.android'], {grown: true, hits: [{pkg: 'com.instagram.android', label: 'Instagram', n: 5}]})], breath: []}];
+  f.concentrare = {window: 7, contract: {on: true, version: 4, needs: 4}, updatedAt: now - 6 * MIN, days: cDays,
+    blocked: [{pkg: 'com.instagram.android', label: 'Instagram', hits: 14, sessions: 4, screenMin: 290}, {pkg: 'com.google.android.youtube', label: 'YouTube', hits: 3, sessions: 1, screenMin: 160}, {pkg: 'com.zhiliaoapp.musically', label: 'TikTok', hits: 0, sessions: 2, screenMin: 0}],
+    breath: {minutes: 12, sessions: 2},
+    detox: {guardOn: true, addictionOn: true, streakStart: now - 11 * DAY - 3 * HOUR, slips: 2, interceptions: 6, byPack: {'02': 3, '03': 2, own: 1},
+      days: [{date: dateKey(now), interceptions: 2, byPack: {'02': 1, own: 1}}, {date: dateKey(now - 2 * DAY), interceptions: 1, byPack: {'03': 1}}, {date: dateKey(now - 4 * DAY), interceptions: 3, byPack: {'02': 2, '03': 1}}],
+      words: {words: ['pariuri', 'cazino', 'betano', 'ruletă'], packs: ['02'], letter: 'Pentru mine, cea de peste un an: fiecare seară fără pariu e o seară câștigată.', updatedAt: now - 2 * DAY}},
+    casca: [{at: now - 90 * MIN, ctx: 'FocusDone', channel: 'coach', private: false, title: 'Postul de pază s-a încheiat.', body: '60 de minute, un copac nou în pădure.', outcome: 'tapped'},
+      {at: now - 5 * HOUR, ctx: 'SleepReport', channel: 'sleep', private: true, title: null, body: null, outcome: 'opened'},
+      {at: now - 9 * HOUR, ctx: 'Morning', channel: 'coach', private: false, title: 'Raportul de dimineață.', body: 'Ai o zi liberă de antrenament. Mergi 20 de minute.', outcome: 'dismissed'},
+      {at: now - DAY - 2 * HOUR, ctx: 'NewPlace', channel: 'explore', private: false, title: 'Un loc nou pe hartă.', body: 'Parcul Ioanid, 1 h 10.', outcome: 'posted'}]};
+  return f;
+}
+
 const profiles = {rich, lana, empty, mirror};
 function buildFixture(profile = 'rich', now = NOW) {
   const make = profiles[profile];
   if (!make) throw Error('Unknown profile ' + profile + ' (known: ' + Object.keys(profiles).join(', ') + ')');
-  return make(now);
+  return mind(make(now), now);
 }
 module.exports = {buildFixture, profiles, NOW, DEVICE, MIN, HOUR, DAY, grid, polyline};

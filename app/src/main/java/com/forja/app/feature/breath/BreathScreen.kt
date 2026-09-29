@@ -21,18 +21,42 @@ import androidx.compose.ui.unit.sp
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * „Respiră" — respirație pătrată (4-4-4-4), calmantă. Nicio legătură cu Focus/Detox:
  * un loc doar al tău, când ai nevoie să te așezi câteva minute.
+ * Fiecare sesiune de cel puțin 10 s se scrie în Room (`breath_sessions`) la Oprește sau la plecarea din ecran;
+ * cu contractul v4 ajunge pe site (FocusMirror → breath/{zi}).
  */
 @Composable
 fun BreathScreen() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val app = remember { com.forja.app.ForjaApp.from(context) }
+    var startedAt by remember { mutableStateOf(0L) }
+    fun record(completed: Boolean) {
+        val start = startedAt
+        val elapsed = System.currentTimeMillis() - start
+        startedAt = 0L
+        if (start == 0L || elapsed < 10_000L) return
+        app.appScope.launch {
+            try {
+                app.db.breathSessionDao().insert(
+                    com.forja.app.core.data.db.BreathSessionEntity(
+                        startAt = start, endAt = start + elapsed, pattern = "4-4-4-4",
+                        cycles = (elapsed / 16_000L).toInt(), durationS = (elapsed / 1000L).toInt(), completed = completed
+                    )
+                )
+            } catch (_: Exception) { }
+        }
+    }
     // fazele: inspiră, ține, expiră, ține — câte 4 secunde
     val phases = listOf("Inspiră" to 4000, "Ține" to 4000, "Expiră" to 4000, "Ține" to 4000)
     var running by remember { mutableStateOf(false) }
     var phase by remember { mutableStateOf(0) }
     var elapsedMs by remember { mutableStateOf(0L) }
+    // Plecarea din ecran în timpul unei sesiuni o scrie și ea (neterminată).
+    DisposableEffect(Unit) { onDispose { if (startedAt != 0L) record(false) } }
 
     LaunchedEffect(running) {
         if (running) {
@@ -104,9 +128,9 @@ fun BreathScreen() {
         Spacer(Modifier.weight(1f))
 
         if (running) {
-            SecondaryButton("Oprește", onClick = { running = false }, modifier = Modifier.fillMaxWidth())
+            SecondaryButton("Oprește", onClick = { running = false; record(true) }, modifier = Modifier.fillMaxWidth())
         } else {
-            PrimaryButton("Începe", onClick = { elapsedMs = 0L; running = true }, modifier = Modifier.fillMaxWidth())
+            PrimaryButton("Începe", onClick = { elapsedMs = 0L; startedAt = System.currentTimeMillis(); running = true }, modifier = Modifier.fillMaxWidth())
         }
         Spacer(Modifier.height(14.dp))
         WarmQuote(

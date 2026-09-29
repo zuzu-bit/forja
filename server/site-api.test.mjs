@@ -39,12 +39,11 @@ test('errors: only GET, unknown sub-paths 404, Firestore down 503, always JSON w
   assert.equal(r.status, 405); assert.equal(typeof r.body.error, 'string');
   for (const p of ['/insights/api/azi/x', '/insights/api/cerc/1', '/insights/api/somn/s1/chunk', '/insights/api/somn/s1/audio/0']) assert.equal((await f.call(p)).status, 404, p);
   f.fs.down = true;
-  for (const p of ['azi', 'ratie', 'mars', 'muzica', 'inventar', 'cont', 'somn']) {
+  for (const p of ['azi', 'ratie', 'mars', 'muzica', 'inventar', 'cont', 'somn', 'concentrare']) {
     r = await f.call('/insights/api/' + p);
     assert.equal(r.status, 503, p); assert.equal(r.res.headers.get('cache-control'), 'no-store'); assert.match(r.body.error, /[ăâîșț]/, 'Romanian message');
   }
-  assert.equal((await f.call('/insights/api/paza')).status, 200, 'Pază needs no Firestore');
-  assert.equal((await f.call('/insights/api/concentrare')).status, 200, 'Concentrare reads nothing yet');
+  assert.equal((await f.call('/insights/api/paza')).status, 200, 'Pază is served from the DO when Firestore is down');
   for (const text of [JSON.stringify(r.body)]) assert(!/!/.test(text));
 });
 

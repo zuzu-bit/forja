@@ -1,11 +1,13 @@
-// MUZICĂ · Ce asculți — „acum” (cât muzica e pornită) și TOPUL săptămânii calculat pe telefon, prin /insights/api/muzica.
+// MUZICĂ · Ce asculți — „acum” (cât muzica e pornită), TOPUL săptămânii calculat pe telefon și, cu contractul v4, jurnalul
+// ascultărilor pe zile (piesă cu piesă, sărite, pornite de FORJA), prin /insights/api/muzica.
 const Muzica = {
-  data: null, body: null,
+  data: null, body: null, day: null, all: false,
   mount(body) { Muzica.body = body; },
   enter() { Poll.every('muzica:data', 60000, () => loadInto('muzica', Muzica.body, () => api('/insights/api/muzica'), d => { Muzica.data = d; Muzica.render(d); }, {replaceOnError: !Muzica.data}), true); },
   render(d) {
     const now = d.now && d.now.title ? d.now : null, sum = d.summary || null, top = [...(sum?.top || [])].sort((a, b) => (b.plays || 0) - (a.plays || 0) || (b.minutes || 0) - (a.minutes || 0));
-    if (!now && !top.length) { setLine('muzica', ''); fill(Muzica.body, emptyState('Liniște pe post.', 'Pornește muzica pe telefon. Topul apare în câteva ore.', null, 'idle')); return; }
+    const log = d.listens || null, logDays = (log?.days || []).filter(x => fmt.dateKey(x.date) !== null && (x.plays || x.skips));
+    if (!now && !top.length && !logDays.length) { setLine('muzica', ''); fill(Muzica.body, emptyState('Liniște pe post.', 'Pornește muzica pe telefon. Topul apare în câteva ore.', null, 'idle')); return; }
     setLine('muzica', sum ? `${sum.windowDays || 7} zile · ${fmt.dur(sum.totalMinutes || 0)} de muzică` : '');
     const nowCard = now
       ? h('article', {class: 'card now-card'},
@@ -20,9 +22,32 @@ const Muzica = {
           h('div', {class: 'top-num'}, h('b', {text: '×' + fmt.int(t.plays || 0)}), h('span', {text: fmt.dur(t.minutes || 0)})))))
       : h('p', {class: 'panel-empty', text: 'Topul vine din FORJA în câteva ore.'});
     fill(Muzica.body, h('div', {class: 'muzica-grid'}, nowCard,
-      h('section', {class: 'card top-card'}, h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Topul săptămânii'}), sum?.updatedAt ? monoLabel('ACTUALIZAT ' + fmt.ago(sum.updatedAt).toUpperCase()) : null), list)));
+      h('section', {class: 'card top-card'}, h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Topul săptămânii'}), sum?.updatedAt ? monoLabel('ACTUALIZAT ' + fmt.ago(sum.updatedAt).toUpperCase()) : null), list),
+      Muzica.logCard(log, logDays)));
   },
-  reset() { Muzica.data = null; if (Muzica.body) delete Muzica.body.dataset.loaded; }
+  /** Jurnalul unei zile: rezumatul, orele în care a ascultat și piesele în ordine. Fără v4: doar un rând care spune de ce lipsește. */
+  logCard(log, days) {
+    if (!log) return h('section', {class: 'card log-card'}, h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Jurnalul ascultărilor'})), h('p', {class: 'panel-empty', text: 'Vine cu contractul v4 semnat în FORJA.'}));
+    if (!days.length) return h('section', {class: 'card log-card'}, h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Jurnalul ascultărilor'})), h('p', {class: 'panel-empty', text: 'Nicio piesă în ultimele ' + (log.window || 7) + ' zile.'}));
+    const key = Muzica.day && days.some(x => x.date === Muzica.day) ? Muzica.day : days[0].date, day = days.find(x => x.date === key);
+    const hours = Array(24).fill(0);
+    for (const it of day.items || []) if (it.event === 'play') hours[new Date(it.at).getHours()] += (it.durS || 0) / 60;
+    const hmax = Math.max(5, ...hours), items = [...(day.items || [])].reverse(), shown = Muzica.all ? items : items.slice(0, 30);
+    const bits = [fmt.dur(day.minutes || 0), plural(day.plays || 0, 'piesă', 'piese'), day.skips ? plural(day.skips, 'sărită', 'sărite') : null, day.forja ? day.forja + ' pornite de FORJA' : null].filter(Boolean);
+    return h('section', {class: 'card log-card'},
+      h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Jurnalul ascultărilor'}), monoLabel(key === fmt.keyOf(Date.now()) ? 'AZI' : fmt.day(fmt.dateKey(key)).toUpperCase())),
+      days.length > 1 ? h('div', {class: 'log-days'}, days.slice(0, 7).map(x => h('button', {type: 'button', class: 'chip-btn' + (x.date === key ? ' on' : ''), 'aria-pressed': String(x.date === key), onclick: () => { Muzica.day = x.date; Muzica.all = false; Muzica.render(Muzica.data); }}, x.date === fmt.keyOf(Date.now()) ? 'Azi' : fmt.weekday(fmt.dateKey(x.date)).replace('.', '') + ' ' + new Date(fmt.dateKey(x.date)).getDate()))) : null,
+      h('p', {class: 'log-sum', text: bits.join(' · ')}),
+      day.firstAt ? h('p', {class: 'muted', text: 'Prima piesă la ' + fmt.time(day.firstAt) + ', ultima la ' + fmt.time(day.lastAt) + '.'}) : null,
+      (day.items || []).length ? h('div', {class: 'log-hours', role: 'img', 'aria-label': 'Minutele de muzică pe ore'}, hours.map((m, i) => h('i', {title: String(i).padStart(2, '0') + ':00 · ' + fmt.dur(m), style: {height: Math.max(4, m / hmax * 100) + '%', opacity: m ? '' : '.2'}}))) : null,
+      (day.items || []).length ? h('ol', {class: 'log-list'}, shown.map(it => h('li', {class: 'log-row' + (it.event === 'skip' ? ' skip' : '')},
+        h('span', {class: 'conc-time', text: fmt.time(it.at)}),
+        h('div', {class: 'top-text'}, h('span', {class: 'top-title', text: it.title}), h('span', {class: 'top-artist', text: [it.artist, it.app].filter(Boolean).join(' · ')})),
+        h('span', {class: 'mono' + (it.src === 'forja' ? ' accent' : ''), text: it.event === 'skip' ? 'sărită' : it.src === 'forja' ? 'FORJA' : it.durS ? fmt.dur(Math.max(1, Math.round(it.durS / 60))) : ''}))))
+        : h('p', {class: 'panel-empty', text: 'Doar totalurile au ajuns pentru ziua asta.'}),
+      items.length > 30 ? h('button', {type: 'button', class: 'chip-btn', onclick: () => { Muzica.all = !Muzica.all; Muzica.render(Muzica.data); }}, Muzica.all ? 'Mai puține' : 'Toate ' + items.length) : null);
+  },
+  reset() { Muzica.data = null; Muzica.day = null; Muzica.all = false; if (Muzica.body) delete Muzica.body.dataset.loaded; }
 };
 Site.register('muzica', Muzica);
 
