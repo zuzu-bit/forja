@@ -1,7 +1,8 @@
 // forja-api · POST /v1/diag/music — încercările telefonului de a porni muzica, ca „Pornește muzica” să poată fi reparat din date,
 // nu din presupuneri. Fără titluri, artiști sau id-uri de piese: doar aplicația (pachetul), treapta încercată, tipul sesiunii,
 // rezultatul și durata. Se păstrează ultimele 500 de evenimente per cont în R2 (MEDIA, sub _admin/, invizibil public),
-// sub o etichetă = primele 16 caractere hex din SHA-256(uid). Comanda de admin `music [n]` le afișează.
+// sub o etichetă = primele 16 caractere hex din SHA-256(uid). Comanda de admin `music [n]` le afișează; rândurile acordului
+// din Inventar (want 'consent', 4.4.1), păstrate alături, au comanda lor, `consent [n]`.
 
 export const MUSIC_DIAG = Object.freeze({
   max_events: 50, keep: 500, max_body: 16384,
@@ -77,8 +78,12 @@ const clock = new Intl.DateTimeFormat('ro-RO', { timeZone: 'Europe/Bucharest', d
 /** Romanian counting: 1 încercare, 2 încercări, 20 de încercări. */
 const count = (n, one, many) => (n === 1 ? `1 ${one}` : n !== 0 && (n % 100 === 0 || n % 100 >= 20) ? `${n} de ${many}` : `${n} ${many}`);
 const deviceText = d => (!d ? '' : typeof d === 'string' ? d : Object.values(d).join(' '));
-/** Admin `music [n]`: the last n attempts of every account, newest last, in Romanian time. */
-export async function musicReport(env, n = 30) {
+/**
+ * Admin `music [n]`: the last n music attempts of every account, newest last, in Romanian time. The Inventar consent rows
+ * stored alongside (want 'consent') are only counted there, so one large apply does not push the attempts off the list;
+ * `consent [n]` (which = 'consent') lists them instead.
+ */
+export async function musicReport(env, n = 30, which = 'music') {
   if (!env.MEDIA) return 'Jurnal indisponibil (media R2 neconfigurată).';
   const rows = [];
   let cursor;
@@ -90,15 +95,20 @@ export async function musicReport(env, n = 30) {
     }
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
-  if (!rows.length) return 'Nicio încercare de muzică primită încă.';
-  rows.sort((a, b) => a.at - b.at);
-  const last = rows.slice(-Math.min(Math.max(n, 1), MUSIC_DIAG.keep));
-  // Rândurile acordului Inventarului stau în același jurnal, dar nu sunt încercări de muzică.
-  const music = last.filter(e => e.want !== 'consent');
-  const ok = music.filter(e => e.result === 'ok').length;
-  const consent = last.length - music.length;
+  // Rândurile acordului Inventarului stau în același jurnal, dar nu sunt încercări de muzică: fiecare listă e a ei.
+  const consent = which === 'consent';
+  const pick = rows.filter(e => (e.want === 'consent') === consent);
+  const other = rows.length - pick.length;
+  const aside = !consent && other ? ` · acord Inventar: ${count(other, 'rând', 'rânduri')} («consent»)` : '';
+  if (!pick.length) return consent ? 'Niciun rând de acord primit încă.' : 'Nicio încercare de muzică primită încă.' + (aside ? ' Acord Inventar: ' + count(other, 'rând', 'rânduri') + ' («consent»).' : '');
+  pick.sort((a, b) => a.at - b.at);
+  const last = pick.slice(-Math.min(Math.max(n, 1), MUSIC_DIAG.keep));
+  const ok = last.filter(e => e.result === 'ok').length;
+  const head = consent
+    ? `Acord Inventar: ${count(last.length, 'rând', 'rânduri')} (ora României) · ${count(last.filter(e => e.rung === 'APPLY_START').length, 'aplicare', 'aplicări')}`
+    : `Muzică: ${count(last.length, 'încercare', 'încercări')} (ora României) · ${count(ok, 'reușită', 'reușite')}` + aside;
   return [
-    `Muzică: ${count(music.length, 'încercare', 'încercări')} (ora României) · ${count(ok, 'reușită', 'reușite')}` + (consent ? ` · acord: ${count(consent, 'rând', 'rânduri')}` : ''),
+    head,
     ...last.map(e => '  ' + [clock.format(new Date(e.at)).replace(',', ''), 'u' + e.u, e.want.padEnd(7), e.rung.padEnd(14), String(e.pkg || '—').padEnd(24), String(e.kind || '—').padEnd(7),
       e.result.padEnd(11), (e.ms + 'ms').padEnd(8), e.ver || '', deviceText(e.device), e.err ? '· ' + e.err : ''].join(' ').trimEnd()),
   ].join('\n');

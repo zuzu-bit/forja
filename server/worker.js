@@ -947,6 +947,7 @@ async function runCmd(env, line, host) {
       "  rec purge                    șterge acum înregistrările expirate (24h; chunk-urile de somn 7 zile)",
       "  log [n]                      ultimele n evenimente (implicit 30)",
       "  music [n]                    ultimele n încercări de pornire a muzicii (fără titluri; implicit 30)",
+      "  consent [n]                  ultimele n rânduri ale acordului Android din Inventar (implicit 30)",
       "  log clear                    golește jurnalul",
       "",
       "Din terminalul tău: curl -H \"X-Admin: CHEIA\" -d \"media ls\" https://" + host + "/admin/api/cmd",
@@ -1055,6 +1056,11 @@ async function runCmd(env, line, host) {
   if (c0 === "music") {
     try { return await musicReport(env, parseInt(c1 || "30", 10) || 30); }
     catch (e) { return "Jurnalul de muzică nu poate fi citit: " + String(e && e.message ? e.message : e).slice(0, 200); }
+  }
+
+  if (c0 === "consent") {
+    try { return await musicReport(env, parseInt(c1 || "30", 10) || 30, "consent"); }
+    catch (e) { return "Jurnalul acordului nu poate fi citit: " + String(e && e.message ? e.message : e).slice(0, 200); }
   }
 
   if (c0 === "log" && c1 === "clear") {

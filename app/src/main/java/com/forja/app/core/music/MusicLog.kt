@@ -30,11 +30,21 @@ import java.util.Locale
  *   trimise după fiecare încercare în loturi de cel mult 50 și sub 15 000 de octeți (serverul refuză peste 16 KB).
  *   Un lot refuzat definitiv (400 / 413) se aruncă, ca să nu blocheze coada. Serverul le arată în jurnalul de admin
  *   (`music [n]`).
+ * - Rândurile acordului din Inventar (ConsentLog, `want` = [CONSENT]) au locurile lor, numărate separat: cel mult 60
+ *   în memorie, 40 pe telefon și 60 în așteptare, peste cele ale muzicii. O aplicare mare (6 runde de 500 ≈ 60 de
+ *   rânduri) nu mai împinge încercările muzicii afară. Aceeași cheie pe telefon, aceeași trimitere; pe server:
+ *   `consent [n]`.
  */
 internal object MusicLog {
     private const val RING = 200
     private const val KEEP = 100
     private const val PENDING_MAX = 150
+    private const val CONSENT_RING = 60
+    private const val CONSENT_KEEP = 40
+    private const val CONSENT_PENDING = 60
+
+    /** `want` al rândurilor acordului din Inventar (ConsentLog). */
+    const val CONSENT = "consent"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, _ -> })
     private val lock = Mutex()
@@ -50,15 +60,37 @@ internal object MusicLog {
 
     fun add(context: Context, e: AttemptEvent) {
         val app = context.applicationContext
-        _events.value = (_events.value + e).takeLast(RING)
+        _events.value = keepLast(_events.value + e, RING, CONSENT_RING)
         scope.launch {
             lock.withLock {
                 load(app)
                 pending += e
-                while (pending.size > PENDING_MAX) pending.removeAt(0)
+                trimPending()
                 persist(app)
             }
         }
+    }
+
+    /** Ultimele [music] rânduri ale muzicii și ultimele [consent] ale acordului, în ordinea lor. */
+    internal fun keepLast(events: List<AttemptEvent>, music: Int, consent: Int): List<AttemptEvent> {
+        var m = 0
+        var c = 0
+        val out = ArrayList<AttemptEvent>(minOf(events.size, music + consent))
+        for (i in events.indices.reversed()) {
+            val e = events[i]
+            if (e.want == CONSENT) {
+                if (c < consent) { c++; out += e }
+            } else if (m < music) {
+                m++; out += e
+            }
+        }
+        out.reverse()
+        return out
+    }
+
+    private fun trimPending() {
+        val kept = keepLast(pending, PENDING_MAX, CONSENT_PENDING)
+        if (kept.size != pending.size) { pending.clear(); pending.addAll(kept) }
     }
 
     /** După o încercare: trimite ce așteaptă (dacă are voie). */
@@ -119,17 +151,17 @@ internal object MusicLog {
         val (recent, waiting) = try { MusicStats.diag(app) } catch (e: CancellationException) { throw e } catch (_: Exception) { null to null }
         val saved = recent?.lineSequence()?.mapNotNull { DiagCodec.parse(it) }?.toList().orEmpty()
         val mem = _events.value
-        _events.value = (saved + mem).distinct().sortedBy { it.at }.takeLast(RING)
+        _events.value = keepLast((saved + mem).distinct().sortedBy { it.at }, RING, CONSENT_RING)
         val old = waiting?.lineSequence()?.mapNotNull { DiagCodec.parse(it) }?.toList().orEmpty()
         pending.addAll(0, old)
-        while (pending.size > PENDING_MAX) pending.removeAt(0)
+        trimPending()
     }
 
     private suspend fun persist(app: Context) {
         try {
             MusicStats.setDiag(
                 app,
-                _events.value.takeLast(KEEP).joinToString("\n") { DiagCodec.line(it) },
+                keepLast(_events.value, KEEP, CONSENT_KEEP).joinToString("\n") { DiagCodec.line(it) },
                 pending.joinToString("\n") { DiagCodec.line(it) }
             )
         } catch (e: CancellationException) {

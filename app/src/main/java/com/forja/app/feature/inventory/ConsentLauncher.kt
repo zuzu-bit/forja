@@ -33,6 +33,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 /** Cât așteptăm ca dialogul lansat să acopere ecranul (activitatea iese din RESUMED). De obicei durează sub 300 ms. */
 internal const val CONSENT_COVER_MS = 2_000L
 
+/** Poarta (activitatea în RESUMED) se notează în jurnal doar peste atât (sau cu ruta rămasă în urmă). */
+internal const val CONSENT_GATE_NOTE_MS = 500L
+
 /** Un rând de jurnal cerut de lansator: treapta, rezultatul, milisecundele, nota. */
 internal typealias ConsentTrace = (rung: String, result: DiagResult, ms: Long, note: String) -> Unit
 
@@ -113,8 +116,13 @@ internal fun ConsentLauncher(
         val now = consent.value
         if (now == null || now.id != c.id || now.attempt != c.attempt || now.launched || now.stuck) return@LaunchedEffect
         val k = c.kind.code
-        // Starea rutei alături de a activității: dacă 4.4 s-ar fi blocat la poartă, aici s-ar vedea „entry=STARTED”.
-        logNow("${k}_GATE", DiagResult.OK, SystemClock.uptimeMillis() - t0, "${c.tag} host=${host.currentState} entry=${entry.lifecycle.currentState}")
+        // Starea rutei alături de a activității: dacă 4.4 s-ar fi blocat la poartă, aici s-ar vedea „entry=STARTED”. Doar
+        // când spune ceva (poartă lentă sau ruta în urmă): rândurile acordului au locuri numărate în jurnal (MusicLog).
+        val gateMs = SystemClock.uptimeMillis() - t0
+        val entryState = entry.lifecycle.currentState
+        if (gateMs > CONSENT_GATE_NOTE_MS || !entryState.isAtLeast(Lifecycle.State.RESUMED)) {
+            logNow("${k}_GATE", DiagResult.OK, gateMs, "${c.tag} host=${host.currentState} entry=$entryState")
+        }
         val t1 = SystemClock.uptimeMillis()
         try {
             launcher.launch(IntentSenderRequest.Builder(c.payload).build(), consentLaunchOptions())
@@ -123,9 +131,9 @@ internal fun ConsentLauncher(
             missingNow(c.id, c.attempt, "launch")
             return@LaunchedEffect
         }
-        // Abia după launch(): rezultatul vine oricum ca mesaj ulterior, iar o lansare eșuată nu intră în coadă.
+        // Abia după launch(): rezultatul vine oricum ca mesaj ulterior, iar o lansare eșuată nu intră în coadă. Lansarea
+        // reușită nu are rând al ei: SHOWN o urmează, cu milisecundele de la lansare.
         launchedNow(c.id, c.attempt)
-        logNow("${k}_LAUNCH", DiagResult.OK, SystemClock.uptimeMillis() - t1, c.tag)
         val covered = withTimeoutOrNull(coverMs) {
             host.currentStateFlow.first { !it.isAtLeast(Lifecycle.State.RESUMED) }
         } != null

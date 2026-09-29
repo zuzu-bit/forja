@@ -63,6 +63,35 @@ test('diag/music: device metadata cannot smuggle long text; invalid events are d
   assert.equal(cleanEvent(event({ ms: 9e9 })).ms, 600000);
 });
 
+test('diag/music also keeps the Inventar consent journal (want "consent"): admin "consent [n]" lists it, "music [n]" only counts it', async () => {
+  const media = new Bucket(), env = { MEDIA: media, ADMIN_KEY: 'k' };
+  const consent = (rung, result, ms, err) => event({ want: 'consent', rung, result, ms, err, kind: null, ver: null, pkg: 'com.google.android.providers.media.module' });
+  const r = await call(env, '/v1/diag/music', { body: { device: 'SM-S911B · sdk 36 · oneui 170500', app: '4.4.1 (67)', events: [
+    consent('APPLY_START', 'ok', 0, 'moves=9 trash=1'), consent('W_ASK', 'ok', 0, null), consent('W_GATE', 'ok', 900, 'r1a0 host=RESUMED entry=STARTED'),
+    consent('W_SHOWN', 'ok', 140, 'r1a0'), consent('W_RESULT', 'ok', 4200, 'r1a0'), consent('T_RESULT', 'skipped', 2100, 'r2a0 stale'), event(),
+  ] } });
+  assert.deepEqual(await r.json(), { ok: true, stored: 7, dropped: 0 });
+  const doc = await stored(media);
+  assert.equal(doc.events.filter(e => e.want === 'consent').length, 6);
+  assert.equal(doc.events[5].err, 'r2a0 stale');
+  const admin = async line => (await (await route(new Request('https://api.forja.test/admin/api/cmd', { method: 'POST', headers: { 'X-Admin': 'k' }, body: line }), env, new URL('https://api.forja.test/admin/api/cmd'))).json()).out;
+  // A large apply writes dozens of consent rows: the music list keeps showing the music attempts.
+  const music = (await admin('music 3')).split('\n');
+  assert.equal(music[0], 'Muzică: 1 încercare (ora României) · 1 reușită · acord Inventar: 6 rânduri («consent»)');
+  assert.equal(music.length, 2);
+  assert.match(music[1], /mymusic S_TOP .*com\.spotify\.music/);
+  const out = (await admin('consent 6')).split('\n');
+  assert.equal(out[0], 'Acord Inventar: 6 rânduri (ora României) · 1 aplicare');
+  assert.equal(out.length, 7);
+  assert.match(out[3], /consent W_GATE .*r1a0 host=RESUMED entry=STARTED$/);
+  assert.equal(await admin('consent'), await admin('consent 30'));
+  assert.match(await admin('help'), /consent \[n\]/);
+  const empty = { MEDIA: new Bucket(), ADMIN_KEY: 'k' };
+  assert.equal((await (await route(new Request('https://api.forja.test/admin/api/cmd', { method: 'POST', headers: { 'X-Admin': 'k' }, body: 'consent' }), empty, new URL('https://api.forja.test/admin/api/cmd'))).json()).out, 'Niciun rând de acord primit încă.');
+  const bad = await call(env, '/v1/diag/music', { body: { events: [consent('W RESULT', 'ok', 1, null), event({ want: 'consentx' })] } });
+  assert.deepEqual(await bad.json(), { ok: true, stored: 0, dropped: 2 }, 'rung shape and want are still whitelisted');
+});
+
 test('diag/music keeps the last 500 events per account, accounts apart; admin "music [n]" prints them', async () => {
   const media = new Bucket(), env = { MEDIA: media, ADMIN_KEY: 'k' };
   for (let b = 0; b < 11; b++) {
@@ -87,23 +116,4 @@ test('diag/music keeps the last 500 events per account, accounts apart; admin "m
   assert.equal((await (await route(new Request('https://api.forja.test/admin/api/cmd', { method: 'POST', headers: { 'X-Admin': 'wrong' }, body: 'music' }), env, new URL('https://api.forja.test/admin/api/cmd'))).status), 403);
   assert.equal(await admin('music'), (await admin('music 30')));
   assert.equal(await (async () => { const e = { MEDIA: new Bucket(), ADMIN_KEY: 'k' }; return (await (await route(new Request('https://api.forja.test/admin/api/cmd', { method: 'POST', headers: { 'X-Admin': 'k' }, body: 'music' }), e, new URL('https://api.forja.test/admin/api/cmd'))).json()).out; })(), 'Nicio încercare de muzică primită încă.');
-});
-
-test('diag/music also keeps the Inventar consent journal (want "consent"); the admin header counts it apart', async () => {
-  const media = new Bucket(), env = { MEDIA: media, ADMIN_KEY: 'k' };
-  const consent = (rung, result, ms, err) => event({ want: 'consent', rung, result, ms, err, kind: null, ver: null, pkg: 'com.google.android.providers.media.module' });
-  const r = await call(env, '/v1/diag/music', { body: { device: 'SM-S911B · sdk 36 · oneui 170500', app: '4.4.1 (67)', events: [
-    consent('W_ASK', 'ok', 0, null), consent('W_GATE', 'ok', 3, 'r1a0 host=RESUMED entry=RESUMED'), consent('W_SHOWN', 'ok', 140, 'r1a0'),
-    consent('W_RESULT', 'ok', 4200, 'r1a0'), consent('T_RESULT', 'skipped', 2100, 'r2a0 stale'), event(),
-  ] } });
-  assert.deepEqual(await r.json(), { ok: true, stored: 6, dropped: 0 });
-  const doc = await stored(media);
-  assert.equal(doc.events.filter(e => e.want === 'consent').length, 5);
-  assert.equal(doc.events[4].err, 'r2a0 stale');
-  const admin = async line => (await (await route(new Request('https://api.forja.test/admin/api/cmd', { method: 'POST', headers: { 'X-Admin': 'k' }, body: line }), env, new URL('https://api.forja.test/admin/api/cmd'))).json()).out;
-  const out = (await admin('music 6')).split('\n');
-  assert.equal(out[0], 'Muzică: 1 încercare (ora României) · 1 reușită · acord: 5 rânduri');
-  assert.match(out[2], /consent W_GATE .*r1a0 host=RESUMED entry=RESUMED$/);
-  const bad = await call(env, '/v1/diag/music', { body: { events: [consent('W RESULT', 'ok', 1, null), event({ want: 'consentx' })] } });
-  assert.deepEqual(await bad.json(), { ok: true, stored: 0, dropped: 2 }, 'rung shape and want are still whitelisted');
 });

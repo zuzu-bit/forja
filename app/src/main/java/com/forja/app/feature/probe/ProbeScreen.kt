@@ -150,7 +150,8 @@ fun ProbeScreen(onBack: () -> Unit) {
             rows = rows,
             running = running,
             upload = upload,
-            journal = events.takeLast(30).reversed().map { e ->
+            // Doar încercările muzicii: rândurile acordului din Inventar pleacă la Copiază / Trimite, nu umplu lista.
+            journal = events.filter { it.want != MusicLog.CONSENT }.takeLast(30).reversed().map { e ->
                 listOfNotNull(e.want, e.rung, e.pkg?.substringAfterLast('.'), e.result.wire, "${e.ms} ms", e.err).joinToString(" · ")
             }
         ),
