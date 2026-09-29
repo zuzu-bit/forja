@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.Contacts
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.MyLocation
@@ -54,6 +55,7 @@ import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.media.Media
 import com.forja.app.core.music.Music
 import com.forja.app.core.social.ContactsReader
+import com.forja.app.core.inventory.AllFiles
 
 /** Piesele de echipament — o bifă fiecare: acordurile Android, accesul la muzică și, la urmă, contractul de securitate. */
 private enum class Gear(val title: String, val icon: ImageVector) {
@@ -61,6 +63,7 @@ private enum class Gear(val title: String, val icon: ImageVector) {
     Location("Locație", Icons.Outlined.MyLocation),
     Microphone("Microfon", Icons.Outlined.Mic),
     Photos("Poze", Icons.Outlined.PhotoLibrary),
+    Files("Fișiere", Icons.Outlined.Folder),
     Battery("Baterie", Icons.Outlined.BatteryChargingFull),
     Contacts("Agendă", Icons.Outlined.Contacts),
     Music("Muzică", Icons.Outlined.MusicNote),
@@ -78,7 +81,7 @@ private const val FALLBACK_POSTER = "https://t3.ftcdn.net/jpg/04/70/98/78/500_F_
 
 /** Ghidajul primei vizite: explicațiile stau aici, nu pe rânduri (≤ 90 de caractere pe pas, 4 pași). */
 private val ECHIPARE_STEPS = listOf(
-    CoachStep("echipare.progres", "Opt bife, o singură dată. Apoi FORJA nu te mai întrerupe."),
+    CoachStep("echipare.progres", "Nouă bife, o singură dată. Apoi FORJA nu te mai întrerupe."),
     CoachStep("echipare.lista", "Atinge un rând ca să-l bifezi. Bateria și alarma se pornesc din Setări Android."),
     CoachStep("echipare.muzica", "Muzică: FORJA vede doar titlul și artistul și le arată prietenilor pe hartă."),
     CoachStep("echipare.contract", "Contractul spune ce pleacă pe site. Mesajele și parolele nu se citesc niciodată.", MascotState.Happy)
@@ -91,10 +94,11 @@ private const val ECHIPARE_DETAILS =
         "Fără ele, alarma de dimineață poate rămâne mută.\n\n" +
         "Muzica: Android numește accesul „Acces la notificări”, dar FORJA nu citește notificările. Vede doar melodia care " +
         "cântă, titlul și artistul, o arată prietenilor pe hartă și pune pauză muzicii la finalul inventarului.\n\n" +
+        "Fișiere: „Acces la toate fișierele”, doar ca Inventarul să mute pozele unde alegi tu.\n\n" +
         "Agenda: numărul tău îl scrii în Profil. Focusul își cere accesul special direct din modulul lui.\n\n" +
         "Un rând „blocat” înseamnă că Android a închis dialogul: atinge-l și pornește-l din Setări."
 
-/** „Echipare” — opt bife, o singură dată; apoi FORJA nu te mai întrerupe. Rândurile nu explică: arată starea. */
+/** „Echipare” — nouă bife, o singură dată; apoi FORJA nu te mai întrerupe. Rândurile nu explică: arată starea. */
 @Composable
 fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
     val context = LocalContext.current
@@ -145,12 +149,14 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
     val powerOn = batteryOn && fsiOn
     // Agenda: doar permisiunea. Numărul tău se cere în alt pas, nu aici.
     val contactsGranted = remember(refresh) { ContactsReader.granted(context) }
+    // Fișiere: „Acces la toate fișierele”, ca Inventarul să mute orice poză, în orice dosar, fără ferestre de acord.
+    val filesOn = remember(refresh) { !AllFiles.available || AllFiles.granted() }
     // Muzica: „Acces la notificări” pentru serviciul FORJA — doar ca să vedem sesiunile media.
     val musicOn = remember(refresh) { Music.hasAccess(context) }
     LaunchedEffect(musicOn) { if (musicOn) Music.ensureStarted(context) }
     // Contractul: semnat la versiunea curentă.
     val contractSigned by app.prefs.contractSigned.collectAsState(initial = false)
-    val done = listOf(notifOn, locationOn, micOn, photosOn, powerOn, contactsGranted, musicOn, contractSigned).count { it }
+    val done = listOf(notifOn, locationOn, micOn, photosOn, filesOn, powerOn, contactsGranted, musicOn, contractSigned).count { it }
 
     // Rândurile pe care Android nu mai arată dialogul: starea „blocat”, iar atingerea deschide setările aplicației.
     var blocked by remember { mutableStateOf(emptySet<Gear>()) }
@@ -250,6 +256,7 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
                 }
             }
             Gear.Contacts -> if (!contactsGranted) askSingle(Manifest.permission.READ_CONTACTS, g)
+            Gear.Files -> if (!filesOn) AllFiles.intents(context).let { openSafe(it[0], fallback = it.getOrNull(1)) }
             // „Acces la notificări” e o pagină de setări, nu un dialog: direct la FORJA pe 11+, lista generală altfel.
             Gear.Music -> openSafe(Music.accessIntent(context), fallback = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             Gear.Contract -> onOpenContract()
@@ -261,6 +268,7 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
         Gear.Location -> locationOn
         Gear.Microphone -> micOn
         Gear.Photos -> photosOn
+        Gear.Files -> filesOn
         Gear.Battery -> powerOn
         Gear.Contacts -> contactsGranted
         Gear.Music -> musicOn
@@ -341,7 +349,7 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
                         }
                         Spacer(Modifier.height(6.dp))
                         Reveal(index = 2) {
-                            Text("Opt bife. O singură dată.", style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp))
+                            Text("Nouă bife. O singură dată.", style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp))
                         }
                     }
                 }

@@ -607,13 +607,13 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
             onApply = {
                 // Un dosar din afara Pictures/DCIM nu se poate aplica fără acces complet: „Aplică” îl cere întâi
                 // (verificat aici, direct din plan: rândul accesului se calculează în fundal și poate întârzia o clipă).
-                val root = (pl.dest as? InvDest.Media)?.root
-                if (pl.kind == InvKind.Photos && root != null && !MediaRoots.standard(root) && AllFiles.available && !allFiles) askAccess("dest")
+                // 4.4.2: fără rând și fără explicații — la poze, fără acces complet, „Aplică” deschide direct comutatorul
+                // din Setări, iar revenirea cu accesul dat continuă aplicarea singură (fără ferestre de acord).
+                if (pl.kind == InvKind.Photos && AllFiles.available && !allFiles) askAccess("dest")
                 else applyNow()
             },
             onDismiss = { confirmApply = false; showLocation = false; accessAfter = false },
-            access = access,
-            onAllowAccess = { askAccess("confirm") }
+            access = null
         )
     }
     if (confirmStop) {
