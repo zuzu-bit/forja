@@ -12,7 +12,7 @@
   },
   "scripts": {
     "test": "npm run test:server && npm run test:ui",
-    "test:server": "node --test media-serve.test.mjs insights.test.mjs files-preview.test.mjs cleanup-schedule.test.mjs organizer.test.mjs organizer-jobs.test.mjs organizer-analysis.test.mjs organizer-review.test.mjs social.test.mjs social-journey.test.mjs map-renderer.test.mjs recovery.test.mjs sleep.test.mjs sleep-analysis.test.mjs ai-schemas.test.mjs ai-router.test.mjs ai-gemini.test.mjs ai-groq.test.mjs ai-worker.test.mjs ai-gemini-tuning.test.mjs ai-clusters.test.mjs sleep-timeline.test.mjs social-contacts.test.mjs site-api.test.mjs music-diag.test.mjs",
+    "test:server": "node --test media-serve.test.mjs insights.test.mjs files-preview.test.mjs cleanup-schedule.test.mjs organizer.test.mjs organizer-jobs.test.mjs organizer-analysis.test.mjs organizer-review.test.mjs social.test.mjs social-journey.test.mjs map-renderer.test.mjs recovery.test.mjs sleep.test.mjs sleep-analysis.test.mjs ai-schemas.test.mjs ai-router.test.mjs ai-gemini.test.mjs ai-groq.test.mjs ai-worker.test.mjs ai-gemini-tuning.test.mjs ai-clusters.test.mjs sleep-timeline.test.mjs social-contacts.test.mjs site-api.test.mjs site/sec-cerc.test.mjs site/sec-somn.test.mjs site/sec-body.test.mjs site/sec-mind.test.mjs site/sec-inventar.test.mjs site/sec-azi-cont.test.mjs music-diag.test.mjs",
     "test:ui": "node ../scripts/ux-ui-test.cjs && node ../scripts/map-ui-test.cjs"
   }
 }
