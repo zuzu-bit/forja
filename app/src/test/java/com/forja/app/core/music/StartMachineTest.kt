@@ -444,6 +444,47 @@ class StartMachineTest {
         // Fără salt, regula de fundal rămâne: niciodată o comandă către un player oprit (backgroundNeverCommandsAStoppedPlayer).
     }
 
+    @Test fun aJumpThatOnlyShowedSpotifyPausedTeachesNothingAboutAutoplay() {
+        // Saltul spre Melodii apreciate a adus sesiunea Spotify, dar pe pauză (linkul nu pornește singur muzica): S_TOP
+        // cere piesa 1 și merge. Tabelul învățat nu află că linkul „pornește muzica” (el ordonează linkurile după asta).
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY)
+        val p = machine(lanaSnap(preferred = SPOTIFY))
+        p.onSend = { step ->
+            when (step.rung) {
+                Rung.V_LIKED_PLAY -> p.add(session("sp", SPOTIFY, state = PState.PAUSED, title = "Altceva"))
+                Rung.S_TOP -> p.setState("sp", PState.PLAYING, title = "Piesa 1")
+                else -> Unit
+            }
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = true)
+        p.advance(1_600)
+        assertEquals(listOf(Rung.V_LIKED_PLAY, Rung.S_TOP), p.sent.map { it.rung })
+        p.advance(3_000)
+        assertEquals(Rung.S_TOP, (p.last as StartState.Playing).route)
+        assertTrue(p.learned.none { it.second == Rung.V_LIKED_PLAY })
+        assertTrue(p.learned.contains(Triple<String?, Rung, LearnedTable.Outcome>(SPOTIFY, Rung.S_TOP, LearnedTable.Outcome.OK)))
+        // Jurnalul spune că Spotify doar a apărut, nu că a cântat.
+        assertEquals("woke idle", p.events.first { it.rung == "V_LIKED_PLAY" }.err)
+    }
+
+    @Test fun aJumpThatStartedSpotifyPlayingIsLearnedAsAutoplay() {
+        val first = TrackRef("Piesa 1", "Artist", SPOTIFY)
+        val p = machine(lanaSnap(preferred = SPOTIFY))
+        p.onSend = { step ->
+            when (step.rung) {
+                Rung.V_LIKED_PLAY -> p.add(session("sp", SPOTIFY, state = PState.PLAYING, title = "Altceva"))
+                Rung.S_TOP -> p.setState("sp", PState.PLAYING, title = "Piesa 1")
+                else -> Unit
+            }
+            SendResult.Sent()
+        }
+        p.machine.start(Want.Workout(first), MusicSource.WORKOUT, tap = true)
+        p.advance(3_000)
+        assertEquals(Triple<String?, Rung, LearnedTable.Outcome>(SPOTIFY, Rung.V_LIKED_PLAY, LearnedTable.Outcome.OK), p.learned.first())
+        assertEquals("woke", p.events.first { it.rung == "V_LIKED_PLAY" }.err)
+    }
+
     @Test fun likedHopIsANormalStartWhenSpotifyIgnoresTheList() {
         // Spotify a ignorat de două ori piesele cerute (tracksLand = nu): saltul e o pornire obișnuită, Apreciate cântă.
         val now = 1_700_000_000_000L

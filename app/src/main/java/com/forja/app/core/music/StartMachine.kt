@@ -161,8 +161,13 @@ class StartMachine(private val port: StartPort) {
                 // piesa cerută — afară de cazul în care chiar piesa cerută cântă deja.
                 val track = wantedTrack(a.want, snap)
                 if (w.state.activeish && (track == null || !TrackKey.matches(track.title, w.title))) port.undo(UndoTarget.Session(w.id))
-                port.learn(v.step.pkg ?: w.pkg, v.step.rung, LearnedTable.Outcome.OK)
-                log(a, v.step.copy(pkg = v.step.pkg ?: w.pkg), DiagResult.OK, port.now() - v.sentAt, w.kind, listOfNotNull(v.note, "woke").joinToString(" "), snap)
+                // Un salt (V_*) se învață ca reușit doar dacă Spotify chiar a pornit să cânte: o sesiune apărută pe pauză
+                // spune doar că linkul deschide Spotify, nu că pornește muzica (după asta se ordonează linkurile în zilele
+                // fără listă). Tasta media, ca înainte.
+                val idle = !w.state.activeish
+                if (!v.step.rung.visible || !idle) port.learn(v.step.pkg ?: w.pkg, v.step.rung, LearnedTable.Outcome.OK)
+                val note = listOfNotNull(v.note, "woke", "idle".takeIf { idle && v.step.rung.visible }).joinToString(" ")
+                log(a, v.step.copy(pkg = v.step.pkg ?: w.pkg), DiagResult.OK, port.now() - v.sentAt, w.kind, note, snap)
                 // După un salt, S_TOP #1 are propriile 12 s (saltul putea dura până aproape de plafon).
                 if (v.step.rung.visible) a.phaseAt = port.now()
                 // Planul se reface cu sesiunea acum prezentă: TOP 1 / lista FORJA → S_TOP (apoi S_LIKED, S_PLAY…).
