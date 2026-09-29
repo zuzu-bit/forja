@@ -1,19 +1,36 @@
 # BRIEF FORJA — de dat lui Claude într-o sesiune nouă („continuă FORJA după brief”)
 
-## Stare (29 septembrie 2026) — FORJA 4.4 (cod 66)
+## Stare (29 septembrie 2026) — FORJA 4.4.1 (cod 67)
 
 - Sursa: branch-ul `claude/quirky-hamilton-7nbpi8` (GitHub `zuzu-bit/forja`); `main` a rămas la v3.7 (merge opțional).
 - **APK**: Releases → „FORJA — ultimul APK” (`apk-latest`), din Actions `build-apk.yml` rulat pe branch cu `publish=true`.
-  Versiuni: 4.1 (62) → 4.2 (63) → 4.2.1 (64) → 4.3 (65, Inventarul) → **4.4 (66: site pe secțiuni, jocuri, muzică, găsire, contract v3)**.
+  Versiuni: 4.1 (62) → 4.2 (63) → 4.2.1 (64) → 4.3 (65, Inventarul) → 4.4 (66: site pe secțiuni, jocuri, muzică, găsire, contract v3)
+  → **4.4.1 (67: Inventarul nu mai îngheață la acord, muzica pornește singură la antrenament)**.
   Pachet `com.forja.app.research`, semnat cu `app/debug.keystore`.
-- **`build-apk.yml` are moduri**: `publish` (build + release + publicarea forja-api), `diag_only` (jurnalul serverului + teste cap-coadă),
-  `ui_shots` (capturi Roborazzi → release `ui-shots-latest`, `ui-shots.zip`; profilele PHONE 393×851 și PHONE_S23 360×696 dp).
+- **`build-apk.yml` are moduri**: `publish` (build + release + publicarea forja-api), `diag_only` (jurnalul serverului, `music 150`,
+  `log 200` + teste cap-coadă), `ui_shots` (capturi Roborazzi → release `ui-shots-latest`, `ui-shots.zip`; profilele PHONE 393×851 și
+  PHONE_S23 360×696 dp).
   Modul `shorts` a dispărut odată cu Scroll (`shorts.yml` rămâne doar manual).
 - **Site-ul** (forja-insights, `/health` versiunea 18): pe ramurile `claude/**` se publică DOAR la cerere (Actions → „Deploy FORJA
   Insights” → Run workflow); pe `main` la fiecare push. `server/verify-live.mjs` oprește publicarea dacă live e mai nou decât pachetul.
 - **Design și contracte**: `DESIGN-4.4.md` (în repo) = deciziile 4.4 și contractele dintre aplicație, server și site (API-urile secțiunilor,
   documentele Firestore, Găsire v2, diagnosticul muzicii). Regula de text: după prima folosire cel mult un rând ajutător; explicațiile stau
   în ghidajul de la prima vizită (`CoachMarks`) și în punctul „i”.
+
+## Ce s-a livrat în 4.4.1 (după testul Lanei din 29.09)
+
+1. **Inventarul rămânea la „0 % · AȘTEPT ACORDUL TĂU”**: răspunsul primului dialog Android (mutarea) ștergea așteptarea celui de-al
+   doilea (coșul). Acum `feature/inventory/ConsentGate.kt` (potrivire FIFO, desprinde înainte de a răspunde, o re-întrebare tăcută, apoi
+   starea „FEREASTRA ANDROID NU A APĂRUT” cu „Încearcă din nou” / „Înapoi la dosare”) și `ConsentLauncher.kt` (lansează doar cu ecranul
+   RESUMED, verifică în 2 s că fereastra a apărut, opt-in BAL). Pozele deja în coș se sar (`T_SKIP`). Jurnal fără nume de fișiere:
+   rândurile `want='consent'` la `/v1/diag/music`, comanda admin `consent [n]`.
+2. **Muzica la „Începe sesiunea”**: atingerea contează ca atingere (salt permis 1,5 s de la ea, măsurat de la atingerea reală), Spotify nu
+   mai dispare din plan din cauza detecției (două sonde; doar `absent` îl scoate), un singur salt pe atingere, apoi S_TOP #1; FORJA
+   închide singură ecranul Spotify deschis de ea când muzica pornește (RET_SUB: `startActivityForResult` + `finishActivity`), lista FORJA
+   continuă în ordine cât Spotify primește piesele (verificare la 6 s, altfel „Azi, ordinea o alege Spotify.”). Rânduri noi în jurnal:
+   ENV, RET, QUEUE (comanda admin `music` le numără separat).
+3. **Răspunsul despre SaveFrom / YouTube**: FORJA nu descarcă muzică (termenii YouTube, drepturile artiștilor, viruși). Lana are Premium,
+   deci urmează „Spotify complet” (4.5).
 
 ## Ce s-a livrat în 4.4 (după testul Lanei pe S23)
 
@@ -91,8 +108,15 @@
 
 ## Ce urmează
 
-1. Testul Lanei pe S23 al lui 4.4: re-semnarea contractului, „Telefonul meu · în gardă” + „Sună” de pe site, sonda de muzică (o dată,
-   cu Spotify) → comanda admin `music` arată ce trepte merg pe telefonul ei; Inventarul cu locație aleasă; jocurile; notificările.
-2. Site: vederea „ca în The Sims” (persoana a treia) — cerută de Lana, încă nefăcută.
-3. Faza 2 Găsire (opțional): FCM pentru secunde în loc de minute în Doze; familia poate suna telefonul.
-4. Curățare: branch-urile GPT (`research/*`, `ux/*`, `delivery/*`, PR #17–#20) și ramurile de lucru `pkg44/*`, `vfix44/*`, `wip44/*`, `int44`.
+1. **4.5 „Spotify complet”** (Lana are Premium): App Remote SDK 0.8.0 (AAR vendorizat) + Auth 5.0.0 (`Type.TOKEN` = cod + PKCE pe
+   telefon, fără secret) + Web API (`/me/top/tracks` scurt/lung, `/me/tracks`, `PUT /me/player/play` cu `uris` pe telefonul ei, shuffle
+   oprit). Pornire invizibilă, ordine exactă, fără coada ei poluată. Ea face o dată (10 min): aplicație pe developer.spotify.com, pachetul
+   `com.forja.app.research`, SHA-1 `F0:66:F9:5C:64:2C:7D:D1:56:EB:36:8E:07:82:EB:32:F8:CA:8C:5A`, redirect
+   `https://forja-api.forja-22e7ea2d.workers.dev/spotify/auth` și `com.forja.app.research://spotify-auth`, emailul ei la User Management,
+   apoi lipește Client ID-ul în Antrenament → Muzică. Faptele verificate: raportul `spotify-2026-facts.md` (scratchpad; esențialul intră
+   în `DESIGN-4.5.md` la livrare).
+2. Testul Lanei pe S23 al lui 4.4.1: Inventarul până la capăt (mută + coș), „Începe sesiunea” cu Spotify închis / deschis, comenzile admin
+   `music` și `consent` arată ce s-a întâmplat.
+3. Site: vederea „ca în The Sims” (persoana a treia) — cerută de Lana, încă nefăcută.
+4. Faza 2 Găsire (opțional): FCM pentru secunde în loc de minute în Doze; familia poate suna telefonul.
+5. Curățare: branch-urile GPT (`research/*`, `ux/*`, `delivery/*`, PR #17–#20) și ramurile de lucru `pkg44/*`, `vfix44/*`, `wip44/*`, `int44`, `fx441/*`, `int441`, `fx45/*`.
