@@ -51,6 +51,8 @@ class GoTrackService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var callback: LocationCallback? = null
     private var lastFirestorePush = 0L
+    private var lastLivePush = 0L
+    private var liveUid: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -124,6 +126,10 @@ class GoTrackService : Service() {
                             ), SetOptions.merge()
                         )
                     }
+                    if (now - lastLivePush >= LIVE_EVERY_MS) {
+                        lastLivePush = now
+                        publishLive(uid, state.value, now)
+                    }
                     scope.launch {
                         try {
                             val fam = app.prefs.familyUids.first()
@@ -144,11 +150,39 @@ class GoTrackService : Service() {
         }
     }
 
+    /**
+     * Tura în desfășurare pentru site (Teren: linia punctată și „ALEARGĂ ACUM · 3,2 km”): users/{uid}/live/go, doar al tău
+     * (regula users/{uid}/{sub}/{doc}; prietenii văd mai departe doar pinul, și nici pe el în fantomă). La 30 s, linia
+     * subțiată la cel mult 500 de puncte. Doar cu contractul semnat; se șterge la final, oricum s-ar termina tura.
+     */
+    private fun publishLive(uid: String, s: GoState, now: Long) {
+        if (!com.forja.app.core.sync.CollectionSettings.contractAtLeast(this, 3)) return
+        liveUid = uid
+        try {
+            FirebaseFirestore.getInstance().collection("users").document(uid).collection("live").document("go").set(
+                mapOf(
+                    "sport" to s.sport,
+                    "startedAt" to s.startedAt,
+                    "distanceM" to s.distanceM,
+                    "polyline" to livePolyline(s.points),
+                    "updatedAt" to now
+                )
+            )
+        } catch (_: Exception) { }
+    }
+
+    private fun clearLive() {
+        val uid = liveUid ?: return
+        liveUid = null
+        try { FirebaseFirestore.getInstance().collection("users").document(uid).collection("live").document("go").delete() } catch (_: Exception) { }
+    }
+
     private fun finish() {
         callback?.let {
             LocationServices.getFusedLocationProviderClient(this).removeLocationUpdates(it)
         }
         callback = null
+        clearLive()
         val s = state.value
         val app = ForjaApp.from(this)
         if (s.recording && s.distanceM > 30) {
@@ -210,6 +244,7 @@ class GoTrackService : Service() {
     }
 
     override fun onDestroy() {
+        clearLive()
         callback?.let {
             LocationServices.getFusedLocationProviderClient(this).removeLocationUpdates(it)
         }
@@ -222,6 +257,18 @@ class GoTrackService : Service() {
         const val NOTIF_ID = 32
         const val ACTION_STOP = "com.forja.app.go.STOP"
         const val EXTRA_SPORT = "sport"
+        const val LIVE_EVERY_MS = 30_000L
+        const val LIVE_MAX_POINTS = 500
+
+        /** Linia live: la cel mult [LIVE_MAX_POINTS] puncte, uniform, cu primul și ultimul păstrate. */
+        fun livePolyline(points: List<Pair<Double, Double>>, max: Int = LIVE_MAX_POINTS): String {
+            if (points.isEmpty()) return ""
+            val pick = if (points.size <= max) points else {
+                val step = (points.size - 1).toDouble() / (max - 1)
+                List(max) { i -> points[Math.round(i * step).toInt()] }
+            }
+            return pick.joinToString(";") { "%.5f,%.5f".format(java.util.Locale.US, it.first, it.second) }
+        }
         val state = MutableStateFlow(GoState())
 
         fun kcalFor(sport: String, distanceM: Double): Int {

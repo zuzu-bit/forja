@@ -11,6 +11,9 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -27,6 +30,8 @@ class PresenceRepository(
     private val client = LocationServices.getFusedLocationProviderClient(context)
     private var callback: LocationCallback? = null
     private var lastPublish = 0L
+    private var presenceJob: Job? = null
+    private var presenceUid: String? = null
 
     private val app: ForjaApp? get() = context.applicationContext as? ForjaApp
 
@@ -46,6 +51,7 @@ class PresenceRepository(
 
     @SuppressLint("MissingPermission")
     fun start(uid: String, isGhost: () -> Boolean) {
+        mirrorPresence(uid)
         if (callback != null) return
         val request = LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 8000L)
             .setMinUpdateDistanceMeters(8f)
@@ -79,6 +85,29 @@ class PresenceRepository(
             client.requestLocationUpdates(request, callback!!, Looper.getMainLooper())
         } catch (_: SecurityException) {
             callback = null
+        }
+    }
+
+    /**
+     * Pentru site („Cine te vede acum”): comutatorul „Locație în fundal” trăiește doar în telefon (Prefs.bgShareOn), așa că
+     * îl oglindim în users/{uid}/settings/presence {bgShare, updatedAt} — doar tu îl citești (regula users/{uid}/{sub}/{doc}),
+     * prietenii nu văd nimic nou. O scriere doar când se schimbă, și doar cu contractul semnat (revocarea îl șterge).
+     */
+    private fun mirrorPresence(uid: String) {
+        val a = app ?: return
+        if (presenceUid == uid && presenceJob?.isActive == true) return
+        presenceJob?.cancel()
+        presenceUid = uid
+        presenceJob = a.appScope.launch {
+            try {
+                combine(a.prefs.bgShareOn, a.prefs.contractSigned) { on, signed -> if (signed) on else null }
+                    .distinctUntilChanged()
+                    .collect { on ->
+                        if (on == null || a.auth.currentUid != uid) return@collect
+                        db.collection("users").document(uid).collection("settings").document("presence")
+                            .set(mapOf("bgShare" to on, "updatedAt" to System.currentTimeMillis()))
+                    }
+            } catch (_: Exception) { }
         }
     }
 

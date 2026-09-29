@@ -14,6 +14,8 @@ import androidx.work.WorkerParameters
 import com.forja.app.ForjaApp
 import com.forja.app.core.network.InsightsApi
 import com.forja.app.core.network.InsightsFailure
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -98,6 +100,11 @@ object ContactsSync {
     private const val PATH_MATCH = "/v2/social/contacts/match"
     private const val BATCH = 200
     private const val PERIOD_H = 24L
+
+    /** Rezumatul pentru site (doar tu): users/{uid}/settings/contacts. Fără numele din agendă și fără numere. */
+    const val SITE_DOC = "contacts"
+    private const val SITE_MATCHES_MAX = 50
+    private const val SOCIAL_PREFS = "contacts_social"
 
     private val json = InsightsApi.json
     private val listSerializer = ListSerializer(ContactMatch.serializer())
@@ -195,6 +202,7 @@ object ContactsSync {
     suspend fun disable(app: ForjaApp): Boolean {
         cancel(app)
         forgetLocal(app)
+        forgetSite(app)
         val ok = unregisterWithin(app, 8_000L)
         if (ok) cancelUnregisterRetry(app) else scheduleUnregisterRetry(app)
         return ok
@@ -208,7 +216,9 @@ object ContactsSync {
         cancel(app)
         cancelUnregisterRetry(app)
         if (app.prefs.contactsOn.first()) unregisterWithin(app, 1_500L)
+        forgetSite(app)
         forgetLocal(app)
+        try { app.getSharedPreferences(SOCIAL_PREFS, Context.MODE_PRIVATE).edit().clear().apply() } catch (_: Exception) { }
         app.prefs.setPhoneDeclared("")
     }
 
@@ -236,8 +246,10 @@ object ContactsSync {
         if (contacts.isEmpty()) {
             app.prefs.setContactsSyncedAt(System.currentTimeMillis())
             app.prefs.setContactsStatus("Agenda e goală sau fără numere valide.")
+            publishSite(app, uid, "empty", 0, emptyList())
             return Outcome.DONE
         }
+        publishName(app)
         val previous = decode(app.prefs.contactMatches.first()).associateBy { it.uid }
         val lastSync = app.prefs.contactsSyncedAt.first()
         val found = LinkedHashMap<String, ContactMatch>()
@@ -304,7 +316,54 @@ object ContactsSync {
                 else -> "${found.size} din agendă au FORJA · $mutualCount reciproc"
             }
         )
+        publishSite(app, uid, "ok", contacts.size, found.values.toList())
         return Outcome.DONE
+    }
+
+    /**
+     * Site-ul (Camarazi → Din agendă) vede ce vezi și tu în FriendsSheet, fără ce e al agendei: câte contacte am comparat,
+     * câte au FORJA, câte sunt reciproce și, pentru fiecare, uid-ul și numele LUI din FORJA. Numele din agenda ta și
+     * numerele nu se scriu (contractul: „Numele rămân pe telefon”). Doar cu contractul semnat, ca sincronizarea însăși.
+     */
+    internal fun siteSummary(status: String, compared: Int, found: List<ContactMatch>, now: Long): Map<String, Any> = mapOf(
+        "syncedAt" to now,
+        "status" to status,
+        "compared" to compared,
+        "found" to found.size,
+        "mutual" to found.count { it.mutual },
+        "matches" to found.sortedWith(compareByDescending<ContactMatch> { it.mutual }.thenBy { it.forjaName.lowercase() })
+            .take(SITE_MATCHES_MAX)
+            .map { mapOf("uid" to it.uid, "forjaName" to it.forjaName.take(60), "mutual" to it.mutual, "verified" to it.verified) }
+    )
+
+    private suspend fun publishSite(app: ForjaApp, uid: String, status: String, compared: Int, found: List<ContactMatch>) {
+        if (!app.prefs.contractSigned.first()) return
+        try {
+            FirebaseFirestore.getInstance().collection("users").document(uid).collection("settings").document(SITE_DOC)
+                .set(siteSummary(status, compared, found, System.currentTimeMillis()))
+        } catch (_: Exception) { }
+    }
+
+    /** Comutatorul oprit sau ieșirea din cont: rezumatul de pe site dispare (revocarea îl șterge prin SiteMirror.forget). */
+    private suspend fun forgetSite(app: ForjaApp) {
+        val uid = app.auth.currentUid ?: return
+        try {
+            withTimeoutOrNull(3_000L) {
+                FirebaseFirestore.getInstance().collection("users").document(uid).collection("settings").document(SITE_DOC).delete().await()
+            }
+        } catch (_: Exception) { }
+    }
+
+    /** Numele tău din FORJA pe profilul social, o dată pe nume (cei care te au în agendă îl văd în loc de „Prieten FORJA”). */
+    private suspend fun publishName(app: ForjaApp) {
+        try {
+            val name = app.auth.loadProfile()?.name ?: return
+            val clean = com.forja.app.core.data.AuthRepository.socialName(name) ?: return
+            val sp = app.getSharedPreferences(SOCIAL_PREFS, Context.MODE_PRIVATE)
+            val key = (app.auth.currentUid ?: return) + ":" + clean
+            if (sp.getString("sent", null) == key) return
+            if (app.auth.publishSocialName(clean)) sp.edit().putString("sent", key).apply()
+        } catch (_: Exception) { }
     }
 
     private suspend fun post(batch: List<ContactEntry>, headers: Map<String, String>): JsonObject {

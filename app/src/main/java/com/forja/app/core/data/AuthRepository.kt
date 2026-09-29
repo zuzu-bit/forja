@@ -11,6 +11,9 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.withTimeout
 import java.security.SecureRandom
 import kotlin.math.absoluteValue
@@ -76,7 +79,24 @@ class AuthRepository(
                 writeAccountAsync(uid, user.email)
             }
         } catch (_: Exception) { /* se sincronizează mai târziu */ }
+        publishSocialName(user.name)
         return user
+    }
+
+    /**
+     * Numele sub care te văd cei care te au în agendă („are FORJA ca Lana”): profilul din graful social al site-ului
+     * (POST /v2/social/profile). Până în 4.4 nu se trimitea niciodată, așa că toți apăreau „Prieten FORJA”.
+     * Fără net sau fără cont: nimic, se reîncearcă la următoarea schimbare de nume sau sincronizare a agendei.
+     */
+    suspend fun publishSocialName(name: String): Boolean {
+        val clean = socialName(name) ?: return false
+        if (currentUid == null) return false
+        return try {
+            withTimeoutOrNull(10_000L) {
+                com.forja.app.core.network.InsightsApi.json("/v2/social/profile", buildJsonObject { put("name", clean) })
+                true
+            } ?: false
+        } catch (_: Exception) { false }
     }
 
     suspend fun login(email: String, password: String): String {
@@ -203,6 +223,7 @@ class AuthRepository(
     suspend fun updateName(name: String) {
         val uid = currentUid ?: return
         db.collection("users").document(uid).set(mapOf("name" to name), SetOptions.merge()).await()
+        publishSocialName(name)
     }
 
     /** „Am uitat parola”: Firebase trimite emailul de resetare la adresa dată. */
@@ -211,6 +232,12 @@ class AuthRepository(
     }
 
     fun logout() = auth.signOut()
+
+    companion object {
+        /** Numele acceptat de /v2/social/profile: 1–40 caractere, fără caractere de control. null = nu se trimite. */
+        fun socialName(name: String): String? =
+            name.trim().replace(Regex("[\\u0000-\\u001f\\u007f]"), "").take(40).trim().takeIf { it.isNotEmpty() }
+    }
 
     /** Cod de invitație nou (din 4.4): 6 caractere aleatorii, FORJA-XXXXXX. Nu se poate calcula din uid. */
     private fun randomInviteCode(): String {
