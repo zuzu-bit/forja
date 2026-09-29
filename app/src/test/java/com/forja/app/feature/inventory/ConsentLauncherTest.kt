@@ -177,6 +177,22 @@ class ConsentLauncherTest {
         assertEquals(1, registry.launches.size)
     }
 
+    @Test fun requestClosedWhileWaitingForResumeIsNotLaunched() {
+        // Închiderea cererii și revenirea activității în același pas, fără cadru între ele (ca rezultatul unui dialog
+        // livrat chiar înainte de onResume): efectul care aștepta poarta se trezește înaintea recompunerii care l-ar
+        // anula. Fără verificarea de după poartă, ar fi deschis încă o dată un dialog deja închis.
+        start()
+        controller.pause(); settle()
+        val out = mutableListOf<String>()
+        scope.launch { out += gate.ask(sender(), Kind.WRITE).name }
+        settle()
+        assertEquals(0, registry.launches.size)
+        gate.cancel(Answer.DROPPED)
+        controller.resume(); settle()
+        assertEquals(listOf("DROPPED"), out)
+        assertEquals("o cerere închisă nu se mai lansează", 0, registry.launches.size)
+    }
+
     @Test fun launchCarriesTheBackgroundStartOptIn() {
         start()
         scope.launch { gate.ask(sender(), Kind.WRITE) }

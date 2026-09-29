@@ -43,7 +43,8 @@ internal typealias ConsentTrace = (rung: String, result: DiagResult, ms: Long, n
  *   un dialog nou nu pornește cât cel vechi încă acoperă ecranul). Ruta din NavHost poate sta STARTED cât Navigation
  *   crede că rulează o tranziție: 4.4 aștepta ruta și putea aștepta la nesfârșit.
  * - **O lansare pe încercare.** Efectul are cheia (id, încercare); o încercare deja lansată (ecran recreat cât dialogul
- *   e deschis) nu se mai lansează: rezultatul vine singur, lansatorul are aceeași cheie salvată.
+ *   e deschis) nu se mai lansează: rezultatul vine singur, lansatorul are aceeași cheie salvată. După așteptarea
+ *   porții, cererea se verifică din nou: una care a primit între timp răspuns nu mai deschide încă un dialog.
  * - **Plasa.** Dialogul acoperă ecranul în câteva sute de ms; activitatea încă RESUMED după [CONSENT_COVER_MS] = n-a
  *   apărut → `onMissing(…, "timeout")`. O lansare care aruncă → `"launch"`.
  * - **Revenire fără răspuns.** Android livrează rezultatul ÎNAINTE de onResume: o încercare lansată, acoperită de
@@ -82,6 +83,10 @@ internal fun ConsentLauncher(
         if (c.launched || c.stuck) return@LaunchedEffect
         val t0 = SystemClock.uptimeMillis()
         host.currentStateFlow.first { it.isAtLeast(Lifecycle.State.RESUMED) }
+        // Cât am așteptat, cererea poate să fi primit răspuns (rezultatul și revenirea vin în același mesaj, înaintea
+        // recompunerii care ar anula efectul) sau să fi fost înlocuită: atunci nu mai lansăm nimic.
+        val now = consent.value
+        if (now == null || now.id != c.id || now.attempt != c.attempt || now.launched || now.stuck) return@LaunchedEffect
         val k = c.kind.code
         // Starea rutei alături de a activității: dacă 4.4 s-ar fi blocat la poartă, aici s-ar vedea „entry=STARTED”.
         logNow("${k}_GATE", DiagResult.OK, SystemClock.uptimeMillis() - t0, "${c.tag} host=${host.currentState} entry=${entry.lifecycle.currentState}")

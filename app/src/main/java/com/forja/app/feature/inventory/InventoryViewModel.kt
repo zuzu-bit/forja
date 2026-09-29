@@ -413,15 +413,24 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** „Încearcă din nou”: aceeași bucată, cu o cerere MediaStore nouă (PendingIntent-urile ei sunt ONE_SHOT). */
-    fun retryConsent() = renewConsent("user")
+    /**
+     * „Încearcă din nou”: aceeași bucată, cu o cerere MediaStore nouă (PendingIntent-urile ei sunt ONE_SHOT). Doar din
+     * starea blocată: a doua atingere, venită înaintea recompunerii, nu mai cere încă o cerere.
+     */
+    fun retryConsent() {
+        if (gate.current.value?.stuck == true) renewConsent("user")
+    }
 
     private fun renewConsent(why: String) {
         val r = gate.current.value ?: return
-        val fresh = when (r.kind) {
-            ConsentGate.Kind.WRITE -> Inventory.writeRequest(ctx)
-            ConsentGate.Kind.TRASH -> Inventory.trashRequest(ctx)
-            ConsentGate.Kind.LAPTOP -> try { CleanupEngine(ctx, forja.prefs).writeRequest(laptopAsk) } catch (_: Exception) { null }
+        val fresh = try {
+            when (r.kind) {
+                ConsentGate.Kind.WRITE -> Inventory.writeRequest(ctx)
+                ConsentGate.Kind.TRASH -> Inventory.trashRequest(ctx)
+                ConsentGate.Kind.LAPTOP -> CleanupEngine(ctx, forja.prefs).writeRequest(laptopAsk)
+            }
+        } catch (_: Exception) {
+            null
         }
         ConsentLog.add(ctx, "${r.kind.code}_RETRY", if (fresh != null) DiagResult.OK else DiagResult.ERROR, now() - askAt, "${r.tag} $why", fresh?.creatorPackage)
         // Imposibil de refăcut: FORJA renunță (nu omul) — aplicarea se oprește cu „Nu s-a aplicat tot.”, planul rămâne.
