@@ -54,6 +54,59 @@ class HopWatchTest {
         assertEquals("back task", h.back(8_000)?.note)
     }
 
+    @Test fun backRightAfterAutoCloseDoesNotEndTheWorkout() {
+        // Ea apasă Înapoi ca să iasă din Spotify („te întorci cu Înapoi”), dar FORJA închisese deja ecranul: apăsarea
+        // ajunge pe ecranul live, unde Înapoi = „Încheie”. Prima se înghite; a doua încheie, ca de obicei.
+        val h = HopWatch()
+        h.sent("workout", SPOTIFY, MusicSource.WORKOUT, sub = true, now = 1_000)
+        assertTrue(h.confirm(4_200))
+        assertTrue("chiar în animația închiderii", h.swallowBack(4_300))
+        assertFalse("doar o apăsare", h.swallowBack(4_600))
+        // Ciclul procesului (FORJA din nou în față) și verificarea „auto” mută fereastra la revenire.
+        h.sent("workout", SPOTIFY, MusicSource.WORKOUT, sub = true, now = 10_000)
+        assertFalse("cât e în Spotify, Înapoi e al lui Spotify", h.swallowBack(11_000))
+        assertTrue(h.confirm(13_000))
+        assertNull(h.back(13_400))
+        assertEquals("auto", h.check(visible = true, now = 13_800)?.note)
+        assertTrue(h.swallowBack(16_300))
+        // Mai târziu de 3 s de la revenire, Înapoi e al ei pentru FORJA: încheie.
+        h.sent("workout", SPOTIFY, MusicSource.WORKOUT, sub = true, now = 20_000)
+        assertTrue(h.confirm(23_000))
+        assertEquals("auto", h.check(visible = true, now = 23_800)?.note)
+        assertFalse(h.swallowBack(26_900))
+    }
+
+    @Test fun theSecondBackAfterSheReturnsHerselfIsSwallowedOnce() {
+        // Ecranul Spotify în taskul lui („none”): FORJA nu-l poate închide, ea revine cu Înapoi mai târziu; un al doilea
+        // Înapoi grăbit (nu se vedea nimic schimbat) nu încheie antrenamentul.
+        val h = HopWatch()
+        h.sent("workout", SPOTIFY, MusicSource.WORKOUT, sub = true, now = 1_000)
+        h.result(1_060)
+        assertTrue(h.confirm(4_000))
+        assertEquals("none cancel:60", h.check(visible = false, now = 4_800)?.note)
+        assertNull(h.back(12_000))
+        assertTrue(h.swallowBack(12_700))
+        assertFalse(h.swallowBack(13_000))
+        // S-a întors ea înaintea închiderii (back): la fel, o singură apăsare.
+        h.sent("mymusic", SPOTIFY, MusicSource.INVENTORY, sub = true, now = 30_000)
+        assertEquals("back", h.back(33_000)?.note)
+        assertTrue(h.swallowBack(34_000))
+        assertFalse(h.swallowBack(34_200))
+    }
+
+    @Test fun aNewTapInForjaSettlesAStaleJumpWithoutSwallowingBack() {
+        // Saltul rămas deschis (s-a întors ea prea repede pentru ciclul procesului), apoi o atingere nouă în FORJA:
+        // rândul „back”, iar un Înapoi de acum e al ei pentru FORJA.
+        val h = HopWatch()
+        h.sent("workout", SPOTIFY, MusicSource.WORKOUT, sub = true, now = 1_000)
+        assertEquals(HopWatch.Row("workout", SPOTIFY, DiagResult.OK, 1_500, "back"), h.settle(2_500))
+        assertFalse(h.open)
+        assertFalse(h.swallowBack(3_000))
+        // Nicio revenire după salt fără salt: întoarcerea din fundal (Acasă, apoi FORJA) nu înghite nimic.
+        assertNull(HopWatch().back(5_000))
+        assertFalse(HopWatch().apply { back(5_000) }.swallowBack(5_500))
+    }
+
     @Test fun theWorkoutEndClosesAnOpenJumpQuietly() {
         val h = HopWatch()
         h.sent("workout", SPOTIFY, MusicSource.WORKOUT, sub = true, now = 0)

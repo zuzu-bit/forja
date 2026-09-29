@@ -60,7 +60,9 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
         }
     }
     // Înapoi = „Încheie”: hubul nu are „continuă sesiunea”, deci muzica FORJA (coada, împrumutul) se încheie odată cu ea.
+    // Afară de Înapoi-ul ei pentru ecranul Spotify, ajuns chiar după ce FORJA l-a închis singură: sesiunea continuă.
     BackHandler {
+        if (MusicStarter.swallowBack()) return@BackHandler
         if (!live.finished) vm.endEarly()
         onExit()
     }

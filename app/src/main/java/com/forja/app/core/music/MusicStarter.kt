@@ -388,7 +388,7 @@ object MusicStarter {
         Music.onMain {
             // O pornire nouă vine dintr-o atingere în FORJA: un salt de dinainte rămas deschis s-a încheiat (s-a întors ea,
             // prea repede ca procesul să fi trecut prin fundal) — altfel o reușită de acum l-ar raporta drept „auto”.
-            if (hops.open && hostVisible()) hops.back(SystemClock.elapsedRealtime())?.let { logRet(it) }
+            if (hops.open && hostVisible()) hops.settle(SystemClock.elapsedRealtime())?.let { logRet(it) }
             startJob?.cancel()
             startJob = null
             machine.cancel()
@@ -595,6 +595,13 @@ object MusicStarter {
     fun onHopResult() {
         Music.onMain { hops.result(SystemClock.elapsedRealtime()) }
     }
+
+    /**
+     * Ecranul live, la Înapoi (= „Încheie”), pe firul principal: true = apăsarea ei pentru ecranul Spotify, ajunsă după
+     * ce FORJA l-a închis singură sau imediat după ce s-a întors ea ([HopWatch.swallowBack]). Nu încheie antrenamentul
+     * și nu oprește muzica abia pornită; un Înapoi de după încheie ca de obicei.
+     */
+    fun swallowBack(): Boolean = hops.swallowBack(SystemClock.elapsedRealtime())
 
     /** Muzica e confirmată: ecranul playerului deschis de FORJA în taskul ei se închide, iar peste 800 ms se vede efectul. */
     private fun closeHopOnSuccess() {
