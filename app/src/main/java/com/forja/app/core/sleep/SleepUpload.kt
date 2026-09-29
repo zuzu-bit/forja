@@ -181,6 +181,7 @@ class SleepUploadWorker(
 
         if (SleepUpload.batteryPercent(applicationContext) < SleepUpload.MIN_BATTERY) {
             SleepUpload.saveProgress(dir, p.copy(lastError = "baterie sub ${SleepUpload.MIN_BATTERY} %"))
+            SleepCloud.audio(app, sessionId)
             return Result.retry()
         }
 
@@ -192,8 +193,10 @@ class SleepUploadWorker(
             when (val r = api.uploadChunk(sessionId, c, f)) {
                 is SleepApi.Upload.Ok -> { p = p.copy(uploaded = p.uploaded + c.index); SleepUpload.saveProgress(dir, p) }
                 is SleepApi.Upload.Rejected -> { p = p.copy(rejected = p.rejected + c.index, lastError = "bucata ${c.index}: refuzată (${r.code})"); SleepUpload.saveProgress(dir, p) }
-                is SleepApi.Upload.Retry -> { SleepUpload.saveProgress(dir, p.copy(lastError = "bucata ${c.index}: ${r.why}")); return Result.retry() }
+                is SleepApi.Upload.Retry -> { SleepUpload.saveProgress(dir, p.copy(lastError = "bucata ${c.index}: ${r.why}")); SleepCloud.audio(app, sessionId); return Result.retry() }
             }
+            // Site-ul (Somn): „Urcat 3 din 16”, o scriere pe bucată.
+            SleepCloud.audio(app, sessionId)
         }
         val sent = chunksToSend.filter { it.index in p.uploaded }
         if (sent.isEmpty()) {
@@ -213,6 +216,7 @@ class SleepUploadWorker(
             }
             p = p.copy(analyzeRequestedAt = System.currentTimeMillis(), pollStartedAt = System.currentTimeMillis())
             SleepUpload.saveProgress(dir, p)
+            SleepCloud.audio(app, sessionId)
         }
 
         // 3. sondaj la 20 s. Serverul duce la capăt ~1–2 bucăți per POST; când GET spune `stale` (rularea s-a oprit),
@@ -261,6 +265,11 @@ class SleepUploadWorker(
         val t = if (t0.stats.totalMin == 0 && sentMin > 0) t0.copy(stats = t0.stats.copy(totalMin = sentMin)) else t0
         SleepTimeline.save(dir, t)
         SleepUpload.saveProgress(dir, p.copy(done = true, lastError = if (t.listened) "" else t.reason))
+        // Site-ul: urcarea s-a încheiat (sau a picat, cu motivul) și cronologia serverului intră în sleepEvents (v4).
+        try {
+            SleepCloud.audio(app, sessionId, findSession(app, sessionId)?.recordedUntil ?: 0L, force = true)
+            SleepCloud.timeline(app, sessionId)
+        } catch (_: Exception) { }
         if (!t.listened) return
 
         try {
