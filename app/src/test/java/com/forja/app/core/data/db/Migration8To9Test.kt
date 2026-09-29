@@ -15,7 +15,7 @@ import java.lang.reflect.Modifier
  * deschidere. Rulează fără codul generat de Room: doar SQLite + instrucțiunile din ForjaDatabase.MIGRATION_8_9.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [35], application = android.app.Application::class)
 class Migration8To9Test {
     @After fun close() = V8Schema.closeAll()
 

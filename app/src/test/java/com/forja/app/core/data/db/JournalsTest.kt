@@ -16,7 +16,7 @@ import org.robolectric.annotation.Config
  * celui dinainte, iar același cont care revine își regăsește tot. Planurile, exercițiile și regulile rămân.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [35], application = android.app.Application::class)
 class JournalsTest {
     @After fun close() = V8Schema.closeAll()
 
