@@ -9,7 +9,7 @@ export const FILE_ACCOUNT_BYTES = 512 * 1024 * 1024;
 export const FILE_ACCOUNT_ITEMS = 500;
 const json = (data,status=200) => Response.json(data,{status,headers:{'cache-control':'no-store','x-content-type-options':'nosniff'}});
 const hash = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(v=>v.toString(16).padStart(2,'0')).join('');
-const publicFile = ({key,...item}) => item;
+const publicFile = ({key,thumb_self,...item}) => item;
 const cleanText = (s,max=200) => typeof s==='string' && s.length<=max && !/[\u0000-\u001f\u007f]/.test(s);
 function headerText(request,name,fallback='') {let v;try{v=decodeURIComponent(request.headers.get(name)||fallback);}catch{bad('Metadate invalide.');}if(!cleanText(v))bad('Metadate invalide.');return v;}
 export function previewType(mime) {
@@ -75,7 +75,8 @@ export async function handleFiles(request,account,uid,bytes,readJSON) {
   const id=match[1],thumb=!!match[2],old=await storage.get('cloud-file:'+id);
   if(request.method==='GET') {
     if(!old||old.expires_at<=Date.now()||(thumb&&!old.thumbnail))bad('Fișierul nu mai este disponibil.',404);
-    const object=await bucket.get(old.key+(thumb?'.thumb':''));if(!object)bad('Fișier indisponibil.',404);
+    // A small JPEG photo is its own thumbnail (GalleryUploader sends 512 px copies and no separate /thumbnail).
+    const object=await bucket.get(old.key+(thumb&&!old.thumb_self?'.thumb':''));if(!object)bad('Fișier indisponibil.',404);
     // Downloads are never served as active HTML/SVG or publicly accessible R2 URLs.
     return new Response(object.body,{headers:{'content-type':thumb?'image/jpeg':'application/octet-stream','content-disposition':thumb?'inline':`attachment; filename="file"; filename*=UTF-8''${encodeURIComponent(old.name)}`,'cache-control':'private, no-store, max-age=0','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; sandbox",'x-expires-at':String(old.expires_at)}});
   }
@@ -109,7 +110,7 @@ export async function handleFiles(request,account,uid,bytes,readJSON) {
     const rows=[...(await storage.list({prefix:'cloud-file:'})).values()];
     if(rows.reduce((n,i)=>n+i.bytes+(i.thumbnail_bytes||0),0)+bytes.length-(old.thumbnail_bytes||0)>FILE_ACCOUNT_BYTES)bad('Spațiul temporar este plin.',429);
     await bucket.put(old.key+'.thumb',bytes,{httpMetadata:{contentType:'image/jpeg'}});
-    old.thumbnail=true;old.thumbnail_bytes=bytes.length;await storage.put('cloud-file:'+id,old);return json(publicFile(old));
+    old.thumbnail=true;old.thumbnail_bytes=bytes.length;delete old.thumb_self;await storage.put('cloud-file:'+id,old);return json(publicFile(old));
   }
   const kind=request.headers.get('x-file-kind');if(!['photo','file'].includes(kind)||!consent[kind==='photo'?'photos':'files'])bad('Sursă neautorizată.',403);
   const name=headerText(request,'x-file-name','Fișier'),folder=headerText(request,'x-file-folder');
@@ -142,6 +143,7 @@ export async function handleFiles(request,account,uid,bytes,readJSON) {
   const staging=await storage.get('file-staging:'+id);
   if(staging&&(staging.sha256!==sha256||staging.device_id!==device))bad('Identificator folosit pentru alt transfer.',409);
   const now=staging?.received_at||Date.now(),item={id,device_id:device,kind,name,folder,media_type:mime,preview:previewType(mime),sha256,bytes:bytes.length,received_at:now,expires_at:now+TTL,thumbnail:false,key};
+  if(kind==='photo'&&mime==='image/jpeg'&&bytes.length<=THUMB_MAX_BYTES&&bytes[0]===255&&bytes[1]===216&&bytes[2]===255)Object.assign(item,{thumbnail:true,thumb_self:true});
   if(autoRun)item.cleanup_run=autoRun;
   if(organizerJob)Object.assign(item,{organizer_job:organizerJob,organizer_item:organizerItem,original_id:original,original_version:version});
   await storage.put('file-staging:'+id,{key,sha256,device_id:device,received_at:now,expires_at:now+TTL});

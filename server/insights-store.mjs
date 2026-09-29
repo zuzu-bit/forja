@@ -11,6 +11,7 @@ import { TTL, idPattern, categories, bad, keys, n, validatePhoneData } from './p
 import { handleSiteStore, applyUsageRollup, sweepSite } from './site-store.mjs';
 import { applyLocationRollup, LOC_DAY_PREFIX } from './site-location.mjs';
 import { eraseFile } from './files-vault.mjs';
+import { handleMirror, forgetMirror, MIRROR_FILE_MAX, MIRROR_POSTER_MAX, MIRROR_THUMB_MAX, MIRROR_COVER_MAX } from './files-mirror.mjs';
 
 const MAX_SESSION = 32 * 1024 * 1024;
 export const reply = (data, status = 200) => Response.json(data, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
@@ -57,8 +58,11 @@ export class InsightsAccount {
       const isRecording = request.method === 'POST' && /^\/v2\/sessions\/[^/]+\/recording$/.test(new URL(request.url).pathname);
       if (isRecording) { if (this.uploadingRecording || this.uploadingFile) bad('Retry shortly',429); this.uploadingRecording = true; upload = true; }
       const isFile = request.method === 'PUT' && /^\/v2\/files\/[0-9a-f-]+(?:\/thumbnail)?$/.test(new URL(request.url).pathname);
-      if (isFile) { if (this.uploadingFile || this.uploadingRecording) bad('Retry shortly',429); this.uploadingFile=true; fileUpload=true; }
-      const bytes = isRecording ? await readBytes(request, RECORDING_MAX_BYTES) : isFile ? await readBytes(request, new URL(request.url).pathname.endsWith('/thumbnail') ? THUMB_MAX_BYTES : FILE_MAX_BYTES) : null;
+      // Oglinda (pachetul C): aceeași coadă de o singură urcare, cu limitele ei (fișier 25 MB, poster 2 MB, miniatură, copertă).
+      const mirror = request.method === 'PUT' ? /^\/v2\/mirror\/(?:cover\/.+|[0-9a-f-]{36}(?:\/(thumb|poster))?)$/.exec(new URL(request.url).pathname) : null;
+      if (isFile || mirror) { if (this.uploadingFile || this.uploadingRecording) bad('Retry shortly',429); this.uploadingFile=true; fileUpload=true; }
+      const mirrorMax = mirror ? (new URL(request.url).pathname.includes('/cover/') ? MIRROR_COVER_MAX : mirror[1] === 'thumb' ? MIRROR_THUMB_MAX : mirror[1] === 'poster' ? MIRROR_POSTER_MAX : MIRROR_FILE_MAX) : 0;
+      const bytes = isRecording ? await readBytes(request, RECORDING_MAX_BYTES) : isFile ? await readBytes(request, new URL(request.url).pathname.endsWith('/thumbnail') ? THUMB_MAX_BYTES : FILE_MAX_BYTES) : mirror ? await readBytes(request, mirrorMax) : null;
       return await this.ctx.blockConcurrencyWhile(() => this.handle(request, bytes));
     } catch(e) { return reply({ error:e.status?e.message:'Storage operation failed' },e.status||500); }
     finally { if(upload) this.uploadingRecording=false; if(fileUpload) this.uploadingFile=false; }
@@ -88,6 +92,8 @@ export class InsightsAccount {
     out.usageDays = await drop('usage-day:');
     await drop('usage-last:');
     out.locDays = await drop(LOC_DAY_PREFIX);
+    // Oglinda galeriei și a documentelor (pachetul C): rândurile `mf*`; obiectele R2 sunt sub files/m/, golite mai jos.
+    out.files += await forgetMirror(s);
     for (const item of (await s.list({ prefix: 'cloud-file:' })).values()) {
       if (bucket) await eraseFile(s, bucket, item); else await s.delete('cloud-file:' + item.id);
       out.files++;
@@ -151,6 +157,8 @@ export class InsightsAccount {
     if(organizerResponse)return organizerResponse;
     const cleanupResponse = await handleCleanup(request,this,readJSON);
     if (cleanupResponse) return cleanupResponse;
+    const mirrorResponse = await handleMirror(request,this,uid,recordingBytes,readJSON);
+    if (mirrorResponse) return mirrorResponse;
     const filesResponse = await handleFiles(request,this,uid,recordingBytes,readJSON);
     if (filesResponse) return filesResponse;
     const url = new URL(request.url); const path = url.pathname;

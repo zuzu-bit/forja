@@ -36,7 +36,7 @@
 import { failure, reply, FirestoreReader } from './site/shared.mjs';
 import { cerc } from './site/sec-cerc.mjs';
 import { somn, somnNight, somnChunk } from './site/sec-somn.mjs';
-import { ratie, mars } from './site/sec-body.mjs';
+import { ratie, mars, ratiePhoto } from './site/sec-body.mjs';
 import { muzica, paza, concentrare } from './site/sec-mind.mjs';
 import { inventar } from './site/sec-inventar.mjs';
 import { azi, cont } from './site/sec-azi-cont.mjs';
@@ -58,13 +58,16 @@ const HANDLERS = { azi, cerc, somn, ratie, mars, muzica, paza, inventar, concent
 export async function handleSiteApi(request, env, uid, deps = {}) {
   const url = new URL(request.url), m = SITE_PATH.exec(url.pathname);
   if (!m) return failure('Secțiune necunoscută.', 404);
-  if (request.method !== 'GET') return failure('Metodă nepermisă.', 405);
   const [, section, rest = ''] = m;
+  const parts = rest ? rest.split('/') : [];
+  // Poza mesei (pachetul C): singura rută care primește și PUT / DELETE (de la telefon), tot pe uid-ul verificat.
+  const photo = section === 'ratie' && parts.length === 2 && parts[0] === 'photo';
+  if (request.method !== 'GET' && !(photo && ['PUT', 'DELETE'].includes(request.method))) return failure('Metodă nepermisă.', 405);
   const token = (request.headers.get('Authorization') || '').slice(7);
   const ctx = { request, env, uid, url, now: deps.now ?? Date.now(), fs: new FirestoreReader(uid, token, deps.fetcher || ((u, o) => fetch(u, o))) };
-  const parts = rest ? rest.split('/') : [];
   try {
     let data;
+    if (photo) return await ratiePhoto(ctx, parts[1]);
     if (section === 'somn' && parts.length === 1) return await somnNight(ctx, parts[0]);
     if (section === 'somn' && parts.length === 3 && parts[1] === 'chunk') return await somnChunk(ctx, parts[0], parts[2]);
     if (parts.length) return failure('Secțiune necunoscută.', 404);
