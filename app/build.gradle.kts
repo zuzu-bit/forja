@@ -1,3 +1,5 @@
+import java.time.Duration
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -77,7 +79,7 @@ android {
                 it.maxHeapSize = "4g"
                 // În jurnalul CI se vede fiecare test pornit: un test blocat (animație fără sfârșit) se găsește după ultimul STARTED.
                 it.testLogging { events("started", "failed"); exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
-                it.timeout.set(java.time.Duration.ofMinutes(38))
+                it.timeout.set(Duration.ofMinutes(38))
             }
         }
     }
