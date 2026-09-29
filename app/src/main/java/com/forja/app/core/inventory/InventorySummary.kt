@@ -40,6 +40,10 @@ internal object InventorySummary {
         val snap = withTimeoutOrNull(20_000L) {
             col.orderBy("finishedAt", Query.Direction.DESCENDING).limit((KEEP * 2).toLong()).get().await()
         } ?: return
-        for (d in snap.documents.drop(KEEP)) try { d.reference.delete() } catch (_: Exception) { }
+        for (d in snap.documents.drop(KEEP)) {
+            try { d.reference.delete() } catch (_: Exception) { }
+            // Mirror C: coperțile rulării ies de pe site odată cu ea („cât rămâne rularea pe site”).
+            InvMirror.dropCovers(d.id)
+        }
     }
 }

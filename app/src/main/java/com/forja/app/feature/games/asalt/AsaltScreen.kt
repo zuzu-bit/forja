@@ -191,7 +191,7 @@ fun AsaltGameScreen(onOpenInventory: (InvPage) -> Unit, onClose: () -> Unit) {
         val level = e.level.id
         val prevBest = progress.bestOf(level)
         val stars = e.stars
-        GameStore.recordResult(context, GameId.Asalt, level, if (won) GameOutcome.Won else GameOutcome.Lost, stars, e.score)
+        GameStore.recordResult(context, GameId.Asalt, level, if (won) GameOutcome.Won else GameOutcome.Lost, stars, e.score, (e.elapsedMs / 1000).toInt())
         GameSessions.finish(context, GameId.Asalt)
         val next = level + 1
         val hasNext = won && level < GameId.Asalt.levels

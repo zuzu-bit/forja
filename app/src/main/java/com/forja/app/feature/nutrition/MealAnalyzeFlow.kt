@@ -162,10 +162,16 @@ object MealAnalyze {
             source = "ESTIMARE AI · POZĂ",
             confidence = report.incredere,
             at = at,
-            photoPath = photoPath
+            photoPath = photoPath,
+            // Mirror C: ce a găsit analiza rămâne și în jurnal (și pe site), iar masa are un id stabil.
+            details = com.forja.app.core.data.SitePayloads.encodeDetails(com.forja.app.core.data.MealDetails(
+                items = components.map { com.forja.app.core.data.MealPart(it.nume, it.grame, it.kcal, it.proteine, it.carbo, it.grasimi) },
+                score = report.scor?.valoare, reason = report.scor?.motiv?.takeIf { it.isNotBlank() }, tip = report.sfat?.takeIf { it.isNotBlank() }, model = report.model)),
+            cloudId = com.forja.app.core.data.SitePayloads.mealCloudId(at)
         )
         val id = app.db.mealDao().insert(meal)
         com.forja.app.core.data.CloudSync.meal(app.auth.currentUid, meal.copy(id = id))
+        com.forja.app.core.data.JournalMirror.kick(app, meal.copy(id = id))
         NutritionPrefs.of(app).noteMeal(day) // nu aruncă: scrierile din NutritionPrefs înghit IOException
         return meal.copy(id = id)
     }

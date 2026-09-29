@@ -61,4 +61,18 @@ class InvSummaryDocTest {
         assertEquals("1 000", InvSummaryDoc.count(1_000))
         assertEquals("12 480", InvSummaryDoc.count(12_480))
     }
+
+    @Test fun mirrorExtrasAppearOnlyWhenSet() {
+        val m = doc(listOf(InvSummaryDoc.Folder("Munte", 4, 400L, theme = "vârfuri și cabane", covers = listOf("c1-0", "c1-1", "c1-2", "c1-3", "c1-4")))).copy(
+            state = "ready", progressDone = 900, progressTotal = 1000, provider = "Gemini", trashByReason = mapOf("duplicate" to 2, "tiny" to 0),
+            trashExpiresAt = 99L, failures = mapOf("owned" to 1), updatedAt = 30L).toMap()
+        assertEquals("ready", m["state"]); assertEquals(mapOf("done" to 900, "total" to 1000), m["progress"]); assertEquals("Gemini", m["provider"])
+        assertEquals(mapOf("owned" to 1), m["failures"])
+        val trash = m["trash"] as Map<*, *>
+        assertEquals(mapOf("duplicate" to 2), trash["byReason"]); assertEquals(99L, trash["expiresAt"])
+        val f = (m["folders"] as List<*>).single() as Map<*, *>
+        assertEquals("vârfuri și cabane", f["theme"]); assertEquals(4, (f["covers"] as List<*>).size)
+        assertTrue(InvMirror.coverKey("Munte", 0).matches(Regex("^c[0-9a-f]{8}-0$")))
+        assertEquals("old_screenshot", InvMirror.reasonCode(DeleteReason.OldScreenshot)); assertEquals("manual", InvMirror.reasonCode(null))
+    }
 }

@@ -107,6 +107,7 @@ object SiteMirror {
         ListenMirror.start(app)
         GamesMirror.start(app)
         StorageMirror.start(app)
+        JournalMirror.start(app)
     }
 
     /** Trimite antrenamentele terminate după ultimul trimis (prima dată: ultimele 60 de zile). */
@@ -120,7 +121,8 @@ object SiteMirror {
             val now = System.currentTimeMillis()
             val (todo, next) = SitePayloads.workoutsToSend(finishedWorkouts(app, since, now - BACKFILL_MS), since, now, BACKFILL_MS)
             if (todo.isEmpty()) return@withLock
-            for (w in todo) CloudSync.workout(uid, w.id, SitePayloads.workout(w, setsOf(app, w.id)))
+            // Mirror C: payload v2 (exerciții, serii, muzică, dus la capăt), pe id-ul stabil al sesiunii.
+            JournalMirror.sendWorkouts(app, uid, todo)
             store.edit().putLong(key, next).apply()
         } catch (_: Exception) { }
     }

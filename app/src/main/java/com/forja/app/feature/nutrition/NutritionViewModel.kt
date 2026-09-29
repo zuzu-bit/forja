@@ -148,7 +148,7 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
                 confidence = if (p.source.startsWith("EXACT")) "exactă" else "ridicată",
                 at = System.currentTimeMillis(),
                 barcode = p.product.barcode
-            )
+            ).let { it.copy(cloudId = com.forja.app.core.data.SitePayloads.mealCloudId(it.at)) }
             val id = dao.insert(meal)
             com.forja.app.core.data.CloudSync.meal(forja.auth.currentUid, meal.copy(id = id))
             nutritionPrefs.noteMeal(meal.epochDay)
@@ -163,7 +163,7 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
                 epochDay = Fmt.epochDay(), mealType = mealType, name = name,
                 kcal = kcal, protein = protein, carbs = carbs, fat = fat, grams = grams,
                 source = "MANUAL", confidence = "—", at = System.currentTimeMillis()
-            )
+            ).let { it.copy(cloudId = com.forja.app.core.data.SitePayloads.mealCloudId(it.at)) }
             val id = dao.insert(meal)
             com.forja.app.core.data.CloudSync.meal(forja.auth.currentUid, meal.copy(id = id))
             nutritionPrefs.noteMeal(meal.epochDay)
@@ -172,10 +172,14 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Șterge masa; dacă ziua ei rămâne fără mese, seria nu o mai numără (o masă adăugată din greșeală nu face „zi”). */
     fun deleteMeal(id: Long) {
-        val day = meals.value.firstOrNull { it.id == id }?.epochDay ?: Fmt.epochDay()
+        val meal = meals.value.firstOrNull { it.id == id }
+        val day = meal?.epochDay ?: Fmt.epochDay()
         viewModelScope.launch {
             dao.delete(id)
-            com.forja.app.core.data.CloudSync.deleteMeal(forja.auth.currentUid, id)
+            if (meal != null) {
+                com.forja.app.core.data.CloudSync.deleteMeal(forja.auth.currentUid, meal)
+                if (!meal.photoPath.isNullOrBlank()) com.forja.app.core.data.JournalMirror.forgetPhoto(forja, meal)
+            }
             if (dao.mealsForDay(day).first().isEmpty()) nutritionPrefs.noteMealRemoved(day)
         }
     }

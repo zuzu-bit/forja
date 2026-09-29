@@ -26,8 +26,17 @@ object SiteSyncStore {
     /** Momentul programat al ultimei sincronizări pornite de o celulă nouă (cel mult una la 5 min). */
     const val EXPLORE_CELL_KICK_AT = "explore_cell_kick_at"
 
-    /** Cel mai nou `endedAt` de antrenament deja trimis în users/{uid}/workouts. */
-    fun workoutsSince(uid: String) = "workouts_since_$uid"
+    /**
+     * Cel mai nou `endedAt` de antrenament deja trimis în users/{uid}/workouts. Cheia poartă versiunea payload-ului
+     * (mirror C: v2 cu exerciții și muzică), ca o versiune nouă să refacă completarea de 60 de zile.
+     */
+    fun workoutsSince(uid: String) = "workouts_since_v${SitePayloads.WORKOUT_PAYLOAD}_$uid"
+
+    /** Jurnalele (mese, ture) reconciliate până la acest id Room, pe cont (mirror C: id-uri stabile + completare). */
+    fun journalUpTo(uid: String, table: String) = "journal_v1_${table}_$uid"
+
+    /** Mesele a căror poză a urcat deja pe site (id-uri stabile, separate prin virgulă, ultimele 400). */
+    fun mealPhotosSent(uid: String) = "meal_photos_$uid"
 
     /** Amprenta rației trimise ultima dată în users/{uid}/settings/targets. */
     fun targetsSignature(uid: String) = "targets_sig_$uid"

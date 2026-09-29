@@ -16,7 +16,18 @@ data class WorkoutRecord(
 )
 
 /** O serie din `set_logs`: repetări și greutatea așa cum a fost scrisă („62,5”, „2×14”, „corp”). */
-data class SetRecord(val reps: Int, val load: String)
+data class SetRecord(val reps: Int, val load: String, val exercise: String = "", val setNo: Int = 0, val at: Long = 0L)
+
+/** O piesă ascultată în timpul antrenamentului (MusicHistory, PLAY). */
+data class TrackRecord(val title: String, val artist: String, val at: Long)
+
+/** O componentă a farfuriei, cum o păstrează `meals.details` (mirror, pachetul C). */
+@kotlinx.serialization.Serializable
+data class MealPart(val name: String, val grams: Int = 0, val kcal: Int = 0, val protein: Int = 0, val carbs: Int = 0, val fat: Int = 0)
+
+/** `meals.details` (JSON): ce a găsit analiza — componente, scor 1–10 cu motivul, sfatul, modelul. */
+@kotlinx.serialization.Serializable
+data class MealDetails(val items: List<MealPart> = emptyList(), val score: Int? = null, val reason: String? = null, val tip: String? = null, val model: String? = null)
 
 /** Rația zilnică pe site: exact ce arată inelele din Rație (kcal + P/C/G în grame). */
 data class SiteTargets(val kcal: Int, val protein: Int, val carbs: Int, val fat: Int) {
@@ -33,6 +44,60 @@ data class SiteTargets(val kcal: Int, val protein: Int, val carbs: Int, val fat:
  * users/{uid}/settings/targets: `{ kcal, protein, carbs, fat, updatedAt }` — niciodată profilul corpului.
  */
 object SitePayloads {
+    /** Versiunea documentelor de antrenament; o versiune nouă face completarea de 60 de zile să retrimită tot. */
+    const val WORKOUT_PAYLOAD = 2
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = false; explicitNulls = false }
+
+    /** Id-urile stabile din Firestore (mirror): din momentul jurnalului, nu din id-ul Room (care o ia de la 1 după o reinstalare). */
+    fun mealCloudId(at: Long): String = "m-$at"
+    fun activityCloudId(startAt: Long): String = "a-$startAt"
+    fun workoutCloudId(startedAt: Long): String = "w-$startedAt"
+
+    fun encodeDetails(d: MealDetails): String = json.encodeToString(MealDetails.serializer(), d)
+    fun decodeDetails(raw: String?): MealDetails? = if (raw.isNullOrBlank()) null else try { json.decodeFromString(MealDetails.serializer(), raw) } catch (_: Exception) { null }
+
+    /**
+     * users/{uid}/meals/{cloudId}: jurnalul mesei plus, când există, `items` (≤ 12), `score` {value 1–10, reason}, `tip`
+     * și `photo` (poza e pe serverul site-ului, contract v4). Nimic din profilul corpului.
+     */
+    fun mealDoc(name: String, kcal: Int, protein: Int, carbs: Int, fat: Int, grams: Int, mealType: Int, epochDay: Long, source: String, confidence: String,
+                at: Long, details: String?, photo: Boolean?): Map<String, Any?> {
+        val d = decodeDetails(details)
+        val out = linkedMapOf<String, Any?>(
+            "name" to name, "kcal" to kcal, "protein" to protein, "carbs" to carbs, "fat" to fat, "grams" to grams, "mealType" to mealType,
+            "epochDay" to epochDay, "source" to source, "confidence" to confidence, "at" to at
+        )
+        if (d != null) {
+            if (d.items.isNotEmpty()) out["items"] = d.items.take(12).map { mapOf("name" to it.name.take(80), "grams" to it.grams, "kcal" to it.kcal, "protein" to it.protein, "carbs" to it.carbs, "fat" to it.fat) }
+            if (d.score != null && d.score in 1..10) out["score"] = mapOf("value" to d.score, "reason" to d.reason?.take(200))
+            d.tip?.takeIf { it.isNotBlank() }?.let { out["tip"] = it.take(300) }
+        }
+        if (photo != null) out["photo"] = photo
+        return out
+    }
+
+    /** Exercițiile, în ordinea în care au fost lucrate, fiecare cu seriile lui (repetări, greutatea scrisă, kg când e număr). */
+    fun exercises(sets: List<SetRecord>): List<Map<String, Any?>> =
+        sets.filter { it.exercise.isNotBlank() }.sortedWith(compareBy<SetRecord> { it.at }.thenBy { it.setNo })
+            .groupBy { it.exercise }.entries.take(30)
+            .map { (name, list) -> mapOf("name" to name.take(80), "sets" to list.take(20).map { mapOf("reps" to it.reps, "load" to it.load.take(20), "kg" to loadKg(it.load), "at" to it.at) }) }
+
+    /**
+     * Payload v2: tot ce era în v1, plus `completed` (seriile făcute ≥ cele din plan), `plannedSets`, `exercises` și
+     * `music` (≤ 30 piese pornite între început și sfârșit). Fără plan (intervalele), `completed` lipsește.
+     */
+    fun workoutV2(w: WorkoutRecord, sets: List<SetRecord>, plannedSets: Int?, music: List<TrackRecord>): Map<String, Any?> {
+        val out = LinkedHashMap(workout(w, sets))
+        val done = out["sets"] as Int
+        if (plannedSets != null && plannedSets > 0) { out["plannedSets"] = plannedSets; out["completed"] = done >= plannedSets }
+        val ex = exercises(sets)
+        if (ex.isNotEmpty()) out["exercises"] = ex
+        val m = music.filter { it.at in w.startedAt..w.endedAt && it.title.isNotBlank() }.sortedBy { it.at }.take(30)
+        if (m.isNotEmpty()) out["music"] = m.map { mapOf("title" to it.title.take(120), "artist" to it.artist.take(120), "at" to it.at) }
+        out["payload"] = WORKOUT_PAYLOAD
+        return out
+    }
+
     const val SOURCE_TRAINING = "instructie"
     const val SOURCE_WAITING = "asteptare"
     const val KIND_STRENGTH = "forta"

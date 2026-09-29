@@ -36,6 +36,9 @@ import java.util.concurrent.TimeUnit
  *
  * Serverul păstrează azi o copie 24 h și cel mult 500 de elemente pe cont / 1 500 de urcări pe zi; la 429 lotul
  * se oprește și reluăm la rularea următoare, fără să pierdem cursorul.
+ *
+ * Mirror (pachetul C): cu contractul semnat la v4, aceeași lucrare rulează oglinda ([MediaMirror]) în locul miniaturilor:
+ * aceleași constrângeri (Wi-Fi implicit, bateria bună), aceeași cadență (un lot, apoi următorul la 3 minute).
  */
 object GalleryUploader {
     const val KEY_ON = "gallery_all"
@@ -103,7 +106,7 @@ object GalleryUploader {
         }
     }
 
-    private fun setStatus(c: Context, text: String) {
+    internal fun setStatus(c: Context, text: String) {
         CollectionSettings.prefs(c).edit().putString(KEY_STATUS, text).apply()
     }
 
@@ -147,6 +150,8 @@ object GalleryUploader {
         if (!on(app)) return Outcome.SKIPPED
         val uid = app.auth.currentUid ?: return Outcome.SKIPPED
         if (CollectionSettings.owner(app) != uid) return Outcome.SKIPPED
+        // Contractul v4: oglinda — pozele, video-urile și documentele însele, cât ai contul (MediaMirror). v3: miniaturile de 24 h.
+        if (CollectionSettings.contractAtLeast(app, 4)) return MediaMirror.run(app, uid)
         if (!canRead(app)) { setStatus(app, "Galeria așteaptă permisiunea „Poze & galerie” din Echipare."); return Outcome.SKIPPED }
         val rows = nextRows(app, p.getLong(KEY_CURSOR, 0L))
         if (rows.isEmpty()) { setStatus(app, "Galeria e pe site: ${uploaded(app)} miniaturi. Pozele noi urcă zilnic."); return Outcome.DONE }

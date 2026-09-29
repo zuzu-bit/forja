@@ -270,6 +270,7 @@ object Inventory {
                 if (id == currentRunId || snapshot?.meta?.runId == id) return@withLock
                 val stage = InventoryStore.readRun(ctx, id)?.meta?.stage
                 if (stage == null || stage in RUNNING || stage == InvStage.Failed) {
+                    InvMirror.discard(ctx, id)
                     InventoryStore.deleteRun(ctx, id)
                     if (InventoryStore.latest(ctx) == id) InventoryStore.setLatest(ctx, null)
                 }
@@ -551,8 +552,10 @@ object Inventory {
             }
             val applied = tally(s, out)
             val r = out.result.copy(lost = applied.lost - (s.meta.applied?.lost ?: 0), pending = applied.pending)
-            if (applied.moved + applied.trashed + applied.failed > 0) summary = summaryOf(s, applied)
             val doc = PlanEdits.without(s.doc, s.items, out.removed)
+            if (applied.moved + applied.trashed + applied.failed > 0) summary = summaryOf(s, applied).copy(
+                state = if (PlanEdits.count(doc) == 0) "done" else "ready",
+                failures = out.result.failures.values.groupingBy { it.reason.code }.eachCount())
             if (PlanEdits.count(doc) == 0) {
                 withContext(Dispatchers.IO) { InventoryStore.deleteRun(ctx, runId) }
                 InventoryStore.setLatest(ctx, null)
@@ -641,7 +644,31 @@ object Inventory {
             trashBytes = a.trashBytes,
             moved = a.moved,
             failed = a.failed,
-            freedBytes = if (photos) a.trashBytes else null
+            freedBytes = if (photos) a.trashBytes else null,
+            provider = s.doc.provider,
+            trashByReason = trashReasons(s.doc, s.doc.trash.itemIds + s.doc.reasons.keys),
+            trashExpiresAt = if (photos && a.trashed > 0) a.lastAt + InvMirror.TRASH_DAYS * 86_400_000L else null,
+            updatedAt = System.currentTimeMillis()
+        ).let { d ->
+            // Temele și coperțile dosarelor (după nume, ca în planul de la „gata”).
+            val themes = s.doc.folders.associate { it.name to it.theme }
+            val cov = InvMirror.coversOf(meta.runId)
+            d.copy(folders = d.folders.map { f -> f.copy(theme = themes[f.name], covers = cov[f.name].orEmpty()) })
+        }
+    }
+
+    /** „De aruncat” pe motiv (ce a propus analiza; null = pus acolo de om). */
+    private fun trashReasons(doc: PlanDoc, ids: Collection<String>): Map<String, Int> =
+        ids.toSet().groupingBy { InvMirror.reasonCode(doc.reasons[it]) }.eachCount()
+
+    /** Planul gata, pentru site (mirror C): dosarele planului cu numărul și octeții lor, încă nimic mutat. */
+    private fun readySummary(s: Snapshot): InvSummaryDoc {
+        val base = summaryOf(s, AppliedRec(lastAt = System.currentTimeMillis()))
+        return base.copy(
+            folders = s.doc.folders.map { f -> InvSummaryDoc.Folder(f.name, f.itemIds.size, f.itemIds.sumOf { s.items[it]?.bytes ?: 0L }, f.theme) },
+            trashCount = s.doc.trash.itemIds.size, trashBytes = s.doc.trash.itemIds.sumOf { s.items[it]?.bytes ?: 0L },
+            moved = 0, failed = 0, freedBytes = null, state = "ready", trashExpiresAt = null,
+            trashByReason = trashReasons(s.doc, s.doc.trash.itemIds)
         )
     }
 
@@ -650,6 +677,8 @@ object Inventory {
         val ctx = bind(context)
         InventoryWorker.cancelWork(ctx)
         lock.withLock {
+            // Un plan aruncat fără nicio aplicare nu rămâne pe site; unul aplicat în parte rămâne cu ce s-a mutat.
+            (snapshot?.meta ?: currentRunId?.let { InventoryStore.readRun(ctx, it)?.meta })?.takeIf { it.applied == null }?.let { InvMirror.discard(ctx, it.runId) }
             currentRunId = null
             snapshot = null
             moveGrant = null
@@ -687,7 +716,10 @@ object Inventory {
     }
 
     internal fun publish(p: InvProgress) {
-        if (p.runId == currentRunId && snapshot == null) _progress.value = p
+        if (p.runId == currentRunId && snapshot == null) {
+            _progress.value = p
+            appContext?.let { InvMirror.stage(it, p) }   // mirror C: starea analizei pe site, o scriere pe etapă
+        }
     }
 
     /** Analiza s-a terminat: planul se salvează, se publică, se anunță (eveniment + notificare). */
@@ -721,6 +753,11 @@ object Inventory {
             event = InvEvent.Done(m.runId, doc.folders.size, trashBytes)
         }
         val m = done ?: return
+        // Mirror C: planul gata apare pe site (dosarele, temele, motivele), apoi coperțile cu contractul v4.
+        snapshot?.takeIf { it.meta.runId == m.runId && it.meta.applied == null }?.let { snap ->
+            InvMirror.ready(ctx, readySummary(snap), snap.doc.folders.map { f -> Triple(f.name, cover(f.itemIds), f.itemIds.size.toLong()) },
+                snap.items.mapValues { it.value.uri }, snap.meta.kind == InvKind.Photos)
+        }
         event?.let { _events.tryEmit(it) }
         InventoryNotify.ready(ctx, m.kind, m.folders, m.itemCount, m.trashCount)
         // „Când tace muzica, inventarul e gata”: pauză (dacă „Oprește la final”), sunetul de final și vibrația.
@@ -738,6 +775,7 @@ object Inventory {
             null, emptyList(), emptyList(), message)
         _events.tryEmit(InvEvent.Failed(message))
         InventoryNotify.failed(ctx, message)
+        InvMirror.failed(ctx, m, message)
     }
 
     // ─────────────────────────── Construirea stării publice ───────────────────────────
