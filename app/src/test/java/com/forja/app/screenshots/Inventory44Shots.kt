@@ -128,6 +128,14 @@ class Inventory44Shots {
         InventoryFolderContent(InventorySamples.trash, FolderActions())
     }
     @Test @Config(qualifiers = PHONE_S23) fun applyS23() = shot("inventory44_s6_apply_s23") { InventoryApplyContent(InventorySamples.apply) }
+    /** 4.4.1: captura Lanei (0 / 10, „AȘTEPT ACORDUL TĂU”, fără butoane) — așa arată cât dialogul e pe drum. */
+    @Test @Config(qualifiers = PHONE_S23) fun applyWaitingS23() = shot("inventory441_s6_waiting_s23") {
+        InventoryApplyContent(InventorySamples.apply.copy(done = 0, total = 10, recent = emptyList(), waiting = true))
+    }
+    /** 4.4.1: fereastra Android n-a apărut nici a doua oară — rândul spune asta, dedesubt cele două butoane, fără derulare. */
+    @Test @Config(qualifiers = PHONE_S23) fun applyStuckS23() = shot("inventory441_s6_stuck_s23") {
+        InventoryApplyContent(InventorySamples.apply.copy(done = 0, total = 10, recent = emptyList(), waiting = true, stuck = true))
+    }
 
     // ───────────── Finalul: sus și jos fixe, eroul scalat, calea noii locații ─────────────
 

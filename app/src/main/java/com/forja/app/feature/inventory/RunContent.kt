@@ -568,9 +568,20 @@ private fun SealBadge(sealed: Boolean, delayMs: Int) {
 
 // ═════════════════════════════ Aplicarea (progres) ═════════════════════════════
 
-/** Aplicarea în curs: aceeași bandă (miniaturile intră în dosarele cu nume), procentul și „1 092 / 3 214”. */
+/**
+ * Aplicarea în curs: aceeași bandă (miniaturile intră în dosarele cu nume), procentul și „1 092 / 3 214”.
+ * Cât așteptăm acordul, un singur rând: „AȘTEPT ACORDUL TĂU”; dacă fereastra Android nu apare nici a doua oară,
+ * rândul spune asta și dedesubt stau „Încearcă din nou” și „Înapoi la dosare” (fără ele pagina era o fundătură).
+ */
 @Composable
-fun InventoryApplyContent(state: ApplyUiState, modifier: Modifier = Modifier, sealed: Boolean = false) {
+fun InventoryApplyContent(
+    state: ApplyUiState,
+    modifier: Modifier = Modifier,
+    sealed: Boolean = false,
+    onRetry: () -> Unit = {},
+    onBack: () -> Unit = {}
+) {
+    val stuck = state.waiting && state.stuck && !sealed
     TopBottomColumn(
         modifier = modifier.fillMaxSize().background(Surface0),
         padding = PaddingValues(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 24.dp),
@@ -588,11 +599,20 @@ fun InventoryApplyContent(state: ApplyUiState, modifier: Modifier = Modifier, se
         },
         bottom = {
             Text(
-                if (state.waiting) "AȘTEPT ACORDUL TĂU" else if (state.kind == InvKind.Photos) "MUT POZELE ÎN DOSARE" else "MUT FIȘIERELE ÎN DOSARE",
+                when {
+                    stuck -> ApplyCopy.NOT_SHOWN
+                    state.waiting -> ApplyCopy.WAITING
+                    state.kind == InvKind.Photos -> "MUT POZELE ÎN DOSARE"
+                    else -> "MUT FIȘIERELE ÎN DOSARE"
+                },
                 style = mono(11, 0.08f, color = TextDim),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
+            if (stuck) {
+                InvPrimaryButton(ApplyCopy.RETRY, onRetry)
+                InvOutlineButton(ApplyCopy.BACK, onBack)
+            }
         }
     )
 }

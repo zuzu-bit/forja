@@ -1,12 +1,10 @@
 package com.forja.app.feature.inventory
 
-import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
@@ -50,7 +48,6 @@ import com.forja.app.core.inventory.InvStage
 import com.forja.app.core.music.Music
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 /** Modurile „Cât aștepți” (jocurile ZID și ASALT, muzica), rute separate în MainActivity. */
@@ -87,7 +84,7 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
     val outcome by vm.outcome.collectAsState()
     val applyWaiting by vm.applyWaiting.collectAsState()
     val applyProgress by vm.applyProgress.collectAsState()
-    val sender by vm.sender.collectAsState()
+    val consent by vm.consent.collectAsState()
     val applying by vm.applyingFlow.collectAsState()
     val track by Music.nowPlaying.collectAsState()
     val phase = phaseOf(progress, plan)
@@ -190,17 +187,13 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
         val ok = if (place != null) OpenPlace.folder(context, place, browse) else OpenPlace.files(context)
         if (!ok) toast.show("Nu am găsit aplicația.")
     }
-    val senderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
-        vm.onDialogResult(res.resultCode == Activity.RESULT_OK)
-    }
-    val senderLifecycle = LocalLifecycleOwner.current
-    LaunchedEffect(sender) {
-        val s = sender ?: return@LaunchedEffect
-        // Dialogul sistemului se cere doar cu ecranul în față (din fundal Android nu îl arată).
-        senderLifecycle.lifecycle.currentStateFlow.first { it.isAtLeast(Lifecycle.State.RESUMED) }
-        vm.onSenderLaunched()
-        try { senderLauncher.launch(IntentSenderRequest.Builder(s).build()) } catch (_: Exception) { vm.onDialogResult(false) }
-    }
+    // Dialogurile de acord (scriere / coș / laptop): lansare cu activitatea în față, plasă, revenire fără răspuns.
+    ConsentLauncher(
+        consent = vm.consent,
+        onLaunched = vm::onConsentLaunched,
+        onMissing = vm::onConsentMissing,
+        onResult = vm::onDialogResult
+    )
 
     // ── viața ecranului ──
     DisposableEffect(Unit) {
@@ -299,7 +292,11 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
         if (page == InvPage.Folders || page == InvPage.Folder) InventoryLinks.markReadySeen(plan?.runId)
     }
 
-    BackHandler(enabled = applying) { /* aplicarea are nevoie de ecran pentru dialogurile următoare */ }
+    // Cât se mută sau cât dialogul e pe drum, „înapoi” nu face nimic (aplicarea are nevoie de ecran). Doar când fereastra
+    // Android n-a apărut (butoanele sunt pe ecran) e la fel ca „Înapoi la dosare”.
+    BackHandler(enabled = applying) {
+        if (consent?.stuck == true || (applyWaiting && consent == null)) vm.cancelConsent("gesture")
+    }
     BackHandler(enabled = !applying && (stack.size > 1 || editing || selected.isNotEmpty())) {
         when {
             editing -> editing = false
@@ -449,9 +446,12 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
                             total = if (live) pr!!.total else applyProgress.second,
                             recent = if (live) pr!!.recent else emptyList(),
                             bins = planBins,
-                            waiting = applyWaiting
+                            waiting = applyWaiting,
+                            stuck = applyWaiting && consent?.stuck == true
                         ),
-                        sealed = sealed
+                        sealed = sealed,
+                        onRetry = vm::retryConsent,
+                        onBack = { vm.cancelConsent("button") }
                     )
                 }
 

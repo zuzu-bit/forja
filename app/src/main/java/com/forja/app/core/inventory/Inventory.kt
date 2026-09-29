@@ -437,7 +437,9 @@ object Inventory {
         return try {
             CleanupEngine(ctx, ForjaApp.from(ctx).prefs).writeRequest(chunk.map { Uri.parse(it.uri) })
                 ?.also { moveGrant = Grant(s.meta.runId, chunk.map { it.id }) }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Fără dialog, apply() nu mută nimic: măcar jurnalul spune de ce (URI respins, limita MediaStore…).
+            ConsentLog.add(ctx, "W_ASK", com.forja.app.core.music.DiagResult.ERROR, 0, "n=${chunk.size} ${e.javaClass.simpleName}")
             null
         }
     }
@@ -453,7 +455,8 @@ object Inventory {
         return try {
             CleanupEngine(ctx, ForjaApp.from(ctx).prefs).trashRequest(chunk.map { Uri.parse(it.uri) }, true)
                 ?.also { trashGrant = Grant(s.meta.runId, chunk.map { it.id }) }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            ConsentLog.add(ctx, "T_ASK", com.forja.app.core.music.DiagResult.ERROR, 0, "n=${chunk.size} ${e.javaClass.simpleName}")
             null
         }
     }

@@ -20,6 +20,7 @@ import com.forja.app.core.cleanup.OrgItem
 import com.forja.app.core.cleanup.OrganizerJobs
 import com.forja.app.core.cleanup.OrganizerLedger
 import com.forja.app.core.inventory.ApplyResult
+import com.forja.app.core.inventory.ConsentLog
 import com.forja.app.core.inventory.DocCounter
 import com.forja.app.core.inventory.DocDest
 import com.forja.app.core.inventory.InvDest
@@ -32,9 +33,9 @@ import com.forja.app.core.inventory.Landing
 import com.forja.app.core.inventory.MediaRoots
 import com.forja.app.core.inventory.TreePaths
 import com.forja.app.core.inventory.mediaRootFromTree
+import com.forja.app.core.music.DiagResult
 import com.forja.app.core.music.Music
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -350,24 +351,99 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
 
     // ─────────────────────────── Dialogurile sistemului ───────────────────────────
 
-    private val _sender = MutableStateFlow<IntentSender?>(null)
-    /** Dialogul de sistem de lansat acum (scriere / coș); ecranul îl lansează și raportează rezultatul. */
-    val sender: StateFlow<IntentSender?> = _sender.asStateFlow()
-    private var answer: CompletableDeferred<Boolean>? = null
+    private val gate = ConsentGate<IntentSender>()
+    /**
+     * Dialogul de sistem cerut acum (scriere / coș / laptop). Rămâne publicat până la răspuns sau renunțare — nu dispare
+     * la lansare —, deci ecranul îl poate cere din nou, iar „Înapoi la dosare” îl poate închide oricând (ConsentGate).
+     */
+    val consent: StateFlow<ConsentGate.Request<IntentSender>?> = gate.current
 
-    fun onSenderLaunched() { _sender.value = null }
+    /** Pozele din laptop din cererea în curs (o cerere refăcută le cere din nou). */
+    private var laptopAsk: List<Uri> = emptyList()
 
-    fun onDialogResult(ok: Boolean) {
-        answer?.complete(ok)
-        answer = null
+    // Pentru jurnal (ConsentLog): când s-a cerut acordul curent și când s-a lansat ultima lui încercare.
+    private var askAt = 0L
+    private var launchAt = 0L
+    private fun now() = SystemClock.uptimeMillis()
+
+    private suspend fun ask(sender: IntentSender, kind: ConsentGate.Kind): ConsentGate.Answer {
+        askAt = now()
+        launchAt = 0L
+        ConsentLog.add(ctx, "${kind.code}_ASK", DiagResult.OK, 0, null, sender.creatorPackage)
+        return gate.ask(sender, kind)
     }
 
-    private suspend fun ask(sender: IntentSender): Boolean {
-        val d = CompletableDeferred<Boolean>()
-        answer?.complete(false)
-        answer = d
-        _sender.value = sender
-        return d.await()
+    /** Ecranul a lansat încercarea [attempt] a cererii [id] (launcher.launch() a trecut). */
+    fun onConsentLaunched(id: Long, attempt: Int) {
+        if (gate.launched(id, attempt)) launchAt = now()
+    }
+
+    /**
+     * Rezultatul dialogului (ActivityResult). Cererea se scoate înainte de completare, deci bucla poate cere pe loc
+     * dialogul următor. [sendFailed]: PendingIntent-ul n-a putut fi trimis (anulat / folosit) — nu e „Nu”-ul omului,
+     * ci un dialog care n-a apărut.
+     */
+    fun onDialogResult(ok: Boolean, sendFailed: Boolean = false) {
+        val r = gate.current.value
+        val k = r?.kind?.code ?: "X"
+        val ms = if (launchAt > 0L) now() - launchAt else 0L
+        val tag = r?.tag ?: "-"
+        if (sendFailed) {
+            ConsentLog.add(ctx, "${k}_RESULT", DiagResult.ERROR, ms, "$tag send")
+            gate.dropLaunch()?.let { onConsentMissing(it.id, it.attempt, "send") }
+            return
+        }
+        // Rândul se scrie ÎNAINTE de răspuns: răspunsul poate relua bucla pe loc, care notează deja cererea următoare.
+        val o = gate.peek()
+        val res = if (o != ConsentGate.Outcome.APPLIED) DiagResult.SKIPPED else if (ok) DiagResult.OK else DiagResult.REFUSED
+        ConsentLog.add(ctx, "${k}_RESULT", res, ms, if (o == ConsentGate.Outcome.APPLIED) tag else "$tag ${o.name.lowercase()}")
+        gate.answer(ok)
+    }
+
+    /**
+     * Încercarea [attempt] a cererii [id] nu a acoperit ecranul, nu s-a putut trimite sau a revenit fără răspuns
+     * ([why]: timeout / launch / send / resume). Prima dată o refacem singuri; apoi pagina arată cele două acțiuni.
+     */
+    fun onConsentMissing(id: Long, attempt: Int, why: String) {
+        val r = gate.current.value ?: return
+        when (gate.missing(id, attempt)) {
+            ConsentGate.Missing.RENEW -> renewConsent("auto:$why")
+            ConsentGate.Missing.STUCK -> ConsentLog.add(ctx, "${r.kind.code}_STUCK", DiagResult.TIMEOUT, now() - askAt, "${r.tag} $why")
+            ConsentGate.Missing.IGNORED -> Unit
+        }
+    }
+
+    /** „Încearcă din nou”: aceeași bucată, cu o cerere MediaStore nouă (PendingIntent-urile ei sunt ONE_SHOT). */
+    fun retryConsent() = renewConsent("user")
+
+    private fun renewConsent(why: String) {
+        val r = gate.current.value ?: return
+        val fresh = when (r.kind) {
+            ConsentGate.Kind.WRITE -> Inventory.writeRequest(ctx)
+            ConsentGate.Kind.TRASH -> Inventory.trashRequest(ctx)
+            ConsentGate.Kind.LAPTOP -> try { CleanupEngine(ctx, forja.prefs).writeRequest(laptopAsk) } catch (_: Exception) { null }
+        }
+        ConsentLog.add(ctx, "${r.kind.code}_RETRY", if (fresh != null) DiagResult.OK else DiagResult.ERROR, now() - askAt, "${r.tag} $why", fresh?.creatorPackage)
+        // Imposibil de refăcut: FORJA renunță (nu omul) — aplicarea se oprește cu „Nu s-a aplicat tot.”, planul rămâne.
+        if (fresh != null) gate.renew(r.id, fresh) else gate.cancel(ConsentGate.Answer.DROPPED)
+    }
+
+    /**
+     * „Înapoi la dosare” (buton sau gest), cât cererea e blocată: la fel ca „Nu” în dialog — planul rămâne întreg,
+     * ecranul revine la dosare. Fără cerere publicată (n-ar trebui să se întâmple) oprim aplicarea direct.
+     */
+    fun cancelConsent(source: String) {
+        val r = gate.current.value
+        if (r != null) {
+            ConsentLog.add(ctx, "${r.kind.code}_BACK", DiagResult.REFUSED, now() - askAt, "${r.tag} $source")
+            gate.cancel(ConsentGate.Answer.NO)
+            return
+        }
+        if (_applyWaiting.value) {
+            ConsentLog.add(ctx, "APPLY_END", DiagResult.REFUSED, 0, "back:norequest")
+            _outcome.value = ApplyOutcome.Cancelled
+            applyJob?.cancel()
+        }
     }
 
     // ─────────────────────────── Aplicarea (S6) ───────────────────────────
@@ -403,6 +479,8 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         _done.value = null
         _applyProgress.value = 0 to (confirm.moves + confirm.trashCount)
         _applying.value = true
+        val startedAt = now()
+        ConsentLog.add(ctx, "APPLY_START", DiagResult.OK, 0, "moves=${confirm.moves} trash=${confirm.trashCount}")
         applyJob = viewModelScope.launch {
             var total = ApplyResult(0, 0, 0, 0L)
             var landing: Landing? = null
@@ -411,21 +489,22 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
             var lost = 0
             var pending = 0
             var rounds = 0
+            var ended = "cancelled"
             try {
                 while (rounds < 64) {
                     val w = Inventory.writeRequest(ctx)
                     if (w != null) {
                         _applyWaiting.value = true
-                        val ok = ask(w)
+                        val a = ask(w, ConsentGate.Kind.WRITE)
                         _applyWaiting.value = false
-                        if (!ok) { _outcome.value = ApplyOutcome.Cancelled; return@launch }
+                        if (a != ConsentGate.Answer.YES) { ended = a.name.lowercase(); _outcome.value = outcomeOf(a); return@launch }
                     }
                     val t = Inventory.trashRequest(ctx)
                     if (t != null) {
                         _applyWaiting.value = true
-                        val ok = ask(t)
+                        val a = ask(t, ConsentGate.Kind.TRASH)
                         _applyWaiting.value = false
-                        if (!ok) { _outcome.value = ApplyOutcome.Cancelled; return@launch }
+                        if (a != ConsentGate.Answer.YES) { ended = a.name.lowercase(); _outcome.value = outcomeOf(a); return@launch }
                     }
                     if (rounds > 0 && w == null && t == null) break
                     val r = runApply()
@@ -452,15 +531,30 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 // Rezultatul se publică ÎNAINTE ca „applying” să cadă: ecranul trece direct la sigilare / final.
                 _outcome.value = if (complete) ApplyOutcome.Complete else ApplyOutcome.Partial
+                ended = if (complete) "complete" else "partial"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // O eroare neprevăzută (disc, MediaStore) nu lasă ecranul agățat și nu închide aplicația: ce s-a aplicat
+                // a ieșit deja din plan, restul rămâne în dosare.
+                ended = e.javaClass.simpleName
+                _outcome.value = if (total.moved + total.trashed > 0) ApplyOutcome.Partial else ApplyOutcome.Cancelled
             } finally {
                 _applyWaiting.value = false
                 _applying.value = false
+                val res = when (ended) { "complete" -> DiagResult.OK; "no", "cancelled" -> DiagResult.REFUSED; else -> DiagResult.ERROR }
+                ConsentLog.add(ctx, "APPLY_END", res, now() - startedAt, "$ended rounds=$rounds")
+                ConsentLog.flush(ctx)
                 // Cifrele din S1 după mutări: pozele aruncate au plecat din galerie, documentele stau acum în dosare.
                 refreshPhotoStats()
                 if (confirm.kind == InvKind.Documents) refreshDocs(force = true)
             }
         }
     }
+
+    /** „Nu” al omului → înapoi la dosare; o cerere la care FORJA a renunțat → „Nu s-a aplicat tot.”, tot la dosare. */
+    private fun outcomeOf(a: ConsentGate.Answer): ApplyOutcome =
+        if (a == ConsentGate.Answer.DROPPED) ApplyOutcome.Partial else ApplyOutcome.Cancelled
 
     /** Inventory.apply rulează în scopul aplicației: dacă ecranul dispare, aplicarea bucății curente se termină oricum. */
     private suspend fun runApply(): ApplyResult {
@@ -484,15 +578,28 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
 
     /** „Permite”: acordul Android pentru pozele aprobate din laptop, apoi mutările urmărite. */
     fun allowLaptop() {
+        // O cerere încă publicată: „Permite” o cere din nou doar dacă e blocată (dialogul n-a apărut). Înainte, a doua
+        // atingere închidea prima cerere cu „nu” și refuza mutările din laptop.
+        val pending = gate.current.value
+        if (pending != null) {
+            if (pending.kind == ConsentGate.Kind.LAPTOP && pending.stuck) retryConsent()
+            return
+        }
         val items = laptop.value.take(CleanupEngine.REQUEST_CHUNK)
         if (items.isEmpty() || applying) return
         viewModelScope.launch {
             try {
                 if (Build.VERSION.SDK_INT >= 30) {
-                    val s = CleanupEngine(ctx, forja.prefs).writeRequest(items.map { Uri.parse(it.uri) }) ?: return@launch
-                    if (!ask(s)) {
-                        OrganizerJobs.declinePermission(forja, items)
-                        return@launch
+                    laptopAsk = items.map { Uri.parse(it.uri) }
+                    val s = CleanupEngine(ctx, forja.prefs).writeRequest(laptopAsk) ?: return@launch
+                    when (ask(s, ConsentGate.Kind.LAPTOP)) {
+                        ConsentGate.Answer.YES -> Unit
+                        ConsentGate.Answer.NO -> {
+                            OrganizerJobs.declinePermission(forja, items)
+                            return@launch
+                        }
+                        // FORJA a renunțat (Aplică a cerut alt dialog, cerere imposibil de refăcut): rămân în așteptare.
+                        ConsentGate.Answer.DROPPED -> return@launch
                     }
                 }
                 OrganizerJobs.applyAfterPermission(forja, items)
@@ -500,13 +607,14 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } catch (_: Exception) {
             } finally {
+                ConsentLog.flush(ctx)
                 refreshLaptop()
             }
         }
     }
 
     override fun onCleared() {
-        answer?.complete(false)
+        gate.cancel(ConsentGate.Answer.DROPPED)
         super.onCleared()
     }
 }

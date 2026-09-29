@@ -103,9 +103,19 @@ data class ApplyUiState(
     val recent: List<Uri> = emptyList(),
     val bins: List<BinTick> = emptyList(),
     /** Așteptăm acordul din dialogul sistemului. */
-    val waiting: Boolean = false
+    val waiting: Boolean = false,
+    /** Așteptăm, dar fereastra Android nu a apărut nici a doua oară: rândul se schimbă și apar cele două butoane. */
+    val stuck: Boolean = false
 ) {
     val percent: Int get() = percentOf(done, total)
+}
+
+/** Textele paginii de aplicare când așteptăm acordul (reguli: fără „!”, ș/ț cu virgulă, butoane ≤ 18 caractere). */
+object ApplyCopy {
+    const val WAITING = "AȘTEPT ACORDUL TĂU"
+    const val NOT_SHOWN = "FEREASTRA ANDROID NU A APĂRUT"
+    const val RETRY = "Încearcă din nou"
+    const val BACK = "Înapoi la dosare"
 }
 
 // ───────────────────────────── S4 ─────────────────────────────

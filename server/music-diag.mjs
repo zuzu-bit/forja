@@ -5,7 +5,8 @@
 
 export const MUSIC_DIAG = Object.freeze({
   max_events: 50, keep: 500, max_body: 16384,
-  wants: ['resume', 'mymusic', 'top', 'workout', 'probe'],
+  // 'consent' = acordul Android la aplicarea Inventarului (4.4.1): cerere, lansare, acoperire, rezultat — fără nume, fără URI.
+  wants: ['resume', 'mymusic', 'top', 'workout', 'probe', 'consent'],
   kinds: ['music', 'spoken', 'video', 'unknown'],
   results: ['ok', 'refused', 'timeout', 'wrong_kind', 'wrong_track', 'error', 'skipped', 'needs_tap'],
 });
@@ -92,9 +93,12 @@ export async function musicReport(env, n = 30) {
   if (!rows.length) return 'Nicio încercare de muzică primită încă.';
   rows.sort((a, b) => a.at - b.at);
   const last = rows.slice(-Math.min(Math.max(n, 1), MUSIC_DIAG.keep));
-  const ok = last.filter(e => e.result === 'ok').length;
+  // Rândurile acordului Inventarului stau în același jurnal, dar nu sunt încercări de muzică.
+  const music = last.filter(e => e.want !== 'consent');
+  const ok = music.filter(e => e.result === 'ok').length;
+  const consent = last.length - music.length;
   return [
-    `Muzică: ${count(last.length, 'încercare', 'încercări')} (ora României) · ${count(ok, 'reușită', 'reușite')}`,
+    `Muzică: ${count(music.length, 'încercare', 'încercări')} (ora României) · ${count(ok, 'reușită', 'reușite')}` + (consent ? ` · acord: ${count(consent, 'rând', 'rânduri')}` : ''),
     ...last.map(e => '  ' + [clock.format(new Date(e.at)).replace(',', ''), 'u' + e.u, e.want.padEnd(7), e.rung.padEnd(14), String(e.pkg || '—').padEnd(24), String(e.kind || '—').padEnd(7),
       e.result.padEnd(11), (e.ms + 'ms').padEnd(8), e.ver || '', deviceText(e.device), e.err ? '· ' + e.err : ''].join(' ').trimEnd()),
   ].join('\n');
