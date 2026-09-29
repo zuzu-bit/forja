@@ -88,6 +88,14 @@ jobs:
                   -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\",\"returnSecureToken\":true}" | jq -r '.idToken // empty')
           fi
           [ -z "$TOK" ] && echo "Nu am putut obține un token de test." || true
+          echo "== site: /insights/api/* cu contul de diagnostic (cod HTTP + motivul Firestore) =="
+          SITE="https://forja-insights.forja-22e7ea2d.workers.dev"
+          for S in azi cerc cont; do
+            curl -s -o /tmp/site.json -D /tmp/site.h --max-time 60 -H "Authorization: Bearer $TOK" "$SITE/insights/api/$S" || true
+            echo "$S: $(head -1 /tmp/site.h | tr -d '\r') fs=$(grep -i '^x-forja-fs' /tmp/site.h | cut -d' ' -f2- | tr -d '\r') $(head -c 200 /tmp/site.json)"
+          done
+          UIDD=$(printf '%s' "$TOK" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | jq -r '.user_id // empty' 2>/dev/null || true)
+          echo "firestore direct: $(curl -s -o /tmp/fs.json -w '%{http_code}' --max-time 30 -H "Authorization: Bearer $TOK" "https://firestore.googleapis.com/v1/projects/forja-65093/databases/(default)/documents/users/$UIDD") $(head -c 300 /tmp/fs.json | tr '\n' ' ')"
           echo "== modelele Gemini disponibile pentru cheie (doar nume) =="
           curl -s --max-time 60 -H "x-goog-api-key: $GEMINI_API_KEY" "https://generativelanguage.googleapis.com/v1beta/models?pageSize=100" | jq -r '(.models // [])[] | .name' | grep -i "gemini" | head -40 || true
           echo "== cheia Groq (doar codul HTTP; 200 = validă) =="

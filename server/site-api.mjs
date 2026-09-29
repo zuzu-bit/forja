@@ -71,7 +71,7 @@ export const where = (field, op, value) => ({ fieldFilter: { field: { fieldPath:
 
 const BATCH_MAX = 10;
 export class FirestoreReader {
-  constructor(uid, token, fetcher = fetch) { this.uid = uid; this.token = token; this.fetcher = fetcher; this.reads = 0; this.calls = 0; this.okCalls = 0; this.failures = 0; }
+  constructor(uid, token, fetcher = fetch) { this.uid = uid; this.token = token; this.fetcher = fetcher; this.reads = 0; this.calls = 0; this.okCalls = 0; this.failures = 0; this.codes = []; }
   /** Rules may refuse a read (403): that data is simply not visible. Network errors and 5xx count as failures. */
   async send(url, body) {
     this.calls++;
@@ -79,11 +79,13 @@ export class FirestoreReader {
     try {
       res = await this.fetcher(url, { method: body ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + this.token, ...(body ? { 'content-type': 'application/json' } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(10000) });
-    } catch { this.failures++; return { failed: true }; }
+    } catch (e) { this.failures++; this.note(e?.name === 'TimeoutError' ? 'timeout' : 'net'); return { failed: true }; }
     if (res.status === 404 || res.status === 403) { this.okCalls++; return { absent: true, status: res.status }; }
-    if (!res.ok) { this.failures++; return { failed: true }; }
+    if (!res.ok) { this.failures++; let st = ''; try { st = (await res.json())?.error?.status || ''; } catch { } this.note(res.status + (st ? ':' + st : '')); return { failed: true }; }
     try { const data = await res.json(); this.okCalls++; return { data }; } catch { this.failures++; return { failed: true }; }
   }
+  /** Codurile eșecurilor (fără date), pentru diagnostic: „401:UNAUTHENTICATED”, „429:RESOURCE_EXHAUSTED”, „timeout”. */
+  note(c) { if (this.codes.length < 6 && !this.codes.includes(c)) this.codes.push(c); }
   get unreachable() { return this.calls > 0 && this.okCalls === 0; }
   /**
    * A checkpoint; `failedSince(mark)` is true when ANY call made after it failed (network, timeout, 5xx). get() and batchGet()
@@ -738,7 +740,7 @@ export async function handleSiteApi(request, env, uid, deps = {}) {
     else if (section === 'paza') data = await paza(ctx);
     else if (section === 'inventar') data = await inventar(ctx);
     else data = await cont(ctx);
-    if (ctx.fs.unreachable && !ctx.stale) return failure('Datele din FORJA nu răspund acum. Reîncearcă peste un minut.', 503);
+    if (ctx.fs.unreachable && !ctx.stale) { console.log('site-api firestore unreachable', section, ctx.fs.codes.join(',')); const r = failure('Datele din FORJA nu răspund acum. Reîncearcă peste un minut.', 503); r.headers.set('x-forja-fs', ctx.fs.codes.join(',')); return r; }
     return reply(data);
   } catch {
     return failure('Datele nu sunt disponibile acum.', 500);
