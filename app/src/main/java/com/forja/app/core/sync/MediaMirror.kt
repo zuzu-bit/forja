@@ -63,17 +63,54 @@ object MediaMirror {
     private const val MAX_PER_RUN = 150
     private const val DOCS_MAX = 15_000
 
-    private fun canReadMedia(c: Context): Boolean {
+    private const val VOLUME_GRACE_MS = 30L * 86_400_000L
+
+    private enum class Access { None, Partial, Full }
+
+    /**
+     * Accesul la poze sau la video. Full = permisiunea întreagă a felului; Partial = doar pozele alese (Android 14+,
+     * „Selectează poze”): urcă ce se vede, dar lipsa unei poze nu mai înseamnă „ștearsă”.
+     */
+    private fun access(c: Context, kind: Kind): Access {
         fun has(p: String) = ContextCompat.checkSelfPermission(c, p) == PackageManager.PERMISSION_GRANTED
-        return when {
-            Build.VERSION.SDK_INT >= 34 -> has(Manifest.permission.READ_MEDIA_IMAGES) || has(Manifest.permission.READ_MEDIA_VIDEO) || has(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-            Build.VERSION.SDK_INT >= 33 -> has(Manifest.permission.READ_MEDIA_IMAGES) || has(Manifest.permission.READ_MEDIA_VIDEO)
-            else -> has(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
+        if (Build.VERSION.SDK_INT < 33) return if (has(Manifest.permission.READ_EXTERNAL_STORAGE)) Access.Full else Access.None
+        if (has(if (kind == Kind.Video) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_MEDIA_IMAGES)) return Access.Full
+        return if (Build.VERSION.SDK_INT >= 34 && has(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)) Access.Partial else Access.None
     }
 
-    /** Totalurile galeriei pentru numărătoare (fără nume de fișiere). */
-    private class Scan(val items: List<Candidate>, val gallery: Boolean, val docs: Boolean, val docsLoose: Int, val docsOrganized: Int, val docsBytes: Long)
+    private fun memo(c: Context) = c.applicationContext.getSharedPreferences("forja-mirror", Context.MODE_PRIVATE)
+
+    /**
+     * Toate volumele văzute (memoria, cardul) sunt montate acum? Un card scos face pozele lui să lipsească din MediaStore:
+     * atunci galeria nu e citită complet. Un volum lipsă de peste 30 de zile se uită (cardul a fost schimbat).
+     */
+    private fun volumesComplete(c: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 29) return true
+        val now = System.currentTimeMillis()
+        val current = try { MediaStore.getExternalVolumeNames(c) } catch (_: Exception) { return false }
+        val m = memo(c)
+        val seen = (m.getStringSet("volumes", emptySet()) ?: emptySet()).mapNotNull { e ->
+            e.substringBeforeLast('|').takeIf { it.isNotBlank() }?.let { it to (e.substringAfterLast('|').toLongOrNull() ?: now) }
+        }.toMap().toMutableMap()
+        var ok = true
+        for ((v, at) in seen.toMap()) if (v !in current) { if (now - at < VOLUME_GRACE_MS) ok = false else seen.remove(v) }
+        for (v in current) seen[v] = now
+        try { m.edit().putStringSet("volumes", seen.map { (v, at) -> "$v|$at" }.toSet()).apply() } catch (_: Exception) { }
+        return ok
+    }
+
+    /** Totalurile galeriei pentru numărătoare (fără nume de fișiere). [complete] = grupurile citite întreg (photo · video). */
+    private class Scan(val items: List<Candidate>, val gallery: Boolean, val docs: Boolean, val docsLoose: Int, val docsOrganized: Int, val docsBytes: Long,
+                       val complete: Set<String> = emptySet(), val docTrees: Set<String> = emptySet(), val knownTrees: Set<String> = emptySet())
+
+    /**
+     * Între loturile aceleiași umpleri (Outcome.MORE, la 3 minute) citirea telefonului și registrul serverului se păstrează
+     * în memorie cel mult [CACHE_MS]: un lot nou doar continuă urcările, fără încă o trecere prin MediaStore și SAF și fără
+     * încă un registru întreg. Mutările și ștergerile se fac doar la o citire proaspătă.
+     */
+    private class Cached(val at: Long, val uid: String, val scan: Scan, val remote: MutableMap<String, MirrorPlan.Remote>, val gone: Set<String>, val tried: MutableSet<String>)
+    @Volatile private var cached: Cached? = null
+    private const val CACHE_MS = 15 * 60_000L
 
     suspend fun run(app: ForjaApp, uid: String): GalleryUploader.Outcome {
         val t0 = SystemClock.elapsedRealtime()
@@ -85,22 +122,35 @@ object MediaMirror {
             GalleryUploader.setStatus(app, e.message ?: "Site-ul nu a răspuns."); return if (e.code == 401) GalleryUploader.Outcome.SKIPPED else GalleryUploader.Outcome.RETRY
         } catch (_: Exception) { GalleryUploader.setStatus(app, "Fără conexiune. Reluăm pe Wi-Fi."); return GalleryUploader.Outcome.RETRY }
 
-        val scan = scan(app)
-        if (!scan.gallery && !scan.docs) {
-            GalleryUploader.setStatus(app, "Oglinda așteaptă permisiunea pozelor din Echipare.")
-            publish(app, uid, scan, null, "permission")
-            return GalleryUploader.Outcome.SKIPPED
+        val warm = cached?.takeIf { it.uid == uid && System.currentTimeMillis() - it.at < CACHE_MS }
+        cached = null
+        val scan: Scan
+        val cache: Cached
+        if (warm != null) { scan = warm.scan; cache = warm } else {
+            scan = scan(app)
+            if (!scan.gallery && !scan.docs) {
+                GalleryUploader.setStatus(app, "Oglinda așteaptă permisiunea pozelor din Echipare.")
+                publish(app, uid, scan, null, "permission")
+                return GalleryUploader.Outcome.SKIPPED
+            }
+            val (rows, gone) = try { registry(device) } catch (e: CancellationException) { throw e } catch (_: Exception) {
+                GalleryUploader.setStatus(app, "Site-ul nu a răspuns. Reluăm cu net."); return GalleryUploader.Outcome.RETRY
+            }
+            cache = Cached(System.currentTimeMillis(), uid, scan, rows.associateByTo(LinkedHashMap()) { it.id }, gone, HashSet())
         }
-        val (remote, gone) = try { registry(device) } catch (e: CancellationException) { throw e } catch (_: Exception) {
-            GalleryUploader.setStatus(app, "Site-ul nu a răspuns. Reluăm cu net."); return GalleryUploader.Outcome.RETRY
-        }
-        val scanned = buildSet { if (scan.gallery) add("gallery"); if (scan.docs) add("docs") }
-        val plan = MirrorPlan.plan(scan.items, remote, gone, scanned)
+        val remote = cache.remote.values.toList()
+        val full = MirrorPlan.plan(scan.items, remote, cache.gone, scan.complete, scan.docTrees, scan.knownTrees)
+        // Un lot din memorie: fără mutări și ștergeri (s-au făcut la citirea proaspătă), fără ce s-a încercat deja.
+        val plan = if (warm == null) full else full.copy(move = emptyList(), claim = emptyList(), delete = emptyList(), upload = full.upload.filter { it.id !in cache.tried })
 
-        // Întâi ce e ieftin: mutările din Inventar și ștergerile, apoi urcările.
-        for ((id, album) in plan.move) patch(device, id, album)
-        for (id in plan.claim) patch(device, id, null)
-        for (id in plan.delete) try { InsightsApi.json("/v2/mirror/$id", null, "DELETE") } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        // Întâi ce e ieftin: mutările din Inventar și ștergerile, apoi urcările. O ștergere venită de pe telefon nu lasă
+        // tombstone (`?from=phone`): poza recuperată din coș sau documentul scos din „De aruncat” urcă din nou.
+        for ((id, album) in plan.move) { patch(device, id, album); cache.remote[id]?.let { cache.remote[id] = it.copy(album = album, mine = true) } }
+        for (id in plan.claim) { patch(device, id, null); cache.remote[id]?.let { cache.remote[id] = it.copy(mine = true) } }
+        for (id in plan.delete) {
+            cache.remote.remove(id)
+            try { InsightsApi.json("/v2/mirror/$id?from=phone", null, "DELETE", mapOf("X-Device-ID" to device)) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        }
 
         val byId = remote.associateBy { it.id }
         var done = 0
@@ -110,8 +160,12 @@ object MediaMirror {
             if (!GalleryUploader.on(app) || !CollectionSettings.contractAtLeast(app, 4)) return GalleryUploader.Outcome.SKIPPED
             if (done >= MAX_PER_RUN || SystemClock.elapsedRealtime() - t0 > RUN_BUDGET_MS) { outcome = GalleryUploader.Outcome.MORE; break }
             val have = byId[c.id]?.parts.orEmpty()
+            cache.tried += c.id
             try {
-                if (upload(app, device, c, have)) done++
+                if (upload(app, device, c, have)) {
+                    done++
+                    cache.remote[c.id] = MirrorPlan.Remote(c.id, c.album, c.kind.code, MirrorPlan.needs(c), true)
+                }
             } catch (e: CancellationException) { throw e } catch (e: InsightsFailure) {
                 when (e.code) {
                     507 -> { state = "full"; outcome = GalleryUploader.Outcome.DONE; break }
@@ -130,9 +184,12 @@ object MediaMirror {
             "limit" -> "Limita zilnică a oglinzii. Continuă mâine."
             "retry" -> "Site-ul nu a răspuns. Reluăm pe Wi-Fi."
             "off" -> "Oglinda e oprită pe site. Semnează din nou."
-            else -> if (waiting > 0) "Oglinda urcă: ${plan.mirrored + done} pe site, $waiting în așteptare." else "Oglinda e la zi: ${plan.mirrored + done} pe site."
+            else -> if (plan.held > 0) "Oglinda păstrează ${plan.held} copii lipsă de pe telefon."
+                else if (waiting > 0) "Oglinda urcă: ${plan.mirrored + done} pe site, $waiting în așteptare." else "Oglinda e la zi: ${plan.mirrored + done} pe site."
         })
-        return if (outcome == GalleryUploader.Outcome.DONE && waiting > 0 && state != "full") GalleryUploader.Outcome.MORE else outcome
+        val result = if (outcome == GalleryUploader.Outcome.DONE && waiting > 0 && state != "full") GalleryUploader.Outcome.MORE else outcome
+        if (result == GalleryUploader.Outcome.MORE) cached = cache
+        return result
     }
 
     private suspend fun patch(device: String, id: String, album: String?) {
@@ -157,16 +214,32 @@ object MediaMirror {
 
     private suspend fun scan(app: ForjaApp): Scan = withContext(Dispatchers.IO) {
         val out = ArrayList<Candidate>()
-        val gallery = canReadMedia(app) && (scanMedia(app, Kind.Photo, out) and scanMedia(app, Kind.Video, out))
-        var loose = 0; var organized = 0; var bytes = 0L
-        val docs = try {
-            val (ok, l, o, b) = scanDocs(app, out)
-            loose = l; organized = o; bytes = b; ok
-        } catch (e: CancellationException) { throw e } catch (_: Exception) { false }
-        Scan(out, gallery, docs, loose, organized, bytes)
+        val volumes = volumesComplete(app)
+        val complete = HashSet<String>()
+        var gallery = false
+        for (kind in listOf(Kind.Photo, Kind.Video)) {
+            val a = access(app, kind)
+            if (a == Access.None) continue
+            val read = scanMedia(app, kind, out)
+            gallery = gallery || read
+            if (read && a == Access.Full && volumes) complete += MirrorPlan.groupOf(kind.code)
+        }
+        var docs = false; var loose = 0; var organized = 0; var bytes = 0L
+        var trees = emptySet<String>()
+        val known = HashSet(memo(app).getStringSet("docTrees", emptySet()) ?: emptySet())
+        try {
+            val d = scanDocs(app, out)
+            docs = d.read; loose = d.loose; organized = d.organized; bytes = d.bytes; trees = d.complete
+            known += d.labels
+            memo(app).edit().putStringSet("docTrees", known).apply()
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        Scan(out, gallery, docs, loose, organized, bytes, complete, trees, known)
     }
 
-    /** true = citită complet (fără excepții), ca lipsa unei poze să poată însemna „ștearsă”. */
+    /**
+     * true = citită fără excepții. Pozele din coșul sistemului (Inventarul le pune acolo) vin marcate `trashed`: nu urcă,
+     * iar copia lor de pe site rămâne cât se pot recupera.
+     */
     private fun scanMedia(c: Context, kind: Kind, out: MutableList<Candidate>): Boolean {
         val video = kind == Kind.Video
         val collection = when {
@@ -178,50 +251,66 @@ object MediaMirror {
         val cols = mutableListOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
             MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_TAKEN, MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns.HEIGHT)
-        if (video) cols += MediaStore.MediaColumns.DURATION
-        val selection = if (Build.VERSION.SDK_INT >= 30) "${MediaStore.MediaColumns.IS_TRASHED} = 0 AND ${MediaStore.MediaColumns.IS_PENDING} = 0" else null
+        cols += if (video) MediaStore.MediaColumns.DURATION else MediaStore.MediaColumns._ID   // coloana 9 ține locul, ca IS_TRASHED să fie a 10-a
+        val trash = Build.VERSION.SDK_INT >= 30
+        if (trash) cols += MediaStore.MediaColumns.IS_TRASHED
         return try {
-            c.contentResolver.query(collection, cols.toTypedArray(), selection, null, null)?.use { cur ->
+            val cursor = if (trash) c.contentResolver.query(collection, cols.toTypedArray(), android.os.Bundle().apply {
+                putString(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION, "${MediaStore.MediaColumns.IS_PENDING} = 0")
+                putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
+            }, null) else c.contentResolver.query(collection, cols.toTypedArray(), null, null, null)
+            cursor?.use { cur ->
                 while (cur.moveToNext()) {
                     val id = cur.getLong(0)
-                    val name = cur.getString(1) ?: (if (video) "video" else "poză")
+                    val isTrashed = trash && !cur.isNull(10) && cur.getInt(10) == 1
+                    // În coș Android redenumește fișierul „.trashed-{expirare}-{nume}”: id-ul rămâne cel al numelui adevărat.
+                    val name = (cur.getString(1) ?: (if (video) "video" else "poză")).let { if (isTrashed) MirrorPlan.untrashedName(it) else it }
                     val album = cur.getString(2)?.takeIf { it.isNotBlank() } ?: "Galerie"
                     val mime = cur.getString(3) ?: if (video) "video/mp4" else "image/jpeg"
                     val size = if (cur.isNull(4)) 0L else cur.getLong(4)
                     val taken = if (!cur.isNull(5) && cur.getLong(5) > 0) cur.getLong(5) else (if (cur.isNull(6)) 0L else cur.getLong(6) * 1000L)
                     val uri = ContentUris.withAppendedId(if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
                     out += Candidate(MirrorPlan.mediaKey(kind, name, taken, size), kind, name.take(200), album.take(160), mime, taken, size, uri.toString(),
-                        if (cur.isNull(7)) 0 else cur.getInt(7), if (cur.isNull(8)) 0 else cur.getInt(8), if (video && !cur.isNull(9)) cur.getLong(9) else 0L)
+                        if (cur.isNull(7)) 0 else cur.getInt(7), if (cur.isNull(8)) 0 else cur.getInt(8), if (video && !cur.isNull(9)) cur.getLong(9) else 0L,
+                        trashed = isTrashed)
                 }
             } != null
         } catch (_: Exception) { false }
     }
 
-    private data class DocScan(val ok: Boolean, val loose: Int, val organized: Int, val bytes: Long)
+    /** [read] = s-a citit ceva; [complete] = etichetele folderelor citite întreg; [labels] = toate folderele configurate acum. */
+    private data class DocScan(val read: Boolean, val loose: Int, val organized: Int, val bytes: Long, val complete: Set<String>, val labels: Set<String>)
 
-    /** Folderele alese în Inventar: sursa (cu „Organizate”) și destinația, când e în altă parte. Coșul FORJA nu urcă. */
+    /**
+     * Folderele alese în Inventar: sursa (cu „Organizate”) și destinația, când e în altă parte. Coșul FORJA („De aruncat”)
+     * nu urcă, dar documentele din el rămân pe site cât stau acolo. Un folder ales care și-a pierdut permisiunea nu e citit
+     * complet: documentele lui de pe site rămân (MirrorPlan le șterge doar din folderele citite întreg).
+     */
     private suspend fun scanDocs(app: ForjaApp, out: MutableList<Candidate>): DocScan {
         val organizer = DocumentOrganizer(app, app.prefs)
         val source = app.prefs.cleanupDocsTree.first().takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
             ?.takeIf { t -> app.contentResolver.persistedUriPermissions.any { it.uri == t && it.isReadPermission } }
         val dest = DocDest.savedTree(app, app.prefs)?.takeUnless { d -> source != null && TreePaths.same(d, source) }
-        if (source == null && dest == null) return DocScan(false, 0, 0, 0L)
+        if (source == null && dest == null) return DocScan(false, 0, 0, 0L, emptySet(), emptySet())
         val seen = HashSet<String>()
-        var ok = true; var loose = 0; var organized = 0; var bytes = 0L
+        val complete = HashSet<String>(); val labels = HashSet<String>()
+        var loose = 0; var organized = 0; var bytes = 0L
         fun add(tree: Uri, items: List<com.forja.app.core.cleanup.DocItem>, prefix: String, isOrganized: Boolean) {
             val label = TreePaths.label(tree)
             for (d in items) {
                 val path = prefix + d.path
-                if ("De aruncat" in path || d.name.startsWith(".forja-") || d.name.startsWith(".")) continue
+                if (d.name.startsWith(".forja-") || d.name.startsWith(".")) continue
                 val key = MirrorPlan.docKey(d.name, d.sizeBytes, d.lastModified)
                 if (!seen.add(key)) continue
-                if (isOrganized) organized++ else loose++
-                bytes += d.sizeBytes
+                val trashed = "De aruncat" in path
+                if (!trashed) { if (isOrganized) organized++ else loose++; bytes += d.sizeBytes }
                 out += Candidate(key, Kind.File, d.name.take(200), MirrorPlan.docAlbum(label, path), d.mime.ifBlank { "application/octet-stream" },
-                    d.lastModified, d.sizeBytes, d.uri.toString())
+                    d.lastModified, d.sizeBytes, d.uri.toString(), trashed = trashed)
             }
         }
         if (source != null) {
+            val label = TreePaths.label(source); labels += label
+            var ok = true
             val (items, warn) = organizer.inventory(source, limit = DOCS_MAX, skipDirIds = DocDest.skips(source, dest))
             if (warn.any { it.contains("Exception") || it.contains("accesibil") || it.startsWith("Am oprit") }) ok = false
             add(source, items, "", false)
@@ -230,13 +319,17 @@ object MediaMirror {
                 if (w2.isNotEmpty()) ok = false
                 add(source, org, DocumentOrganizer.ROOT_FOLDER + "/", true)
             }
+            if (ok) complete += label
         }
         if (dest != null) {
+            val label = TreePaths.label(dest); labels += label
             val (items, warn) = organizer.inventory(dest, limit = DOCS_MAX)
-            if (warn.isNotEmpty()) ok = false
             add(dest, items, "", true)
+            if (warn.isEmpty()) complete += label
         }
-        return DocScan(ok, loose, organized, bytes)
+        // Un folder „Folder” (alt furnizor, id opac) nu se poate deosebi de altul: nu ștergem după el.
+        complete.remove("Folder")
+        return DocScan(true, loose, organized, bytes, complete, labels)
     }
 
     // ─────────────────────────── urcarea unei copii ───────────────────────────
@@ -353,10 +446,10 @@ object MediaMirror {
 
     private fun thumb(bmp: Bitmap): ByteArray? = fitJpeg(bmp, THUMB_EDGE, THUMB_MAX)
 
-    /** Data făcută (și aparatul) din EXIF-ul originalului trec în JPEG-ul de pe site; locația nu. */
+    /** Doar data făcută din EXIF-ul originalului trece în JPEG-ul de pe site (cum spune contractul); aparatul și locația nu. */
     private fun withExifDate(c: Context, uri: Uri, jpeg: ByteArray): ByteArray {
         val tags = listOf(ExifInterface.TAG_DATETIME_ORIGINAL, ExifInterface.TAG_DATETIME, ExifInterface.TAG_DATETIME_DIGITIZED,
-            ExifInterface.TAG_OFFSET_TIME_ORIGINAL, ExifInterface.TAG_OFFSET_TIME, ExifInterface.TAG_SUBSEC_TIME_ORIGINAL, ExifInterface.TAG_MAKE, ExifInterface.TAG_MODEL)
+            ExifInterface.TAG_OFFSET_TIME_ORIGINAL, ExifInterface.TAG_OFFSET_TIME, ExifInterface.TAG_SUBSEC_TIME_ORIGINAL)
         return try {
             val src = c.contentResolver.openInputStream(uri)?.use { ExifInterface(it) } ?: return jpeg
             val values = tags.mapNotNull { t -> src.getAttribute(t)?.let { t to it } }
@@ -402,15 +495,15 @@ object MediaMirror {
     // ─────────────────────────── numărătoarea pentru site ───────────────────────────
 
     private suspend fun publish(app: ForjaApp, uid: String, scan: Scan, plan: MirrorPlan.Plan?, state: String) {
-        val photos = scan.items.filter { it.kind == Kind.Photo }
-        val videos = scan.items.filter { it.kind == Kind.Video }
-        val docAlbums = scan.items.filter { it.kind == Kind.File }.map { it.album }.toSet().size
+        val photos = scan.items.filter { it.kind == Kind.Photo && !it.trashed }
+        val videos = scan.items.filter { it.kind == Kind.Video && !it.trashed }
+        val docAlbums = scan.items.filter { it.kind == Kind.File && !it.trashed }.map { it.album }.toSet().size
         StorageMirror.publish(app, uid, mapOf(
-            "photos" to (if (scan.gallery) mapOf("count" to photos.size, "bytes" to photos.sumOf { it.size }) else null),
-            "videos" to (if (scan.gallery) mapOf("count" to videos.size, "bytes" to videos.sumOf { it.size }) else null),
+            "photos" to (if ("photo" in scan.complete) mapOf("count" to photos.size, "bytes" to photos.sumOf { it.size }) else null),
+            "videos" to (if ("video" in scan.complete) mapOf("count" to videos.size, "bytes" to videos.sumOf { it.size }) else null),
             "docs" to (if (scan.docs) mapOf("loose" to scan.docsLoose, "organized" to scan.docsOrganized, "bytes" to scan.docsBytes, "folders" to docAlbums) else null),
             "gallery" to mapOf(
-                "total" to scan.items.size, "mirrored" to (plan?.mirrored ?: 0), "waiting" to (plan?.waiting ?: 0), "tooBig" to (plan?.tooBig ?: 0),
+                "total" to scan.items.count { !it.trashed }, "held" to (plan?.held ?: 0), "mirrored" to (plan?.mirrored ?: 0), "waiting" to (plan?.waiting ?: 0), "tooBig" to (plan?.tooBig ?: 0),
                 "state" to state, "cellular" to GalleryUploader.cellularAllowed(app), "lastAt" to System.currentTimeMillis()
             ),
             "updatedAt" to System.currentTimeMillis()

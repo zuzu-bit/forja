@@ -652,7 +652,7 @@ object Inventory {
         ).let { d ->
             // Temele și coperțile dosarelor (după nume, ca în planul de la „gata”).
             val themes = s.doc.folders.associate { it.name to it.theme }
-            val cov = InvMirror.coversOf(meta.runId)
+            val cov = InvMirror.coversOf(appContext, meta.runId)
             d.copy(folders = d.folders.map { f -> f.copy(theme = themes[f.name], covers = cov[f.name].orEmpty()) })
         }
     }

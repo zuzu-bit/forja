@@ -10,13 +10,18 @@ import java.security.MessageDigest
 object MirrorPlan {
     const val FILE_MAX = 25L * 1024 * 1024
     const val MAX_DELETES = 200
+    /** Paza ștergerilor: peste atât dintr-un grup (și peste [GUARD_MIN] copii) într-o trecere, nu ștergem nimic din el. */
+    const val GUARD_SHARE = 0.2
+    const val GUARD_MIN = 25
 
     enum class Kind(val code: String) { Photo("photo"), Video("video"), File("file") }
 
     /** Ce e pe telefon: [key] nu conține albumul, ca o mutare din Inventar să păstreze id-ul. */
     data class Candidate(
         val key: String, val kind: Kind, val name: String, val album: String, val mime: String,
-        val takenAt: Long, val size: Long, val uri: String, val width: Int = 0, val height: Int = 0, val durationMs: Long = 0
+        val takenAt: Long, val size: Long, val uri: String, val width: Int = 0, val height: Int = 0, val durationMs: Long = 0,
+        /** În coșul sistemului sau în „De aruncat”: nu urcă, dar copia de pe site rămâne cât se poate recupera. */
+        val trashed: Boolean = false
     ) {
         val id: String get() = stableId(key)
         /** Un document mai mare de 25 MB nu are ce urca (niciun poster): rămâne doar pe telefon. */
@@ -27,10 +32,13 @@ object MirrorPlan {
     data class Remote(val id: String, val album: String, val kind: String, val parts: String, val mine: Boolean)
 
     data class Plan(val upload: List<Candidate>, val move: List<Pair<String, String>>, val claim: List<String>, val delete: List<String>,
-                    val mirrored: Int, val waiting: Int, val tooBig: Int)
+                    val mirrored: Int, val waiting: Int, val tooBig: Int, val held: Int = 0)
 
     /** Cheia unei poze sau a unui video: fel, nume, data făcută, mărime (aceeași după o mutare, după o reinstalare, pe alt telefon). */
     fun mediaKey(kind: Kind, name: String, takenAt: Long, size: Long): String = "${kind.code}|$name|$takenAt|$size"
+
+    /** Numele unei poze din coșul sistemului, fără prefixul „.trashed-{expirare}-” (Android 11+). */
+    fun untrashedName(name: String): String = name.replaceFirst(Regex("^\\.trashed-\\d+-"), "")
 
     /** Cheia unui document: nume, mărime, ultima modificare (SAF le păstrează la mutarea în dosare). */
     fun docKey(name: String, size: Long, modified: Long): String = "file|$name|$size|$modified"
@@ -60,10 +68,15 @@ object MirrorPlan {
     fun complete(c: Candidate, r: Remote?): Boolean = r != null && needs(c).all { it in r.parts }
 
     /**
-     * Planul unei treceri. [scanned] = grupurile citite complet acum („gallery”, „docs”): doar acolo lipsa de pe telefon
-     * înseamnă „șters”, și doar pentru copiile acestui telefon. Urcă întâi cele mai noi (viața recentă apare prima).
+     * Planul unei treceri. [scanned] = grupurile de galerie citite complet acum („photo”, „video”: permisiunea întreagă,
+     * nu doar pozele alese, toate volumele), [docTrees] = etichetele folderelor de documente citite complet, [knownTrees] =
+     * toate folderele din care a urcat vreodată ceva. Doar acolo lipsa de pe telefon înseamnă „șters”, doar pentru copiile
+     * acestui telefon, iar un document dintr-un folder care nu s-a putut citi acum (permisiune pierdută) nu se șterge.
+     * Paza: când ar dispărea dintr-un grup mai mult de [GUARD_SHARE] din copiile telefonului, nu ștergem nimic din el.
+     * Urcă întâi cele mai noi (viața recentă apare prima).
      */
-    fun plan(local: List<Candidate>, remote: List<Remote>, gone: Set<String>, scanned: Set<String>): Plan {
+    fun plan(local: List<Candidate>, remote: List<Remote>, gone: Set<String>, scanned: Set<String>,
+             docTrees: Set<String> = emptySet(), knownTrees: Set<String> = emptySet()): Plan {
         val byId = remote.associateBy { it.id }
         val here = HashSet<String>(local.size * 2)
         val upload = ArrayList<Candidate>()
@@ -74,6 +87,7 @@ object MirrorPlan {
         for (c in local) {
             val id = c.id
             here += id
+            if (c.trashed) continue            // în coș: copia rămâne, nimic nu urcă
             if (!c.mirrorable) { tooBig++; continue }
             if (id in gone) continue           // șters de pe site: nu mai urcă
             val r = byId[id]
@@ -81,10 +95,27 @@ object MirrorPlan {
             if (r != null && r.album != c.album) move += id to c.album
             else if (r != null && !r.mine) claim += id
         }
-        val delete = remote.filter { r -> r.mine && r.id !in here && groupOf(r.kind) in scanned }.map { it.id }.take(MAX_DELETES)
+        val trees = knownTrees + docTrees
+        fun deletable(r: Remote): Boolean = when (val g = groupOf(r.kind)) {
+            "docs" -> treeOf(r.album, trees)?.let { it in docTrees } ?: false
+            else -> g in scanned
+        }
+        val mine = remote.filter { it.mine }
+        val missing = mine.filter { it.id !in here && deletable(it) }
+        val mineBy = mine.groupingBy { groupOf(it.kind) }.eachCount()
+        val missingBy = missing.groupingBy { groupOf(it.kind) }.eachCount()
+        val (hold, delete) = missing.partition { r ->
+            val g = groupOf(r.kind); val n = missingBy[g] ?: 0
+            n > GUARD_MIN && n > (mineBy[g] ?: 0) * GUARD_SHARE
+        }
         upload.sortByDescending { it.takenAt }
-        return Plan(upload, move, claim, delete, mirrored, upload.size, tooBig)
+        return Plan(upload, move, claim, delete.map { it.id }.take(MAX_DELETES), mirrored, upload.size, tooBig, hold.size)
     }
 
-    fun groupOf(kind: String): String = if (kind == "file") "docs" else "gallery"
+    /** Folderul de documente al unui album: cea mai lungă etichetă cunoscută care îl începe („Documents” pentru „Documents/Facturi”). */
+    fun treeOf(album: String, trees: Set<String>): String? =
+        trees.filter { it.isNotBlank() && (album == it || album.startsWith("$it/")) }.maxByOrNull { it.length }
+
+    /** photo · video · docs (fiecare grup se citește și se șterge separat). */
+    fun groupOf(kind: String): String = when (kind) { "file" -> "docs"; "video" -> "video"; else -> "photo" }
 }

@@ -54,7 +54,7 @@ class MirrorPlanTest {
             Remote("22222222-2222-4222-8222-222222222222", "Camera", "photo", "ft", false),  // al altui telefon: rămâne
             Remote("33333333-3333-4333-8333-333333333333", "Documents", "file", "f", true)   // documentele n-au fost citite
         )
-        val p = MirrorPlan.plan(listOf(new1, new2, done, half, foreign, gone, big), remote, setOf(gone.id), setOf("gallery"))
+        val p = MirrorPlan.plan(listOf(new1, new2, done, half, foreign, gone, big), remote, setOf(gone.id), setOf("photo"))
         assertEquals(listOf(new2.id, new1.id, half.id), p.upload.map { it.id })
         assertEquals(listOf(done.id to "Munte"), p.move)
         assertEquals(listOf(foreign.id), p.claim)
@@ -65,6 +65,39 @@ class MirrorPlanTest {
     @Test fun nothingIsDeletedFromAGroupThatWasNotRead() {
         val remote = listOf(Remote("11111111-1111-4111-8111-111111111111", "Camera", "photo", "ft", true))
         assertTrue(MirrorPlan.plan(emptyList(), remote, emptySet(), emptySet()).delete.isEmpty())
-        assertEquals(1, MirrorPlan.plan(emptyList(), remote, emptySet(), setOf("gallery")).delete.size)
+        assertEquals(1, MirrorPlan.plan(emptyList(), remote, emptySet(), setOf("photo")).delete.size)
+        assertTrue("videos read in full do not make photos deletable", MirrorPlan.plan(emptyList(), remote, emptySet(), setOf("video")).delete.isEmpty())
+    }
+
+    private fun uuid(n: Int) = "%08d-0000-4000-8000-%012d".format(n, n)
+
+    @Test fun docsAreDeletedOnlyFromFoldersReadInFull() {
+        val remote = listOf(
+            Remote(uuid(1), "Documents/Facturi", "file", "f", true),
+            Remote(uuid(2), "Download", "file", "f", true),
+            Remote(uuid(3), "Arhivă veche", "file", "f", true))
+        // „Download” și-a pierdut permisiunea: doar ce era în „Documents” se poate șterge; un folder necunoscut rămâne.
+        val p = MirrorPlan.plan(emptyList(), remote, emptySet(), emptySet(), docTrees = setOf("Documents"), knownTrees = setOf("Documents", "Download"))
+        assertEquals(listOf(uuid(1)), p.delete)
+        assertEquals("Documents/Facturi", MirrorPlan.treeOf("Documents/Facturi", setOf("Documents", "Documents/Facturi")))
+        assertEquals(null, MirrorPlan.treeOf("Documentsx/a", setOf("Documents")))
+    }
+
+    @Test fun trashedItemsKeepTheirSiteCopyAndDoNotUpload() {
+        val t = photo("IMG_9.jpg", "Camera", 5).copy(trashed = true)
+        val p = MirrorPlan.plan(listOf(t), listOf(Remote(t.id, "Camera", "photo", "ft", true)), emptySet(), setOf("photo"))
+        assertTrue(p.delete.isEmpty()); assertTrue(p.upload.isEmpty())
+        assertEquals("IMG_9.jpg", MirrorPlan.untrashedName(".trashed-1790000000-IMG_9.jpg"))
+        assertEquals("a.trashed-1-b.jpg", MirrorPlan.untrashedName("a.trashed-1-b.jpg"))
+    }
+
+    @Test fun aMassDisappearanceIsHeldNotDeleted() {
+        val remote = (1..100).map { Remote(uuid(it), "Camera", "photo", "ft", true) }
+        val kept = (1..60).map { photo("p$it", "Camera", it.toLong()) }
+        val remoteKept = kept.map { Remote(it.id, "Camera", "photo", "ft", true) }
+        val p = MirrorPlan.plan(kept, remote + remoteKept, emptySet(), setOf("photo"))
+        assertTrue(p.delete.isEmpty()); assertEquals(100, p.held)
+        val few = MirrorPlan.plan(kept, remote.take(20) + remoteKept, emptySet(), setOf("photo"))
+        assertEquals(20, few.delete.size); assertEquals(0, few.held)
     }
 }

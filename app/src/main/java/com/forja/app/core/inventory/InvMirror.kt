@@ -44,7 +44,35 @@ internal object InvMirror {
     /** Cheia coperții: stabilă după numele dosarului (aceeași la „gata” și după aplicare). */
     fun coverKey(folder: String, n: Int): String = "c" + Integer.toHexString(folder.hashCode()).padStart(8, '0') + "-" + n
 
-    fun coversOf(runId: String): Map<String, List<String>> = covers[runId].orEmpty()
+    /**
+     * Cheile coperților unei rulări: din memorie, altfel din preferințele păstrate (procesul poate muri între „gata” și
+     * aplicare, iar la aplicare `folders` se rescrie întreg, deci fără ele cardul de pe site pierde coperțile).
+     */
+    fun coversOf(ctx: Context?, runId: String): Map<String, List<String>> {
+        covers[runId]?.let { return it }
+        val raw = try { ctx?.let { store(it).getString(runId, null) } } catch (_: Exception) { null } ?: return emptyMap()
+        val out = try {
+            val o = org.json.JSONObject(raw)
+            o.keys().asSequence().associateWith { k -> o.getJSONArray(k).let { a -> (0 until a.length()).map { a.getString(it) } } }
+        } catch (_: Exception) { emptyMap() }
+        if (out.isNotEmpty()) covers[runId] = out
+        return out
+    }
+
+    private fun store(ctx: Context) = ctx.applicationContext.getSharedPreferences("forja-inv-covers", Context.MODE_PRIVATE)
+
+    private fun keepCovers(ctx: Context, runId: String, done: Map<String, List<String>>) {
+        covers[runId] = done
+        try {
+            val o = org.json.JSONObject(); for ((k, v) in done) o.put(k, org.json.JSONArray(v))
+            store(ctx).edit().putString(runId, o.toString()).apply()
+        } catch (_: Exception) { }
+    }
+
+    private fun forgetCovers(ctx: Context?, runId: String) {
+        covers.remove(runId)
+        try { ctx?.let { store(it).edit().remove(runId).apply() } } catch (_: Exception) { }
+    }
 
     private fun uid(ctx: Context): String? = try { ForjaApp.from(ctx).auth.currentUid } catch (_: Exception) { null }
 
@@ -94,14 +122,14 @@ internal object InvMirror {
                 if (keys.isNotEmpty()) done[name] = keys
             }
             if (done.isEmpty()) return@launch
-            covers[base.id] = done
+            keepCovers(ctx, base.id, done)
             InventorySummary.publish(ctx, base.copy(folders = base.folders.map { f -> f.copy(covers = done[f.name].orEmpty()) }, updatedAt = System.currentTimeMillis()))
         }
     }
 
     /** O rulare fără nicio aplicare iese de pe site (analiza oprită, planul aruncat). */
     fun discard(ctx: Context, runId: String) {
-        lastStage.remove(runId); covers.remove(runId)
+        lastStage.remove(runId); forgetCovers(ctx, runId)
         io.launch {
             val uid = uid(ctx) ?: return@launch
             try { FirebaseFirestore.getInstance().collection("users").document(uid).collection("inventory").document(runId).delete() } catch (_: Exception) { }
@@ -109,7 +137,8 @@ internal object InvMirror {
         }
     }
 
-    suspend fun dropCovers(runId: String) {
+    suspend fun dropCovers(runId: String, ctx: Context? = null) {
+        forgetCovers(ctx, runId)
         try { InsightsApi.json("/v2/mirror/cover/$runId", null, "DELETE") } catch (e: CancellationException) { throw e } catch (_: Exception) { }
     }
 
