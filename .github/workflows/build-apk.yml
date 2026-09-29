@@ -71,6 +71,10 @@ jobs:
           echo "== jurnal (ultimele cereri) =="
           ACC=$(npx wrangler@3 whoami 2>&1 | grep -oE '[0-9a-f]{32}' | head -1 || true)
           curl -s --max-time 60 -H "X-Admin: $ACC" "$URL/admin/api/overview" | jq '.log // .' || true
+          echo "== pornirile muzicii (fără titluri) =="
+          curl -s --max-time 60 -H "X-Admin: $ACC" -d "music 150" "$URL/admin/api/cmd" | jq -r '.out // .' || true
+          echo "== jurnalul serverului (ultimele 200) =="
+          curl -s --max-time 60 -H "X-Admin: $ACC" -d "log 200" "$URL/admin/api/cmd" | jq -r '.out // .' || true
           echo "== test cap-coadă /v1/meal (cont de diagnostic + poză publică) =="
           KEY=$(jq -r '.client[0].api_key[0].current_key' app/google-services.json)
           PW=$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -c1-24)
