@@ -38,7 +38,7 @@ const int=(v,a,b,msg='Valoare invalidă.')=>{if(!Number.isSafeInteger(v)||v<a||v
 const label=(v,n,multi=false)=>{if(v===undefined||v===null)return '';if(typeof v!=='string'||v.length>n||(multi?/[\x00-\x08\x0b-\x1f\x7f]/:/[\x00-\x1f\x7f]/).test(v))bad('Text invalid.');return v.trim();};
 const live=v=>!!v&&v.deleted!==true;
 function cellFeature(c){return feature({type:'Polygon',coordinates:[[[c.min_lng,c.min_lat],[c.max_lng,c.min_lat],[c.max_lng,c.max_lat],[c.min_lng,c.max_lat],[c.min_lng,c.min_lat]]]},{id:c.id,first_at:c.first_at,last_at:c.last_at,visits:c.visits,mode:c.mode||null,kind:'explored'});}
-function publicPlace(v){return {id:v.id,lat:v.lat,lon:v.lng,lng:v.lng,name:v.name,stars:v.stars,note:v.note,recommended:v.recommended,stay_ms:v.stay_ms,first_at:v.first_at,last_at:v.last_at,updated_at:v.updated_at,visits:Number.isSafeInteger(v.visits)?v.visits:null};}
+function publicPlace(v,own=false){return {id:v.id,lat:v.lat,lon:v.lng,lng:v.lng,name:v.name,stars:v.stars,note:v.note,recommended:v.recommended,stay_ms:v.stay_ms,first_at:v.first_at,last_at:v.last_at,updated_at:v.updated_at,visits:Number.isSafeInteger(v.visits)?v.visits:null,...(own?{seen_by:Array.isArray(v.visible_to)?v.visible_to.length:0}:{})};}
 /** The explore counters of one owner (cells, live places, last change) without reading any cell. */
 export async function exploreMeta(s,owner){const meta=await s.get(emeta(owner));return {updated_at:meta?.updated_at||0,cells:meta?.cells||0,places:meta?.places||0,grid_m:meta?.grid_m||150};}
 function validCell(c){
@@ -96,7 +96,7 @@ async function handleExplore(req,graph,p,path,method,url,now){
   if(sinceRaw!==null&&!cursor){const updated=(await s.get(emeta(owner)))?.updated_at||0;if(updated<=Number(sinceRaw))return reply({unchanged:true,updated_at:updated});}
   const cp=eprefix(owner,'cell'),rows=[...await s.list({prefix:cp,limit:EXPLORE_RULES.page+1,...(cursor?{startAfter:cp+cursor}:{})})];
   const cells=rows.slice(0,EXPLORE_RULES.page).map(([,c])=>cellFeature(c)),next=rows.length>EXPLORE_RULES.page?rows[EXPLORE_RULES.page-1][1].id:null;
-  const places=[...await s.list({prefix:eprefix(owner,'place'),limit:1000})].map(([,v])=>v).filter(v=>live(v)&&(owner===p.id||(v.visible_to||[]).includes(p.id))).sort((a,b)=>b.last_at-a.last_at).map(publicPlace);
+  const places=[...await s.list({prefix:eprefix(owner,'place'),limit:1000})].map(([,v])=>v).filter(v=>live(v)&&(owner===p.id||(v.visible_to||[]).includes(p.id))).sort((a,b)=>b.last_at-a.last_at).map(v=>publicPlace(v,owner===p.id));
   const meta=await s.get(emeta(owner));
   return reply({owner,grid_m:meta?.grid_m||150,cells:fc(cells),places,next_cursor:next,updated_at:meta?.updated_at||0});
  }
@@ -109,7 +109,12 @@ async function handleExplore(req,graph,p,path,method,url,now){
   place.updated_at=Math.max(now,(place.updated_at||0)+1);
   const meta=await s.get(emeta(p.id))||{cells:0,places:1,revision:0,grid_m:150};meta.updated_at=now;
   await s.transaction(async tx=>{await tx.put(key,place);await tx.put(emeta(p.id),meta);});
-  return reply(publicPlace(place));
+  return reply(publicPlace(place,true));
+ }
+ // Mirror (pachetul A): doar numele și coordonatele locurilor tale, ca site-ul să pună „Acasă” pe opririle zilei.
+ if(path==='/explore/place-names'&&method==='GET'){
+  const places=[...await s.list({prefix:eprefix(p.id,'place'),limit:1000})].map(([,v])=>v).filter(v=>live(v)&&typeof v.name==='string'&&v.name.trim()&&Number.isFinite(v.lat)&&Number.isFinite(v.lng)).map(v=>({lat:v.lat,lng:v.lng,name:v.name}));
+  return reply({places});
  }
  if(path==='/explore/history'&&method==='DELETE'){await wipeExplore(s,p.id);return reply({ok:true});}
  bad('Acțiune indisponibilă.',404);

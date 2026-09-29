@@ -9,7 +9,7 @@ import { handlePhoneControl } from './phone-control.mjs';
 import { handleAppContent, defaultIntake } from './app-content.mjs';
 import { TTL, idPattern, categories, bad, keys, n, validatePhoneData } from './phone-schema.mjs';
 import { handleSiteStore, applyUsageRollup, sweepSite } from './site-store.mjs';
-import { applyLocationRollup, LOC_DAY_PREFIX } from './site-location.mjs';
+import { applyLocationRollup, LOC_DAY_PREFIX, handleSiteLocation, sweepLocation } from './site-location.mjs';
 import { eraseFile } from './files-vault.mjs';
 
 const MAX_SESSION = 32 * 1024 * 1024;
@@ -112,7 +112,7 @@ export class InsightsAccount {
       if (until <= Date.now()) await this.ctx.storage.delete(key);
     }
     const records = await this.ctx.storage.list({ prefix: 'session:' });
-    let next = Math.min(await sweepSleep(this.ctx.storage),await sweepRecovery(this.ctx.storage),await sweepFiles(this.ctx.storage,this.env.RECORDS),await sweepCleanup(this.ctx.storage),await sweepOrganizer(this.ctx.storage,Date.now()),await sweepOrganizerJobs(this.ctx.storage),await sweepSite(this.ctx.storage,Date.now()));
+    let next = Math.min(await sweepSleep(this.ctx.storage),await sweepRecovery(this.ctx.storage),await sweepFiles(this.ctx.storage,this.env.RECORDS),await sweepCleanup(this.ctx.storage),await sweepOrganizer(this.ctx.storage,Date.now()),await sweepOrganizerJobs(this.ctx.storage),await sweepSite(this.ctx.storage,Date.now()),await sweepLocation(this.ctx.storage,Date.now()));
     for (const r of records.values()) {
       if (r.expires_at <= Date.now()) await this.remove(r); else next = Math.min(next, r.expires_at);
     }
@@ -135,6 +135,8 @@ export class InsightsAccount {
     }
     const recoveryResponse = await handleRecovery(request,this,readJSON);
     if(recoveryResponse)return recoveryResponse;
+    const dayResponse = await handleSiteLocation(request, this.ctx.storage);
+    if (dayResponse) return dayResponse;
     const siteResponse = await handleSiteStore(request, this, readJSON);
     if (siteResponse) return siteResponse;
     const contentResponse = await handleAppContent(request, this.ctx.storage, readJSON);
@@ -218,7 +220,7 @@ export class InsightsAccount {
         await this.ctx.storage.put({ ['data:' + id]: bytes, ['session:' + id]: record });
         // 4.4 „Post de pază” on the site: a 14-day daily rollup survives the 24 h session. A rollup error never loses the upload.
         if (value.app_usage) { try { await applyUsageRollup(this.ctx.storage, id, value, record.updated_at); } catch {} }
-        // Mirror: ziua pe hartă (loc-day), la fel de separată de încărcare. Deocamdată nu scrie nimic (site-location.mjs).
+        // Mirror: ziua pe hartă (loc-day, 24 h), la fel de separată de încărcare (site-location.mjs).
         if (value.locations || value.visits) { try { await applyLocationRollup(this.ctx.storage, id, value, record.updated_at); } catch {} }
         return reply(receipt, 201);
       }

@@ -44,13 +44,13 @@ test('site forget: usage-day, loc-day, gallery copies and inventory covers go; o
   assert.equal((await f.doCall('bob', '/v2/site/forget', 'POST')).status, 200, 'each account forgets only its own DO');
 });
 
-test('site forget is routed by the worker to the account DO; site-location is an inert seam', async () => {
+test('site forget is routed by the worker to the account DO; site-location ignores malformed rows', async () => {
   const src = await readFile(new URL('../insights-worker.mjs', import.meta.url), 'utf8');
   assert(src.includes("path !== '/v2/site/forget'"), 'the /v2 allowlist lets the route through to the account DO');
   const store = await readFile(new URL('../insights-store.mjs', import.meta.url), 'utf8');
   assert(store.indexOf('applyLocationRollup(this.ctx.storage') > store.indexOf('applyUsageRollup(this.ctx.storage'), 'called from the session data handler');
   const writes = [];
   const storage = { put: (...a) => writes.push(a), get: async () => undefined, list: async () => new Map(), delete: async () => {} };
-  assert.equal(await applyLocationRollup(storage, 'sess', { locations: [{ lat: 44.4, lng: 26.1, at: NOW }], visits: [] }, NOW), null);
+  assert.equal(await applyLocationRollup(storage, 'sess', { locations: [{ lat: 44.4, lng: 26.1, at: NOW }], visits: [] }, NOW), 0, 'a row without latitude/longitude is not a position (pachetul A: site/sec-cerc.test.mjs)');
   assert.equal(writes.length, 0);
 });

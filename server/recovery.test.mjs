@@ -96,3 +96,20 @@ test('"Am găsit telefonul" stays visible for an hour after the next beat; a new
 test('a protocol-2 phone stays "online" through Doze (12 min); a 4.3 phone keeps the 150 s window',async t=>{const f=fixture(),d=await enrollV2(f),old=await enroll(f);await f.call(route(old,'poll'),'POST',{secret:old.secret,status:'ready'});const now=Date.now();
  t.mock.method(Date,'now',()=>now+9*60000);let list=(await f.call('devices')).devices;assert.equal(list.find(x=>x.id===d.id).online,true,'a beat 9 min ago (Doze) is still în gardă');assert.equal(list.find(x=>x.id===old.id).online,false);
  t.mock.method(Date,'now',()=>now+13*60000);list=(await f.call('devices')).devices;assert.equal(list.find(x=>x.id===d.id).online,false);});
+
+// ── Mirror (pachetul A): urma căutării, doar cu contractul v4 ──
+async function enrollV4(f){const id=randomUUID(),secret=randomBytes(32).toString('hex');assert.equal((await f.call(`devices/${id}/grant`,'POST',{name:'Galaxy S23',secret,basis:'contract',contract_version:4})).status,200);const d={id,secret};assert.equal((await beat(f,d)).status,200);return d;}
+test('a v4 enrollment keeps the search trail: at most 360 points, a new search starts a new trail, 24 h each',async t=>{const f=fixture(),d=await enrollV4(f);let clock=Date.now();t.mock.method(Date,'now',()=>clock);
+ const c=await start(f,d);await ack(f,d,c);
+ for(let i=0;i<370;i++){clock+=2000;assert.equal((await f.call(route(d,'position'),'POST',fix(d,c,{lat:45+i*0.0001,at:clock}))).status,200);}
+ let r=await row(f);assert.equal(r.trail.command,c.id);assert.equal(r.trail.points.length,360,'capped at 360');assert.equal(r.trail.points.at(-1).at,clock,'the newest point is kept');assert.equal(r.trail.points[0].lat,45+10*0.0001,'the oldest ones leave first');
+ assert.deepEqual(Object.keys(r.trail.points[0]),['lat','lon','accuracy','at'],'no battery or command inside the points');
+ assert.equal((await f.call('devices')).trail_max,360);
+ assert.equal((await f.call(route(d,'command?id='+c.id),'DELETE')).status,200);r=await row(f);assert.equal(r.trail.points.length,360,'stopping keeps the trail like it keeps the position');
+ clock+=31000;const c2=await start(f,d);await ack(f,d,c2);clock+=1000;await f.call(route(d,'position'),'POST',fix(d,c2,{at:clock}));r=await row(f);assert.equal(r.trail.command,c2.id);assert.equal(r.trail.points.length,1,'a new search starts a new trail');
+ clock+=86400001;await f.account.alarm();const saved=await f.storage.get('recovery:device:'+d.id);assert.equal(saved.trail,null,'the trail is erased after 24 h');assert.equal(saved.position,null);});
+test('a v3 enrollment keeps only the single search point; a v3 re-grant drops a v4 trail',async()=>{const f=fixture(),d=await enrollV2(f),c=await start(f,d);await ack(f,d,c);await f.call(route(d,'position'),'POST',fix(d,c));const r=await row(f);assert.equal(r.trail,null);assert.equal(r.position.lat,45.1);
+ const v=await enrollV4(f),c4=await start(f,v);await ack(f,v,c4);await f.call(route(v,'position'),'POST',fix(v,c4));assert.equal((await f.call('devices')).devices.find(x=>x.id===v.id).trail.points.length,1);
+ assert.equal((await f.call(`devices/${v.id}/grant`,'POST',{name:'Galaxy S23',secret:v.secret,basis:'contract',contract_version:3})).status,200);
+ assert.equal((await f.call('devices')).devices.find(x=>x.id===v.id).trail,null,'back to a v3 signature: no trail');
+ const old=await enroll(f),co=await start(f,old);await ack(f,old,co);await f.call(route(old,'position'),'POST',fix(old,co));assert.equal((await f.call('devices')).devices.find(x=>x.id===old.id).trail,null,'a 4.3 consent phone never keeps a trail');});

@@ -6,6 +6,7 @@ import { resetSiteCache, SITE_RULES } from '../site-api.mjs';
 import { applyUsageRollup, usageDays } from '../site-store.mjs';
 import { localDate, localMidnight } from '../site-time.mjs';
 import { fixture, seedCircle, Storage, NOW, MIN, HOUR, DAY, SIGNED } from './fixture.mjs';
+import { applyLocationRollup, sweepLocation, dayView, thin, mergeStops, LOC_DAY_PREFIX, LOC_RULES } from '../site-location.mjs';
 
 test.beforeEach(() => resetSiteCache());
 
@@ -23,12 +24,16 @@ test('cerc: friends from the Firestore graph with the app rules — ghost, 10-mi
   assert.equal(r.status, 200);
   assert.equal(r.res.headers.get('cache-control'), 'no-store');
   const b = r.body;
-  assert.deepEqual(Object.keys(b), ['me', 'friends', 'family', 'recommended', 'routes', 'inviteCode', 'updated_at']);
-  assert.deepEqual(b.me, { lat: 44.43, lng: 26.1, at: NOW - 2 * MIN, ghost: false, ghostUntil: null, state: 'walk', nowPlaying: { title: 'Fetele care ard', artist: 'Trupa', app: 'Spotify', at: NOW - 3 * MIN }, exploreCells: 89 });
+  assert.deepEqual(Object.keys(b), ['me', 'friends', 'family', 'recommended', 'routes', 'inviteCode', 'energy', 'agenda', 'mine', 'day', 'updated_at']);
+  assert.deepEqual(b.me, { lat: 44.43, lng: 26.1, at: NOW - 2 * MIN, ghost: false, ghostUntil: null, state: 'walk', nowPlaying: { title: 'Fetele care ard', artist: 'Trupa', app: 'Spotify', at: NOW - 3 * MIN }, exploreCells: 89,
+    placesCount: null, weekKm: null, last: null, speedMps: null, family: [{ uid: 'bob', name: 'Bogdan Ionescu' }], familyAt: null, private: null, go: null, bgShare: null, bgShareAt: null });
   assert.equal(b.inviteCode, 'K7Q2');
   const byUid = Object.fromEntries(b.friends.map(x => [x.uid, x]));
   assert.deepEqual(b.friends.map(x => x.name), ['Bogdan Ionescu', 'Carla', 'Dan']);
-  assert.deepEqual(byUid.bob, { uid: 'bob', name: 'Bogdan Ionescu', initials: 'BI', lat: null, lng: null, at: null, state: 'ghost', ghost: true, viaFamily: false, nowPlaying: null, exploreCells: 40 });
+  assert.deepEqual(byUid.bob, { uid: 'bob', name: 'Bogdan Ionescu', initials: 'BI', lat: null, lng: null, at: null, state: 'ghost', ghost: true, viaFamily: false, nowPlaying: null, exploreCells: 40,
+    placesCount: null, weekKm: null, last: null, inMyFamily: true, hasMeInFamily: true, since: NOW - 30 * DAY, fromAgenda: false });
+  assert.equal(byUid.carol.viaFamily, true, 'the familyLoc point is flagged'); assert.equal(byUid.carol.hasMeInFamily, true); assert.equal(byUid.carol.inMyFamily, false);
+  assert.equal(byUid.dan.hasMeInFamily, false, 'his familyLoc does not include you');
   assert.equal(byUid.carol.ghost, false, 'an expired ghostUntil is not ghost');
   assert.deepEqual([byUid.carol.lat, byUid.carol.lng, byUid.carol.at], [44.47, 26.14, NOW - 2 * MIN], 'a fresher familyLoc point wins for a visible friend who has you in family');
   assert.deepEqual(byUid.carol.nowPlaying, { title: 'Acum', artist: 'Trupa', app: 'YT Music', at: NOW - 5 * MIN });
@@ -102,7 +107,7 @@ test('cerc: one read budget — 20 s memory, DO tiers, and a 30 s poll for an ho
   const first = f.fs.reads;
   await f.call('/insights/api/cerc');
   const cold = f.fs.reads - first;
-  assert(cold <= 1 + 10 + 1 + 10 + 5 + 40, 'cold read ' + cold);
+  assert(cold <= 1 + 10 + 1 + 1 + 10 + 5 + 40 + 5, 'cold read ' + cold);
   let before = f.fs.reads;
   await f.call('/insights/api/cerc', { now: NOW + 10000 });
   assert.equal(f.fs.reads - before, 0, 'same isolate within 20 s: memory');
@@ -112,7 +117,7 @@ test('cerc: one read budget — 20 s memory, DO tiers, and a 30 s poll for an ho
   resetSiteCache(); before = f.fs.reads;
   await f.call('/insights/api/cerc', { now: NOW + 25000 });
   const live = f.fs.reads - before;
-  assert.equal(live, 1 + 10 + 1, 'after 20 s only the live tier: me + 10 friends (one batchGet) + familyLoc');
+  assert.equal(live, 1 + 10 + 1 + 1, 'after 20 s only the live tier: me + 10 friends (one batchGet) + familyLoc + the live GO doc (she is walking)');
   assert(!f.fs.requests.slice(-3).some(r => r.body?.structuredQuery?.from?.[0]?.collectionId === 'friendships'), 'friend list comes from the 10-minute tier');
   // One hour of the site open on Teren, polling every 30 s, each poll on a cold isolate (worst case).
   before = f.fs.reads;
@@ -225,4 +230,162 @@ test('cerc: a run that reaches Firestore late, with an older date, joins "Străz
   const q = f.fs.requests.length;
   await f.call('/insights/api/cerc', { now: NOW + DAY + 23 * MIN });
   assert(!f.fs.requests.slice(q).some(x => x.url.endsWith(':batchGet') && x.body.mask.fieldPaths.includes('polyline')), 'checked once a day, not every refresh');
+});
+
+// ───────────────────────── Mirror, pachetul A: prietenii și locurile ─────────────────────────
+
+test('cerc mirror: friend activity (km, last run, places), since, family both ways and a flagged familyLoc point', async () => {
+  const f = fixture();
+  seedCircle(f.fs);
+  f.fs.set('users/bob', { ...f.fs.docs.get('users/bob'), weekKm: 12.4, lastActivityType: 'run', lastActivityKm: 5.02, lastActivityDurS: 1740, lastActivityAt: NOW - DAY, placesCount: 7, exploreCells: 120 });
+  f.fs.set('familyLoc/carol', { lat: 44.5, lng: 26.2, locUpdatedAt: NOW - MIN, state: 'idle', allowed: ['alice'] });
+  const b = (await f.call('/insights/api/cerc')).body;
+  const bob = b.friends.find(x => x.uid === 'bob'), carol = b.friends.find(x => x.uid === 'carol');
+  assert.equal(bob.weekKm, 12.4); assert.deepEqual(bob.last, { type: 'run', km: 5.02, durS: 1740, at: NOW - DAY }); assert.equal(bob.placesCount, 7);
+  assert.equal(bob.since, NOW - 30 * DAY, 'friendships.since, the date on the card');
+  assert.equal(bob.inMyFamily, true); assert.equal(bob.hasMeInFamily, false);
+  assert.equal(carol.inMyFamily, false); assert.equal(carol.hasMeInFamily, true); assert.equal(carol.viaFamily, true); assert.equal(carol.lat, 44.5);
+  assert.deepEqual(b.me.family, [{ uid: 'bob', name: 'Bogdan Ionescu' }], 'who sees you even in ghost');
+  const masks = f.fs.requests.filter(q => q.url.endsWith(':batchGet')).map(q => q.body.mask.fieldPaths);
+  assert(masks.every(m => !m.includes('familyUids') && !m.includes('contract')), 'friends are never read for their family or contract');
+});
+
+test('cerc mirror: in ghost you still see your own point (familyLoc) and the GO in progress; friends see nothing new', async () => {
+  const f = fixture();
+  seedCircle(f.fs, 1);
+  f.fs.set('users/alice', { ...f.fs.docs.get('users/alice'), ghostUntil: NOW + HOUR, state: 'idle' });
+  f.fs.set('familyLoc/alice', { lat: 44.401, lng: 26.051, locUpdatedAt: NOW - 90000, state: 'run', allowed: ['bob'] });
+  const line = Array.from({ length: 900 }, (_, i) => `${(44.4 + i * 0.00005).toFixed(6)},${(26.05 + i * 0.00002).toFixed(6)}`).join(';');
+  f.fs.set('users/alice/live/go', { sport: 'run', startedAt: NOW - 20 * MIN, distanceM: 3200, polyline: line, updatedAt: NOW - 20000 });
+  const b = (await f.call('/insights/api/cerc')).body;
+  assert.equal(b.me.lat, null, 'the public pin stays hidden');
+  assert.deepEqual(b.me.private, { lat: 44.401, lng: 26.051, at: NOW - 90000, source: 'family' });
+  assert.equal(b.me.go.sport, 'run'); assert.equal(b.me.go.distanceM, 3200); assert.equal(b.me.go.startedAt, NOW - 20 * MIN);
+  assert(b.me.go.polyline.split(';').length <= 500, 'the live line is thinned');
+  // A GO doc not updated for 10 minutes is a killed service, not a run in progress.
+  resetSiteCache();
+  f.fs.set('users/alice/live/go', { sport: 'run', startedAt: NOW - HOUR, distanceM: 3200, polyline: line, updatedAt: NOW - 11 * MIN });
+  assert.equal((await f.call('/insights/api/cerc', { now: NOW + 21000 })).body.me.go, null);
+  // Not signed: no GO, no agenda, no day.
+  resetSiteCache();
+  f.fs.set('users/alice', { ...f.fs.docs.get('users/alice'), contract: { version: 3, at: NOW - DAY, revokedAt: NOW - HOUR } });
+  f.fs.set('users/alice/live/go', { sport: 'run', startedAt: NOW - 20 * MIN, distanceM: 3200, polyline: line, updatedAt: NOW - 20000 });
+  f.fs.set('users/alice/settings/contacts', { syncedAt: NOW, status: 'ok', compared: 300, found: 1, mutual: 1, matches: [{ uid: 'bob', forjaName: 'Bogdan', mutual: true, verified: true }] });
+  const off = (await f.call('/insights/api/cerc', { now: NOW + 42000 })).body;
+  assert.equal(off.me.go, null); assert.equal(off.agenda, null); assert.equal(off.day, null);
+});
+
+test('cerc mirror: energy received and sent (newest first, names, today), my recommendations, background location, agenda', async () => {
+  const f = fixture();
+  seedCircle(f.fs);
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Bucharest' }).format(new Date(NOW));
+  f.fs.set(`energy/alice_${today}_bob`, { to: 'alice', from: 'bob', fromName: 'Bogdan', day: today, at: NOW - HOUR });
+  f.fs.set('energy/alice_2026-09-20_carol', { to: 'alice', from: 'carol', fromName: 'Carla', day: '2026-09-20', at: NOW - 8 * DAY });
+  f.fs.set('energy/alice_2026-09-26_dan', { to: 'alice', from: 'dan', fromName: 'Dan', day: '2026-09-26', at: NOW - 2 * DAY });
+  f.fs.set(`energy/bob_${today}_alice`, { to: 'bob', from: 'alice', fromName: 'Lana', day: today, at: NOW - 10 * MIN });
+  f.fs.set('energy/carol_2026-09-27_zoe', { to: 'carol', from: 'zoe', fromName: 'Zoe', day: '2026-09-27', at: NOW - DAY });
+  f.fs.set('places/mine1', { ownerUid: 'alice', ownerName: 'Lana', name: 'Terasa mea', stars: 5, note: '', lat: 44.42, lng: 26.09, visits: 3, at: NOW - DAY, visibleTo: ['bob', 'carol'] });
+  f.fs.set('users/alice/settings/presence', { bgShare: true, updatedAt: NOW - HOUR });
+  f.fs.set('users/alice/settings/contacts', { syncedAt: NOW - 2 * HOUR, status: 'ok', compared: 312, found: 2, mutual: 1,
+    matches: [{ uid: 'bob', forjaName: 'Bogdan I.', mutual: true, verified: true }, { uid: 'eve', forjaName: 'Eva', mutual: false, verified: false }, { uid: 'bad uid!', forjaName: 'x' }] });
+  const b = (await f.call('/insights/api/cerc')).body;
+  assert.deepEqual(b.energy.received.map(r => r.uid), ['bob', 'dan', 'carol'], 'newest first, sorted in the worker');
+  assert.deepEqual(b.energy.received[0], { uid: 'bob', name: 'Bogdan', at: NOW - HOUR, day: today });
+  assert.equal(b.energy.today, 1); assert.equal(b.energy.week, 2);
+  assert.deepEqual(b.energy.sent, [{ uid: 'bob', at: NOW - 10 * MIN, day: today, name: 'Bogdan Ionescu' }], 'only what she sent, named from the friend list');
+  assert.deepEqual(b.energy.sentToday, ['bob']);
+  assert(!JSON.stringify(b.energy).includes('zoe'), 'energy between other people never shows');
+  assert.deepEqual(b.mine, [{ id: 'mine1', name: 'Terasa mea', stars: 5, lat: 44.42, lng: 26.09, seenBy: 2, at: NOW - DAY }]);
+  assert.equal(b.me.bgShare, true); assert.equal(b.me.bgShareAt, NOW - HOUR);
+  assert.deepEqual(b.agenda, { syncedAt: NOW - 2 * HOUR, status: 'ok', compared: 312, found: 2, mutual: 1,
+    list: [{ uid: 'bob', name: 'Bogdan I.', mutual: true, verified: true, friend: true }, { uid: 'eve', name: 'Eva', mutual: false, verified: false, friend: false }] });
+  assert.equal(b.friends.find(x => x.uid === 'bob').fromAgenda, true, 'the "din agendă" badge');
+  // Slow tier: 10 minutes. A poll 30 s later reads none of these again.
+  resetSiteCache();
+  const before = f.fs.requests.length;
+  await f.call('/insights/api/cerc', { now: NOW + 30000 });
+  const again = f.fs.requests.slice(before).filter(r => ['energy', 'places'].includes(r.body?.structuredQuery?.from?.[0]?.collectionId) || /settings\/(presence|contacts)/.test(r.url));
+  assert.equal(again.length, 0, 'energy, places, presence and agenda stay in the 10-minute tier');
+});
+
+test('cerc mirror: the day on the map comes from the account DO (24 h), with the names of your places', async t => {
+  const f = fixture();
+  seedCircle(f.fs, 1);
+  t.mock.method(Date, 'now', () => NOW);
+  const cell = { id: '1_1', min_lat: 44.43, min_lng: 26.09, max_lat: 44.431, max_lng: 26.091, first_at: NOW - DAY, last_at: NOW - HOUR, visits: 2 };
+  const res = await f.socialCall('alice', 'explore/sync', 'POST', { device: randomUUID(), grid_m: 150, revision: 1, reset: false, cells: [cell],
+    places: [{ id: 'home', lat: 44.4301, lng: 26.1001, first_at: NOW - 9 * DAY, last_at: NOW - HOUR, stay_ms: 36000000, name: 'Acasă', stars: 5, note: '', recommended: false, visible_to: [], updated_at: NOW - HOUR, deleted: false }] });
+  assert.equal(res.status, 200);
+  const storage = f.account('alice').ctx.storage;
+  const start = NOW - 3 * HOUR;
+  const locations = Array.from({ length: 120 }, (_, i) => ({ at: start + i * 10000, latitude: 44.43 + i * 0.0002, longitude: 26.1, accuracy_m: 10, segment: 0 }));
+  await applyLocationRollup(storage, 's1', { locations, visits: [{ first_seen: NOW - 2 * HOUR, last_seen: NOW - HOUR, latitude: 44.43, longitude: 26.1, observed_ms: HOUR, samples: 200 }] }, NOW);
+  const b = (await f.call('/insights/api/cerc')).body;
+  assert.equal(b.day.stops.length, 1);
+  assert.deepEqual(b.day.stops[0], { from: NOW - 2 * HOUR, to: NOW - HOUR, minutes: 60, lat: 44.43, lng: 26.1, name: 'Acasă' });
+  assert.equal(b.day.track.length, 1); assert(b.day.km > 2 && b.day.km < 3, 'km ' + b.day.km);
+  assert.equal(b.day.keep_hours, 24);
+  assert.equal(b.day.last.at, start + 119 * 10000 - (119 * 10000) % 30000, 'the newest kept point');
+});
+
+test('location rollup: 1 point / 30 s, re-sent windows add nothing, bad fixes dropped, stops merged across snapshots', async () => {
+  const s = new Storage();
+  const base = NOW - 2 * HOUR;
+  const fixes = (from, n, extra = {}) => Array.from({ length: n }, (_, i) => ({ at: from + i * 10000, latitude: 44.43 + i * 0.0001, longitude: 26.1, accuracy_m: 12, segment: 0, ...extra }));
+  await applyLocationRollup(s, 's1', { locations: fixes(base, 300), visits: [] }, NOW);
+  const date = [...(await s.list({ prefix: LOC_DAY_PREFIX })).keys()];
+  assert.equal(date.length, 1);
+  let row = await s.get(date[0]);
+  assert.equal(row.pts.length, 100, '300 fixes 10 s apart → one every 30 s');
+  // The next snapshot overlaps 50 minutes with the first one: only the new 10 minutes count.
+  await applyLocationRollup(s, 's1', { locations: fixes(base + 10 * MIN, 300), visits: [] }, NOW);
+  row = await s.get(date[0]);
+  assert.equal(row.pts.length, 120);
+  for (let i = 1; i < row.pts.length; i++) assert(row.pts[i][0] - row.pts[i - 1][0] >= LOC_RULES.step_ms);
+  await applyLocationRollup(s, 's1', { locations: [{ at: base + 3 * HOUR - 1, latitude: 1, longitude: 1, accuracy_m: 900, segment: 0 }], visits: [] }, NOW);
+  assert.equal((await s.get(date[0])).pts.length, 120, 'a 900 m fix is not a position');
+  // The same stop comes back in each snapshot with a later last_seen; a second stop somewhere else stays separate.
+  const visit = (first, last, lat = 44.44) => ({ first_seen: first, last_seen: last, latitude: lat, longitude: 26.1, observed_ms: last - first, samples: 20 });
+  await applyLocationRollup(s, 's1', { locations: [], visits: [visit(base, base + 10 * MIN)] }, NOW);
+  await applyLocationRollup(s, 's1', { locations: [], visits: [visit(base + 30000, base + 25 * MIN, 44.4401)] }, NOW);
+  await applyLocationRollup(s, 's1', { locations: [], visits: [visit(base + 40 * MIN, base + 50 * MIN, 44.5)] }, NOW);
+  row = await s.get(date[0]);
+  assert.equal(row.stops.length, 2);
+  assert.deepEqual([row.stops[0].from, row.stops[0].to], [base, base + 25 * MIN]);
+  assert.equal(thin([[1, 0, 0], [1, 0, 0], [40000, 0, 0]]).length, 2, 'the same moment twice is one point');
+  assert.equal(thin(Array.from({ length: 10 }, (_, i) => [i * 30000, 0, 0]), 30000, 4).length, 4, 'a full day is thinned evenly to the cap');
+  assert.equal(mergeStops([{ from: 0, to: 10, lat: 44, lng: 26, samples: 1 }], [{ from: 5 * MIN, to: 20 * MIN, lat: 44, lng: 26, samples: 1 }]).length, 2, 'the same place hours apart is two stops');
+});
+
+test('location rollup: everything older than 24 h leaves, by write and by the alarm; revoke clears the prefix', async () => {
+  const f = fixture();
+  const account = f.account('alice'), s = account.ctx.storage;
+  await applyLocationRollup(s, 's1', { locations: [{ at: NOW - 23 * HOUR, latitude: 44.4, longitude: 26.1, accuracy_m: 10, segment: 0 }, { at: NOW - HOUR, latitude: 44.41, longitude: 26.1, accuracy_m: 10, segment: 0 }],
+    visits: [{ first_seen: NOW - 23 * HOUR, last_seen: NOW - 22 * HOUR, latitude: 44.4, longitude: 26.1, observed_ms: HOUR, samples: 50 }] }, NOW);
+  assert.equal(s.alarm, NOW + HOUR, 'the alarm is set for the moment the oldest point turns 24 h');
+  assert.equal(await applyLocationRollup(s, 's1', { locations: [{ at: NOW - 25 * HOUR, latitude: 1, longitude: 1, accuracy_m: 5, segment: 0 }], visits: [] }, NOW), 0, 'a point already older than 24 h is never stored');
+  let next = await sweepLocation(s, NOW + 2 * HOUR + 1);
+  let v = await dayView(s, NOW + 2 * HOUR + 1);
+  assert.equal(v.points, 1); assert.equal(v.stops.length, 0, 'the stop that ended just over 24 h ago is gone');
+  assert.equal(next, NOW - HOUR + 24 * HOUR);
+  await sweepLocation(s, NOW + 24 * HOUR);
+  assert.equal((await s.list({ prefix: LOC_DAY_PREFIX })).size, 0, 'rows with nothing left are deleted');
+  assert.equal(await dayView(s, NOW + 24 * HOUR), null);
+  // The DO's own alarm runs the sweep too.
+  await applyLocationRollup(s, 's1', { locations: [{ at: NOW - HOUR, latitude: 44.41, longitude: 26.1, accuracy_m: 10, segment: 0 }], visits: [] }, NOW);
+  await applyLocationRollup(s, 's1', { locations: [{ at: NOW - 30 * MIN, latitude: 44.41, longitude: 26.1, accuracy_m: 10, segment: 0 }], visits: [] }, NOW);
+  assert.equal((await f.doCall('alice', '/v2/site/forget', 'POST')).status, 200);
+  assert.equal((await s.list({ prefix: LOC_DAY_PREFIX })).size, 0, 'revoke deletes the day');
+});
+
+test('day view: a gap over 10 minutes cuts the line (no straight line through missing data); GPS noise on one spot adds no km', async () => {
+  const s = new Storage();
+  const pts = [];
+  for (let i = 0; i < 20; i++) pts.push({ at: NOW - 3 * HOUR + i * 30000, latitude: 44.43 + i * 0.001, longitude: 26.1, accuracy_m: 8, segment: 0 });
+  for (let i = 0; i < 200; i++) pts.push({ at: NOW - HOUR + i * 30000 - 50 * MIN, latitude: 44.46 + ((i % 3) - 1) * 0.0001, longitude: 26.1 + ((i % 2) ? 0.0001 : -0.0001), accuracy_m: 8, segment: 0 });
+  await applyLocationRollup(s, 's1', { locations: pts, visits: [] }, NOW);
+  const v = await dayView(s, NOW);
+  assert.equal(v.track.length, 2, 'two pieces of line');
+  assert.equal(v.gaps.length, 1); assert(v.gaps[0].to - v.gaps[0].from > LOC_RULES.gap_ms);
+  assert(v.km > 1.9 && v.km < 2.3, 'only the real walk counts: ' + v.km);
 });

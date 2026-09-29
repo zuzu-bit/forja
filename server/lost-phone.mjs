@@ -6,12 +6,15 @@ import {bad,keys} from './phone-schema.mjs';
  *
  * Retenție: `last` = un singur punct suprascris, ținut 7 zile de la măsurare; `position` = poziția dintr-o căutare, 24 h.
  * Oprirea (din site sau de pe telefon) închide doar comanda: `last` și `position` rămân.
+ * Urma căutării (`trail`, mirror v4): pozițiile ultimei căutări, cel mult 360, fiecare ținută 24 h de la măsurare. Se
+ * păstrează doar pentru o înrolare făcută cu contractul v4 semnat (`contract_version` ≥ 4, trimis de telefon din semnătura
+ * reală); o căutare nouă începe o urmă nouă. Cu v3, `position` rămâne un singur punct, ca până acum.
  */
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const SECRET=/^[a-f0-9]{64}$/;const DAY=86400000,MIN=60000;
 // `online`: a protocol-2 phone beats every ~60 s, but in Doze Android stretches the alarm to ~9 min, so "în gardă" lasts 12 min
 // (the same window as the Găsire tile on Azi). A 4.3 phone polls every 30 s and keeps its 150 s.
-export const RECOVERY_RULES=Object.freeze({queue_ms:30*MIN,position_ms:DAY,last_ms:7*DAY,enrollment_ms:30*DAY,online_ms:12*MIN,legacy_online_ms:150000,found_ms:60*MIN,
+export const RECOVERY_RULES=Object.freeze({queue_ms:30*MIN,position_ms:DAY,last_ms:7*DAY,enrollment_ms:30*DAY,online_ms:12*MIN,legacy_online_ms:150000,found_ms:60*MIN,trail_max:360,trail_contract:4,
  locate_minutes:[5,10,15,30],ring_seconds:[30,60,120],extend_cap_minutes:60,beat_s:60,active_beat_s:15,name_max:40,grant_name_max:60,devices:5});
 const states=['ready','locating','ringing','found','location_off','permission_missing','notification_missing','offline','stopped'];
 const reply=(data,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store','x-content-type-options':'nosniff'}});
@@ -22,12 +25,14 @@ const duration=c=>c.kind==='ring'?c.seconds*1000:c.minutes*MIN;
 const isOnline=(d,now)=>d.seen_at>now-(d.proto>=2?RECOVERY_RULES.online_ms:RECOVERY_RULES.legacy_online_ms);
 /** Starts or keeps the phone's last known point: only a strictly newer measurement replaces it. */
 function keepLast(d,fix){if(!d.last||fix.at>d.last.at)d.last={lat:fix.lat,lon:fix.lon,accuracy:fix.accuracy,at:fix.at};}
+const trailOn=d=>d.basis==='contract'&&Number.isSafeInteger(d.contract_version)&&d.contract_version>=RECOVERY_RULES.trail_contract;
 function expire(d,now){
  if(d.position?.at<=now-RECOVERY_RULES.position_ms)d.position=null;
+ if(d.trail){d.trail.points=(d.trail.points||[]).filter(p=>p.at>now-RECOVERY_RULES.position_ms);if(!d.trail.points.length||!trailOn(d))d.trail=null;}
  if(d.last?.at<=now-RECOVERY_RULES.last_ms)d.last=null;
  if(d.command&&(d.command.until<=now||d.command.phase==='queued'&&d.command.start_before<=now)){d.command=null;d.status='expired';}
 }
-function nextWake(d){return Math.min(d.expires_at,d.position?d.position.at+RECOVERY_RULES.position_ms:Infinity,d.last?d.last.at+RECOVERY_RULES.last_ms:Infinity,d.command?d.command.phase==='queued'?Math.min(d.command.start_before,d.command.until):d.command.until:Infinity);}
+function nextWake(d){return Math.min(d.expires_at,d.trail?.points?.length?d.trail.points[0].at+RECOVERY_RULES.position_ms:Infinity,d.position?d.position.at+RECOVERY_RULES.position_ms:Infinity,d.last?d.last.at+RECOVERY_RULES.last_ms:Infinity,d.command?d.command.phase==='queued'?Math.min(d.command.start_before,d.command.until):d.command.until:Infinity);}
 function view(d,now){
  expire(d,now);
  return {id:d.id,name:d.name,basis:d.basis||'consent',enabled:true,seen_at:d.seen_at,online:isOnline(d,now),status:d.status,
@@ -35,12 +40,13 @@ function view(d,now){
   found_at:Number.isFinite(d.found_at)&&d.found_at>now-RECOVERY_RULES.found_ms?d.found_at:null,
   battery:Number.isFinite(d.battery)?d.battery:Number.isFinite(d.position?.battery)?d.position.battery:null,charging:typeof d.charging==='boolean'?d.charging:null,
   last:d.last?{lat:d.last.lat,lon:d.last.lon,accuracy:d.last.accuracy,at:d.last.at}:null,
-  position:d.position?{...d.position,fresh:d.position.at>now-120000}:null,command:d.command};
+  position:d.position?{...d.position,fresh:d.position.at>now-120000}:null,command:d.command,
+  trail:d.trail?{command:d.trail.command,points:d.trail.points.map(p=>({lat:p.lat,lon:p.lon,accuracy:p.accuracy,at:p.at}))}:null};
 }
 export async function sweepRecovery(storage,now=Date.now()){
  let next=Infinity;for(const [key,d]of await storage.list({prefix:'recovery:device:'})){
   if(d.expires_at<=now){await storage.delete(key);continue;}
-  const before=JSON.stringify([d.position,d.last,d.command]);expire(d,now);if(JSON.stringify([d.position,d.last,d.command])!==before)await storage.put(key,d);next=Math.min(next,nextWake(d));
+  const before=JSON.stringify([d.position,d.last,d.command,d.trail]);expire(d,now);if(JSON.stringify([d.position,d.last,d.command,d.trail])!==before)await storage.put(key,d);next=Math.min(next,nextWake(d));
  }return next;
 }
 /** A short, read-only view for the site's section summaries (Azi, Livret): no secret, no hash, no command. */
@@ -54,7 +60,7 @@ export async function handleRecovery(req,account,readJSON){
  const s=account.ctx.storage,now=Date.now(),method=req.method;
  const body=async(fields,required=fields)=>{const {value}=await readJSON(req,4096);keys(value,fields,required);return value;};
  const alarm=async d=>{const next=nextWake(d);const current=await s.getAlarm();if(!current||current>next)await s.setAlarm(next);};
- if(path==='/v2/recovery/devices'&&method==='GET'){const devices=[];for(const d of (await s.list({prefix:'recovery:device:'})).values())if(d.expires_at>now)devices.push(view(d,now));return reply({devices,retention_hours:24,last_retention_days:7});}
+ if(path==='/v2/recovery/devices'&&method==='GET'){const devices=[];for(const d of (await s.list({prefix:'recovery:device:'})).values())if(d.expires_at>now)devices.push(view(d,now));return reply({devices,retention_hours:24,last_retention_days:7,trail_max:RECOVERY_RULES.trail_max});}
  const match=path.match(/^\/v2\/recovery\/devices\/([^/]+)(?:\/(grant|poll|beat|status|position|command|extend|stop|revoke))?$/);if(!match||!UUID.test(match[1]))bad('Telefon sau acțiune invalidă.',404);
  const [_,id,action]=match,key='recovery:device:'+id;let d=await s.get(key);if(d?.expires_at<=now){await s.delete(key);d=null;}
  if(action==='grant'&&method==='POST'){
@@ -69,7 +75,7 @@ export async function handleRecovery(req,account,readJSON){
   d=d||{id,secret_hash,created_at:now,seen_at:0,status:'waiting_for_phone',command:null,position:null,last:null,last_start:0,seen_requests:[]};
   // A name set on the site wins over the phone's default name on a later re-grant.
   if(!d.renamed)d.name=v.name.trim();
-  d.basis=basis;d.contract_version=basis==='contract'?v.contract_version:null;d.expires_at=now+RECOVERY_RULES.enrollment_ms;await s.put(key,d);await alarm(d);return reply({ok:true,id});
+  d.basis=basis;d.contract_version=basis==='contract'?v.contract_version:null;if(!trailOn(d))d.trail=null;d.expires_at=now+RECOVERY_RULES.enrollment_ms;await s.put(key,d);await alarm(d);return reply({ok:true,id});
  }
  if(!d)bad('Găsirea nu este activată pentru acest telefon.',404);expire(d,now);
  const device=async v=>{if(typeof v.secret!=='string'||!SECRET.test(v.secret)||await hash(v.secret)!==d.secret_hash)bad('Activarea telefonului s-a schimbat.',403);};
@@ -138,6 +144,7 @@ export async function handleRecovery(req,account,readJSON){
   if(v.charging!==undefined&&typeof v.charging!=='boolean')bad('Încărcare invalidă.');
   if(d.position&&at<=d.position.at)bad('Poziție veche.',409);
   d.position={lat:v.lat,lon:v.lon,accuracy:v.accuracy,at,battery:battery===null?null:Math.round(battery),command:v.command};keepLast(d,{lat:v.lat,lon:v.lon,accuracy:v.accuracy,at});
+  if(trailOn(d)){if(d.trail?.command!==v.command)d.trail={command:v.command,points:[]};d.trail.points.push({lat:v.lat,lon:v.lon,accuracy:v.accuracy,at});if(d.trail.points.length>RECOVERY_RULES.trail_max)d.trail.points=d.trail.points.slice(-RECOVERY_RULES.trail_max);}
   if(battery!==null){d.battery=Math.round(battery);d.battery_at=now;}if(typeof v.charging==='boolean')d.charging=v.charging;
   d.seen_at=now;if(d.command.kind!=='ring')d.status='locating';await s.put(key,d);await alarm(d);return reply({ok:true});
  }

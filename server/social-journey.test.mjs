@@ -157,3 +157,13 @@ test('site-meta tells when explore and the agenda listing last moved, without ce
  await sync(f,'alice',{cells:[cell(1,1),cell(2,2)],places:[place('p1')]});m=await f.call('alice','site-meta');assert.equal(m.explore.cells,2);assert.equal(m.explore.places,1);assert(m.explore.updated_at>0);
  assert.equal(JSON.stringify(m).includes('hash'),false);assert.equal((await f.call('bob','site-meta')).explore.cells,0,'owner scoped');
 });
+test('mirror: the owner sees how many friends a place is shared with; friends never do; place names for the day timeline',async()=>{
+ const f=fixture();await friends(f);
+ await sync(f,'alice',{places:[place('p1',{visible_to:['bob']}),place('p2',{name:'',lat:44.5}),place('p3',{name:'Sala',lat:44.44,deleted:true})]});
+ const own=await f.call('alice','explore/state');assert.equal(own.places.find(p=>p.id==='p1').seen_by,1);assert.equal(own.places.find(p=>p.id==='p2').seen_by,0);
+ assert.equal(own.places.find(p=>p.id==='p1').first_at,1759000000000);
+ await visibility(f,{ghost:false,grants:[{id:'bob',current:false,ghost:false,history:true}],consent:true});
+ const shared=await f.call('bob','explore/state?owner=alice');assert.equal(shared.places[0].seen_by,undefined,'a friend does not learn who else sees it');
+ const names=await f.call('alice','explore/place-names');assert.equal(names.status,200);assert.deepEqual(names.places,[{lat:44.43,lng:26.09,name:'Parcul Herăstrău'}],'only live places with a name');
+ assert.deepEqual((await f.call('bob','explore/place-names')).places,[],'each account sees only its own');
+});
