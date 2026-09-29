@@ -58,6 +58,9 @@ internal object MusicStats {
         }
     }
 
+    /** Alt cont a intrat pe telefon (MindOwner): ascultările celui dinainte nu trec la el. */
+    suspend fun clearHistory(context: Context) { context.musicStore.edit { it.remove(PLAYS); it.remove(LIBRARY) } }
+
     suspend fun rows(context: Context): List<PlayRow> = HistoryCodec.parse(context.musicStore.data.first()[PLAYS])
 
     /** Ascultările, live (mirror D: ListenMirror le trimite pe zile cu contractul v4). */

@@ -87,9 +87,12 @@ class FocusMonitorService : Service() {
             // Ce a rămas deschis de la un serviciu oprit de Android se închide la ultima clipă văzută.
             if (fresh) try { FocusJournal.closeStale(app) } catch (_: Exception) { }
             if (grownAtStart < 0) grownAtStart = try { app.prefs.focusForest.first().first } catch (_: Exception) { 0 }
+            var lastTouch = 0L
             while (true) {
                 delay(1200)
                 try {
+                    // Jurnalul: „încă în post” la ~20 s, și în deblocare (closeStale închide abia după 90 s de tăcere).
+                    if (System.currentTimeMillis() - lastTouch >= FocusJournal.TOUCH_MS) { lastTouch = System.currentTimeMillis(); FocusJournal.touch(this@FocusMonitorService) }
                     val unlockUntil = app.prefs.focusUnlockUntil.first()
                     if (System.currentTimeMillis() < unlockUntil) continue
 
@@ -109,7 +112,6 @@ class FocusMonitorService : Service() {
                     if (focusAccumMs >= 30_000) {
                         app.prefs.addFocusProgress((focusAccumMs / 1000).toInt())
                         focusAccumMs = 0
-                        FocusJournal.touch(this@FocusMonitorService)
                     }
 
                     val fg = foregroundPackage() ?: continue
@@ -160,9 +162,10 @@ class FocusMonitorService : Service() {
             if (active.isNotEmpty()) {
                 if (FocusJournal.openId(this, "focus") == 0L) {
                     grownAtFocusOpen = app.prefs.focusForest.first().first
+                    FocusJournal.setGrownAtOpen(this, grownAtFocusOpen)
                     val planned = (active.maxOf { it.untilHour * 60 + it.untilMinute } - minNow).coerceAtLeast(0)
                     FocusJournal.ensureOpen(app, "focus", planned, active.map { it.packageName })
-                }
+                } else if (grownAtFocusOpen < 0) grownAtFocusOpen = FocusJournal.grownAtOpen(this) // serviciu repornit
             } else if (FocusJournal.openId(this, "focus") != 0L) {
                 val grownNow = app.prefs.focusForest.first().first
                 FocusJournal.end(app, "focus", "timer", grown = grownAtFocusOpen >= 0 && grownNow > grownAtFocusOpen)

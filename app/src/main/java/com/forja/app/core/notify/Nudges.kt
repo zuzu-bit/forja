@@ -217,7 +217,8 @@ object Nudges {
             val ctx = NudgeContext.entries.firstOrNull { it.name == h.ctx } ?: continue
             val pose = NudgePose.entries.firstOrNull { it.name == h.pose } ?: NudgePose.Talking
             val r = Rendered(h.id, ctx, h.title, h.body, pose, h.private, h.localOnly)
-            Notifier.post(app, r, specFor(ctx, h.notifId))
+            // Ținute peste noapte și date acum: intră și ele în „Ce i-a spus Casca” (la ora la care au plecat).
+            if (Notifier.post(app, r, specFor(ctx, h.notifId))) try { NudgeStore.logPosted(app, r, h.channel, now) } catch (_: Exception) { }
         }
     }
 

@@ -45,6 +45,17 @@ class MindDocsTest {
         assertEquals(listOf("focus", "detox"), sessions.map { it["kind"] })
     }
 
+    @Test fun focusDocCapsAnOrphanedOpenSession() {
+        // Deschisă acum 10 h, planificată 60 min, serviciul oprit de Android după 30 min: nu crește peste plan.
+        val orphan = MindDocs.Session(now - 36_000_000, null, "focus", 60, emptyList(), false, false, emptyMap(), null)
+        var d = MindDocs.focusDoc("2026-09-28", listOf(orphan), null, emptyMap(), now, mapOf("focus" to now - 34_200_000))
+        assertEquals(60, d["focusMin"])
+        // Încă în post (atins acum 10 s), prelungită peste plan: numără până acum.
+        val live = MindDocs.Session(now - 7_200_000, null, "detox", 60, emptyList(), false, false, emptyMap(), null)
+        d = MindDocs.focusDoc("2026-09-28", listOf(live), null, emptyMap(), now, mapOf("detox" to now - 10_000))
+        assertEquals(120, d["detoxMin"])
+    }
+
     @Test fun detoxDocCountsOnlyPacks() {
         val d = MindDocs.detoxDoc("2026-09-28", mapOf("02" to 2, "own" to 1, "zz" to 9), true, true, now - 86_400_000, 1, now)
         assertEquals(3, d["interceptions"]); assertEquals(mapOf("02" to 2, "own" to 1), d["byPack"])

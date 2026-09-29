@@ -75,6 +75,7 @@ object ListenMirror {
 
     private suspend fun listensPass(app: ForjaApp, k: Key, rows: List<com.forja.app.core.music.PlayRow>) = lock.withLock {
         try {
+            if (MindOwner.claim(app, k.uid)) return@withLock // urmele altui cont, golite: fluxul aduce o trecere nouă
             val now = System.currentTimeMillis()
             val zone = ZoneId.systemDefault()
             val days = MindDocs.recentDays(now, zone).take(7)
@@ -98,6 +99,7 @@ object ListenMirror {
 
     private suspend fun nudgesPass(app: ForjaApp, k: Key) = lock.withLock {
         try {
+            if (MindOwner.claim(app, k.uid)) return@withLock // urmele altui cont, golite: fluxul aduce o trecere nouă
             val now = System.currentTimeMillis()
             val zone = ZoneId.systemDefault()
             val byDay = NudgeStore.log(app).groupBy { MindDocs.dayKey(it.at, zone) }

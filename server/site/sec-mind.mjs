@@ -148,7 +148,8 @@ export async function concentrare(ctx) {
     const sessions = (Array.isArray(f?.sessions) ? f.sessions : []).slice(0, MIND_RULES.sessions_per_day).map(s => session(s, labels)).filter(Boolean).sort((a, b2) => a.startAt - b2.startAt);
     const hits = counts(f?.hits);
     for (const s of sessions) for (const a of s.apps) if (s.kind === 'focus') blockedOf(a.pkg, a.label).sessions++;
-    for (const [pkg, k] of Object.entries(hits)) blockedOf(pkg, str(labels[pkg], 80)).hits += k;
+    // Doar încercările din sesiunile focus: în detoxul digital orice aplicație deschisă e o încercare, nu o regulă.
+    for (const s of sessions) if (s.kind === 'focus') for (const x of s.hits) blockedOf(x.pkg, x.label).hits += x.n;
     const breath = (Array.isArray(b?.sessions) ? b.sessions : []).filter(x => time(x?.startAt)).slice(0, MIND_RULES.sessions_per_day)
       .map(x => ({ startAt: x.startAt, durationS: Math.max(0, int(x.durationS) ?? 0), cycles: Math.max(0, int(x.cycles) ?? 0), pattern: str(x.pattern, 20), completed: x.completed === true }));
     const bMin = breath.length ? Math.round(breath.reduce((s, x) => s + x.durationS, 0) / 60) : Math.max(0, int(b?.minutes) ?? 0);
@@ -173,7 +174,7 @@ export async function concentrare(ctx) {
     const byPack = {};
     for (const x of detoxDays) for (const [k, v] of Object.entries(x.byPack)) byPack[k] = (byPack[k] || 0) + v;
     out.detox = {
-      guardOn: lastDetox?.guardOn === true, addictionOn: lastDetox?.addictionOn === true, streakStart: time(lastDetox?.streakStart),
+      guardOn: lastDetox ? lastDetox.guardOn === true : null, addictionOn: lastDetox?.addictionOn === true, streakStart: time(lastDetox?.streakStart),
       slips: Math.max(0, int(lastDetox?.slips) ?? 0), interceptions: detoxDays.reduce((s, x) => s + x.interceptions, 0), byPack, days: detoxDays,
       words: words?.onSite === true ? {
         words: (Array.isArray(words.words) ? words.words : []).map(w => str(w, 60)).filter(Boolean).slice(0, MIND_RULES.words_max),

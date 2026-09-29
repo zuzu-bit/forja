@@ -8,6 +8,7 @@ import com.forja.app.core.focus.MindDocs
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
@@ -55,11 +56,17 @@ object FocusMirror {
             if (uid != null && v4) Key(uid, at) else null
         }.distinctUntilChanged()
 
+        // Stăpânul urmelor de pe telefon (ascultări, Casca, detox, pădure): orice cont care intră le preia sau le golește,
+        // chiar fără contractul v4, ca un cont nou să nu moștenească urmele celui dinainte.
+        app.appScope.launch {
+            try { authUid().collect { uid -> if (uid != null) MindOwner.claim(app, uid) } } catch (_: Exception) { }
+        }
+
         // Zilele: sesiunile, respirația, pădurea, opririle paznicului, seria.
         app.appScope.launch {
             try {
                 val journals = combine(app.db.focusSessionDao().since(since), app.db.breathSessionDao().since(since), app.prefs.focusForestHistory.distinctUntilChanged()) { a, b, c -> Triple(a, b, c) }.distinctUntilChanged()
-                val detox = combine(app.prefs.detoxHits, app.prefs.detoxOn, app.prefs.detoxStreakStart, app.prefs.detoxSlips) { h, on, st, sl -> listOf(h, on, st, sl) }.distinctUntilChanged()
+                val detox = combine(app.prefs.detoxHits, app.prefs.detoxOn, app.prefs.detoxStreakStart, app.prefs.detoxSlips, guardEnabled(app)) { h, on, st, sl, g -> listOf(h, on, st, sl, g) }.distinctUntilChanged()
                 combine(who, journals, detox) { k, _, _ -> k }.collectLatest { k ->
                     if (k == null) return@collectLatest
                     delay(SETTLE_MS)
@@ -94,6 +101,12 @@ object FocusMirror {
 
     private suspend fun daysPass(app: ForjaApp, k: Key) = lock.withLock {
         try {
+            if (MindOwner.claim(app, k.uid)) return@withLock // golite: fluxurile se schimbă și aduc o trecere nouă
+            // Rândurile Room ale altui cont nu pleacă: claim le golește înainte de citire (nu ne bizuim pe SiteMirror).
+            withContext(Dispatchers.IO) { Journals.claim(app, k.uid) }
+            // O sesiune rămasă de la un serviciu oprit de Android se închide aici (la ultima clipă văzută), nu doar la
+            // următoarea pornire a lui Focus.
+            try { com.forja.app.core.focus.FocusJournal.closeStale(app) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
             val now = System.currentTimeMillis()
             val zone = ZoneId.systemDefault()
             val days = MindDocs.recentDays(now, zone)
@@ -106,6 +119,7 @@ object FocusMirror {
             val streak = app.prefs.detoxStreakStart.first()
             val slips = app.prefs.detoxSlips.first()
             val guardOn = ForjaGuardService.isEnabled(app)
+            val seen = listOf("focus", "detox").associateWith { com.forja.app.core.focus.FocusJournal.seen(app, it) }
             val labels = labelsOf(app, sessions.flatMap { MindDocs.parseRules(it.rules) + MindDocs.parseHits(it.blockHits).keys }.toSet())
             val prefix = "${k.uid}:${k.signedAt}"
             for (date in days) {
@@ -115,7 +129,7 @@ object FocusMirror {
                 }
                 val tree = forest[epoch]
                 if (daySessions.isNotEmpty() || (tree != null && (tree.first > 0 || tree.second > 0)))
-                    writeIfChanged(app, "$prefix:focus:$date", k.uid, "focus", date, MindDocs.focusDoc(date, daySessions, tree, labels, now))
+                    writeIfChanged(app, "$prefix:focus:$date", k.uid, "focus", date, MindDocs.focusDoc(date, daySessions, tree, labels, now, seen, com.forja.app.core.focus.FocusJournal.STALE_MS))
                 val dayBreath = breaths.filter { MindDocs.dayKey(it.startAt, zone) == date }.map {
                     MindDocs.Breath(it.startAt, it.endAt, it.pattern, it.cycles, it.durationS, it.completed)
                 }
@@ -131,6 +145,7 @@ object FocusMirror {
 
     private suspend fun wordsPass(app: ForjaApp, k: Key, on: Boolean, words: String, letter: String) = lock.withLock {
         try {
+            if (MindOwner.claim(app, k.uid)) return@withLock
             val key = "${k.uid}:${k.signedAt}:detox:words"
             val ref = FirebaseFirestore.getInstance().collection("users").document(k.uid).collection("detox").document("words")
             if (on && (words.isNotBlank() || letter.isNotBlank())) {
@@ -157,10 +172,48 @@ object FocusMirror {
         try { c.packageManager.getApplicationLabel(c.packageManager.getApplicationInfo(pkg, 0)).toString().take(80) } catch (_: Exception) { pkg }
     }
 
+    /** Paznicul (serviciul de accesibilitate) pornit sau oprit din Setări: o schimbare rescrie detox/{azi}.guardOn. */
+    private fun guardEnabled(c: Context): Flow<Boolean> = callbackFlow {
+        val uri = android.provider.Settings.Secure.getUriFor(android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+        val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) { trySend(ForjaGuardService.isEnabled(c)) }
+        }
+        c.contentResolver.registerContentObserver(uri, false, observer)
+        trySend(ForjaGuardService.isEnabled(c))
+        awaitClose { c.contentResolver.unregisterContentObserver(observer) }
+    }.distinctUntilChanged()
+
     private fun authUid(): Flow<String?> = callbackFlow {
         val auth = FirebaseAuth.getInstance()
         val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser?.uid) }
         auth.addAuthStateListener(listener)
         awaitClose { auth.removeAuthStateListener(listener) }
     }.distinctUntilChanged()
+}
+
+/**
+ * Al cui cont sunt urmele minții ținute pe telefon, fără ownerUid (ca Journals pentru Room): ascultările (MusicStats),
+ * jurnalul Căștii (NudgeStore), opririle paznicului, pădurea pe zile, seria, cuvintele și scrisoarea (Prefs).
+ * Primul cont știut le preia (instalările vechi: contul conectat acum); alt cont care intră le golește înainte ca vreo
+ * oglindă să le citească. Întoarce true dacă a golit.
+ */
+internal object MindOwner {
+    private const val FILE = "forja_mind_owner"
+    private const val KEY = "owner"
+    private val lock = Mutex()
+
+    suspend fun claim(app: ForjaApp, uid: String): Boolean = lock.withLock {
+        val p = app.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+        val previous = p.getString(KEY, null)
+        if (previous == uid) return@withLock false
+        val foreign = previous != null
+        if (foreign) withContext(NonCancellable + Dispatchers.IO) {
+            try { com.forja.app.core.music.MusicStats.clearHistory(app) } catch (_: Exception) { }
+            try { com.forja.app.core.notify.NudgeStore.clearLog(app) } catch (_: Exception) { }
+            try { app.prefs.clearMindTraces() } catch (_: Exception) { }
+            try { app.getSharedPreferences("forja_mind_mirror", Context.MODE_PRIVATE).edit().clear().apply() } catch (_: Exception) { }
+        }
+        p.edit().putString(KEY, uid).commit()
+        foreign
+    }
 }

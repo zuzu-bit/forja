@@ -72,7 +72,10 @@ export async function applyUsageRollup(storage, sessionId, data, now = Date.now(
       if (!ms && !opens) continue;
       const self = isSelfApp(a.package);
       const lastUsed = Number.isFinite(a.last_used) ? Math.min(end, Math.max(start, a.last_used)) : end;
-      const pieces = splitByHour(start, Math.max(lastUsed, start + 1));
+      // Timpul nou al aplicației stă cel mult în [ultima folosire − ms, ultima folosire]: un gol lung între fotografii
+      // (telefon offline, Doze, repornire) nu se întinde pe toată noaptea și nu mută „prima dată” la 00:00.
+      const from = Math.max(start, lastUsed - ms);
+      const pieces = splitByHour(from, Math.max(lastUsed, from + 1));
       const total = pieces.reduce((n, p) => n + p.ms, 0) || 1;
       for (const p of pieces) {
         const share = Math.round(ms * p.ms / total);
@@ -110,7 +113,11 @@ export async function applyUsageRollup(storage, sessionId, data, now = Date.now(
       writes[DAY_PREFIX + d.date] = {
         date: d.date, updated_at: now, source: 'day', firstAt: d.first_at || null, lastAt: d.last_at || null,
         hours: Array.isArray(d.hours) && d.hours.length === 24 ? d.hours.map(x => Math.max(0, Math.round(x) || 0)) : null,
-        apps: Object.fromEntries(d.apps.filter(a => a.foreground_ms > 0 || a.opens > 0).map(a => [a.package, { label: a.label, ms: a.foreground_ms, opens: a.opens }])),
+        // „ultima” pe aplicație: cea trimisă de telefon (last_used) sau, altfel, cea din rândul live înlocuit.
+        apps: Object.fromEntries(d.apps.filter(a => a.foreground_ms > 0 || a.opens > 0).map(a => [a.package, {
+          label: a.label, ms: a.foreground_ms, opens: a.opens,
+          ...((Number.isFinite(a.last_used) ? a.last_used : cur?.apps?.[a.package]?.lastAt) ? { lastAt: Number.isFinite(a.last_used) ? a.last_used : cur.apps[a.package].lastAt } : {}),
+        }])),
       };
     }
   }

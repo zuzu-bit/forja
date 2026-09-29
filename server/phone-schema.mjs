@@ -54,10 +54,11 @@ function validateUsageBackfill(days) {
     for (const x of d.hours) n(x, 0, 2 * 3600000);
     rows(d.apps, BACKFILL_RULES.apps);
     for (const p of d.apps) {
-      keys(p, ['package', 'label', 'foreground_ms', 'opens']);
+      keys(p, ['package', 'label', 'foreground_ms', 'opens', 'last_used'], ['package', 'label', 'foreground_ms', 'opens']);
       if (typeof p.package !== 'string' || !/^[A-Za-z0-9_.]{1,200}$/.test(p.package) ||
           typeof p.label !== 'string' || p.label.length > 200) bad('Invalid app name');
       n(p.foreground_ms, 0, BACKFILL_RULES.day_ms); n(p.opens, 0, 100000);
+      if (p.last_used !== undefined) n(p.last_used);
     }
   }
 }

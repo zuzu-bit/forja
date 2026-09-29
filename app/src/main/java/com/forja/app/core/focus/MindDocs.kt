@@ -82,9 +82,19 @@ object MindDocs {
         val grown: Boolean, val withered: Boolean, val hits: Map<String, Int>, val endedBy: String?
     )
 
-    fun focusDoc(date: String, sessions: List<Session>, forest: Pair<Int, Int>?, labels: Map<String, String>, now: Long): Map<String, Any?> {
+    /**
+     * `seen`: pe fel, ultima clipă în care serviciul a atins jurnalul. O sesiune încă deschisă numără cel mult până la
+     * max(capătul planificat, seen + [staleMs]) — una rămasă de la un serviciu oprit de Android nu crește la nesfârșit.
+     */
+    fun focusDoc(date: String, sessions: List<Session>, forest: Pair<Int, Int>?, labels: Map<String, String>, now: Long,
+                 seen: Map<String, Long> = emptyMap(), staleMs: Long = 90_000L): Map<String, Any?> {
         val list = sessions.sortedBy { it.startAt }.take(SESSIONS_PER_DAY)
-        fun minutes(kind: String) = list.filter { it.kind == kind }.sumOf { (((it.endAt ?: now) - it.startAt).coerceAtLeast(0) / 60_000L).toInt() }
+        fun openEnd(s: Session): Long {
+            val planned = if (s.plannedMin > 0) s.startAt + s.plannedMin * 60_000L else s.startAt
+            val alive = seen[s.kind]?.takeIf { it > 0 }?.let { it + staleMs } ?: now
+            return minOf(now, maxOf(planned, alive))
+        }
+        fun minutes(kind: String) = list.filter { it.kind == kind }.sumOf { (((it.endAt ?: openEnd(it)) - it.startAt).coerceAtLeast(0) / 60_000L).toInt() }
         val hits = HashMap<String, Int>()
         for (s in list) for ((p, n) in s.hits) hits[p] = (hits[p] ?: 0) + n
         val pkgs = (list.flatMap { it.rules } + hits.keys).toSet()

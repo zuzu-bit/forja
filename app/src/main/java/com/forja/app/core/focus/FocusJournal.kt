@@ -14,7 +14,9 @@ import kotlinx.coroutines.sync.withLock
  */
 object FocusJournal {
     private const val FILE = "forja_focus_journal"
-    private const val STALE_MS = 15_000L
+    /** Serviciul atinge jurnalul la ~20 s ([TOUCH_MS]); după 90 s fără atingere sesiunea e a unui serviciu oprit. */
+    const val STALE_MS = 90_000L
+    const val TOUCH_MS = 20_000L
     private val lock = Mutex()
 
     private fun prefs(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -40,6 +42,13 @@ object FocusJournal {
         val s = app.db.focusSessionDao().byId(id) ?: return@withLock
         app.db.focusSessionDao().update(s.copy(blockHits = MindDocs.addHit(s.blockHits, pkg)))
     }
+
+    /** Ultima clipă văzută a sesiunii `kind` deschise (0 = niciuna). */
+    fun seen(c: Context, kind: String): Long = prefs(c).getLong("seen_$kind", 0L)
+
+    /** Copacii crescuți când s-a deschis sesiunea focus (supraviețuiește repornirii serviciului), -1 = necunoscut. */
+    fun grownAtOpen(c: Context): Int = prefs(c).getInt("grown_focus", -1)
+    fun setGrownAtOpen(c: Context, v: Int) { prefs(c).edit().putInt("grown_focus", v).apply() }
 
     /** Serviciul e încă în post: ultima clipă văzută (pentru închiderea „system” după o oprire bruscă). */
     fun touch(c: Context) {

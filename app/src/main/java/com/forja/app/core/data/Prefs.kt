@@ -323,6 +323,12 @@ class Prefs(private val context: Context) {
     val detoxWords: Flow<String> = context.dataStore.data.map { it[K.detoxWords] ?: "" }
     suspend fun setDetoxWords(v: String) = context.dataStore.edit { it[K.detoxWords] = v }
 
+    /** Alt cont a intrat pe telefon (MindOwner): urmele detoxului și ale pădurii celui dinainte nu trec la el. */
+    suspend fun clearMindTraces() = context.dataStore.edit {
+        it.remove(K.detoxHits); it.remove(K.focusForestHistory); it.remove(K.detoxStreakStart); it.remove(K.detoxSlips)
+        it.remove(K.detoxWords); it.remove(K.detoxLetter); it.remove(K.detoxWordsOnSite)
+    }
+
     // ── Prieteni din agendă (ca la Telegram) ──
     /** Numărul MEU, declarat de mine în format E.164 (+407…). Pleacă doar ca antet `x-forja-phone-declared`; serverul ține o amprentă. */
     val phoneDeclared: Flow<String> = context.dataStore.data.map { it[K.phoneDeclared] ?: "" }

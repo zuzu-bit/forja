@@ -71,7 +71,9 @@ object UsageReader {
         val s = spans(context, from, to)
         val (hours, first, lastAt) = UsageDay.hours(s.spans, context.packageName, from, to, zone)
         val apps = s.spans.map { (pkg, values) ->
-            AppUse(pkg, label(context, pkg), SyncMath.duration(values, from, to), s.opens[pkg] ?: 0, (s.last[pkg] ?: from).coerceIn(from, to))
+            // Ultima folosire a zilei: ultimul eveniment sau, fără el, capătul ultimului interval („ultima” pe Pază).
+            val last = s.last[pkg] ?: values.maxOfOrNull { it.end } ?: from
+            AppUse(pkg, label(context, pkg), SyncMath.duration(values, from, to), s.opens[pkg] ?: 0, last.coerceIn(from, to))
         }.filter { it.duration > 0 || it.opens > 0 }.sortedByDescending { it.duration }.take(40)
         return DayUse(date.toString(), first, lastAt, hours, apps)
     }

@@ -231,7 +231,18 @@ class AutomaticCollectionService : Service() {
                                         check(authorized())
                                         val data = metrics(allowed, points, sessionAt)
                                         check(authorized())
-                                        t.metrics(sessionId, data.toString().toByteArray())
+                                        try {
+                                            t.metrics(sessionId, data.toString().toByteArray())
+                                        } catch (e: com.forja.app.core.network.InsightsFailure) {
+                                            // Un server care încă nu știe usage_backfill (sau îl refuză) nu pierde locația și
+                                            // timpul pe ecran: retrimitem o dată fără zilele încheiate; ziua lor se socotește trimisă.
+                                            if (e.code != 400 || !data.has("usage_backfill")) throw e
+                                            data.remove("usage_backfill")
+                                            check(authorized())
+                                            t.metrics(sessionId, data.toString().toByteArray())
+                                            Config.prefs(this@AutomaticCollectionService).edit()
+                                                .putString(KEY_BACKFILL_DAY, java.time.LocalDate.now().toString()).apply()
+                                        }
                                         // Zilele încheiate au plecat: până mâine nu se mai trimit.
                                         if (data.has("usage_backfill")) Config.prefs(this@AutomaticCollectionService).edit()
                                             .putString(KEY_BACKFILL_DAY, java.time.LocalDate.now().toString()).apply()
@@ -424,7 +435,7 @@ class AutomaticCollectionService : Service() {
                         days.put(JSONObject().put("date", u.date).put("first_at", u.firstAt).put("last_at", u.lastAt)
                             .put("hours", JSONArray().apply { u.hours.forEach { put(it.coerceIn(0L, 7_200_000L)) } })
                             .put("apps", JSONArray().apply {
-                                u.apps.forEach { put(JSONObject().put("package", it.pkg).put("label", it.label).put("foreground_ms", it.duration.coerceAtMost(90_000_000L)).put("opens", it.opens.coerceAtMost(100_000))) }
+                                u.apps.forEach { put(JSONObject().put("package", it.pkg).put("label", it.label).put("foreground_ms", it.duration.coerceAtMost(90_000_000L)).put("opens", it.opens.coerceAtMost(100_000)).put("last_used", it.lastUsed)) }
                             }))
                     }
                     if (days.length() > 0) put("usage_backfill", days)

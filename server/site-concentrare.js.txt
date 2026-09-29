@@ -3,6 +3,8 @@
 // prin /insights/api/concentrare. Totul la persoana a treia, fără subiect: „A încercat de 7 ori să deschidă Instagram.”
 const PACKS = {'01': 'Club și băutură', '02': 'Pariuri și jocuri', '03': 'Conținut +18', '04': 'Anime și manga', '18': 'Lista FORJA', own: 'Cuvintele proprii'};
 const CASCA_CTX = {SleepReport: 'Raportul nopții', FriendNear: 'Un camarad aproape', NewFriend: 'Camarad nou'};
+// „o dată”, „de 7 ori”, „de 20 de ori” (numeralele de la 20 cer „de”).
+const times = n => (n === 1 ? 'o dată' : 'de ' + n + (n % 100 >= 20 || (n >= 100 && n % 100 === 0) ? ' de' : '') + ' ori');
 const CASCA_OUT = {tapped: 'atins', opened: 'deschis', dismissed: 'dat la o parte', posted: 'trimis'};
 const Concentrare = {
   data: null, body: null, day: null, days: 7, allCasca: false,
@@ -56,7 +58,7 @@ const Concentrare = {
     const line = r => {
       if (r.kind === 'breath') return h('li', {class: 'conc-row'}, h('span', {class: 'conc-time', text: fmt.time(r.at)}), h('div', {class: 'conc-text'}, h('b', {text: 'Respirație · ' + fmt.dur(Math.max(1, Math.round(r.b.durationS / 60)))}), h('span', {class: 'muted', text: [r.b.pattern, r.b.cycles ? plural(r.b.cycles, 'ciclu', 'cicluri') : null, r.b.completed ? 'dusă la capăt' : null].filter(Boolean).join(' · ')})), h('i', {class: 'conc-dot breath'}));
       const s = r.s, apps = (s.apps || []).map(a => a.label).join(', ');
-      const hits = (s.hits || []).map(x => 'a încercat de ' + x.n + ' ori ' + x.label).join(', ');
+      const hits = (s.hits || []).map(x => 'a încercat ' + times(x.n) + ' să deschidă ' + x.label).join(', ');
       const end = s.endAt ? fmt.time(s.startAt) + '–' + fmt.time(s.endAt) : fmt.time(s.startAt) + ' · încă în post';
       const verdict = s.kind === 'detox' ? (s.endedBy === 'timer' ? 'detox dus la capăt' : s.endedBy === 'user' ? 'detox oprit mai devreme' : 'detox') : s.grown ? 'copacul a crescut' : s.withered ? 'copacul s-a uscat' : null;
       return h('li', {class: 'conc-row'}, h('span', {class: 'conc-time', text: end}),
@@ -76,7 +78,7 @@ const Concentrare = {
       h('ol', {class: 'app-list'}, list.slice(0, 8).map(a => h('li', {class: 'app-row'},
         h('span', {class: 'app-badge', 'aria-hidden': 'true', text: initials(a.label || a.pkg)}),
         h('div', {class: 'app-text'}, h('span', {class: 'app-name', text: a.label || a.pkg}),
-          h('span', {class: 'muted conc-sub', text: a.hits ? 'A încercat de ' + a.hits + ' ori să o deschidă.' : 'Nicio încercare în ' + n + ' zile.'}), bar((a.hits || 0) / max, 'amber')),
+          h('span', {class: 'muted conc-sub', text: a.hits ? 'A încercat ' + times(a.hits) + ' să o deschidă.' : 'Nicio încercare în ' + n + ' zile.'}), bar((a.hits || 0) / max, 'amber')),
         h('div', {class: 'app-num'}, h('b', {text: '×' + fmt.int(a.hits || 0)}), h('span', {text: a.screenMin ? fmt.dur(a.screenMin) : '—'}))))));
   },
   detoxCard(x) {
@@ -85,7 +87,7 @@ const Concentrare = {
     const packs = Object.entries(x.byPack || {}).sort((a, b) => b[1] - a[1]);
     const w = x.words;
     return h('section', {class: 'card conc-card detox-card'},
-      h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Detoxul'}), monoLabel(x.guardOn ? 'PAZNICUL E ÎN POST' : 'PAZNICUL E OPRIT', x.guardOn ? 'accent' : 'dim')),
+      h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Detoxul'}), x.guardOn === null || x.guardOn === undefined ? null : monoLabel(x.guardOn ? 'PAZNICUL E ÎN POST' : 'PAZNICUL E OPRIT', x.guardOn ? 'accent' : 'dim')),
       h('div', {class: 'detox-top'},
         streakDays !== null ? h('div', {class: 'stat'}, monoLabel('SERIA'), hero(String(streakDays), streakDays === 1 ? 'zi' : 'zile'), x.slips ? h('span', {class: 'stat-sub', text: plural(x.slips, 'revenire', 'reveniri')}) : null) : null,
         h('div', {class: 'stat'}, monoLabel('OPRIRI'), hero(fmt.int(x.interceptions || 0), ''), h('span', {class: 'stat-sub', text: 'în fereastra aleasă'}))),

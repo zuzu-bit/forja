@@ -32,19 +32,19 @@ test('usage rollup: cumulative snapshots become per-day minutes, split at local 
   const from = midnight - HOUR;
   await applyUsageRollup(s, 'sess', snap(from, midnight + 30 * MIN, [['com.instagram.android', 40 * MIN, 6, midnight - 10 * MIN], ['com.spotify.music', 20 * MIN, 2]]), NOW);
   let d = await usageDays(s, 7, NOW);
-  // Spotify was used until 00:30: its 20 min spread over 23:00–00:30 → 13 min yesterday, 7 min today (+ its 2 opens today).
-  assert.deepEqual(d.days.map(x => [x.date, x.totalMin]), [['2026-09-28', 7], ['2026-09-27', 53]]);
-  assert.deepEqual(d.days[1].apps.map(a => [a.pkg, a.minutes, a.opens]), [['com.instagram.android', 40, 6], ['com.spotify.music', 13, 0]]);
+  // Spotify was used until 00:30: its 20 min sit right before the last use (00:10–00:30) → all today, with its 2 opens.
+  assert.deepEqual(d.days.map(x => [x.date, x.totalMin]), [['2026-09-28', 20], ['2026-09-27', 40]]);
+  assert.deepEqual(d.days[1].apps.map(a => [a.pkg, a.minutes, a.opens]), [['com.instagram.android', 40, 6]]);
   // Next snapshot: only the difference counts, all of it after midnight.
   await applyUsageRollup(s, 'sess', snap(from, midnight + 90 * MIN, [['com.instagram.android', 55 * MIN, 8], ['com.spotify.music', 20 * MIN, 2]]), NOW);
   d = await usageDays(s, 7, NOW);
-  assert.deepEqual(d.days[0].apps.map(a => [a.pkg, a.minutes, a.opens]), [['com.instagram.android', 15, 2], ['com.spotify.music', 7, 2]]);
+  assert.deepEqual(d.days[0].apps.map(a => [a.pkg, a.minutes, a.opens]), [['com.spotify.music', 20, 2], ['com.instagram.android', 15, 2]]);
   assert.equal(d.updated_at, NOW);
   // A retry of an older snapshot changes nothing; another phone (session) adds its own time.
   await applyUsageRollup(s, 'sess', snap(from, midnight + 60 * MIN, [['com.instagram.android', 99 * MIN, 50]]), NOW);
   await applyUsageRollup(s, 'phone2', snap(midnight + 2 * HOUR, midnight + 3 * HOUR, [['com.instagram.android', 10 * MIN, 1]]), NOW);
   d = await usageDays(s, 7, NOW);
-  assert.equal(d.days[0].apps[0].minutes, 25);
+  assert.equal(d.days[0].apps.find(a => a.pkg === 'com.instagram.android').minutes, 25);
   // 14 days kept.
   for (let i = 1; i <= 20; i++) await applyUsageRollup(s, 'old' + i, snap(NOW - i * DAY - HOUR, NOW - i * DAY, [['a.b', 10 * MIN, 1]]), NOW);
   const all = [...(await s.list({ prefix: 'usage-day:' })).keys()].sort();
@@ -85,7 +85,7 @@ test('paza: the session upload feeds the rollup; the site reads the last 7 days'
   const r = await f.call('/insights/api/paza');
   assert.equal(r.status, 200);
   const hours = Array(24).fill(0); hours[13] = 30; hours[14] = 15;
-  assert.deepEqual(r.body, { updated_at: NOW, window: 7, contract: true, days: [{ date: '2026-09-28', totalMin: 45, forjaMin: 0, firstAt: NOW - 2 * HOUR, lastAt: NOW - 30 * MIN - 1000, hours, source: 'live',
+  assert.deepEqual(r.body, { updated_at: NOW, window: 7, contract: true, days: [{ date: '2026-09-28', totalMin: 45, forjaMin: 0, firstAt: NOW - 90 * MIN - 1000, lastAt: NOW - 30 * MIN - 1000, hours, source: 'live',
     apps: [{ label: 'Instagram', pkg: 'com.instagram.android', minutes: 45, opens: 5, lastAt: NOW - 30 * MIN - 1000 }] }] });
   assert.deepEqual((await f.call('/insights/api/paza', { uid: 'nou' })).body, { updated_at: null, days: [], window: 7, contract: false });
   // The session delete also forgets its snapshot; the rollup (its own 14-day history) stays.
@@ -106,14 +106,26 @@ test('usage rollup: 24 hourly buckets, first and last use of the day, FORJA kept
   assert.equal(d.totalMin, 20); assert.equal(d.forjaMin, 10);
   assert.equal(d.hours[7], 20, 'FORJA is not in the hours');
   assert.equal(d.hours.reduce((a, b) => a + b, 0), 20);
-  assert.equal(d.firstAt, midnight + 7 * HOUR + 10 * MIN); assert.equal(d.lastAt, midnight + 7 * HOUR + 40 * MIN);
+  assert.equal(d.firstAt, midnight + 7 * HOUR + 20 * MIN, '20 min ending at 07:40'); assert.equal(d.lastAt, midnight + 7 * HOUR + 40 * MIN);
   assert.deepEqual(d.apps.map(a => [a.pkg, a.minutes, !!a.self]), [['com.whatsapp', 20, false], ['com.forja.app.research', 10, true]]);
   // A window that crosses 08:00 splits between the two hours, in proportion.
   await applyUsageRollup(s, 'a', snapAt(midnight + 7 * HOUR + 10 * MIN, midnight + 8 * HOUR + 20 * MIN, [['com.whatsapp', 50 * MIN, 4], ['com.forja.app.research', 10 * MIN, 2]]), NOW);
   d = (await usageDays(s, 7, NOW)).days[0];
-  assert.deepEqual([d.hours[7], d.hours[8]], [20 + 15, 15], '30 min between 07:40 and 08:20: half in each hour');
+  assert.deepEqual([d.hours[7], d.hours[8]], [20 + 10, 20], '30 min ending at 08:20: 07:50–08:20');
   assert.equal(d.lastAt, midnight + 8 * HOUR + 20 * MIN);
   assert.equal(d.apps[0].lastAt, midnight + 8 * HOUR + 20 * MIN);
+});
+
+test('usage rollup: a 7 h gap between snapshots does not smear one minute of use over the night', async () => {
+  const s = new Storage(), midnight = localMidnight(NOW);
+  const at = (h, m = 0) => midnight + h * HOUR + m * MIN;
+  await applyUsageRollup(s, 'a', snapAt(at(-1, 0), at(-1, 40), [['com.whatsapp', 5 * MIN, 1]]), NOW);
+  // Offline / Doze from 23:40 to 07:16; she used WhatsApp for 60 s, last at 07:15.
+  await applyUsageRollup(s, 'a', snapAt(at(-1, 0), at(7, 16), [['com.whatsapp', 6 * MIN, 2, at(7, 15)]]), NOW);
+  const days = (await usageDays(s, 7, NOW)).days, today = days[0], yesterday = days[1];
+  assert.equal(today.firstAt, at(7, 14), 'the first use is 07:14, not 00:00');
+  assert.equal(today.hours[7], 1); assert.equal(today.hours.reduce((a, b) => a + b, 0), 1);
+  assert.equal(yesterday.totalMin, 5, 'nothing of the morning lands in yesterday');
 });
 
 test('usage backfill: whole past days fill gaps, never lower a live day, never touch today or days past 14', async t => {
@@ -131,6 +143,16 @@ test('usage backfill: whole past days fill gaps, never lower a live day, never t
   await applyUsageRollup(s, 'sess', { ...snapAt(NOW - 10 * MIN, NOW, [['com.x', MIN, 1]]), usage_backfill: [day(1, [['com.instagram.android', 25 * MIN, 8]])] }, NOW);
   assert.equal((await usageDays(s, 14, NOW)).days[1].totalMin, 25);
   async function storage2(st, date, min) { await st.put('usage-day:' + date, { date, updated_at: NOW - DAY, apps: { 'com.live': { label: 'Live', ms: min * MIN, opens: 1 } } }); }
+});
+
+test('usage backfill: each app keeps its last use (sent by the phone, or kept from the live row it replaces)', async () => {
+  const s = new Storage(), date = localDate(NOW - DAY);
+  await s.put('usage-day:' + date, { date, updated_at: NOW - DAY, apps: { 'com.a': { label: 'A', ms: MIN, opens: 1, lastAt: NOW - DAY + 1000 } } });
+  const hours = Array(24).fill(0);
+  await applyUsageRollup(s, 'sess', { ...snapAt(NOW - MIN, NOW, []), usage_backfill: [{ date, first_at: NOW - DAY - HOUR, last_at: NOW - DAY + 2000, hours, apps: [
+    { package: 'com.a', label: 'A', foreground_ms: 5 * MIN, opens: 2 }, { package: 'com.b', label: 'B', foreground_ms: 4 * MIN, opens: 1, last_used: NOW - DAY + 2000 }] }] }, NOW);
+  const apps = (await usageDays(s, 7, NOW)).days[0].apps;
+  assert.deepEqual(apps.map(a => [a.pkg, a.lastAt]), [['com.a', NOW - DAY + 1000], ['com.b', NOW - DAY + 2000]]);
 });
 
 test('usage backfill: the phone schema accepts whole days and refuses malformed ones', async t => {
@@ -208,7 +230,8 @@ test('concentrare: forest per day, sessions, blocked apps crossed with screen ti
   const [s1, s2] = b.days[0].sessions;
   assert.deepEqual([s1.kind, s1.minutes, s1.grown, s1.endedBy, s1.apps.map(a => a.label), s1.hits], ['focus', 50, true, 'timer', ['Instagram', 'TikTok'], [{ pkg: 'com.instagram.android', label: 'Instagram', n: 7 }]]);
   assert.deepEqual([s2.kind, s2.withered, s2.endedBy], ['detox', true, 'user']);
-  assert.deepEqual(b.blocked.map(x => [x.label, x.hits, x.sessions, x.screenMin]), [['Instagram', 7, 1, 40], ['TikTok', 2, 1, 0]]);
+  // TikTok's 2 attempts were during a digital detox (every app is paused): they are not attempts against a Focus rule.
+  assert.deepEqual(b.blocked.map(x => [x.label, x.hits, x.sessions, x.screenMin]), [['Instagram', 7, 1, 40], ['TikTok', 0, 1, 0]]);
   assert.deepEqual(b.breath, { minutes: 4, sessions: 1 });
   assert.deepEqual(b.days[1].breath, [{ startAt: NOW - DAY, durationS: 240, cycles: 15, pattern: '4-4-4-4', completed: true }]);
   assert.deepEqual([b.detox.guardOn, b.detox.streakStart, b.detox.slips, b.detox.interceptions, b.detox.byPack], [true, NOW - 4 * DAY, 1, 6, { '03': 3, own: 2, '02': 1 }]);
@@ -222,6 +245,11 @@ test('concentrare: forest per day, sessions, blocked apps crossed with screen ti
   assert.equal((await f.call('/insights/api/concentrare')).body.detox.words, null);
   f.fs.set('users/alice/detox/words', { onSite: true, words: ['pariu', 'cazino'], packs: ['02', 'xx'], letter: 'Pentru mine.', updatedAt: NOW - HOUR });
   assert.deepEqual((await f.call('/insights/api/concentrare')).body.detox.words, { words: ['pariu', 'cazino'], packs: ['02'], letter: 'Pentru mine.', updatedAt: NOW - HOUR });
+  // Only the words, no detox day: the guard state is unknown (null), not "off".
+  const g = fixture();
+  g.fs.set('users/alice', { contract: SIGNED4 });
+  g.fs.set('users/alice/detox/words', { onSite: true, words: ['pariu'], updatedAt: NOW - HOUR });
+  assert.equal((await g.call('/insights/api/concentrare')).body.detox.guardOn, null);
   // Revoked: nothing.
   f.fs.set('users/alice', { contract: { ...SIGNED4, revokedAt: NOW - MIN } });
   assert.deepEqual((await f.call('/insights/api/concentrare')).body.days, []);

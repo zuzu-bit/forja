@@ -140,6 +140,9 @@ internal object NudgeStore {
 
     fun log(c: Context): List<LogRec> = synchronized(lock) { logUnlocked(c) }
 
+    /** Alt cont a intrat pe telefon (MindOwner): jurnalul Căștii celui dinainte nu trece la el. */
+    fun clearLog(c: Context) = synchronized(lock) { try { prefs(c).edit().remove(KEY_LOG).apply() } catch (_: Exception) { } }
+
     fun logPosted(c: Context, r: Rendered, channel: String, now: Long) = synchronized(lock) {
         val hidden = r.private || r.localOnly
         writeLog(c, logUnlocked(c) + LogRec(now, r.id, r.context.name, channel, if (hidden) null else r.title, if (hidden) null else r.body, hidden))

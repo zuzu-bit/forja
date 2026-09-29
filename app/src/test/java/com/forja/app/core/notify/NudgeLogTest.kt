@@ -29,5 +29,8 @@ class NudgeLogTest {
         assertFalse(NudgeStore.prefs(c).all.values.joinToString().contains("dormit"))
         assertEquals(listOf("dismissed", "tapped"), log.map { it.outcome })
         assertEquals("Postul s-a încheiat.", log[1].title)
+        // Alt cont intră pe telefon (MindOwner): jurnalul celui dinainte se golește.
+        NudgeStore.clearLog(c)
+        assertEquals(emptyList<NudgeStore.LogRec>(), NudgeStore.log(c))
     }
 }
