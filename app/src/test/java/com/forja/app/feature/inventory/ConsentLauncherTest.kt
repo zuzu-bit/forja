@@ -96,6 +96,10 @@ class ConsentLauncherTest {
 
     private fun start(entry: LifecycleOwner? = null, coverMs: Long = 60_000L) {
         controller = Robolectric.buildActivity(ComponentActivity::class.java).setup()
+        compose(entry, coverMs)
+    }
+
+    private fun compose(entry: LifecycleOwner? = null, coverMs: Long = 60_000L) {
         controller.get().setContent {
             val locals = listOfNotNull(LocalActivityResultRegistryOwner provides owner, entry?.let { LocalLifecycleOwner provides it })
             CompositionLocalProvider(*locals.toTypedArray()) {
@@ -103,6 +107,15 @@ class ConsentLauncherTest {
             }
         }
         settle()
+    }
+
+    /**
+     * Activitate recreată cât dialogul e deschis (mod întunecat, font): ca pe telefon, cea nouă revine la pauză, iar
+     * ecranul se compune abia după aceea — observatorul nou nu vede nicio pauză. ViewModel-ul (poarta) rămâne.
+     */
+    private fun recreate(coverMs: Long) {
+        controller.recreate()
+        compose(coverMs = coverMs)
     }
 
     /** Cadre, efecte și mesaje, până se liniștește Looper-ul principal. */
@@ -238,5 +251,35 @@ class ConsentLauncherTest {
         assertEquals(2, registry.launches.size)
         answerLast(Activity.RESULT_OK)
         assertEquals(listOf("YES"), out)
+    }
+
+    @Test fun launchAdoptedAfterRecreateIsDeclaredLostWithoutAResult() {
+        start()
+        scope.launch { gate.ask(sender(), Kind.WRITE) }
+        settle()
+        assertEquals(1, registry.launches.size)
+        controller.pause(); settle()                          // dialogul acoperă ecranul
+        recreate(coverMs = 150)                               // activitate nouă, tot în pauză; efectul găsește cererea lansată
+        assertEquals("nu se lansează încă o dată", 1, registry.launches.size)
+        controller.resume(); settle()                         // dialogul s-a închis, iar rezultatul lui s-a pierdut
+        // Fără urmărire, pagina rămânea în „AȘTEPT ACORDUL TĂU”, fără butoane și cu „înapoi” oprit.
+        waitUntil("pierdut după recreare") { events.contains("missing:0:recreate") && registry.launches.size == 2 }
+        assertTrue(events.any { it.startsWith("trace:W_ADOPT:") })
+    }
+
+    @Test fun launchAdoptedAfterRecreateGetsItsResult() {
+        start()
+        val out = mutableListOf<String>()
+        scope.launch { out += gate.ask(sender(), Kind.WRITE).name }
+        settle()
+        controller.pause(); settle()
+        recreate(coverMs = 150)
+        // Ca pe telefon: rezultatul ajunge la activitatea nouă înainte de onResume.
+        registry.dispatchResult(registry.launches.last().first, Activity.RESULT_OK, null)
+        controller.resume(); settle()
+        Thread.sleep(400); settle()                           // peste plasa de 150 ms: nimic nu se declară pierdut
+        assertEquals(listOf("YES"), out)
+        assertTrue(events.none { it.startsWith("missing") })
+        assertEquals(1, registry.launches.size)
     }
 }

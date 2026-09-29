@@ -43,13 +43,16 @@ internal typealias ConsentTrace = (rung: String, result: DiagResult, ms: Long, n
  *   un dialog nou nu pornește cât cel vechi încă acoperă ecranul). Ruta din NavHost poate sta STARTED cât Navigation
  *   crede că rulează o tranziție: 4.4 aștepta ruta și putea aștepta la nesfârșit.
  * - **O lansare pe încercare.** Efectul are cheia (id, încercare); o încercare deja lansată (ecran recreat cât dialogul
- *   e deschis) nu se mai lansează: rezultatul vine singur, lansatorul are aceeași cheie salvată. După așteptarea
- *   porții, cererea se verifică din nou: una care a primit între timp răspuns nu mai deschide încă un dialog.
+ *   e deschis) nu se mai lansează: rezultatul vine singur, lansatorul are aceeași cheie salvată. Dar e urmărită: cu
+ *   activitatea în față [CONSENT_COVER_MS] și cererea neschimbată, rezultatul ei s-a pierdut → `onMissing(…, "recreate")`
+ *   (altfel pagina rămânea în „AȘTEPT ACORDUL TĂU” fără butoane). După așteptarea porții, cererea se verifică din nou:
+ *   una care a primit între timp răspuns nu mai deschide încă un dialog.
  * - **Plasa.** Dialogul acoperă ecranul în câteva sute de ms; activitatea încă RESUMED după [CONSENT_COVER_MS] = n-a
  *   apărut → `onMissing(…, "timeout")`. O lansare care aruncă → `"launch"`.
  * - **Revenire fără răspuns.** Android livrează rezultatul ÎNAINTE de onResume: o încercare lansată, acoperită de
  *   dialog și tot fără răspuns la revenire și-a pierdut rezultatul → `onMissing(…, "resume")`. Un observator nou
- *   primește la înregistrare doar CREATE/START/RESUME, niciodată PAUSE: după o recreare nu declară nimic pierdut.
+ *   primește la înregistrare doar CREATE/START/RESUME, niciodată PAUSE: după o recreare nu declară nimic pierdut (asta
+ *   o face efectul, pentru încercarea lansată de compunerea veche).
  */
 @Composable
 internal fun ConsentLauncher(
@@ -80,7 +83,29 @@ internal fun ConsentLauncher(
     LaunchedEffect(key?.id, key?.attempt) {
         val c = consent.value ?: return@LaunchedEffect
         if (c.id != key?.id || c.attempt != key.attempt) return@LaunchedEffect   // depășită: rulează cheia următoare
-        if (c.launched || c.stuck) return@LaunchedEffect
+        if (c.stuck) return@LaunchedEffect
+        if (c.launched) {
+            // Lansată de o compunere anterioară: activitate recreată cât dialogul era deschis (mod întunecat, font) sau
+            // ecran recompus. Plasa ei și verificarea de la revenire s-au dus cu acea compunere, iar observatorul nou n-a
+            // văzut pauza. Activitatea în față [coverMs] fără ca cererea să se schimbe = rezultat pierdut / dialog
+            // neapărut. Un rezultat adevărat vine înainte de onResume și schimbă cererea, deci aici nu ajunge.
+            fun same() = consent.value.let { it != null && it.id == c.id && it.attempt == c.attempt && it.launched && !it.stuck }
+            while (true) {
+                host.currentStateFlow.first { it.isAtLeast(Lifecycle.State.RESUMED) }
+                if (!same()) return@LaunchedEffect
+                val t2 = SystemClock.uptimeMillis()
+                val covered = withTimeoutOrNull(coverMs) {
+                    host.currentStateFlow.first { !it.isAtLeast(Lifecycle.State.RESUMED) }
+                } != null
+                if (!same()) return@LaunchedEffect
+                if (!covered) {
+                    logNow("${c.kind.code}_ADOPT", DiagResult.TIMEOUT, SystemClock.uptimeMillis() - t2, c.tag)
+                    missingNow(c.id, c.attempt, "recreate")
+                    return@LaunchedEffect
+                }
+                // Dialogul ei acoperă din nou ecranul: așteptăm revenirea următoare.
+            }
+        }
         val t0 = SystemClock.uptimeMillis()
         host.currentStateFlow.first { it.isAtLeast(Lifecycle.State.RESUMED) }
         // Cât am așteptat, cererea poate să fi primit răspuns (rezultatul și revenirea vin în același mesaj, înaintea
