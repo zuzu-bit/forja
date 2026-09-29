@@ -11,6 +11,7 @@ import com.forja.app.core.inventory.InvPlace
 import com.forja.app.core.inventory.InvPlan
 import com.forja.app.core.inventory.InvStage
 import com.forja.app.core.inventory.Landing
+import com.forja.app.core.inventory.MoveReason
 
 /**
  * Date false pentru capturile de ecran (Roborazzi) și revizuire: exemplul din prototip —
@@ -225,6 +226,45 @@ object InventorySamples {
     /** Finalul cu elemente nemutate (șterse între timp) și fără contract (fără „Pe site”); mutate + nemutate = total. */
     val doneFailed = done.copy(items = 3211, failed = 3, showSite = false)
     val doneDocsFailed = doneDocs.copy(items = 484, failed = 2)
+
+    // ───────────── 4.4.2: „Acces complet” și pagina de rezultat ─────────────
+
+    /** Rândul „Acces complet”, varianta simplă (nicio poză a altei aplicații). */
+    val access = AccessUi()
+    /** Planul Lanei de pe S23: 6 din 9 poze sunt din WhatsApp (Android/media/com.whatsapp/…). */
+    val accessWhatsApp = AccessUi(owned = 6, app = "WhatsApp", apps = 1)
+    /** Dosarul ales în Documents: fără acces complet nu se poate, „Aplică” îl cere (și rândul n-are „Fără”). */
+    val accessDest = AccessUi(forDest = true)
+    /** Confirmarea Lanei: 9 mutări într-un dosar („Capturi de ecran”) și o poză la gunoi. */
+    val confirmLana = ApplyConfirmUi(
+        kind = InvKind.Photos, folders = 1, moves = 9, trashCount = 1, trashBytes = 3 * MB, destLabel = "FORJA", destPath = "PICTURES/FORJA"
+    )
+    /** Aceeași confirmare, cu destinația aleasă în Documents/Poze. */
+    val confirmLanaDocuments = confirmLana.copy(destLabel = "Poze", destPath = "DOCUMENTS/POZE")
+    /** „Locație” cu un dosar din Documents ales (acum se poate, cu acces complet). */
+    val locationDocuments: LocationUi get() = photoPlan.copy(dest = InvDest.Media("Documents/Poze/")).locationUi()
+
+    private val landingCapturi = Landing(
+        kind = InvKind.Photos,
+        root = InvPlace(doc("primary:Pictures/FORJA"), "Pictures/FORJA", "/storage/emulated/0/Pictures/FORJA"),
+        single = InvPlace(doc("primary:Pictures/FORJA/Capturi de ecran"), "Pictures/FORJA/Capturi de ecran", "/storage/emulated/0/Pictures/FORJA/Capturi de ecran"),
+        segments = setOf("Capturi de ecran"), first = photoUri(1), firstMime = "image/jpeg", bucketId = 7L
+    )
+    /** Rezultatul Lanei: 3 mutate + 1 la gunoi, cele 6 din WhatsApp au rămas → „Permite accesul”. */
+    val doneAccess = DoneUiState(
+        kind = InvKind.Photos, folders = 1, items = 4, freedBytes = 3 * MB, failed = 6, musicStopped = true, place = landingCapturi,
+        runId = "sample", showSite = true, trashed = 1, reason = MoveReason.Owned, ownerApp = "WhatsApp", ownerApps = 1, fix = DoneFix.Access
+    )
+    /** Un motiv pe care accesul nu-l schimbă (Android n-a mutat 234 din 3 214): „Încearcă din nou” aplică restul. */
+    val doneRetry = DoneUiState(
+        kind = InvKind.Photos, folders = 12, items = 2980, freedBytes = (1.1 * GB).toLong(), failed = 234, musicStopped = false,
+        place = landing, runId = "sample", showSite = false, trashed = 200, reason = MoveReason.Error, fix = DoneFix.Retry
+    )
+    /** Nimic aplicat: dosarul ales (Documents) cere acces complet. */
+    val doneNothing = DoneUiState(
+        kind = InvKind.Photos, folders = 0, items = 0, freedBytes = 0L, failed = 9, musicStopped = true, place = null,
+        runId = "sample", showSite = true, trashed = 0, reason = MoveReason.Dir, fix = DoneFix.Access
+    )
 
     /** Pastila: la 34 % și „Gata”. */
     val pill = PillState(34, ready = false)

@@ -16,6 +16,7 @@ import com.forja.app.core.inventory.InvProgress
 import com.forja.app.core.inventory.InvStage
 import com.forja.app.core.inventory.Landing
 import com.forja.app.core.inventory.MediaRoots
+import com.forja.app.core.inventory.MoveReason
 import com.forja.app.core.inventory.TreePaths
 
 /*
@@ -256,6 +257,9 @@ data class LocationUi(val kind: InvKind, val options: List<DestOption>) {
 /**
  * Finalul: `place` = unde au ajuns lucrurile (se deschide din buton și din eticheta cu calea), `runId` = rularea
  * (pentru „Pe site” → /insights#inventar/<runId>), `showSite` = contract semnat (rezumatul urcă doar atunci).
+ * 4.4.2: `reason` = rândul cu motivul nemutatelor (unul), `ownerApp` / `ownerApps` = a cui sunt pozele (motivul
+ * „owned”), `fix` = pagina de rezultat, când planul n-a fost aplicat tot: o singură acțiune („Permite accesul” sau
+ * „Încearcă din nou”) și „Înapoi la dosare”, în locul toast-ului „Nu s-a aplicat tot.” de până acum.
  */
 @Immutable
 data class DoneUiState(
@@ -267,8 +271,16 @@ data class DoneUiState(
     val musicStopped: Boolean = true,
     val place: Landing? = null,
     val runId: String? = null,
-    val showSite: Boolean = false
-)
+    val showSite: Boolean = false,
+    val trashed: Int = 0,
+    val reason: MoveReason? = null,
+    val ownerApp: String? = null,
+    val ownerApps: Int = 1,
+    val fix: DoneFix? = null
+) {
+    /** Pagina de rezultat (nu s-a aplicat tot), nu finalul „Gata”. */
+    val result: Boolean get() = fix != null
+}
 
 // ───────────────────────────── Mapări din plan ─────────────────────────────
 
@@ -325,7 +337,7 @@ internal fun InvPlan.confirmUi(): ApplyConfirmUi {
 internal fun InvPlan.locationUi(): LocationUi {
     val current = dest
     val options = if (kind == InvKind.Photos) {
-        val chosen = (current as? InvDest.Media)?.root?.let { MediaRoots.normalize(it) } ?: MediaRoots.DEFAULT
+        val chosen = (current as? InvDest.Media)?.root?.let { MediaRoots.normalize(it, anyTop = true) } ?: MediaRoots.DEFAULT
         val presets = MediaRoots.PRESETS.map { root ->
             val icon = when (root) {
                 MediaRoots.DEFAULT -> DestIcon.Gallery

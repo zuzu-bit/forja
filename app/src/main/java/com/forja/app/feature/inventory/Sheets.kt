@@ -36,6 +36,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,6 +63,7 @@ import com.forja.app.core.cleanup.Album
 import com.forja.app.core.designsystem.Accent2
 import com.forja.app.core.designsystem.Error
 import com.forja.app.core.designsystem.LocalReducedMotion
+import com.forja.app.core.designsystem.OnAccent
 import com.forja.app.core.designsystem.Surface0
 import com.forja.app.core.designsystem.Surface1
 import com.forja.app.core.designsystem.Surface2
@@ -288,6 +290,9 @@ internal fun AlbumSheet(albums: List<Album>?, selectedId: Long?, onPick: (Album)
 /**
  * S6 — confirmarea: rândul destinației (atingibil → „Locație”), gunoiul cu onestitatea (30 de zile), „Aplică”.
  * Aceeași foaie comută între confirmare și „Locație” ([showLocation]), fără să se închidă și să se redeschidă.
+ * 4.4.2: [access] = rândul „Acces complet” (fără „Acces la toate fișierele”): „Permite” deschide setările, „Fără” îl
+ * ascunde pentru confirmarea asta (rămân ferestrele de acord din 4.4.1), iar un dosar ales care cere accesul nu are
+ * „Fără” ([AccessUi.required]).
  */
 @Composable
 internal fun ApplyConfirmSheet(
@@ -298,9 +303,13 @@ internal fun ApplyConfirmSheet(
     onPickDest: (InvDest) -> Unit,
     onOther: () -> Unit,
     onApply: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    access: AccessUi? = null,
+    onAllowAccess: () -> Unit = {}
 ) {
     val reduced = LocalReducedMotion.current
+    var skipped by rememberSaveable { mutableStateOf(false) }
+    val shown = access?.takeUnless { skipped && !it.required }
     InvSheet(onDismiss) {
         AnimatedContent(
             targetState = showLocation,
@@ -308,14 +317,21 @@ internal fun ApplyConfirmSheet(
             label = "applySheet"
         ) { loc ->
             if (loc) LocationBody(location, onBack = { onShowLocation(false) }, onPick = onPickDest, onOther = onOther)
-            else ApplyConfirmBody(ui, onApply = onApply, onDest = { onShowLocation(true) })
+            else ApplyConfirmBody(ui, onApply = onApply, onDest = { onShowLocation(true) }, access = shown, onAllow = onAllowAccess, onSkip = { skipped = true })
         }
     }
 }
 
 /** Conținutul confirmării (și în capturi, prin [InvSheetFrame]). */
 @Composable
-internal fun ApplyConfirmBody(ui: ApplyConfirmUi, onApply: () -> Unit, onDest: () -> Unit) {
+internal fun ApplyConfirmBody(
+    ui: ApplyConfirmUi,
+    onApply: () -> Unit,
+    onDest: () -> Unit,
+    access: AccessUi? = null,
+    onAllow: () -> Unit = {},
+    onSkip: () -> Unit = {}
+) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         val photos = ui.kind == InvKind.Photos
         if (ui.moves > 0) {
@@ -332,8 +348,54 @@ internal fun ApplyConfirmBody(ui: ApplyConfirmUi, onApply: () -> Unit, onDest: (
                 sub = if (photos) "Recuperezi 30 de zile" else "Nimic nu se șterge"
             )
         }
+        if (access != null) AccessRow(access, onAllow, if (access.required) null else onSkip)
         Spacer(Modifier.height(10.dp))
         InvPrimaryButton("Aplică", onApply)
+    }
+}
+
+/**
+ * „Acces complet” (4.4.2): lacătul amber, titlul, un singur rând (varianta simplă, pozele altei aplicații sau dosarul
+ * ales) și butoanele mici [Permite] / [Fără]. „Aplică” rămâne butonul principal al foii.
+ */
+@Composable
+private fun AccessRow(ui: AccessUi, onAllow: () -> Unit, onSkip: (() -> Unit)?) {
+    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.Top) {
+        Box(Modifier.size(44.dp).clip(R8).background(Amber.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
+            Icon(InvIcons.Unlock, null, tint = Amber, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(AccessCopy.TITLE, style = cond(20, 22), modifier = Modifier.padding(top = 1.dp))
+            Text(AccessCopy.line(ui), style = body(14), modifier = Modifier.padding(top = 3.dp))
+            Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SmallAction(AccessCopy.ALLOW, primary = true, onClick = onAllow)
+                if (onSkip != null) SmallAction(AccessCopy.SKIP, primary = false, onClick = onSkip)
+            }
+        }
+    }
+}
+
+/** Butonul mic din rândul accesului: 40 dp desenat (ca „Permite” din „Din laptop”), 48 dp de atins. */
+@Composable
+private fun SmallAction(label: String, primary: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .pressable(onClick)
+            .height(48.dp)
+            .semantics(mergeDescendants = true) { role = Role.Button },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier
+                .height(40.dp)
+                .clip(R6)
+                .then(if (primary) Modifier.background(CtaBrush) else Modifier.border(1.dp, W12, R6))
+                .padding(horizontal = 16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(label, style = cond(17, color = if (primary) OnAccent else TextSecondary), maxLines = 1)
+        }
     }
 }
 

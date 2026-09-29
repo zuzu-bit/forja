@@ -3,6 +3,7 @@ package com.forja.app.core.inventory
 import android.app.Application
 import android.net.Uri
 import android.provider.DocumentsContract
+import com.forja.app.feature.inventory.photoPickerStart
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -12,7 +13,10 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** Destinațiile Inventarului 4.4: rădăcinile acceptate de MediaStore, traducerea selectorului, căile, locul de sosire. */
+/**
+ * Destinațiile Inventarului 4.4: rădăcinile acceptate de MediaStore, traducerea selectorului, căile, locul de sosire.
+ * 4.4.2: cu „Acces la toate fișierele” orice dosar din memoria internă (în afară de rădăcină și de Android/…).
+ */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
 class DestinationsTest {
@@ -38,7 +42,59 @@ class DestinationsTest {
         assertEquals("DCIM/FORJA/", MediaRoots.forItem("DCIM/FORJA/", video = true, sdk = 29))
         assertEquals("Pictures/FORJA/", MediaRoots.forItem("Pictures/FORJA/", video = false, sdk = 29))
         // O rădăcină stricată nu ajunge niciodată la MediaStore: cade pe implicită.
-        assertEquals(MediaRoots.DEFAULT, MediaRoots.forItem("Download/", video = false, sdk = 34))
+        assertEquals(MediaRoots.DEFAULT, MediaRoots.forItem("Android/media/com.whatsapp/", video = false, sdk = 34))
+        assertEquals(MediaRoots.DEFAULT, MediaRoots.forItem("", video = false, sdk = 34))
+        // 4.4.2: un dosar ales cu acces complet rămâne cum e (și pentru video): MediaProvider îl primește de la un „manager”;
+        // fără acces, mutarea eșuează cu motivul `dir`, nu se mută în tăcere în altă parte.
+        assertEquals("Download/", MediaRoots.forItem("Download/", video = false, sdk = 34))
+        assertEquals("Documents/Poze/", MediaRoots.forItem("Documents/Poze/", video = true, sdk = 36))
+        assertEquals("Documents/Poze/", MediaRoots.forItem("Documents/Poze/", video = true, sdk = 29))
+    }
+
+    @Test fun withFullAccessAnyTopFolderButAndroid() {
+        assertEquals("Documents/Poze/", MediaRoots.normalize("Documents/Poze", anyTop = true))
+        assertEquals("Vacanțe 2023/", MediaRoots.normalize("/Vacanțe 2023/", anyTop = true))
+        assertEquals("Download/Acte/", MediaRoots.normalize("Download//Acte", anyTop = true))
+        // Pictures și DCIM rămân scrise ca de sistem; celelalte, cum le-a scris omul.
+        assertEquals("Pictures/Vara/", MediaRoots.normalize("pictures/Vara", anyTop = true))
+        assertEquals("DCIM/Camera/", MediaRoots.normalize("dcim/Camera", anyTop = true))
+        assertEquals("Documents/Vacanțe/", MediaRoots.normalize("Documents/../Vacanțe", anyTop = true))
+        assertEquals("Poze/", MediaRoots.normalize("Poze:*?", anyTop = true))
+        assertNull(MediaRoots.normalize("Android/media/com.whatsapp", anyTop = true))
+        assertNull(MediaRoots.normalize("android/data", anyTop = true))
+        assertNull(MediaRoots.normalize("Android", anyTop = true))
+        assertNull(MediaRoots.normalize("/", anyTop = true))
+        assertNull(MediaRoots.normalize("a/b/c/d/e/f/g", anyTop = true))
+        // Fără anyTop, regula din 4.4 (doar Pictures și DCIM) rămâne.
+        assertNull(MediaRoots.normalize("Documents/Poze"))
+    }
+
+    @Test fun standardRootsWorkWithoutFullAccess() {
+        assertTrue(MediaRoots.standard("Pictures/FORJA/"))
+        assertTrue(MediaRoots.standard("DCIM/"))
+        assertTrue(MediaRoots.standard("dcim/x"))
+        assertFalse(MediaRoots.standard("Documents/Poze/"))
+        assertFalse(MediaRoots.standard("Download/"))
+        assertTrue("o rădăcină stricată cade pe implicită", MediaRoots.standard("Android/media/x/"))
+    }
+
+    @Test fun labelsForAnyFolder() {
+        assertEquals("Poze", MediaRoots.optionLabel("Documents/Poze/"))
+        assertEquals("Poze", MediaRoots.shortLabel("Documents/Poze/"))
+        assertEquals("Documents", MediaRoots.shortLabel("Documents/"))
+        assertEquals("Cameră", MediaRoots.shortLabel("DCIM/"))
+        assertEquals("DOCUMENTS/POZE", MediaRoots.path("Documents/Poze/"))
+        assertEquals("Documents/Poze", DestNames.path(InvDest.Media("Documents/Poze/"), null))
+        assertEquals("Documents/Poze/", DestRec(mediaRoot = "Documents/Poze/").mediaRoot())
+        assertEquals(MediaRoots.DEFAULT, DestRec(mediaRoot = "Android/data/x/").mediaRoot())
+    }
+
+    @Test fun thePickerStartsNextToTheCurrentDestination() {
+        assertEquals("Pictures", photoPickerStart(InvDest.Media("Pictures/FORJA/")))
+        assertEquals("Pictures", photoPickerStart(InvDest.Media("Pictures/")))
+        assertEquals("Documents", photoPickerStart(InvDest.Media("Documents/Poze/")))
+        assertEquals("Documents/Poze", photoPickerStart(InvDest.Media("Documents/Poze/Vara/")))
+        assertEquals("Pictures", photoPickerStart(null))
     }
 
     @Test fun labelsAndPaths() {
@@ -54,7 +110,14 @@ class DestinationsTest {
     @Test fun pickerTreeBecomesARelativePath() {
         assertEquals("Pictures/Vacanțe/", mediaRootFromTree(tree("primary:Pictures/Vacanțe")))
         assertEquals("DCIM/", mediaRootFromTree(tree("primary:DCIM")))
-        assertNull(mediaRootFromTree(tree("primary:Download/Acte")))
+        // 4.4.2: orice dosar din memoria internă (cu acces complet; fără el, confirmarea îl cere) — nu mai e refuzat.
+        assertEquals("Download/Acte/", mediaRootFromTree(tree("primary:Download/Acte")))
+        assertEquals("Documents/Poze/", mediaRootFromTree(tree("primary:Documents/Poze")))
+        assertEquals("Vacanțe/", mediaRootFromTree(tree("primary:Vacanțe")))
+        // Rădăcina memoriei și Android/… nu; nici cardul (alt volum) și nici alți furnizori.
+        assertNull(mediaRootFromTree(tree("primary:")))
+        assertNull(mediaRootFromTree(tree("primary:Android/media/com.whatsapp")))
+        assertNull(mediaRootFromTree(tree("primary:Android")))
         assertNull(mediaRootFromTree(tree("1A2B-3C4D:Pictures")))   // cardul SD: alt volum
         assertNull(mediaRootFromTree(DocumentsContract.buildTreeDocumentUri("com.google.android.apps.docs.storage", "acc=1;doc=x")))
     }

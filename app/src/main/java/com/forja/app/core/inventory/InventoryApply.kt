@@ -22,16 +22,22 @@ import kotlinx.coroutines.withContext
 // ═══════════════ Inventar — aplicarea planului ═══════════════
 // Poze: RELATIVE_PATH → „<rădăcină>/<dosar>/” după acordul de scriere (API 30+: MediaStore.createWriteRequest, în bucăți
 // de ≤ 500). Rădăcina e aleasă de om în „Locație” (implicit „Pictures/FORJA/”) și adaptată pe element de MediaRoots
-// (un video pe API 29 nu poate sta în Pictures → „Movies/…”), ca nimic să nu eșueze în tăcere. „De aruncat” → coșul
-// sistemului (createTrashRequest, recuperabil 30 de zile — sistemul îl execută la acord, aici doar verificăm); sub
-// API 30: ștergere directă prin CleanupEngine.deleteLegacy. Mutarea proprie (nu CleanupEngine.moveToRelativePath)
-// pentru că acela acceptă doar „Pictures/…”; tehnica e aceeași (coliziune de nume → „nume · id”, verificare).
+// (un video pe API 29 nu poate sta în Pictures → „Movies/…”). „De aruncat” → coșul sistemului (createTrashRequest,
+// recuperabil 30 de zile — sistemul îl execută la acord, aici doar verificăm); sub API 30: ștergere directă prin
+// CleanupEngine.deleteLegacy. Mutarea proprie (nu CleanupEngine.moveToRelativePath) pentru că acela acceptă doar
+// „Pictures/…”; tehnica e aceeași (coliziune de nume → „nume · id”, verificare).
+// 4.4.2: cu „Acces la toate fișierele” (AllFiles, `manager`) nu există dialoguri: se mută tot ce a rămas, într-o rundă,
+// în orice dosar ales (și pozele din dosarele altor aplicații, ca WhatsApp), iar coșul se face prin IS_TRASHED = 1
+// (tot recuperabil 30 de zile), verificat ca înainte. Fiecare eșec are un motiv (MoveReason), niciodată în tăcere.
 // Documente: mutări SAF prin DocumentOrganizer.moveToPath în „<destinație>/<sub>/<dosar>” (implicit
 // „<folderul ales>/Organizate/<dosar>”); „De aruncat (FORJA)” rămâne mereu în folderul sursă.
 // Fiecare aplicare întoarce și un [Landing]: unde au ajuns lucrurile, ca ecranul final să deschidă exact acolo.
 
 internal object InventoryApply {
-    /** `moved` = id-urile care stau acum în dosarul lor (mutate sau deja acolo), pentru rezumatul pe dosare. */
+    /**
+     * `moved` = id-urile care stau acum în dosarul lor (mutate sau deja acolo), pentru rezumatul pe dosare. Eșecurile
+     * rundei, pe element, stau în [ApplyResult.failures].
+     */
     class Outcome(val result: ApplyResult, val removed: Set<String>, val folders: Int, val moved: Set<String> = emptySet())
 
     private class Move(val item: ItemRec, val path: String, val segment: String)
@@ -51,13 +57,17 @@ internal object InventoryApply {
         for (f in doc.folders) {
             for (id in f.itemIds) {
                 val r = items[id] ?: continue
-                if (r.relPath != target(r, f.name, root)) out += r
+                if (!inPlace(r, target(r, f.name, root))) out += r
             }
         }
         return out
     }
 
+    /** Elementul stă deja în dosarul lui (MediaProvider compară căile fără să țină cont de litere mari / mici). */
+    private fun inPlace(r: ItemRec, path: String): Boolean = r.relPath.equals(path, ignoreCase = true)
+
     fun pendingTrash(doc: PlanDoc, items: Map<String, ItemRec>): List<ItemRec> = doc.trash.itemIds.mapNotNull { items[it] }
+
 
     /** Din bucata coșului, ce mai cere dialogul: fără pozele aflate deja în coș ([trashed] = id-uri MediaStore). */
     fun stillToTrash(chunk: List<ItemRec>, trashed: Set<Long>): List<ItemRec> =
@@ -67,7 +77,8 @@ internal object InventoryApply {
      * Pozele. API 30+: se mută doar bucata acceptată în dialogul de scriere ([grantMoves]; fără dialog nu se mută
      * nimic — altfel ar eșua sute de elemente fără acord), iar din „De aruncat” se numără doar bucata trimisă la coș
      * ([grantTrash]: cele din dialog plus cele găsite deja în coș). Elementele deja aflate în dosarul lor se numără
-     * mutate oricum.
+     * mutate oricum. Cu acces complet ([manager], API 30+): fără dialoguri, toate mutările rămase și tot „De aruncat”
+     * (coșul prin IS_TRASHED = 1), într-o singură rundă.
      * API 29: mutări directe (reușesc doar elementele FORJA; restul cer acord per element → eșuate). Sub 29 nu există
      * RELATIVE_PATH: mutările eșuează, gunoiul se șterge direct (legacy).
      */
@@ -77,13 +88,17 @@ internal object InventoryApply {
         items: Map<String, ItemRec>,
         grantMoves: List<String>?,
         grantTrash: List<String>?,
-        step: suspend (Int, Int, Uri?) -> Unit
+        step: suspend (Int, Int, Uri?) -> Unit,
+        manager: Boolean = false
     ): Outcome {
         val sdk = Build.VERSION.SDK_INT
+        val mgr = manager && sdk >= 30
+        val self = ctx.packageName
         val root = doc.dest.mediaRoot()
         val removed = HashSet<String>()
         val placed = LinkedHashSet<String>()
         val touched = LinkedHashSet<String>()
+        val fails = LinkedHashMap<String, MoveFail>()
         var firstImage: ItemRec? = null
         var firstVideo: ItemRec? = null
         fun landed(r: ItemRec, seg: String) {
@@ -102,47 +117,59 @@ internal object InventoryApply {
             for (id in f.itemIds) {
                 val r = items[id] ?: continue
                 val path = target(r, f.name, root)
-                if (r.relPath == path) { moved++; removed += id; landed(r, seg) } else todo += Move(r, path, seg)
+                if (inPlace(r, path)) { moved++; removed += id; landed(r, seg) } else todo += Move(r, path, seg)
             }
         }
-        val moves = when {
-            sdk >= 30 && grantMoves != null -> { val g = grantMoves.toHashSet(); todo.filter { it.item.id in g } }
-            sdk >= 30 -> emptyList()
-            else -> todo
-        }
-        val trashTodo = if (sdk >= 30) {
-            val inTrash = doc.trash.itemIds.toHashSet()
-            grantTrash.orEmpty().filter { it in inTrash }.mapNotNull { items[it] }
-        } else pendingTrash(doc, items)
+        val moves = ApplySelect.moves(todo, { it.item.id }, grantMoves, mgr, sdk)
+        val trashTodo = ApplySelect.trash(doc.trash.itemIds, grantTrash, mgr, sdk).mapNotNull { items[it] }
 
         val total = moves.size + trashTodo.size
         var done = 0
         step(0, total, null)
         for (m in moves) {
             currentCoroutineContext().ensureActive()
-            when (withContext(Dispatchers.IO) { MediaMover.move(ctx, m.item, m.path) }) {
+            val owned = MediaOwners.foreignOwner(m.item.relPath, self) != null
+            when (val res = withContext(Dispatchers.IO) { MediaMover.move(ctx, m.item, m.path, owned) }) {
                 MediaMover.Result.Moved -> { moved++; removed += m.item.id; landed(m.item, m.segment) }
-                MediaMover.Result.Gone -> { failed++; removed += m.item.id }   // șters între timp: iese din plan
-                MediaMover.Result.Denied, MediaMover.Result.Failed -> failed++
+                is MediaMover.Result.Failed -> {
+                    failed++
+                    if (res.reason == MoveReason.Gone) removed += m.item.id   // șters între timp: iese din plan
+                    fails[m.item.id] = MoveDiag.fail(res.reason, m.item.mime, m.item.video, m.item.relPath, m.path, res.error)
+                }
             }
             done++
             step(done, total, Uri.parse(m.item.uri))
         }
         if (trashTodo.isNotEmpty()) {
             if (sdk >= 30) {
-                // Coșul l-a făcut deja sistemul (la acordul din dialog): ce nu se mai vede în MediaStore e la gunoi.
+                // Fără acces complet, coșul l-a făcut deja sistemul (la acordul din dialog). Cu acces complet îl facem noi,
+                // aici, prin IS_TRASHED = 1 (ca dialogul: recuperabil 30 de zile). Apoi, în ambele cazuri: ce nu se mai
+                // vede în MediaStore e la gunoi.
+                val refused = HashMap<String, MediaMover.Result.Failed>()
+                if (mgr) for (r in trashTodo) {
+                    currentCoroutineContext().ensureActive()
+                    val res = withContext(Dispatchers.IO) { MediaMover.trash(ctx, r) }
+                    if (res is MediaMover.Result.Failed) refused[r.id] = res
+                    done++
+                    step(done, total, Uri.parse(r.uri))
+                }
                 val visible = withContext(Dispatchers.IO) { MediaMover.visibleIds(ctx, trashTodo.map { it.mediaId }) }
                 for (r in trashTodo) {
-                    if (visible == null || r.mediaId in visible) failed++
-                    else { trashed++; freed += r.bytes; removed += r.id }
-                    done++
+                    if (visible == null || r.mediaId in visible) {
+                        failed++
+                        // Încă vizibilă: refuzul de la IS_TRASHED, dacă a fost unul; altfel coșul pur și simplu nu s-a făcut.
+                        val res = refused[r.id]?.takeIf { it.reason != MoveReason.Gone }
+                        fails[r.id] = MoveDiag.failTrash(res?.reason ?: MoveReason.Error, r.mime, r.video, r.relPath, res?.error)
+                    } else { trashed++; freed += r.bytes; removed += r.id }
+                    if (!mgr) done++
                 }
                 step(done, total, null)
             } else {
                 val engine = CleanupEngine(ctx, ForjaApp.from(ctx).prefs)
                 for (r in trashTodo) {
                     currentCoroutineContext().ensureActive()
-                    if (engine.deleteLegacy(listOf(Uri.parse(r.uri))) > 0) { trashed++; freed += r.bytes; removed += r.id } else failed++
+                    if (engine.deleteLegacy(listOf(Uri.parse(r.uri))) > 0) { trashed++; freed += r.bytes; removed += r.id }
+                    else { failed++; fails[r.id] = MoveDiag.failTrash(MoveReason.Error, r.mime, r.video, r.relPath) }
                     done++
                     step(done, total, Uri.parse(r.uri))
                 }
@@ -150,7 +177,7 @@ internal object InventoryApply {
         }
         val first = firstImage ?: firstVideo
         val landing = if (first != null) withContext(Dispatchers.IO) { photoLanding(ctx, root, touched, first) } else null
-        return Outcome(ApplyResult(moved, trashed, failed, freed, landing), removed, touched.size, placed)
+        return Outcome(ApplyResult(moved, trashed, failed, freed, landing, failures = fails), removed, touched.size, placed)
     }
 
     /**
@@ -255,12 +282,21 @@ internal object InventoryApply {
     }
 }
 
-/** Actualizarea RELATIVE_PATH a unui element MediaStore (API 29+), cu verificare. Blocant: se cheamă de pe IO. */
+/**
+ * Actualizarea RELATIVE_PATH a unui element MediaStore (API 29+), cu verificare. Blocant: se cheamă de pe IO. Fiecare
+ * eșec are motivul lui (MoveReason): excepția MediaProvider se clasifică, nu se înghite; mesajul ei (cu căi întregi) nu
+ * iese de aici.
+ */
 internal object MediaMover {
-    enum class Result { Moved, Gone, Denied, Failed }
+    sealed interface Result {
+        data object Moved : Result
+        /** [error] = clasa excepției, doar pentru [MoveReason.Error]. */
+        data class Failed(val reason: MoveReason, val error: String? = null) : Result
+    }
 
-    fun move(ctx: Context, r: ItemRec, relPath: String): Result {
-        if (Build.VERSION.SDK_INT < 29) return Result.Failed
+    /** [ownedByOther] = sursa e în dosarul altei aplicații (Android/media/<pachet>/): motivul, când excepția nu-l spune. */
+    fun move(ctx: Context, r: ItemRec, relPath: String, ownedByOther: Boolean = false): Result {
+        if (Build.VERSION.SDK_INT < 29) return Result.Failed(MoveReason.Error, "Sdk")
         val cr = ctx.contentResolver
         val uri = Uri.parse(r.uri)
         return try {
@@ -270,14 +306,33 @@ internal object MediaMover {
             }
             val n = cr.update(uri, values, null, null)
             when {
-                n >= 1 -> { val now = pathOf(ctx, uri); if (now == null || now == relPath) Result.Moved else Result.Failed }
-                exists(ctx, uri) -> Result.Failed
-                else -> Result.Gone
+                n >= 1 -> {
+                    val now = pathOf(ctx, uri)
+                    if (now == null || now.equals(relPath, ignoreCase = true)) Result.Moved else Result.Failed(MoveReason.Mismatch)
+                }
+                // Niciun rând actualizat, dar elementul există: MediaProvider nu ne-a lăsat să-l atingem.
+                exists(ctx, uri) -> Result.Failed(if (ownedByOther) MoveReason.Owned else MoveReason.Denied)
+                else -> Result.Failed(MoveReason.Gone)
             }
-        } catch (_: SecurityException) {
-            Result.Denied
-        } catch (_: Exception) {
-            Result.Failed
+        } catch (e: Exception) {
+            if (!exists(ctx, uri)) Result.Failed(MoveReason.Gone)
+            else MoveReasons.classify(e, ownedByOther).let { why -> Result.Failed(why, if (why == MoveReason.Error) MoveReasons.errorClass(e) else null) }
+        }
+    }
+
+    /**
+     * La coș prin IS_TRASHED = 1 (API 30+, doar cu acces complet: fără el MediaProvider cere dialogul coșului). Același
+     * rezultat ca dialogul: fișierul stă 30 de zile în coșul galeriei. Verificarea (nu se mai vede) o face apelantul.
+     */
+    fun trash(ctx: Context, r: ItemRec): Result {
+        if (Build.VERSION.SDK_INT < 30) return Result.Failed(MoveReason.Error, "Sdk")
+        val uri = Uri.parse(r.uri)
+        return try {
+            val n = ctx.contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_TRASHED, 1) }, null, null)
+            if (n >= 1) Result.Moved else if (exists(ctx, uri)) Result.Failed(MoveReason.Denied) else Result.Failed(MoveReason.Gone)
+        } catch (e: Exception) {
+            val why = MoveReasons.classify(e, ownedByOther = false)
+            Result.Failed(why, if (why == MoveReason.Error) MoveReasons.errorClass(e) else null)
         }
     }
 

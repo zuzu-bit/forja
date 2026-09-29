@@ -85,13 +85,16 @@ import com.forja.app.core.inventory.TreePaths
 
 /**
  * `onGallery` = butonul principal („Galerie” / „Fișiere”), `onPlace` = eticheta cu calea (dosarul nou, în Fișiere),
- * `onSite` = „Pe site” (rularea pe /insights#inventar), `onClose` = „Închide”.
+ * `onSite` = „Pe site” (rularea pe /insights#inventar), `onClose` = „Închide”. Pagina de rezultat (4.4.2):
+ * `onFix` = acțiunea ei („Permite accesul” / „Încearcă din nou”), `onFolders` = „Înapoi la dosare”.
  */
 data class DoneActions(
     val onGallery: () -> Unit = {},
     val onClose: () -> Unit = {},
     val onPlace: () -> Unit = {},
-    val onSite: () -> Unit = {}
+    val onSite: () -> Unit = {},
+    val onFix: () -> Unit = {},
+    val onFolders: () -> Unit = {}
 )
 
 /** O scânteie care urcă (Gata.dc.html): poziția (dp în eroul de 280), mărimea, culoarea, faza. */
@@ -116,20 +119,31 @@ private val EaseOut = CubicBezierEasing(0f, 0f, 0.58f, 1f)
  * Așezarea (4.4, după testul pe S23 — 360 × 780 dp, cu barele ≈ 696 dp utili): sus și jos sunt fixe, doar mijlocul
  * derulează când nu încape (text mărit); eroul se scalează cu înălțimea (280 dp pe 851, ~230 pe 696), iar între mijloc
  * și butoane rămân mereu cel puțin 16 dp. Fără X sus-dreapta: dubla lui „Închide”, și stătea lipit de bara de stare.
+ *
+ * Pagina de rezultat (4.4.2, [DoneUiState.result]: planul n-a fost aplicat tot): aceeași pagină, fără scântei, cu
+ * mascota „Sorry”, „Aproape” (sau „Nimic mutat”), totalurile, „N NEMUTATE”, UN rând cu motivul și UNA acțiune
+ * („Permite accesul” / „Încearcă din nou”), plus „Înapoi la dosare”. Înainte: toast-ul „Nu s-a aplicat tot.” și dosarele.
  */
 @Composable
 fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
-    val t = if (!reduced) {
+    val result = state.result
+    val t = if (!reduced && !result) {
         rememberInfiniteTransition(label = "gata").animateFloat(0f, 1f, infiniteRepeatable(tween((RISE_S * 1000).toInt(), easing = LinearEasing)), label = "gataT")
     } else null
     val enter = remember { Animatable(if (reduced) 1f else 0f) }
     LaunchedEffect(Unit) { if (!reduced) enter.animateTo(1f, tween(720, easing = LinearEasing)) }
     fun inAt(delayMs: Int): () -> Float = { InEase.transform(((enter.value * 720f - delayMs) / 500f).coerceIn(0f, 1f)) }
     val photos = state.kind == InvKind.Photos
+    // Pe pagina de rezultat: „Recuperezi 30 de zile” doar dacă ceva a ajuns la coș; la documente rămâne „Nimic nu s-a șters”.
+    val restore = !result || !photos || state.trashed > 0
+    val reason = state.reason?.let { AccessCopy.reason(it, state.ownerApp, state.ownerApps) }
 
     BoxWithConstraints(modifier.fillMaxSize().background(Surface0)) {
-        val title = if (maxHeight < 720.dp) 68 else 84
+        val title = when {
+            !result -> if (maxHeight < 720.dp) 68 else 84
+            else -> if (maxHeight < 720.dp) 52 else 60
+        }
         Canvas(Modifier.fillMaxSize()) {
             // radial-gradient(90% 55% at 50% 34%, amber .16 → transparent 70 %): elipsă = cerc scalat pe verticală
             val c = Offset(size.width / 2f, size.height * 0.34f)
@@ -152,8 +166,9 @@ fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Mod
                 val viewport = maxHeight
                 // Eroul ia ce rămâne după restul mijlocului (estimat cu rezervă), ca pe S23 (≈ 483 dp de mijloc) totul să
                 // încapă fără derulare, cu cale și „NEMUTATE” cu tot; pe ecrane mari rămâne la 280 dp.
-                val rest = (title + 10).dp + 76.dp + 38.dp +
-                    (if (state.place?.target != null) 52.dp else 0.dp) + (if (state.failed > 0) 26.dp else 0.dp) + 12.dp
+                val rest = (title + 10).dp + 76.dp + (if (restore) 38.dp else 0.dp) +
+                    (if (state.place?.target != null) 52.dp else 0.dp) + (if (state.failed > 0) 26.dp else 0.dp) +
+                    (if (reason != null) 48.dp else 0.dp) + 12.dp
                 val hero = (viewport - rest).coerceIn(140.dp, 280.dp)
                 Column(
                     Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = viewport),
@@ -182,23 +197,30 @@ fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Mod
                                 }
                             }
                         }
-                        Mascot(state = MascotState.Happy, hat = MascotHat.Helmet, size = hero * 0.75f)
+                        Mascot(state = if (result) MascotState.Sorry else MascotState.Happy, hat = MascotHat.Helmet, size = hero * 0.75f)
                     }
                     Text(
-                        "Gata",
+                        when {
+                            !result -> "Gata"
+                            state.items > 0 -> AccessCopy.PARTIAL
+                            else -> AccessCopy.NOTHING
+                        },
                         style = cond(title, title - 4, tracking = 0.01f),
                         textAlign = TextAlign.Center,
+                        maxLines = 1,
                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp).riseIn(inAt(0))
                     )
                     StatsRow(state, inAt(120), Modifier.fillMaxWidth().padding(top = 14.dp).height(62.dp).riseIn(inAt(120)))
-                    Row(
-                        Modifier.fillMaxWidth().padding(top = 14.dp).riseIn(inAt(220)),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(if (photos) InvIcons.Restore else InvIcons.Check, null, tint = TextSecondary, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (photos) "Recuperezi 30 de zile" else "Nimic nu s-a șters", style = body(14))
+                    if (restore) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 14.dp).riseIn(inAt(220)),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(if (photos) InvIcons.Restore else InvIcons.Check, null, tint = TextSecondary, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (photos) "Recuperezi 30 de zile" else "Nimic nu s-a șters", style = body(14))
+                        }
                     }
                     val place = state.place?.target
                     if (place != null) {
@@ -209,22 +231,40 @@ fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Mod
                             "${fmtCount(state.failed)} NEMUTATE",
                             style = mono(10, 0.16f, color = Error),
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(top = if (place != null) 2.dp else 10.dp)
+                            modifier = Modifier.fillMaxWidth().padding(top = if (place != null) 2.dp else 14.dp)
+                        )
+                    }
+                    if (reason != null) {
+                        Text(
+                            reason,
+                            style = body(14, color = TextSecondary),
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, top = 6.dp, end = 8.dp).riseIn(inAt(340))
                         )
                     }
                 }
             }
             // jos, fix, la cel puțin 16 dp de mijloc
             Spacer(Modifier.height(16.dp))
-            InvPrimaryButton(if (photos) "Galerie" else "Fișiere", actions.onGallery)
-            Spacer(Modifier.height(10.dp))
-            if (state.showSite) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SiteButton(actions.onSite, Modifier.weight(1f))
-                    InvOutlineButton("Închide", actions.onClose, Modifier.weight(1f))
-                }
+            val fix = state.fix
+            if (fix != null) {
+                // Pagina de rezultat: o singură acțiune, apoi drumul înapoi la dosare (și gestul „înapoi”).
+                InvPrimaryButton(AccessCopy.fix(fix), actions.onFix)
+                Spacer(Modifier.height(10.dp))
+                InvOutlineButton(AccessCopy.BACK, actions.onFolders)
             } else {
-                InvOutlineButton("Închide", actions.onClose)
+                InvPrimaryButton(if (photos) "Galerie" else "Fișiere", actions.onGallery)
+                Spacer(Modifier.height(10.dp))
+                if (state.showSite) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SiteButton(actions.onSite, Modifier.weight(1f))
+                        InvOutlineButton("Închide", actions.onClose, Modifier.weight(1f))
+                    }
+                } else {
+                    InvOutlineButton("Închide", actions.onClose)
+                }
             }
         }
     }

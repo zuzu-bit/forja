@@ -7,9 +7,11 @@ import com.forja.app.core.cleanup.DocumentOrganizer
 
 // ═══════════════ Inventar 4.4 — unde ajung lucrurile (destinația aleasă de om) ═══════════════
 // Poze: o rădăcină RELATIVE_PATH („Pictures/FORJA/”, „Pictures/”, „DCIM/FORJA/” sau un dosar ales cu selectorul
-// sistemului, tradus). MediaStore acceptă doar anumite dosare de sus, pe fiecare colecție (MediaProvider):
-//   imagini: DCIM, Pictures · video: DCIM, Movies (API 29) și + Pictures (API 30+).
-// O rădăcină nepermisă ar eșua în tăcere, element cu element; de aceea [MediaRoots.forItem] o adaptează înainte de mutare.
+// sistemului, tradus). Fără acces complet, MediaStore acceptă doar anumite dosare de sus, pe fiecare colecție
+// (MediaProvider.ensureFileColumns): imagini: DCIM, Pictures · video: DCIM, Movies (API 29) și + Pictures (API 30+).
+// 4.4.2: cu „Acces la toate fișierele” (AllFiles) orice dosar din memoria internă e bun („Documents/Poze/”, un dosar de
+// sus al ei), în afară de rădăcină și de Android/…: MediaProvider lasă un „manager” să creeze fișiere oriunde. Fără
+// acces, un astfel de dosar nu se mai refuză la alegere: Inventarul cere accesul, iar mutările fără el au motivul `dir`.
 // Documente: un arbore SAF + un subdosar („Organizate” în folderul ales, sau nimic când omul a ales alt folder).
 
 internal object MediaRoots {
@@ -20,57 +22,72 @@ internal object MediaRoots {
     /** Rădăcinile gata făcute din foaia „Locație”, în ordinea rândurilor. */
     val PRESETS = listOf(DEFAULT, GALLERY, CAMERA)
 
+    /** Dosarele de sus în care MediaStore primește poze și fără acces complet. */
+    val STANDARD = setOf("Pictures", "DCIM")
+
     fun allowed(video: Boolean, sdk: Int = Build.VERSION.SDK_INT): Set<String> = when {
         !video -> setOf("Pictures", "DCIM")
         sdk >= 30 -> setOf("Pictures", "DCIM", "Movies")
         else -> setOf("DCIM", "Movies")
     }
 
-    /** Rădăcina pentru un element: un video pe API 29 nu poate sta în Pictures → „Movies/<restul căii>”. */
+    /**
+     * Rădăcina pentru un element: un video pe API 29 nu poate sta în Pictures → „Movies/<restul căii>” (pe API 29 nu
+     * există acces complet, deci regula se aplică mereu). Un alt dosar de sus, ales cu acces complet, rămâne cum e:
+     * MediaProvider îl primește de la un „manager”, iar fără acces mutarea eșuează cu motivul ei (`dir`), nu în tăcere.
+     */
     fun forItem(root: String, video: Boolean, sdk: Int = Build.VERSION.SDK_INT): String {
-        val r = normalize(root) ?: DEFAULT
-        return if (r.substringBefore('/') in allowed(video, sdk)) r else "Movies/" + r.substringAfter('/', "")
+        val r = normalize(root, anyTop = true) ?: DEFAULT
+        val top = r.substringBefore('/')
+        return if (video && top == "Pictures" && top !in allowed(true, sdk)) "Movies/" + r.substringAfter('/', "") else r
     }
+
+    /** Rădăcina e în Pictures sau DCIM: merge și fără acces complet. */
+    fun standard(root: String): Boolean = (normalize(root, anyTop = true) ?: DEFAULT).substringBefore('/') in STANDARD
 
     /**
      * „Pictures/Vacanțe” → „Pictures/Vacanțe/”: segmente curățate (fără „..”, fără caractere interzise), ≤ 6, cu primul
-     * segment Pictures sau DCIM (scris ca de sistem). Null dacă nu e o rădăcină pe care o acceptă pozele.
+     * segment Pictures sau DCIM (scris ca de sistem). Cu [anyTop] (dosarul ales cu acces complet) primul segment poate fi
+     * oricare, în afară de Android (Android/data, obb și media nu sunt ale pozelor). Null dacă nu e o rădăcină acceptată.
      */
-    fun normalize(root: String?): String? {
+    fun normalize(root: String?, anyTop: Boolean = false): String? {
         if (root.isNullOrBlank()) return null
         val bad = Regex("[\\\\:*?\"<>|\\p{Cntrl}]")
         val segs = root.replace('\\', '/').split('/').map { it.replace(bad, "").trim().trim('.') }
             .filter { it.isNotBlank() && it != ".." }
         if (segs.isEmpty() || segs.size > 6) return null
-        val top = when (segs[0].lowercase()) {
-            "pictures" -> "Pictures"
-            "dcim" -> "DCIM"
-            else -> return null
+        val first = segs[0]
+        val top = when {
+            first.equals("pictures", ignoreCase = true) -> "Pictures"
+            first.equals("dcim", ignoreCase = true) -> "DCIM"
+            !anyTop || first.equals("android", ignoreCase = true) -> return null
+            else -> first.take(60)
         }
         return (listOf(top) + segs.drop(1).map { it.take(60) }).joinToString("/") + "/"
     }
 
-    /** Eticheta scurtă din rândul de confirmare: „FORJA”, „Galerie”, „Vacanțe”. */
+    /** Eticheta scurtă din rândul de confirmare: „FORJA”, „Galerie”, „Vacanțe”, „Documents”. */
     fun shortLabel(root: String): String {
-        val r = normalize(root) ?: DEFAULT
+        val r = normalize(root, anyTop = true) ?: DEFAULT
         val segs = r.trimEnd('/').split('/')
         return when {
             segs.size > 1 -> segs.last()
             segs[0] == "Pictures" -> "Galerie"
-            else -> "Cameră"
+            segs[0] == "DCIM" -> "Cameră"
+            else -> segs[0]
         }
     }
 
     /** Numele rândului din „Locație” (și eticheta de pe site). */
-    fun optionLabel(root: String): String = when (normalize(root) ?: DEFAULT) {
+    fun optionLabel(root: String): String = when (normalize(root, anyTop = true) ?: DEFAULT) {
         DEFAULT -> "Galerie · FORJA"
         GALLERY -> "Direct în Galerie"
         CAMERA -> "Lângă Cameră"
         else -> shortLabel(root)
     }
 
-    /** Calea pentru meta mono: „PICTURES/FORJA”. */
-    fun path(root: String): String = (normalize(root) ?: DEFAULT).trimEnd('/').uppercase()
+    /** Calea pentru meta mono: „PICTURES/FORJA”, „DOCUMENTS/POZE”. */
+    fun path(root: String): String = (normalize(root, anyTop = true) ?: DEFAULT).trimEnd('/').uppercase()
 }
 
 internal object TreePaths {
@@ -136,15 +153,20 @@ internal fun DestRec?.docsTree(source: Uri?): Uri? = this?.tree?.let { Uri.parse
 
 internal fun DestRec?.docsSub(): String = this?.sub ?: DocumentOrganizer.ROOT_FOLDER
 
-/** Rădăcina pozelor din plan (sau implicita), deja validată. */
-internal fun DestRec?.mediaRoot(): String = MediaRoots.normalize(this?.mediaRoot) ?: MediaRoots.DEFAULT
+/** Rădăcina pozelor din plan (sau implicita), deja validată (și un dosar ales cu acces complet). */
+internal fun DestRec?.mediaRoot(): String = MediaRoots.normalize(this?.mediaRoot, anyTop = true) ?: MediaRoots.DEFAULT
 
-/** Arborele ales în selectorul „Alt dosar…” → rădăcina RELATIVE_PATH („Pictures/Vacanțe/”), sau null dacă MediaStore n-o acceptă. */
+/**
+ * Arborele ales în selectorul „Alt dosar…” → rădăcina RELATIVE_PATH („Pictures/Vacanțe/”, „Documents/Poze/”): orice
+ * dosar din memoria internă, în afară de rădăcina ei și de Android/…. Null pentru card (alt volum MediaStore: nu mutăm
+ * între volume), pentru alți furnizori (Drive…) și pentru căi mai adânci de 6 dosare. Pictures și DCIM merg oricum;
+ * restul cer acces complet ([MediaRoots.standard]).
+ */
 internal fun mediaRootFromTree(tree: Uri): String? {
     if (tree.authority != TreePaths.EXTERNAL) return null
     val id = TreePaths.treeDocId(tree) ?: return null          // „primary:Pictures/Vacanțe”
     if (!id.startsWith("primary:")) return null                // card SD = alt volum MediaStore: nu mutăm între volume
-    return MediaRoots.normalize(TreePaths.relative(id))
+    return MediaRoots.normalize(TreePaths.relative(id), anyTop = true)
 }
 
 /** Numele destinațiilor, pentru confirmare, foaia „Locație”, ecranul final și rezumatul de pe site. */
@@ -164,7 +186,7 @@ internal object DestNames {
 
     /** Calea (natural, fără majuscule): „Pictures/FORJA”, „Documents/Organizate”, „Documents/Arhivă”. */
     fun path(dest: InvDest, source: Uri?): String = when (dest) {
-        is InvDest.Media -> (MediaRoots.normalize(dest.root) ?: MediaRoots.DEFAULT).trimEnd('/')
+        is InvDest.Media -> (MediaRoots.normalize(dest.root, anyTop = true) ?: MediaRoots.DEFAULT).trimEnd('/')
         is InvDest.Tree -> {
             val base = TreePaths.label(dest.tree ?: source ?: return dest.sub)
             if (dest.sub.isBlank()) base else "$base/${dest.sub}"

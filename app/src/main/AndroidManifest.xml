@@ -19,6 +19,12 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Inventarul (4.4.2): „Acces la toate fișierele”, cerut doar din confirmarea aplicării, când e nevoie. Fără el,
+         Android nu mută pozele din dosarele altor aplicații (WhatsApp: Android/media/com.whatsapp/…) și nu primește poze
+         în afara Pictures/DCIM. Aplicația se instalează direct, nu din Play. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
     <!-- Prieteni din agendă (ca la Telegram): agenda se citește doar după bifa din Echipare; numele și numerele rămân pe telefon. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />

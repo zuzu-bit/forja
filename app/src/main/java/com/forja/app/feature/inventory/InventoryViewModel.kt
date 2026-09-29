@@ -19,6 +19,7 @@ import com.forja.app.core.cleanup.DocumentOrganizer
 import com.forja.app.core.cleanup.OrgItem
 import com.forja.app.core.cleanup.OrganizerJobs
 import com.forja.app.core.cleanup.OrganizerLedger
+import com.forja.app.core.inventory.AllFiles
 import com.forja.app.core.inventory.ApplyResult
 import com.forja.app.core.inventory.ConsentLog
 import com.forja.app.core.inventory.DocCounter
@@ -30,6 +31,8 @@ import com.forja.app.core.inventory.InvProgress
 import com.forja.app.core.inventory.InvScope
 import com.forja.app.core.inventory.Inventory
 import com.forja.app.core.inventory.MediaRoots
+import com.forja.app.core.inventory.MoveDiag
+import com.forja.app.core.inventory.MoveReason
 import com.forja.app.core.inventory.TreePaths
 import com.forja.app.core.inventory.mediaRootFromTree
 import com.forja.app.core.music.DiagResult
@@ -50,6 +53,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Ce a ales omul în S1. `lastN` = N-ul din „Ultimele N” (reținut în Prefs). */
 data class StartSelection(
@@ -60,8 +64,20 @@ data class StartSelection(
     val lastN: Int = 500
 )
 
-/** Cum s-a încheiat o aplicare. */
+/** Cum s-a încheiat o aplicare. Partial = pagina de rezultat (motivul + o acțiune), nu mai e toast + dosare. */
 enum class ApplyOutcome { Complete, Partial, Cancelled }
+
+/** Ce a dat „Alt dosar…” la poze (4.4.2). */
+enum class PhotoPick {
+    /** Ales: e noua destinație. */
+    Set,
+    /** Ales, dar în afara Pictures/DCIM și fără acces complet: confirmarea cere accesul („Aplică” îl cere întâi). */
+    NeedsAccess,
+    /** Sub Android 11 nu există acces complet: doar Pictures sau DCIM. */
+    OnlyStandard,
+    /** Rădăcina memoriei, Android/…, cardul sau alt furnizor. */
+    Invalid
+}
 
 /**
  * Inventarul pe ecran: alegerile din S1 (cu cifrele reale din galerie / folder și estimarea sinceră a motorului),
@@ -120,6 +136,14 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
     private var docsAt = 0L
     private var docsJob: Job? = null
 
+    // „Acces la toate fișierele” (4.4.2). Tot înaintea lui init: colectorul de mai jos le citește pe loc (Main.immediate).
+    private val _allFiles = MutableStateFlow(AllFiles.granted())
+    /** Accesul complet e dat (se recitește la fiecare revenire în ecran și la întoarcerea din setări). */
+    val allFiles: StateFlow<Boolean> = _allFiles.asStateFlow()
+    private val _access = MutableStateFlow<AccessUi?>(null)
+    /** Rândul „Acces complet” din confirmare; null = nu e nevoie (dat, documente, sub Android 11, nimic de mutat). */
+    val access: StateFlow<AccessUi?> = _access.asStateFlow()
+
     init {
         // Motorul face și muncă de CPU (plan, grupare) pe firul apelantului: nimic din el pe firul principal.
         viewModelScope.launch(Dispatchers.Default) { try { Inventory.load(ctx) } catch (e: CancellationException) { throw e } catch (_: Exception) { } }
@@ -152,6 +176,12 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         }
         // Mutările aprobate din laptop (organizarea de pe site) care așteaptă acordul Android.
         viewModelScope.launch { OrganizerLedger.changed.collect { refreshLaptop() } }
+        // Rândul „Acces complet”: din plan (mutările rămase, a cui sunt, dosarul ales) și din starea accesului.
+        viewModelScope.launch {
+            combine(plan, _allFiles) { p, g -> p to g }.collectLatest { (p, g) ->
+                _access.value = try { accessOf(p, g) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+            }
+        }
     }
 
     private data class EstimateKey(val s: StartSelection, val access: Boolean, val photos: Int?, val tree: Uri?, val docs: Int?)
@@ -245,6 +275,7 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun onResume() {
         refreshPhotoStats()
+        refreshAllFiles()
         if (_selection.value.kind == InvKind.Documents) refreshDocs(force = false)
     }
 
@@ -261,16 +292,71 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun setPhotoRoot(root: String) {
-        val r = MediaRoots.normalize(root) ?: return
+        val r = MediaRoots.normalize(root, anyTop = true) ?: return
         edit { Inventory.setDestination(InvDest.Media(r)) }
         viewModelScope.launch { try { forja.prefs.setInventoryPhotoRoot(r) } catch (e: CancellationException) { throw e } catch (_: Exception) { } }
     }
 
-    /** „Alt dosar…” (poze): folderul ales în selector, tradus în RELATIVE_PATH. False = nu e în Pictures sau DCIM. */
-    fun pickPhotoFolder(tree: Uri): Boolean {
-        val root = mediaRootFromTree(tree) ?: return false
+    /**
+     * „Alt dosar…” (poze): folderul ales în selector, tradus în RELATIVE_PATH. De la 4.4.2 orice dosar din memoria
+     * internă: se reține pe loc (e alegerea omului), iar unul din afara Pictures/DCIM, fără acces complet, face ca
+     * rândul „Acces complet” din confirmare să-l ceară ([PhotoPick.NeedsAccess]) — nu mai e refuzat cu un toast.
+     */
+    fun pickPhotoFolder(tree: Uri): PhotoPick {
+        val root = mediaRootFromTree(tree) ?: return PhotoPick.Invalid
+        val standard = MediaRoots.standard(root)
+        if (!standard && !AllFiles.available) return PhotoPick.OnlyStandard
         setPhotoRoot(root)
-        return true
+        return if (!standard && !refreshAllFiles()) PhotoPick.NeedsAccess else PhotoPick.Set
+    }
+
+    // ─────────────────────────── „Acces la toate fișierele” (4.4.2) ───────────────────────────
+
+    /** Recitește accesul complet; întoarce starea nouă. */
+    fun refreshAllFiles(): Boolean {
+        val g = AllFiles.granted()
+        _allFiles.value = g
+        return g
+    }
+
+    /** Rândul din confirmare pentru planul [p]: null când nu e nevoie de el. */
+    private suspend fun accessOf(p: InvPlan?, granted: Boolean): AccessUi? {
+        if (p == null || p.kind != InvKind.Photos || !AllFiles.available || granted) return null
+        val owners = withContext(Dispatchers.Default) { Inventory.pendingOwners(ctx) }
+        if (owners.pending == 0) return null
+        val root = (p.dest as? InvDest.Media)?.root ?: MediaRoots.DEFAULT
+        val app = owners.owners.keys.singleOrNull()?.let { appLabel(it) }
+        return AccessUi(owned = owners.owned, app = app, apps = owners.owners.size, forDest = !MediaRoots.standard(root))
+    }
+
+    /** Numele aplicației („WhatsApp”) din pachet, doar pentru ecran (niciodată în jurnal); null dacă nu se vede. */
+    private fun appLabel(pkg: String): String? = try {
+        val pm = ctx.packageManager
+        val info = if (Build.VERSION.SDK_INT >= 33) pm.getApplicationInfo(pkg, PackageManager.ApplicationInfoFlags.of(0))
+        else @Suppress("DEPRECATION") pm.getApplicationInfo(pkg, 0)
+        pm.getApplicationLabel(info).toString().trim().takeIf { it.isNotEmpty() && it.length <= 40 }
+    } catch (_: Exception) {
+        null
+    }
+
+    private var accessAt = 0L
+
+    /**
+     * S-a cerut accesul ([from]: `confirm` = „Permite” din confirmare, `dest` = „Aplică” cu un dosar care îl cere,
+     * `result` = „Permite accesul” de pe pagina de rezultat); [opened] = pagina de setări s-a deschis.
+     */
+    fun onAccessAsked(from: String, opened: Boolean) {
+        accessAt = now()
+        ConsentLog.add(ctx, "A_ASK", if (opened) DiagResult.OK else DiagResult.ERROR, 0, from)
+    }
+
+    /** Întoarcerea din setări: starea nouă a accesului (și rândul ei în jurnal). */
+    fun onAccessReturned(): Boolean {
+        val g = refreshAllFiles()
+        ConsentLog.add(ctx, "A_RESULT", if (g) DiagResult.OK else DiagResult.REFUSED, if (accessAt > 0L) now() - accessAt else 0L)
+        accessAt = 0L
+        ConsentLog.flush(ctx)
+        return g
     }
 
     /**
@@ -435,7 +521,7 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val rebuilt: ConsentGate.Renewal<IntentSender> = try {
                     when (r.kind) {
-                        ConsentGate.Kind.WRITE -> Inventory.writeRequest(ctx)?.let { ConsentGate.Renewal.Again(it) } ?: ConsentGate.Renewal.Drop
+                        ConsentGate.Kind.WRITE -> Inventory.writeRequest(ctx, activeLoop?.skip.orEmpty())?.let { ConsentGate.Renewal.Again(it) } ?: ConsentGate.Renewal.Drop
                         // Toată bucata deja la coș = acordul a fost dat, dar rezultatul lui s-a pierdut: DA, iar bucla o numără.
                         ConsentGate.Kind.TRASH -> Inventory.trashRequest(ctx).renewal()
                         ConsentGate.Kind.LAPTOP -> CleanupEngine(ctx, forja.prefs).writeRequest(laptopAsk)?.let { ConsentGate.Renewal.Again(it) }
@@ -501,59 +587,63 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
     val applyingFlow: StateFlow<Boolean> = _applying.asStateFlow()
     val applying: Boolean get() = applyJob?.isActive == true
 
+    /** Bucla aplicării în curs (cererile refăcute ale scrierii folosesc aceleași elemente sărite). */
+    private var activeLoop: ApplyRounds? = null
+
     /**
      * Bucla din motor ([ApplyRounds]): dialogul de scriere (dacă e), coșul (dialog, sau nimic când bucata e deja toată
-     * la coș), apoi apply(); din nou, cât runda a avut ce aplica. Un dialog refuzat oprește tot (nimic pierdut) și
-     * ecranul revine la dosare.
+     * la coș), apoi apply(); din nou, cât runda a avut ce aplica. Un „Nu” al omului oprește tot (nimic pierdut) și
+     * ecranul revine la dosare. Cu „Acces la toate fișierele” (4.4.2): nicio fereastră, o singură rundă cu tot planul.
+     * La final: „Gata” când planul s-a golit, altfel pagina de rezultat (câte au rămas, motivul, o acțiune).
      */
     fun apply() {
         if (applying) return
         val p = plan.value ?: return
         val confirm = p.confirmUi()
+        val mgr = p.kind == InvKind.Photos && refreshAllFiles()
         _done.value = null
         _applyProgress.value = 0 to (confirm.moves + confirm.trashCount)
         _applying.value = true
         val startedAt = now()
-        ConsentLog.add(ctx, "APPLY_START", DiagResult.OK, 0, "moves=${confirm.moves} trash=${confirm.trashCount}")
+        ConsentLog.add(ctx, "APPLY_START", DiagResult.OK, 0, "moves=${confirm.moves} trash=${confirm.trashCount} mgr=${if (mgr) 1 else 0}")
         val loop = ApplyRounds(
-            writeRequest = { Inventory.writeRequest(ctx) },
+            writeRequest = { skip -> Inventory.writeRequest(ctx, skip) },
             trashRequest = { Inventory.trashRequest(ctx) },
             ask = ::ask,
             waiting = { _applyWaiting.value = it },
-            runApply = ::runApply
+            runApply = { manager -> runApply(manager) },
+            manager = mgr
         )
+        activeLoop = loop
         applyJob = viewModelScope.launch {
             var ended = "cancelled"
+            var report: ApplyReport? = null
             try {
                 val stop = loop.run()
-                if (stop != null) { ended = stop.name.lowercase(); _outcome.value = outcomeOf(stop); return@launch }
-                val total = loop.total
-                val complete = plan.value == null
-                val stopped = try { Music.stopWhenDoneFlow(ctx).first() } catch (e: CancellationException) { throw e } catch (_: Exception) { true }
-                _done.value = DoneUiState(
-                    kind = confirm.kind,
-                    folders = confirm.folders,
-                    items = total.moved + total.trashed,
-                    freedBytes = if (total.freedBytes > 0) total.freedBytes else if (total.trashed > 0) confirm.trashBytes else 0L,
-                    failed = loop.lost + loop.pending,
-                    musicStopped = stopped,
-                    place = loop.landing,
-                    runId = p.runId,
-                    showSite = contractSigned.value
-                )
-                // Rezultatul se publică ÎNAINTE ca „applying” să cadă: ecranul trece direct la sigilare / final.
-                _outcome.value = if (complete) ApplyOutcome.Complete else ApplyOutcome.Partial
-                ended = if (complete) "complete" else "partial"
+                if (stop == ConsentGate.Answer.NO) { ended = "no"; _outcome.value = ApplyOutcome.Cancelled; return@launch }
+                // Până la capăt, sau o cerere la care FORJA a renunțat (DROPPED): pagina spune ce s-a aplicat și ce nu.
+                val r = finish(p, confirm, loop)
+                report = r
+                ended = when {
+                    stop == ConsentGate.Answer.DROPPED -> "dropped"
+                    r.fix == null -> "complete"
+                    else -> "partial"
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 // O eroare neprevăzută (disc, MediaStore) nu lasă ecranul agățat și nu închide aplicația: ce s-a aplicat
-                // a ieșit deja din plan, restul rămâne în dosare.
+                // a ieșit deja din plan, restul se poate reîncerca de pe pagina de rezultat.
                 ended = e.javaClass.simpleName
-                _outcome.value = if (loop.total.moved + loop.total.trashed > 0) ApplyOutcome.Partial else ApplyOutcome.Cancelled
+                report = try { finish(p, confirm, loop) } catch (e2: CancellationException) { throw e2 } catch (_: Exception) {
+                    _outcome.value = ApplyOutcome.Cancelled
+                    null
+                }
             } finally {
                 _applyWaiting.value = false
                 _applying.value = false
+                if (activeLoop === loop) activeLoop = null
+                if (loop.rounds > 0) logMoves(loop, report, mgr)
                 val res = when (ended) { "complete" -> DiagResult.OK; "no", "cancelled" -> DiagResult.REFUSED; else -> DiagResult.ERROR }
                 ConsentLog.add(ctx, "APPLY_END", res, now() - startedAt, "$ended rounds=${loop.rounds}")
                 ConsentLog.flush(ctx)
@@ -564,14 +654,67 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** „Nu” al omului → înapoi la dosare; o cerere la care FORJA a renunțat → „Nu s-a aplicat tot.”, tot la dosare. */
-    private fun outcomeOf(a: ConsentGate.Answer): ApplyOutcome =
-        if (a == ConsentGate.Answer.DROPPED) ApplyOutcome.Partial else ApplyOutcome.Cancelled
+    /**
+     * [apply], dar și când planul abia se încarcă: întoarcerea din setări după o recreare a activității (planul se
+     * citește de pe disc câteva zeci de ms). Fără plan în 5 s, nimic.
+     */
+    fun applySoon() {
+        if (plan.value != null) { apply(); return }
+        viewModelScope.launch {
+            val ready = withTimeoutOrNull(5_000) { plan.first { it != null } }
+            if (ready != null) apply()
+        }
+    }
+
+    /**
+     * Pagina de după aplicare, publicată ÎNAINTE ca „applying” să cadă (ecranul trece direct la sigilare / rezultat):
+     * „Gata” când planul s-a golit; altfel rezultatul — totalurile, nemutatele, UN motiv și UNA acțiune.
+     */
+    private suspend fun finish(p: InvPlan, confirm: ApplyConfirmUi, loop: ApplyRounds): ApplyReport {
+        val total = loop.total
+        val left = plan.value
+        val remaining = left?.items?.keys ?: emptySet()
+        val photos = p.kind == InvKind.Photos
+        val report = ApplyReports.of(photos, remaining, loop.lost, loop.failures, AllFiles.available, refreshAllFiles())
+        val owners = if (report.reason == MoveReason.Owned) withContext(Dispatchers.Default) { Inventory.pendingOwners(ctx).owners } else emptyMap()
+        val stopped = try { Music.stopWhenDoneFlow(ctx).first() } catch (e: CancellationException) { throw e } catch (_: Exception) { true }
+        _done.value = DoneUiState(
+            kind = confirm.kind,
+            folders = if (report.fix == null) confirm.folders else loop.landing?.segments?.size ?: 0,
+            items = total.moved + total.trashed,
+            freedBytes = if (total.freedBytes > 0) total.freedBytes else if (total.trashed > 0 && report.fix == null) confirm.trashBytes else 0L,
+            failed = report.failed,
+            musicStopped = stopped,
+            place = loop.landing,
+            runId = p.runId,
+            showSite = contractSigned.value,
+            trashed = total.trashed,
+            reason = report.reason,
+            ownerApp = owners.keys.singleOrNull()?.let { appLabel(it) },
+            ownerApps = owners.size.coerceAtLeast(1),
+            fix = report.fix
+        )
+        _outcome.value = if (report.fix == null) ApplyOutcome.Complete else ApplyOutcome.Partial
+        return report
+    }
+
+    /**
+     * Jurnalul mutărilor (ConsentLog): cel mult 12 rânduri M_FAIL și un M_SUM cu eșecurile pe motiv. Doar coduri și
+     * dosare standard (MoveDiag): niciun nume de fișier, titlu, dosar ales sau cale.
+     */
+    private fun logMoves(loop: ApplyRounds, report: ApplyReport?, mgr: Boolean) {
+        val fails = (report?.effective ?: loop.failures).values
+        for (note in MoveDiag.failNotes(fails, mgr)) ConsentLog.add(ctx, "M_FAIL", DiagResult.ERROR, 0, note)
+        ConsentLog.add(
+            ctx, "M_SUM", if (fails.isEmpty()) DiagResult.OK else DiagResult.ERROR, 0,
+            MoveDiag.sumNote(loop.total.moved, loop.total.trashed, MoveDiag.counts(fails), mgr)
+        )
+    }
 
     /** Inventory.apply rulează în scopul aplicației: dacă ecranul dispare, aplicarea bucății curente se termină oricum. */
-    private suspend fun runApply(): ApplyResult {
+    private suspend fun runApply(manager: Boolean): ApplyResult {
         val job = forja.appScope.async(Dispatchers.Default) {
-            Inventory.apply(ctx) { d, t -> _applyProgress.value = d to t }
+            Inventory.apply(ctx, manager) { d, t -> _applyProgress.value = d to t }
         }
         return job.await()
     }

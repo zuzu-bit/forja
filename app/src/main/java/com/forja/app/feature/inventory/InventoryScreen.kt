@@ -42,9 +42,12 @@ import com.forja.app.core.designsystem.LocalReducedMotion
 import com.forja.app.core.designsystem.Surface0
 import com.forja.app.core.designsystem.components.CoachMarks
 import com.forja.app.core.designsystem.components.LocalToast
+import com.forja.app.core.inventory.AllFiles
 import com.forja.app.core.inventory.BinTick
+import com.forja.app.core.inventory.InvDest
 import com.forja.app.core.inventory.InvKind
 import com.forja.app.core.inventory.InvStage
+import com.forja.app.core.inventory.MediaRoots
 import com.forja.app.core.music.Music
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -86,6 +89,8 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
     val applyProgress by vm.applyProgress.collectAsState()
     val consent by vm.consent.collectAsState()
     val applying by vm.applyingFlow.collectAsState()
+    val access by vm.access.collectAsState()
+    val allFiles by vm.allFiles.collectAsState()
     val track by Music.nowPlaying.collectAsState()
     val phase = phaseOf(progress, plan)
 
@@ -159,10 +164,46 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
         startAfterTree = andStart
         try { treeLauncher.launch(null) } catch (_: Exception) { startAfterTree = false; toast.show("Nu pot deschide dosarele.") }
     }
-    // „Locație” → „Alt dosar…” (poze): selectorul pornește în Pictures; alegerea se traduce în RELATIVE_PATH.
+    // ── „Acces la toate fișierele” (4.4.2) ──
+    // `accessAfter` = omul a atins deja „Aplică” (un dosar care cere accesul) sau „Permite accesul” pe pagina de rezultat:
+    // întors din setări cu accesul dat, aplicarea pornește singură. „Permite” din rândul confirmării doar dă accesul:
+    // foaia rămâne deschisă (fără rând), iar „Aplică” merge apoi fără ferestre de acord.
+    var accessAfter by rememberSaveable { mutableStateOf(false) }
+    fun applyNow() {
+        confirmApply = false
+        showLocation = false
+        vm.applySoon()
+        setStack(InvPage.Start, InvPage.Folders, InvPage.Apply)
+    }
+    val allFilesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val granted = vm.onAccessReturned()
+        val after = accessAfter
+        accessAfter = false
+        // Fără acces: rămâne ce era (confirmarea cu rândul ei sau pagina de rezultat); „Aplică” merge cu ferestrele de acord.
+        if (granted && after) applyNow()
+    }
+    fun askAccess(from: String) {
+        accessAfter = from != "confirm"
+        var opened = false
+        for (intent in AllFiles.intents(context)) {
+            try { allFilesLauncher.launch(intent); opened = true; break } catch (_: Exception) { }
+        }
+        vm.onAccessAsked(from, opened)
+        if (!opened) { accessAfter = false; toast.show("Nu pot deschide setările.") }
+    }
+    // Plasa: dacă setările nu întorc rezultat (unele versiuni OEM), revenirea în ecran (ON_RESUME recitește accesul) pornește aplicarea.
+    LaunchedEffect(allFiles) {
+        if (allFiles && accessAfter) { accessAfter = false; applyNow() }
+    }
+    // „Locație” → „Alt dosar…” (poze): selectorul pornește lângă destinația curentă; alegerea se traduce în RELATIVE_PATH.
+    // Orice dosar din memoria internă (4.4.2): în afara Pictures/DCIM, fără acces complet, confirmarea îl cere.
     val photoDestLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
-            if (vm.pickPhotoFolder(uri)) showLocation = false else toast.show("Alege un dosar din Pictures sau DCIM.")
+            when (vm.pickPhotoFolder(uri)) {
+                PhotoPick.Set, PhotoPick.NeedsAccess -> showLocation = false
+                PhotoPick.OnlyStandard -> toast.show("Alege un dosar din Pictures sau DCIM.")
+                PhotoPick.Invalid -> toast.show("Alege alt dosar.")
+            }
         }
     }
     // „Locație” → „Alt folder…” (documente): selectorul pornește în destinația curentă (sau în folderul ales).
@@ -171,7 +212,7 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
     }
     fun pickOtherDest(kind: InvKind) {
         try {
-            if (kind == InvKind.Photos) photoDestLauncher.launch(DocumentsContract.buildDocumentUri(EXTERNAL_DOCS, "primary:Pictures"))
+            if (kind == InvKind.Photos) photoDestLauncher.launch(DocumentsContract.buildDocumentUri(EXTERNAL_DOCS, "primary:" + photoPickerStart(plan?.dest)))
             else docsDestLauncher.launch(vm.docsPickerStart())
         } catch (_: Exception) {
             toast.show("Nu pot deschide dosarele.")
@@ -222,8 +263,9 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
                 vm.consumeOutcome()
             }
             ApplyOutcome.Partial -> {
-                toast.show("Nu s-a aplicat tot.")
-                setStack(InvPage.Start, if (vm.plan.value != null) InvPage.Folders else InvPage.Start)
+                // Pagina de rezultat (4.4.2), nu toast + dosare: ce s-a aplicat, ce a rămas și de ce, cu o acțiune.
+                // „Înapoi” (gest sau buton) duce la dosare.
+                if (vm.plan.value != null) setStack(InvPage.Start, InvPage.Folders, InvPage.Done) else setStack(InvPage.Start, InvPage.Done)
                 vm.consumeOutcome()
             }
             null -> Unit
@@ -467,7 +509,15 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
                                 },
                                 onClose = onBack,
                                 onPlace = { openPlace(d) },
-                                onSite = { openSite(context, d.runId) { toast.show(it) } }
+                                onSite = { openSite(context, d.runId) { toast.show(it) } },
+                                onFix = {
+                                    when (d.fix) {
+                                        DoneFix.Access -> askAccess("result")
+                                        DoneFix.Retry -> applyNow()
+                                        null -> Unit
+                                    }
+                                },
+                                onFolders = { setStack(InvPage.Start, InvPage.Folders) }
                             )
                         )
                     }
@@ -547,12 +597,15 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
             onPickDest = { dest -> vm.setDestination(dest); showLocation = false },
             onOther = { pickOtherDest(pl.kind) },
             onApply = {
-                confirmApply = false
-                showLocation = false
-                vm.apply()
-                push(InvPage.Apply)
+                // Un dosar din afara Pictures/DCIM nu se poate aplica fără acces complet: „Aplică” îl cere întâi
+                // (verificat aici, direct din plan: rândul accesului se calculează în fundal și poate întârzia o clipă).
+                val root = (pl.dest as? InvDest.Media)?.root
+                if (pl.kind == InvKind.Photos && root != null && !MediaRoots.standard(root) && AllFiles.available && !allFiles) askAccess("dest")
+                else applyNow()
             },
-            onDismiss = { confirmApply = false; showLocation = false }
+            onDismiss = { confirmApply = false; showLocation = false },
+            access = access,
+            onAllowAccess = { askAccess("confirm") }
         )
     }
     if (confirmStop) {
@@ -574,8 +627,18 @@ private fun pageTransition(from: InvPage, to: InvPage, reduced: Boolean): Conten
     }
 }
 
-/** Furnizorul memoriei (ExternalStorageProvider): de aici pornește selectorul „Alt dosar…” (Pictures). */
+/** Furnizorul memoriei (ExternalStorageProvider): de aici pornește selectorul „Alt dosar…”. */
 private const val EXTERNAL_DOCS = "com.android.externalstorage.documents"
+
+/**
+ * Unde pornește selectorul „Alt dosar…” la poze: în dosarul-părinte al destinației curente („Pictures/FORJA/” →
+ * „Pictures”, „Documents/Poze/” → „Documents”), ca vecinii ei să se vadă; implicit în Pictures.
+ */
+internal fun photoPickerStart(dest: InvDest?): String {
+    val segs = ((dest as? InvDest.Media)?.root?.let { MediaRoots.normalize(it, anyTop = true) } ?: MediaRoots.DEFAULT)
+        .trimEnd('/').split('/').filter { it.isNotBlank() }
+    return (if (segs.size > 1) segs.dropLast(1) else segs).joinToString("/").ifBlank { "Pictures" }
+}
 
 /** „Pe site”: secțiunea Inventar a site-ului (cu rularea, dacă o știm: /insights#inventar/<runId>). */
 private fun openSite(context: android.content.Context, runId: String? = null, onFail: (String) -> Unit) {

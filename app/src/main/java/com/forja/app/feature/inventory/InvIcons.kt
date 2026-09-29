@@ -66,6 +66,13 @@ internal object InvIcons {
         width = 1.8f
     )
     val Image = stroke("M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z", "M4 16l5-5 4 4 3-3 4 4", "M15 8.5h.01", width = 1.8f)
+    /** Lacătul deschis: „Acces complet” (4.4.2). */
+    val Unlock = stroke(
+        "M6 11h12a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z",
+        "M8 11V7a4 4 0 0 1 7.7-1.5",
+        "M12 15v2",
+        width = 1.8f
+    )
 
     // Motivele din „De aruncat” (DeAruncat.dc.html)
     val ReasonAll = stroke("M4 5h16M4 12h16M4 19h16")

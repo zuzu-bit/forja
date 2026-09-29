@@ -131,6 +131,7 @@ data class Landing(
  * O rundă de aplicare. [failed] = eșecurile rundei (unele se reîncearcă în runda următoare); [lost] = cele ieșite din
  * plan fără să ajungă la loc în runda asta, [pending] = cele rămase în plan după ea (de reîncercat). Nemutatele unei
  * aplicări cu mai multe runde = suma lui [lost] + [pending] din ultima rundă (ca `AppliedRec.failed` de pe site).
+ * [failures] (4.4.2) = motivul fiecărui eșec al rundei, pe id-ul elementului (poze; documentele n-au motive).
  */
 data class ApplyResult(
     val moved: Int,
@@ -139,8 +140,17 @@ data class ApplyResult(
     val freedBytes: Long,
     val landing: Landing? = null,
     val lost: Int = 0,
-    val pending: Int = 0
+    val pending: Int = 0,
+    val failures: Map<String, MoveFail> = emptyMap()
 )
+
+/**
+ * Mutările rămase din plan ([pending]) și câte dintre ele stau în dosarul altei aplicații, pe pachet ([owners],
+ * „com.whatsapp” → 6): pe acestea Android le mută doar cu „Acces la toate fișierele”.
+ */
+data class PendingOwners(val pending: Int = 0, val owners: Map<String, Int> = emptyMap()) {
+    val owned: Int get() = owners.values.sum()
+}
 
 /** Ce cere coșul pentru bucata curentă din „De aruncat” ([Inventory.trashRequest]). */
 sealed interface TrashAsk {
@@ -409,7 +419,8 @@ object Inventory {
             val rec = when (dest) {
                 is InvDest.Media -> {
                     if (s.meta.kind != InvKind.Photos) return@withLock
-                    DestRec(mediaRoot = MediaRoots.normalize(dest.root) ?: return@withLock)
+                    // Orice dosar (4.4.2): cel din afara Pictures/DCIM se aplică doar cu acces complet (îl cere confirmarea).
+                    DestRec(mediaRoot = MediaRoots.normalize(dest.root, anyTop = true) ?: return@withLock)
                 }
                 is InvDest.Tree -> {
                     if (s.meta.kind != InvKind.Documents) return@withLock
@@ -437,14 +448,17 @@ object Inventory {
 
     /**
      * Acordul de scriere pentru mutări (API 30+, poze): prima bucată de ≤ 500 dintre elementele încă nemutate; null
-     * când nu mai e nimic de mutat, sub API 30 sau la documente. Vezi fluxul din KDoc-ul obiectului.
+     * când nu mai e nimic de mutat, sub API 30 sau la documente. Vezi fluxul din KDoc-ul obiectului. [skip] = elementele
+     * care au eșuat deja în aplicarea asta dintr-un motiv pe care un acord nou nu-l schimbă (dosarul altei aplicații,
+     * dosar nepermis, alt volum): nu se mai cer încă o dată, în runda următoare (4.4.1 le cerea din nou, degeaba).
      */
-    fun writeRequest(context: android.content.Context): android.content.IntentSender? {
+    fun writeRequest(context: android.content.Context, skip: Set<String> = emptySet()): android.content.IntentSender? {
         if (Build.VERSION.SDK_INT < 30) return null
         val ctx = bind(context)
         val s = snapshot ?: return null
         if (s.meta.kind != InvKind.Photos) return null
-        val chunk = InventoryApply.pendingMoves(s.doc, s.items).take(CleanupEngine.REQUEST_CHUNK)
+        val chunk = InventoryApply.pendingMoves(s.doc, s.items).let { all -> if (skip.isEmpty()) all else all.filter { it.id !in skip } }
+            .take(CleanupEngine.REQUEST_CHUNK)
         if (chunk.isEmpty()) { moveGrant = null; return null }
         return try {
             CleanupEngine(ctx, ForjaApp.from(ctx).prefs).writeRequest(chunk.map { Uri.parse(it.uri) })
@@ -497,8 +511,10 @@ object Inventory {
      * coșul, raportează progresul (pe contextul apelantului), scoate din plan ce s-a aplicat și emite Done/Failed. Când
      * planul rămâne gol, dispare (fișiere + pointer) și [progress] trece în Done. După fiecare rundă, rezumatul
      * rulării (totalurile adunate peste runde) urcă pe site, dacă e semnat contractul.
+     * [manager] (4.4.2) = „Acces la toate fișierele” e dat: pozele se aplică toate, fără acordurile din dialoguri
+     * (mutările rămase + „De aruncat” prin IS_TRASHED = 1). Documentele nu depind de el.
      */
-    suspend fun apply(context: android.content.Context, onProgress: (Int, Int) -> Unit): ApplyResult {
+    suspend fun apply(context: android.content.Context, manager: Boolean = false, onProgress: (Int, Int) -> Unit): ApplyResult {
         val ctx = bind(context)
         if (snapshot == null) load(ctx)
         var event: InvEvent? = null
@@ -526,7 +542,7 @@ object Inventory {
                 onProgress(d, t)
             }
             val out = try {
-                if (s.meta.kind == InvKind.Photos) InventoryApply.photos(ctx, s.doc, s.items, moves, trash, step)
+                if (s.meta.kind == InvKind.Photos) InventoryApply.photos(ctx, s.doc, s.items, moves, trash, step, manager = manager)
                 else InventoryApply.documents(ctx, s.doc, s.items, s.meta.tree, step)
             } catch (e: CancellationException) {
                 withContext(NonCancellable + Dispatchers.IO) { InventoryStore.writeRun(ctx, RunFile(s.meta, s.doc)) }
@@ -554,6 +570,18 @@ object Inventory {
         event?.let { _events.tryEmit(it) }
         summary?.let { doc -> io.launch { InventorySummary.publish(ctx, doc) } }
         return result
+    }
+
+    /**
+     * Mutările rămase ale planului de poze curent și proprietarii lor (Android/media/<pachet>/, alții decât FORJA), pentru
+     * rândul „Acces complet” din confirmare și pentru numele aplicației din pagina de rezultat. Doar citire, CPU.
+     */
+    fun pendingOwners(context: android.content.Context): PendingOwners {
+        val s = snapshot ?: return PendingOwners()
+        if (s.meta.kind != InvKind.Photos) return PendingOwners()
+        val self = (context.applicationContext ?: context).packageName
+        val pending = InventoryApply.pendingMoves(s.doc, s.items)
+        return PendingOwners(pending.size, pending.mapNotNull { MediaOwners.foreignOwner(it.relPath, self) }.groupingBy { it }.eachCount())
     }
 
     /** Totalurile rulării după încă o rundă (dosare după nume, eșecurile fără dublări). */
@@ -761,7 +789,7 @@ object Inventory {
         val prefs = ForjaApp.from(ctx).prefs
         return try {
             when (kind) {
-                InvKind.Photos -> DestRec(mediaRoot = MediaRoots.normalize(prefs.inventoryPhotoRoot.first()) ?: MediaRoots.DEFAULT)
+                InvKind.Photos -> DestRec(mediaRoot = MediaRoots.normalize(prefs.inventoryPhotoRoot.first(), anyTop = true) ?: MediaRoots.DEFAULT)
                 InvKind.Documents -> {
                     val src = source?.let { Uri.parse(it) }
                     val saved = DocDest.savedTree(ctx, prefs)?.takeUnless { src != null && TreePaths.same(it, src) }
