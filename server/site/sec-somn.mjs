@@ -1,6 +1,6 @@
 // FORJA 4.4 — secțiunea „somn”: nopțile din Firestore, cronologia și sunetul din R2 `forja-sleep` (chei numai din uid-ul verificat).
-// Oglinda (pachetul B): starea nopții (în curs, întreruptă), alarma, sunetele, stingerea, urcarea sunetului (jurnal, fără
-// contract) și cronologia fără sunet din users/{uid}/sleepEvents/s{id} (fazele, trezirile, momentele, vorbele — doar cu
+// Oglinda (pachetul B): starea nopții (în curs, întreruptă), fazele, trezirile, latența, liniile scorului, alarma, sunetele,
+// stingerea, urcarea sunetului (jurnal, fără contract) și cronologia fără sunet din users/{uid}/sleepEvents/s{id} (momentele, vorbele — doar cu
 // contractul v4, contractGate(me.contract, 4); rămâne și după ce sunetul expiră în 7 zile). Sunetul se ascultă prin URL-uri
 // semnate scurt (HMAC pe uid + noapte + bucată + expirare, 10 min, cheia SLEEP_URL_KEY), ca <audio> să poată derula cu Range.
 import { SITE_RULES, MIN, HOUR, reply, failure, num, int, str, time, where, dayParam, contractGate } from './shared.mjs';
@@ -12,6 +12,10 @@ const LABELS = { talk: 'Vorbit', snore: 'Sforăit', cough: 'Tuse', breath: 'Resp
 export const LIVE_MAX_MS = 16 * HOUR;
 /** Cât trăiește un URL semnat de bucată (și cât îl mai acceptăm cu ceasul puțin decalat). */
 export const AUDIO_URL_MS = 10 * MIN;
+/** Cât ține telefonul bucățile care n-au urcat (SleepTrackService.cleanupRecordings). */
+const LOCAL_KEEP_MS = 3 * DAY;
+/** Un moment de pe telefon și unul al serverului de același fel, la cel mult atât distanță, sunt același moment. */
+const SAME_EVENT_MS = 5000;
 const UPLOAD_STATES = new Set(['none', 'waiting_wifi', 'waiting_net', 'waiting_battery', 'uploading', 'analyzing', 'done', 'failed']);
 const STAGES = new Set(['deep', 'light', 'rem', 'awake']);
 const SOUND_KEYS = new Set(['rain', 'storm', 'wind', 'stream', 'fire', 'forest']);
@@ -79,12 +83,17 @@ function bedtimeOf(b) {
  * Sunetul nopții, într-un cuvânt: ready · pending (analiză) · waiting (bucățile nu au urcat: Wi-Fi, baterie) ·
  * failed · expired (a fost, cele 7 zile au trecut) · none (fără microfon). R2 are ultimul cuvânt când bucățile sunt acolo.
  */
-function audioState(row, upload, endAt, now) {
+export function audioState(row, upload, endAt, now) {
   if (row?.chunks) return row.analysis && row.status !== 'processing' ? 'ready' : 'pending';
-  const s = upload?.state;
-  if (s === 'waiting_wifi' || s === 'waiting_net' || s === 'waiting_battery' || s === 'uploading') return 'waiting';
-  if (s === 'analyzing') return 'pending';
-  if (s === 'failed') return 'failed';
+  const s = upload?.state, age = endAt ? now - endAt : 0, sent = (upload?.uploaded || 0) > 0;
+  if (s === 'waiting_wifi' || s === 'waiting_net' || s === 'waiting_battery' || s === 'uploading') {
+    // telefonul șterge după 3 zile bucățile care n-au urcat: ce a urcat a expirat, restul nu mai urcă
+    if (age > LOCAL_KEEP_MS) return sent ? 'expired' : 'failed';
+    return 'waiting';
+  }
+  if (s === 'analyzing') return age > 7 * DAY ? 'expired' : 'pending';
+  // bucățile au ajuns pe server (analiza s-a putut opri), dar nu mai sunt în R2: au expirat, nu „n-au urcat”
+  if (s === 'failed') return sent ? 'expired' : 'failed';
   if (s === 'done' || (upload?.recordedUntil && upload.recordedUntil < now) || (upload?.chunks && endAt && now - endAt > 7 * DAY)) return 'expired';
   return 'none';
 }
@@ -110,20 +119,23 @@ export function phasesOf(raw, startAt) {
 function scoreLinesOf(list) {
   return (Array.isArray(list) ? list : []).filter(l => l && int(l.delta) !== null && str(l.reason, 80)).slice(0, 8).map(l => ({ delta: int(l.delta), reason: str(l.reason, 80) }));
 }
-/** Cifrele cronologiei (v4) care încap pe cardul nopții. */
+/** Cifrele stadiilor (jurnalul, fără contract) care încap pe cardul nopții. */
 function sleepDetail(t) {
-  if (!t) return null;
+  if (!t || (t.latencyMin === undefined && t.awakenings === undefined && t.scoreLines === undefined)) return null;
   return { latencyMin: int(t.latencyMin), awakenings: int(t.awakenings), awakeMin: int(t.awakeMin), scoreLines: scoreLinesOf(t.scoreLines) };
 }
 
-const NIGHT_FIELDS = ['startAt', 'endAt', 'score', 'deepMin', 'lightMin', 'remMin', 'snoreMin', 'talkCount', 'coverageMin', 'summary',
-  'movements', 'snoreEvents', 'soundEvents', 'state', 'alarm', 'sounds', 'bedtime', 'audio'];
-const TIMELINE_FIELDS = ['audioStartAt', 'phases', 'awakeMin', 'latencyMin', 'awakenings', 'scoreLines', 'events', 'talkSummary', 'limits', 'stats', 'analysis'];
+const STAGING_FIELDS = ['awakeMin', 'latencyMin', 'awakenings', 'scoreLines'];
+const LIST_FIELDS = ['startAt', 'endAt', 'score', 'deepMin', 'lightMin', 'remMin', 'snoreMin', 'talkCount', 'coverageMin', 'summary',
+  'movements', 'snoreEvents', 'soundEvents', 'state', 'alarm', 'sounds', 'bedtime', 'audio', ...STAGING_FIELDS];
+const NIGHT_FIELDS = [...LIST_FIELDS, 'phases'];
+// fazele / cifrele stau acum în jurnal; din cronologie se citesc doar pentru nopțile scrise înainte (v4)
+const TIMELINE_FIELDS = ['audioStartAt', 'phases', ...STAGING_FIELDS, 'events', 'talkSummary', 'limits', 'stats', 'analysis'];
 
 export async function somn({ env, fs, uid, now, url }) {
   const days = dayParam(url, SITE_RULES.somn_days);
   const [rows, index, me] = await Promise.all([
-    fs.query(`users/${uid}`, 'sleep', { filters: [where('startAt', 'GREATER_THAN_OR_EQUAL', now - days * DAY)], orderBy: 'startAt', limit: 100, select: NIGHT_FIELDS }),
+    fs.query(`users/${uid}`, 'sleep', { filters: [where('startAt', 'GREATER_THAN_OR_EQUAL', now - days * DAY)], orderBy: 'startAt', limit: 100, select: LIST_FIELDS }),
     sleepIndex(env, uid, now),
     fs.get(`users/${uid}`, ['contract']),
   ]);
@@ -140,9 +152,10 @@ export async function somn({ env, fs, uid, now, url }) {
       state, movements: int(r.movements), snoreEvents: int(r.snoreEvents), soundEvents: int(r.soundEvents), alarm, sounds: soundsOf(r.sounds), bedtime: bedtimeOf(r.bedtime),
       upload, audioExpiresAt: row?.chunks ? row.expiresAt : null });
   }
-  // Cifrele cronologiei doar pentru ultima noapte (1 citire), cu v4.
+  // Adormirea, trezirile și liniile scorului vin din jurnal (fără contract), pentru ultima noapte.
   const last = nights.reduce((m, n) => (!m || n.startAt > m.startAt ? n : m), null);
-  if (last && timeline) last.sleep = sleepDetail(await fs.get(`users/${uid}/sleepEvents/${last.id}`, ['latencyMin', 'awakenings', 'awakeMin', 'scoreLines']));
+  const detail = last && sleepDetail((rows || []).find(r => r.id === last.id));
+  if (detail) last.sleep = detail;
   return { nights, live, days, timeline };
 }
 
@@ -235,9 +248,15 @@ export async function somnNight({ env, fs, uid, now }, id) {
   // Cronologia păstrată (v4): momentele de pe telefon mereu; ale serverului doar când analiza din R2 a expirat.
   const kept = Array.isArray(tl?.events) ? tl.events.slice(0, 200).filter(e => e && time(e.at)) : [];
   const fallback = !analysis && kept.some(e => e.source === 'server');
-  for (const e of kept) {
-    if (e.source === 'server' && analysis) continue;
+  // întâi momentele serverului, apoi ale telefonului, ca un moment prins de amândouă să rămână unul singur
+  for (const e of [...kept.filter(e => e.source !== 'phone'), ...kept.filter(e => e.source === 'phone')]) {
+    if (e.source !== 'phone' && analysis) continue;
     const c = chunkAt(chunks, e.at), kind = (LABELS[e.kind] || e.kind === 'noise') ? String(e.kind) : 'noise';
+    if (e.source === 'phone') {
+      const dur = Math.max(0, int(e.dur) || 0);
+      const twin = events.find(x => x.source === 'server' && x.kind === kind && e.at <= x.t + x.durationMs + SAME_EVENT_MS && e.at + dur >= x.t - SAME_EVENT_MS);
+      if (twin) { twin.phoneClip = true; continue; }
+    }
     events.push({ t: e.at, kind, label: eventLabel({ type: kind, intensity: e.intensity }), text: str(e.text, 400), chunk: c ? c.i : null,
       offsetMs: c ? Math.max(0, e.at - c.startAt) : null, durationMs: Math.max(0, int(e.dur) || 0), source: e.source === 'phone' ? 'phone' : 'server' });
   }
@@ -261,7 +280,7 @@ export async function somnNight({ env, fs, uid, now }, id) {
         : keptStats ? { snoreMin: null, snoreEpisodes: int(keptStats.snoreEpisodes), coughs: int(keptStats.coughCount), noises: null, longestSnore: null } : null,
       limits, sources: (Array.isArray(analysis?.sources) ? analysis.sources : []).map(s => str(s, 80)).filter(Boolean).slice(0, 4),
     } : null,
-    timeline: v4, phases: phasesOf(tl?.phases, night.startAt), sleep: sleepDetail(tl), talkSummary: str(tl?.talkSummary, 600),
+    timeline: v4, phases: phasesOf(night.phases ?? tl?.phases, night.startAt), sleep: sleepDetail(night) || sleepDetail(tl), talkSummary: str(tl?.talkSummary, 600),
   });
 }
 

@@ -116,9 +116,13 @@ test('somn: the night in progress, an interrupted one, upload waiting for Wi-Fi 
   f.fs.set('users/alice/sleep/s57', { startAt: NOW - 1.5 * DAY, endAt: NOW - 1.5 * DAY + 8 * HOUR, state: 'done',
     audio: { chunks: 16, uploaded: 3, state: 'waiting_wifi', audioStartAt: NOW - 1.5 * DAY + 5000 },
     alarm: { target: NOW - 1.5 * DAY + 8 * HOUR, windowMin: 30, firedAt: NOW - 1.5 * DAY + 7.5 * HOUR, reason: 'cycle', snoozes: 1 },
-    sounds: [{ sound: 'rain', minutes: 30 }, { sound: 'lava', minutes: 9 }, { sound: 'fire', minutes: 0 }], bedtime: { minute: 23 * 60, reminder: true } });
+    sounds: [{ sound: 'rain', minutes: 30 }, { sound: 'lava', minutes: 9 }, { sound: 'fire', minutes: 0 }], bedtime: { minute: 23 * 60, reminder: true },
+    latencyMin: 14, awakenings: 3, awakeMin: 12, scoreLines: [{ delta: 84, reason: '7 h 10 dormite' }, { delta: -8, reason: '3 treziri' }, { reason: 'fără delta' }] });
+  // bucățile care n-au urcat în 3 zile s-au șters de pe telefon; bucățile urcate, cu analiza oprită, au expirat din R2
+  f.fs.set('users/alice/sleep/s56', { startAt: NOW - 5 * DAY, endAt: NOW - 5 * DAY + 8 * HOUR, audio: { chunks: 16, uploaded: 0, state: 'waiting_wifi' } });
+  f.fs.set('users/alice/sleep/s55', { startAt: NOW - 9 * DAY, endAt: NOW - 9 * DAY + 8 * HOUR, audio: { chunks: 16, uploaded: 16, state: 'failed', lastError: 'serverul nu a mai avansat în 20 de minute' } });
+  f.fs.set('users/alice/sleep/s54', { startAt: NOW - 10 * DAY, endAt: NOW - 10 * DAY + 8 * HOUR, audio: { chunks: 16, uploaded: 0, state: 'failed' } });
   f.fs.set('users/alice/sleep/s50', { startAt: NOW - 12 * DAY, endAt: NOW - 12 * DAY + 8 * HOUR, audio: { chunks: 16, uploaded: 16, state: 'done', recordedUntil: NOW - 5 * DAY } });
-  f.fs.set('users/alice/sleepEvents/s57', { latencyMin: 14, awakenings: 3, awakeMin: 12, scoreLines: [{ delta: 84, reason: '7 h 10 dormite' }, { delta: -8, reason: '3 treziri' }, { reason: 'fără delta' }] });
   const b = (await f.call('/insights/api/somn?days=14')).body;
   assert.deepEqual(b.live, { id: 's60', startAt: NOW - 3 * HOUR, alarm: { target: NOW + 4 * HOUR, windowMin: 30, firedAt: null, reason: null, snoozes: 0 }, sounds: [{ sound: 'rain', minutes: 20 }] });
   const byId = Object.fromEntries(b.nights.map(n => [n.id, n]));
@@ -131,20 +135,23 @@ test('somn: the night in progress, an interrupted one, upload waiting for Wi-Fi 
   assert.deepEqual(byId.s57.sounds, [{ sound: 'rain', minutes: 30 }], 'unknown sounds and zero minutes are dropped');
   assert.deepEqual(byId.s57.bedtime, { minute: 1380, reminder: true });
   assert.equal(byId.s50.audio, 'expired');
+  assert.equal(byId.s56.audio, 'failed', 'waiting for 5 days: the phone deleted the chunks');
+  assert.equal(byId.s55.audio, 'expired', 'uploaded, then R2 expired: not "no upload"');
+  assert.equal(byId.s54.audio, 'failed');
   assert.equal(b.timeline, true);
-  // v4: the last finished night carries the timeline numbers (1 read), the others do not.
+  // the last finished night carries the staging numbers from the journal, with or without v4
   const last = b.nights.reduce((m, n) => (n.startAt > m.startAt ? n : m));
   assert.equal(last.id, 's57');
   assert.deepEqual(last.sleep, { latencyMin: 14, awakenings: 3, awakeMin: 12, scoreLines: [{ delta: 84, reason: '7 h 10 dormite' }, { delta: -8, reason: '3 treziri' }] });
   assert.equal(byId.s58.sleep, undefined);
-  // v3 (or revoked): the journal stays, the timeline does not.
+  // v3 (or revoked): the journal stays (with the staging numbers), the timeline does not.
   for (const contract of [{ version: 3, at: NOW - DAY }, { version: 4, at: NOW - 3 * DAY, revokedAt: NOW - DAY }, undefined]) {
     const g = fixture();
     for (const [k, v] of f.fs.docs) g.fs.set(k, v);
     g.fs.set('users/alice', { name: 'Lana', ...(contract ? { contract } : {}) });
     const gb = (await g.call('/insights/api/somn')).body;
     assert.equal(gb.timeline, false);
-    assert.equal(gb.nights.find(n => n.id === 's57').sleep, undefined);
+    assert.deepEqual(gb.nights.find(n => n.id === 's57').sleep, last.sleep);
     assert.ok(!g.fs.requests.some(r => r.url.includes('sleepEvents')), 'no timeline read without v4');
   }
 });
@@ -152,10 +159,11 @@ test('somn/<id>: audioStartAt is the clock base, phases become a hypnogram, anal
   const f = fixture();
   f.fs.set('users/alice', { contract: V4 });
   const startAt = NOW - 10 * HOUR, audioStart = startAt + 40 * MIN;
-  f.fs.set('users/alice/sleep/s70', { startAt, endAt: startAt + 8 * HOUR, state: 'done', summary: 'Liniște.', audio: { chunks: 2, uploaded: 2, state: 'done', audioStartAt: audioStart } });
-  f.fs.set('users/alice/sleepEvents/s70', { phases: '0,14,awake;14,90,light;90,130,deep;bad;130,120,rem;130,160,dream', latencyMin: 14, awakenings: 1, awakeMin: 3,
-    scoreLines: [{ delta: 90, reason: '7 h 40 dormite' }], talkSummary: 'Ai spus două cuvinte.',
-    events: [{ kind: 'snore', at: audioStart + 31 * MIN, dur: 12000, intensity: 0.85, source: 'phone', pid: 4 }, { kind: 'talk', at: audioStart + 70 * MIN, dur: 3000, text: 'Păstrat', source: 'server' }] });
+  f.fs.set('users/alice/sleep/s70', { startAt, endAt: startAt + 8 * HOUR, state: 'done', summary: 'Liniște.', audio: { chunks: 2, uploaded: 2, state: 'done', audioStartAt: audioStart },
+    phases: '0,14,awake;14,90,light;90,130,deep;bad;130,120,rem;130,160,dream', latencyMin: 14, awakenings: 1, awakeMin: 3, scoreLines: [{ delta: 90, reason: '7 h 40 dormite' }] });
+  f.fs.set('users/alice/sleepEvents/s70', { talkSummary: 'Ai spus două cuvinte.',
+    events: [{ kind: 'snore', at: audioStart + 31 * MIN, dur: 12000, intensity: 0.85, source: 'phone', pid: 4 }, { kind: 'talk', at: audioStart + 70 * MIN, dur: 3000, text: 'Păstrat', source: 'server' },
+      { kind: 'talk', at: audioStart + 5 * MIN + 1000, dur: 5000, intensity: 0.3, source: 'phone', pid: 5 }] });
   for (let i = 0; i < 2; i++) await f.sleep.put(`alice/s70/chunk_${i}.m4a`, new Uint8Array(1000), { customMetadata: { from: String(i * 30 * MIN), dur: String(30 * MIN), at: String(NOW), ttl: String(7 * DAY) } });
   await f.sleep.put('alice/s70/analysis.json', JSON.stringify({ status: 'complete', progress: { done: 2, failed: 0, total: 2 },
     events: [{ type: 'talk', from: 5 * MIN, to: 5 * MIN + 2000, chunk: 0, transcript: 'Da.' }],
@@ -167,6 +175,7 @@ test('somn/<id>: audioStartAt is the clock base, phases become a hypnogram, anal
   assert.deepEqual(b.chunks.map(c => c.startAt), [audioStart, audioStart + 30 * MIN], 'chunks on the audio clock, not the vigil start');
   assert.deepEqual(b.events.map(e => [e.t, e.source, e.chunk, e.offsetMs]), [[audioStart + 5 * MIN, 'server', 0, 5 * MIN], [audioStart + 31 * MIN, 'phone', 1, MIN]],
     'phone moments merge in and find their chunk; kept server moments stay out while R2 has the analysis');
+  assert.equal(b.events[0].phoneClip, true, 'the phone clip of the same moment is folded into the server moment, not listed twice');
   assert.deepEqual(b.phases, [{ from: startAt, to: startAt + 14 * MIN, stage: 'awake' }, { from: startAt + 14 * MIN, to: startAt + 90 * MIN, stage: 'light' }, { from: startAt + 90 * MIN, to: startAt + 130 * MIN, stage: 'deep' }]);
   assert.deepEqual(b.sleep, { latencyMin: 14, awakenings: 1, awakeMin: 3, scoreLines: [{ delta: 90, reason: '7 h 40 dormite' }] });
   assert.equal(b.talkSummary, 'Ai spus două cuvinte.');
@@ -174,6 +183,11 @@ test('somn/<id>: audioStartAt is the clock base, phases become a hypnogram, anal
     stats: { snoreMin: 4, snoreEpisodes: 2, coughs: 1, noises: 0, longestSnore: { t: audioStart + 40 * MIN, minutes: 3 } },
     limits: ['Fără cheie Gemini: doar transcriere Whisper cu timpi; sforăitul nu poate fi detectat din chunk-uri.'], sources: ['groq/whisper'] });
   assert.equal(b.audioExpiresAt, NOW + 7 * DAY);
+  // v3: the hypnogram and the score lines stay (journal); the kept timeline and the talk summary do not
+  f.fs.set('users/alice', { contract: { version: 3, at: NOW - DAY } });
+  const v3 = (await f.call('/insights/api/somn/s70')).body;
+  assert.deepEqual([v3.timeline, v3.phases.length, v3.sleep, v3.talkSummary], [false, 3, b.sleep, null]);
+  assert.deepEqual(v3.events.map(e => e.source), ['server'], 'without v4 the phone moments are not read');
 });
 test('somn/<id>: after the 7 days the kept timeline (v4) stays readable, without sound; revoked hides it', async () => {
   const f = fixture();

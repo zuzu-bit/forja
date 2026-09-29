@@ -3,10 +3,10 @@ package com.forja.app.core.sleep
 /**
  * Oglinda nopții pe site (pachetul B), fără Firebase și fără Android — doar hărțile care se scriu, ca să poată fi
  * testate pe JVM. [SleepCloud] le trimite:
- *  · users/{uid}/sleep/s{id} (jurnalul, fără contract): starea (recording | done | interrupted), alarma, sunetele de
- *    adormit, stingerea, urcarea sunetului;
- *  · users/{uid}/sleepEvents/s{id} (doar cu contractul v4, „Cronologia nopții”): fazele, trezirile, liniile scorului,
- *    cel mult [EVENTS_MAX] momente (sforăit, vorbit, tuse, sunet) cu ce s-a înțeles din vorbe, limitările analizei.
+ *  · users/{uid}/sleep/s{id} (jurnalul, fără contract): starea (recording | done | interrupted), fazele, trezirile,
+ *    latența, liniile scorului ([stagingMap] — cifre din mișcare, nu sunet), alarma, sunetele de adormit, stingerea,
+ *    urcarea sunetului;
+ *  · users/{uid}/sleepEvents/s{id} (doar cu contractul v4, „Cronologia nopții”): cel mult [EVENTS_MAX] momente (sforăit, vorbit, tuse, sunet) cu ce s-a înțeles din vorbe, limitările analizei.
  *    Revocarea o șterge (SiteMirror.MIRRORED), jurnalul rămâne.
  */
 object SleepNightDoc {
@@ -44,7 +44,8 @@ object SleepNightDoc {
         put("chunks", a.chunks)
         put("uploaded", a.uploaded)
         put("state", a.state)
-        if (a.lastError.isNotBlank()) put("lastError", a.lastError.take(120))
+        // mereu, și gol: `merge` nu șterge un câmp, iar o eroare veche ar rămâne pe site
+        put("lastError", a.lastError.take(120))
         if (a.audioStartAt > 0L) put("audioStartAt", a.audioStartAt)
         if (a.recordedUntil > 0L) put("recordedUntil", a.recordedUntil)
     }
@@ -58,7 +59,8 @@ object SleepNightDoc {
         attempts: Int, maxAttempts: Int, lastError: String, cellular: Boolean, started: Boolean
     ): String = when {
         chunks <= 0 -> "none"
-        done -> if (uploaded > 0 && lastError.isBlank()) "done" else "failed"
+        // urcarea s-a încheiat dacă bucățile sunt pe server; o analiză oprită (timeout, parțială) își ține motivul în lastError
+        done -> if (uploaded > 0) "done" else "failed"
         attempts >= maxAttempts -> "failed"
         analyzeRequested -> "analyzing"
         lastError.contains("baterie") -> "waiting_battery"
@@ -107,20 +109,23 @@ object SleepNightDoc {
         }
     }
 
-    /** users/{uid}/sleepEvents/s{id} — cronologia întreagă a nopții, fără sunet. */
+    /** Stadiile nopții, pentru jurnal (users/{uid}/sleep/s{id}): hipnograma, trezirile, latența, liniile scorului. */
+    fun stagingMap(staging: SleepStaging.Result?): Map<String, Any> = buildMap {
+        staging ?: return@buildMap
+        if (staging.phases.isNotBlank()) put("phases", staging.phases.take(8000))
+        put("awakeMin", staging.awakeMin)
+        put("latencyMin", staging.latencyMin)
+        put("awakenings", staging.awakenings)
+        put("scoreLines", staging.lines.take(8).map { mapOf("delta" to it.delta, "reason" to it.reason.take(80)) })
+    }
+
+    /** users/{uid}/sleepEvents/s{id} — momentele nopții, fără sunet (stadiile stau în jurnal, [stagingMap]). */
     fun timelineDoc(
-        startAt: Long, staging: SleepStaging.Result?, phone: List<PhoneEvent>, server: SleepTimeline?,
+        startAt: Long, phone: List<PhoneEvent>, server: SleepTimeline?,
         audioStartAt: Long, now: Long
     ): Map<String, Any> = buildMap {
         put("startAt", startAt)
         if (audioStartAt > 0L) put("audioStartAt", audioStartAt)
-        if (staging != null) {
-            if (staging.phases.isNotBlank()) put("phases", staging.phases.take(8000))
-            put("awakeMin", staging.awakeMin)
-            put("latencyMin", staging.latencyMin)
-            put("awakenings", staging.awakenings)
-            put("scoreLines", staging.lines.take(8).map { mapOf("delta" to it.delta, "reason" to it.reason.take(80)) })
-        }
         put("events", events(phone, server, audioStartAt))
         if (server != null) {
             put("analysis", server.status)

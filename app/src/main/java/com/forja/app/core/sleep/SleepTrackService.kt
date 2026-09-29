@@ -100,6 +100,9 @@ class SleepTrackService : Service(), SensorEventListener {
     @Volatile private var alarmReason = ""
     @Volatile private var snoozes = 0
     private val soundMs = HashMap<String, Long>()
+    /** Sunetul care cântă acum și de când (sub lacătul lui [soundMs]) — finalul adaugă și bucata în curs. */
+    private var soundPlaying: String? = null
+    private var soundSince = 0L
     private var soundJob: Job? = null
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
@@ -271,14 +274,14 @@ class SleepTrackService : Service(), SensorEventListener {
         startAlarmWatcher(app)
         // Sunetele de adormit: cât a cântat fiecare în timpul veghei (doar cheia și minutele).
         soundJob?.cancel()
-        synchronized(soundMs) { soundMs.clear() }
+        synchronized(soundMs) { soundMs.clear(); soundPlaying = null; soundSince = 0L }
         soundJob = scope.launch {
-            var playing: String? = null
-            var since = 0L
             SleepSounds.current.collect { now ->
                 val t = System.currentTimeMillis()
-                playing?.let { k -> synchronized(soundMs) { soundMs[k] = (soundMs[k] ?: 0L) + (t - since) } }
-                playing = now; since = t
+                synchronized(soundMs) {
+                    soundPlaying?.let { k -> soundMs[k] = (soundMs[k] ?: 0L) + (t - soundSince) }
+                    soundPlaying = now; soundSince = t
+                }
             }
         }
     }
@@ -293,8 +296,10 @@ class SleepTrackService : Service(), SensorEventListener {
 
     /** Minutele fiecărui sunet de adormit, cu sunetul care încă mai cântă. */
     private fun soundUses(): List<SleepNightDoc.SoundUse> {
-        val map = synchronized(soundMs) { HashMap(soundMs) }
-        SleepSounds.current.value?.let { cur -> if (!map.containsKey(cur)) map[cur] = 60_000L }
+        val t = System.currentTimeMillis()
+        val map = synchronized(soundMs) {
+            HashMap(soundMs).also { m -> soundPlaying?.let { k -> m[k] = (m[k] ?: 0L) + (t - soundSince).coerceAtLeast(0L) } }
+        }
         return map.map { (k, ms) -> SleepNightDoc.SoundUse(k, ((ms + 30_000L) / 60_000L).toInt()) }
     }
 
@@ -524,7 +529,7 @@ class SleepTrackService : Service(), SensorEventListener {
                         if (now >= snoozeUntil) {
                             snoozeUntil = 0L
                             alarmFired = true
-                            alarmReason = "snooze"
+                            // motivul rămâne al primei sunări (ciclu, mișcare, limită); amânările sunt în `snoozes`
                             fireAlarm()
                         }
                         continue
@@ -709,7 +714,7 @@ class SleepTrackService : Service(), SensorEventListener {
                             "alarm" to SleepNightDoc.alarmMap(alarmOut),
                             "sounds" to SleepNightDoc.soundsList(sounds),
                             "bedtime" to SleepCloud.bedtime(app)
-                        )
+                        ) + SleepNightDoc.stagingMap(staging)
                     )
                     SleepCloud.audio(app, s.id, recordedUntil, force = true)
                     SleepCloud.timeline(app, s.id)

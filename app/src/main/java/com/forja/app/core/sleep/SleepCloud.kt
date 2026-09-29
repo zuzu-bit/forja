@@ -5,7 +5,6 @@ import com.forja.app.core.data.db.SleepSessionEntity
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.flow.first
-import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -13,7 +12,8 @@ import java.util.concurrent.ConcurrentHashMap
  * revenire — și sunt `merge`, ca să nu se calce între ele (serviciul, urcarea, ecranul).
  *  · users/{uid}/sleep/s{id}: jurnalul nopții (cifrele, rezumatul) + starea, alarma, sunetele, stingerea, urcarea.
  *    Se scrie la pornirea veghei (`state: recording`, endAt 0), la final și la o veghe întreruptă.
- *  · users/{uid}/sleepEvents/s{id}: cronologia fără sunet (fazele, trezirile, momentele, vorbele) — doar cu v4.
+ *    Tot aici, fără contract, stadiile din mișcare: fazele, trezirile, latența, liniile scorului.
+ *  · users/{uid}/sleepEvents/s{id}: cronologia fără sunet (momentele, vorbele, limitările) — doar cu v4.
  * Formele hărților sunt în [SleepNightDoc].
  */
 object SleepCloud {
@@ -107,12 +107,8 @@ object SleepCloud {
         } catch (_: Exception) { }
     }
 
-    private fun readStaging(dir: File): SleepStaging.Result? = try {
-        File(dir, SleepTrackService.STAGING_FILE).takeIf { it.exists() }?.let { SleepStaging.fromJson(it.readText()) }
-    } catch (_: Exception) { null }
-
     /**
-     * Cronologia nopții (v4): stadiile din `staging.json`, cronologia serverului din `timeline.json` și momentele
+     * Cronologia nopții (v4): cronologia serverului din `timeline.json` și momentele
      * prinse pe telefon (Room). Se rescrie întreagă: la final, după analiza serverului și după ce ștergi un moment.
      */
     suspend fun timeline(app: ForjaApp, sessionId: Long) {
@@ -126,7 +122,7 @@ object SleepCloud {
             }
             val server = SleepTimeline.load(dir)
             val audioStartAt = AacRecorder.manifestFor(app.filesDir, sessionId, 0L)?.startedAt ?: server?.startedAt ?: 0L
-            val doc = SleepNightDoc.timelineDoc(s.startAt, readStaging(dir), phone, server, audioStartAt, System.currentTimeMillis())
+            val doc = SleepNightDoc.timelineDoc(s.startAt, phone, server, audioStartAt, System.currentTimeMillis())
             db.collection("users").document(uid).collection("sleepEvents").document("s$sessionId").set(doc, SetOptions.merge())
         } catch (_: Exception) { }
     }

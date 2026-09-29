@@ -174,7 +174,7 @@ const Somn = {
       h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Noaptea, ascultată'}), tag),
       h('div', {class: 'tl-track'},
         ...[...chunks.values()].map(c => h('span', {class: 'tl-chunk', style: {left: ((c.startAt - start) / span * 100) + '%', width: (c.durationMs / span * 100) + '%'}})),
-        ...events.map(e => h('button', {type: 'button', class: 'tl-dot ' + (KIND_TONE[e.kind] || 'noise'), style: {left: Math.max(0, Math.min(100, (e.t - start) / span * 100)) + '%'}, title: fmt.time(e.t) + ' · ' + (e.label || e.kind), 'aria-label': fmt.time(e.t) + ' ' + (e.label || e.kind), onclick: () => document.getElementById('ev-' + e.t)?.scrollIntoView({block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth'})}))),
+        ...events.map((e, i) => h('button', {type: 'button', class: 'tl-dot ' + (KIND_TONE[e.kind] || 'noise'), style: {left: Math.max(0, Math.min(100, (e.t - start) / span * 100)) + '%'}, title: fmt.time(e.t) + ' · ' + (e.label || e.kind), 'aria-label': fmt.time(e.t) + ' ' + (e.label || e.kind), onclick: () => document.getElementById('ev-' + i)?.scrollIntoView({block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth'})}))),
       h('div', {class: 'tl-axis'}, h('span', {text: fmt.time(start)}), h('span', {text: fmt.time(start + span / 2)}), h('span', {text: fmt.time(end)})),
       analysisFacts(a));
     for (const l of limits) box.append(h('p', {class: 'tl-limit', text: l}));
@@ -190,13 +190,13 @@ const Somn = {
       return box;
     }
     const player = !!Somn.player;
-    box.append(h('ol', {class: 'events'}, events.map(e => {
+    box.append(h('ol', {class: 'events'}, events.map((e, i) => {
       const canPlay = num(e.chunk) !== null && chunks.has(e.chunk);
       const play = canPlay ? h('button', {type: 'button', class: 'play-btn', 'aria-label': 'Ascultă ' + fmt.time(e.t), onclick: ev => player ? Somn.seek(e.t - 400, true) : Somn.play(night?.id || detail.id, e, ev.currentTarget)}, icon('play', 16)) : null;
-      return h('li', {class: 'event ' + (KIND_TONE[e.kind] || 'noise'), id: 'ev-' + e.t},
+      return h('li', {class: 'event ' + (KIND_TONE[e.kind] || 'noise'), id: 'ev-' + i},
         h('span', {class: 'ev-time', text: fmt.time(e.t)}), h('i', {class: 'ev-dot'}),
         h('div', {class: 'ev-body'}, h('span', {class: 'ev-label', text: e.label || e.kind}), e.text ? h('q', {class: 'ev-text', text: e.text}) : null,
-          num(e.durationMs) ? h('span', {class: 'ev-dur', text: Math.max(1, Math.round(e.durationMs / 1000)) + ' s' + (e.source === 'phone' ? ' · clip pe telefon' : '')}) : e.source === 'phone' ? h('span', {class: 'ev-dur', text: 'clip pe telefon'}) : null),
+          num(e.durationMs) ? h('span', {class: 'ev-dur', text: Math.max(1, Math.round(e.durationMs / 1000)) + ' s' + (e.source === 'phone' || e.phoneClip ? ' · clip pe telefon' : '')}) : e.source === 'phone' || e.phoneClip ? h('span', {class: 'ev-dur', text: 'clip pe telefon'}) : null),
         play);
     })));
     return box;

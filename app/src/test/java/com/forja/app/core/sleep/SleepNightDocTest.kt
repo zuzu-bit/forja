@@ -44,19 +44,22 @@ class SleepNightDocTest {
     }
 
     @Test
-    fun timelineDocCarriesStagingAndTheServerLimits() {
+    fun stagingGoesToTheJournalAndTheTimelineKeepsTheServerLimits() {
         val staging = SleepStaging.Result("0,14,awake;14,90,light", 90, 250, 100, 12, 14, 3, 78, listOf(SleepStaging.ScoreLine(84, "7 h 10 dormite"), SleepStaging.ScoreLine(-8, "3 treziri")))
+        val night = SleepNightDoc.stagingMap(staging)
+        assertEquals("0,14,awake;14,90,light", night["phases"])
+        assertEquals(14, night["latencyMin"]); assertEquals(3, night["awakenings"]); assertEquals(12, night["awakeMin"])
+        assertEquals(listOf(mapOf("delta" to 84, "reason" to "7 h 10 dormite"), mapOf("delta" to -8, "reason" to "3 treziri")), night["scoreLines"])
+        assertEquals(emptyMap<String, Any>(), SleepNightDoc.stagingMap(null))
         val t = SleepTimeline("done", startedAt = audioStart, limits = listOf("fără Gemini: sforăitul nu se poate detecta", " "),
             stats = SleepTimeline.Stats(snoreEpisodes = 2, coughCount = 1, coverageMin = 470, totalMin = 480))
-        val doc = SleepNightDoc.timelineDoc(audioStart - 60_000L, staging, emptyList(), t, audioStart, 5L)
-        assertEquals("0,14,awake;14,90,light", doc["phases"])
-        assertEquals(14, doc["latencyMin"]); assertEquals(3, doc["awakenings"]); assertEquals(12, doc["awakeMin"])
-        assertEquals(listOf(mapOf("delta" to 84, "reason" to "7 h 10 dormite"), mapOf("delta" to -8, "reason" to "3 treziri")), doc["scoreLines"])
+        val doc = SleepNightDoc.timelineDoc(audioStart - 60_000L, emptyList(), t, audioStart, 5L)
+        assertFalse(doc.containsKey("phases")); assertFalse(doc.containsKey("scoreLines"))
         assertEquals(listOf("fără Gemini: sforăitul nu se poate detecta"), doc["limits"])
         assertEquals(mapOf("snoreEpisodes" to 2, "coughCount" to 1, "coverageMin" to 470, "totalMin" to 480), doc["stats"])
         assertEquals("done", doc["analysis"])
-        val bare = SleepNightDoc.timelineDoc(1L, null, emptyList(), null, 0L, 5L)
-        assertFalse(bare.containsKey("phases")); assertFalse(bare.containsKey("limits")); assertFalse(bare.containsKey("audioStartAt"))
+        val bare = SleepNightDoc.timelineDoc(1L, emptyList(), null, 0L, 5L)
+        assertFalse(bare.containsKey("limits")); assertFalse(bare.containsKey("audioStartAt"))
         assertEquals(emptyList<Any>(), bare["events"])
     }
 
@@ -72,7 +75,8 @@ class SleepNightDocTest {
         assertEquals("analyzing", st(up = 15, rej = 1))
         assertEquals("analyzing", st(up = 16, an = true))
         assertEquals("done", st(up = 16, done = true))
-        assertEquals("failed", st(up = 16, done = true, err = "serverul nu a mai avansat"))
+        assertEquals("done", st(up = 16, done = true, err = "serverul nu a mai avansat"))
+        assertEquals("failed", st(up = 0, done = true, err = "nicio bucată nu a putut urca"))
         assertEquals("failed", st(up = 2, att = 24))
     }
 
@@ -86,6 +90,6 @@ class SleepNightDocTest {
         assertEquals(listOf(mapOf("sound" to "rain", "minutes" to 30), mapOf("sound" to "fire", "minutes" to 2)),
             SleepNightDoc.soundsList(listOf(SleepNightDoc.SoundUse("fire", 2), SleepNightDoc.SoundUse("rain", 30), SleepNightDoc.SoundUse("wind", 0))))
         val a = SleepNightDoc.audioMap(SleepNightDoc.Audio(16, 3, "uploading", "", audioStart, 0L))
-        assertEquals(mapOf("chunks" to 16, "uploaded" to 3, "state" to "uploading", "audioStartAt" to audioStart), a)
+        assertEquals(mapOf("chunks" to 16, "uploaded" to 3, "state" to "uploading", "lastError" to "", "audioStartAt" to audioStart), a)
     }
 }

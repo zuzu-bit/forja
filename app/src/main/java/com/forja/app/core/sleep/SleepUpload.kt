@@ -184,6 +184,8 @@ class SleepUploadWorker(
             SleepCloud.audio(app, sessionId)
             return Result.retry()
         }
+        // bateria e bună acum: o eroare veche („baterie sub 15 %”, o bucată amânată) nu mai descrie urcarea
+        if (p.lastError.isNotEmpty()) { p = p.copy(lastError = ""); SleepUpload.saveProgress(dir, p) }
 
         // 1. bucățile, în ordine; ce s-a urcat deja se sare
         val chunksToSend = manifest.chunks.filter { it.dur > 0 || manifest.chunks.size == 1 }
