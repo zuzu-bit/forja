@@ -11,6 +11,8 @@ package com.forja.app.core.music
  * - În fundal, niciodată o comandă către un player care s-a oprit: coada se retrage și lasă playerul în pace.
  * - Aterizarea (4.4.1): o piesă cerută ([issued]) trebuie să cânte în 6 s ([check]); o reclamă pornește așteptarea de la
  *   capăt. Nu a apărut → Spotify nu primește piesele cerute azi: coada se retrage ca „refuzată”, autoplay-ul lui continuă.
+ *   Cât o cerere e în așteptare, o piesă străină nu e „a preluat ea”: e răspunsul lui Spotify (o piesă înlocuitoare),
+ *   deci tot termenul decide.
  */
 class MusicQueue(items: List<PlayItem>, reserve: List<PlayItem>, val targetPkg: String) {
 
@@ -84,6 +86,10 @@ class MusicQueue(items: List<PlayItem>, reserve: List<PlayItem>, val targetPkg: 
             return Action.None
         }
         if (isAd(title, artist, durationMs)) return Action.Hold
+        // O piesă cerută e în așteptare: altă piesă acum e răspunsul playerului la cerere (pe Spotify gratuit, una
+        // înlocuitoare), sau piesa cerută venită în doi pași (titlul, apoi artistul) — nu ea care a preluat. Decide
+        // termenul aterizării ([check]): piesa cerută → Landed, altceva → „refused”.
+        if (pending != null) return Action.None
         val natural = prevDurMs > 0 && prevPosMs >= prevDurMs - NATURAL_END_MS
         if (!natural) return release("takeover")
         if (!fg && !targetPlaying) return release("background-stopped")

@@ -73,6 +73,47 @@ class MusicQueueTest {
         assertEquals(2, q.landed)
     }
 
+    @Test fun aSubstitutedSongIsARefusalNotATakeover() {
+        // Piesa 1 s-a terminat natural, Spotify a trecut la radioul lui („Radio”), coada a cerut piesa 2. Spotify pune
+        // altă piesă decât cea cerută (pe gratuit: una înlocuitoare, un amestec al artistului) la 2 s după ce „Radio”
+        // pornise. Nu a preluat ea: e răspunsul lui Spotify la cerere, deci termenul aterizării decide („refused”).
+        val q = queue()
+        issueSecond(q, now = 10_000)
+        assertEquals(
+            MusicQueue.Action.None,
+            q.onTrack("Alta piesa", "Altcineva", null, 190_000, prevPosMs = 2_000, prevDurMs = 180_000, targetPlaying = true, fg = true)
+        )
+        assertFalse("nu e „takeover”: împrumutul rămâne, muzica pornită de FORJA se oprește la final", q.released)
+        assertEquals(16_000L, q.landingDeadline)
+        assertEquals(MusicQueue.Action.None, q.check("Alta piesa", "Altcineva", null, 190_000, now = 12_000))
+        assertEquals(MusicQueue.Action.Release(MusicQueue.REFUSED), q.check("Alta piesa", "Altcineva", null, 190_000, now = 16_000))
+        assertEquals(MusicQueue.REFUSED, q.releaseReason)
+        assertEquals("doar piesa 1 a cântat din listă", 1, q.landed)
+    }
+
+    @Test fun theRequestedSongArrivingInTwoMetadataStepsStillLands() {
+        // Spotify dă întâi titlul (fără artist), apoi și artistul: primul pas nu e o piesă străină, nici un refuz.
+        val q = queue()
+        issueSecond(q, now = 10_000)
+        assertEquals(MusicQueue.Action.None, q.onTrack("Piesa 2", null, null, 0, 1_000, 180_000, true, true))
+        assertEquals(MusicQueue.Action.None, q.check("Piesa 2", null, null, 0, now = 10_400))
+        assertFalse(q.released)
+        assertEquals(MusicQueue.Action.None, q.onTrack("Piesa 2", "A2", "spotify:track:2", 200_000, 400, 0, true, true))
+        assertEquals(MusicQueue.Action.Landed(1), q.check("Piesa 2", "A2", "spotify:track:2", 200_000, now = 10_700))
+        assertEquals(2, q.landed)
+    }
+
+    @Test fun withNothingPendingAnEarlyForeignSongIsStillHerTakeover() {
+        // Piesa 2 a aterizat; la minutul 1 ea alege altă listă în Spotify: coada se retrage fără luptă (ca până acum).
+        val q = queue()
+        issueSecond(q, now = 10_000)
+        assertEquals(MusicQueue.Action.Landed(1), q.check("Piesa 2", "A2", null, 200_000, now = 11_000))
+        assertEquals(
+            MusicQueue.Action.Release("takeover"),
+            q.onTrack("Lista ei", "Altcineva", null, 210_000, prevPosMs = 60_000, prevDurMs = 200_000, targetPlaying = true, fg = true)
+        )
+    }
+
     @Test fun theSongStillPlayingIsNotALanding() {
         // ⏭ pe piesa 2: se cere piesa 3; piesa 2, care încă sună, nu e o aterizare.
         val q = queue()
