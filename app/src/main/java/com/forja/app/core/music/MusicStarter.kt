@@ -91,6 +91,8 @@ object MusicStarter {
     private var refreshError: String? = null
     /** Playere dovedite lipsă până la repornirea aplicației ([Snapshot.absent]). */
     private val absent = HashSet<String>()
+    /** Ultima citire completă și fără erori a istoricului și a playerelor ([refresh]); ceasul monoton, 0 = niciuna. */
+    private var refreshedAt = 0L
 
     /** Saltul în player deschis de FORJA și întoarcerea (RET_SUB). */
     private val hops = HopWatch()
@@ -249,6 +251,21 @@ object MusicStarter {
             if (error == null) error = cls(e)
         }
         refreshError = error
+        if (error == null) refreshedAt = SystemClock.elapsedRealtime()
+    }
+
+    /**
+     * Hubul ([prewarm]) sau pornirea de dinainte au citit totul de curând (și nimic nu e dovedit lipsă): atingerea nu
+     * recitește istoricul și playerele, ca pregătirea să nu mănânce din cele 1,5 s ale saltului.
+     */
+    private fun refreshedRecently(): Boolean =
+        refreshedAt != 0L && SystemClock.elapsedRealtime() - refreshedAt < FRESH_MS && absent.isEmpty()
+
+    /** Partea ieftină a [refresh], pe firul principal: un player văzut acum cântând muzică e pe telefon. */
+    private fun seePlaying() {
+        val playing = Music.sessions.value.filter { it.kind == MediaKind.MUSIC && !it.remote }.map { it.pkg }
+            .filter { it !in installed && it !in MusicKind.SPOKEN_APPS && it !in MusicKind.VIDEO_APPS }
+        if (playing.isNotEmpty()) installed = installed + playing
     }
 
     /** O citire din DataStore, pe firul de I/O: reușita sau excepția ei (anularea trece mai departe). */
@@ -376,9 +393,10 @@ object MusicStarter {
 
     /**
      * O pornire nouă, o singură încercare odată: anulează ce era, arată „Pornește…” din prima clipă, pregătește
-     * intenția ([prepare]: istoricul, lista), citește din nou playerele, scrie rândul ENV și abia apoi pornește mașina.
-     * Momentul atingerii se ia ÎNAINTEA pregătirii: o pregătire lentă duce la „Deschide Spotify”, nu la un salt târziu.
-     * O pauză sau ieșirea din ecran o pot opri și în timpul pregătirii.
+     * intenția ([prepare]: istoricul, lista), citește din nou playerele (doar dacă n-au fost citite de curând,
+     * [refreshedRecently]), scrie rândul ENV și abia apoi pornește mașina. Momentul atingerii se ia ÎNAINTEA pregătirii:
+     * o pregătire lentă duce la „Deschide Spotify”, nu la un salt târziu. O pauză sau ieșirea din ecran o pot opri și în
+     * timpul pregătirii.
      */
     private fun launchStart(app: Context, source: MusicSource, tap: Boolean, shown: Want, prepare: suspend () -> Want) {
         val calledAt = SystemClock.elapsedRealtime()
@@ -397,7 +415,7 @@ object MusicStarter {
             startJob = scope.launch {
                 val want = prepare()
                 lastWant = want
-                refresh(app)
+                if (refreshedRecently()) seePlaying() else refresh(app)
                 logEnv(app, want, buildSnapshot(), SystemClock.elapsedRealtime() - calledAt)
                 machine.start(want, source, tapAt)
             }
@@ -627,20 +645,23 @@ object MusicStarter {
     /**
      * „Începe sesiunea” cu „Muzică” pornit: lista FORJA ([Playlist]) pentru cât ține sesiunea, prima piesă pe sesiunea
      * playerului, apoi coada. Din 4.4.1 atingerea pe „Începe sesiunea” e atingerea care permite un salt (cel mult unul,
-     * în 1,5 s de la ea). Nu așteaptă nimic: antrenamentul merge oricum.
+     * în 1,5 s de la ea). Nu așteaptă nimic: antrenamentul merge oricum. [ready] = lista clădită de hub la deschidere
+     * (folosită dacă e pentru aceeași alegere și durată, [Playlist.readyOr]), ca atingerea să găsească planul gata.
      */
-    fun startWorkout(context: Context, mix: Mix, targetMin: Int, tap: Boolean = false) {
+    fun startWorkout(context: Context, mix: Mix, targetMin: Int, tap: Boolean = false, ready: FPlaylist? = null) {
         val app = context.applicationContext
         workoutBegan()
         launchStart(app, MusicSource.WORKOUT, tap, Want.Workout(null)) {
-            val list = try {
-                withContext(Dispatchers.IO) {
-                    Playlist.build(MusicStats.rows(app), MusicStats.library(app), mix, targetMin, System.currentTimeMillis())
+            val list = Playlist.readyOr(ready, mix, targetMin) {
+                try {
+                    withContext(Dispatchers.IO) {
+                        Playlist.build(MusicStats.rows(app), MusicStats.library(app), mix, targetMin, System.currentTimeMillis())
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
             }
             pendingList = list
             queueMix = mix
@@ -880,4 +901,6 @@ object MusicStarter {
 
     private const val WORKOUT_WIRE = "workout"
     private const val QUEUE_RUNG = "QUEUE"
+    /** Cât rămâne bună citirea istoricului și a playerelor pentru o atingere (hubul o reface la fiecare revenire). */
+    private const val FRESH_MS = 60_000L
 }

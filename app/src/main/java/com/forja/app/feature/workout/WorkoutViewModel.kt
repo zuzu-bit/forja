@@ -157,7 +157,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     /** O atingere pe disc când nu cântă nimic: lista sesiunii, cu voie de salt în player (e o atingere). */
     fun startMusicNow() {
         val m = _music.value
-        MusicStarter.startWorkout(forja, m.effective, targetMinutes(), tap = true)
+        MusicStarter.startWorkout(forja, m.effective, targetMinutes(), tap = true, ready = m.lists[m.effective])
     }
 
     private fun targetMinutes(): Int = Playlist.targetMinutes(_live.value.exercises.ifEmpty { _planExercises.value }.map { it.sets to it.reps })
@@ -201,8 +201,9 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         MusicStarter.workoutBegan()
         // Muzica pornește odată cu sesiunea, fără să țină nimic în loc; dacă muzica ta cântă deja, rămâne a ta.
         // „Începe sesiunea” e o atingere (4.4.1): fără nicio cale invizibilă, cel mult un salt în Spotify, în 1,5 s de la ea.
+        // Lista e cea clădită de hub (cea arătată), deci pornirea n-o mai clădește în fereastra saltului.
         val m = _music.value
-        if (m.on) MusicStarter.startWorkout(forja, m.effective, targetMinutes(), tap = true)
+        if (m.on) MusicStarter.startWorkout(forja, m.effective, targetMinutes(), tap = true, ready = m.lists[m.effective])
     }
 
     private fun toast(msg: String) {
