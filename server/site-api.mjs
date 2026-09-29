@@ -71,7 +71,7 @@ export const where = (field, op, value) => ({ fieldFilter: { field: { fieldPath:
 
 const BATCH_MAX = 10;
 export class FirestoreReader {
-  constructor(uid, token, fetcher = fetch) { this.uid = uid; this.token = token; this.fetcher = fetcher; this.reads = 0; this.calls = 0; this.okCalls = 0; this.failures = 0; this.codes = []; }
+  constructor(uid, token, fetcher = (u, o) => fetch(u, o)) { this.uid = uid; this.token = token; this.fetcher = fetcher; this.reads = 0; this.calls = 0; this.okCalls = 0; this.failures = 0; this.codes = []; }
   /** Rules may refuse a read (403): that data is simply not visible. Network errors and 5xx count as failures. */
   async send(url, body) {
     this.calls++;
@@ -724,7 +724,7 @@ export async function handleSiteApi(request, env, uid, deps = {}) {
   if (request.method !== 'GET') return failure('Metodă nepermisă.', 405);
   const [, section, rest = ''] = m;
   const token = (request.headers.get('Authorization') || '').slice(7);
-  const ctx = { request, env, uid, url, now: deps.now ?? Date.now(), fs: new FirestoreReader(uid, token, deps.fetcher || fetch) };
+  const ctx = { request, env, uid, url, now: deps.now ?? Date.now(), fs: new FirestoreReader(uid, token, deps.fetcher || ((u, o) => fetch(u, o))) };
   const parts = rest ? rest.split('/') : [];
   try {
     let data;

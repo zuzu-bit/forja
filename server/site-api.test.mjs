@@ -805,3 +805,18 @@ test('batchGet splits more than 10 documents into batches of 10 (the new rules a
   assert.equal(out.size, 25);
   assert.equal(out.get('users/f24').name, 'f24');
 });
+
+// 30.09: în Workers, `fetch` apelat ca metodă a altui obiect aruncă „Illegal invocation” — toate secțiunile dădeau 503.
+test('FirestoreReader calls the global fetch without rebinding this', async () => {
+  const { FirestoreReader } = await import('./site-api.mjs');
+  const real = globalThis.fetch;
+  globalThis.fetch = function (url) {
+    if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+    return Promise.resolve(new Response(JSON.stringify({ name: 'projects/p/databases/(default)/documents/users/u', fields: {} }), { status: 200 }));
+  };
+  try {
+    const fs = new FirestoreReader('u', 't');
+    await fs.get('users/u', ['a']);
+    assert.equal(fs.unreachable, false);
+  } finally { globalThis.fetch = real; }
+});
