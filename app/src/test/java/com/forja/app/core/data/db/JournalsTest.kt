@@ -12,8 +12,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Confidențialitatea între conturi (mirror P0): la ieșirea din cont jurnalele din Room se golesc, iar alt cont conectat
- * pe același telefon nu preia (și nu urcă pe site) jurnalele celui dinainte. Planurile, exercițiile și regulile rămân.
+ * Confidențialitatea între conturi (mirror P0): alt cont conectat pe același telefon nu preia (și nu urcă pe site) jurnalele
+ * celui dinainte, iar același cont care revine își regăsește tot. Planurile, exercițiile și regulile rămân.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -49,7 +49,7 @@ class JournalsTest {
         db.query("SELECT ownerUid FROM `$t`").use { c -> buildList { while (c.moveToNext()) add(if (c.isNull(0)) null else c.getString(0)) } }
     }.toSet()
 
-    @Test fun logoutWipesEveryJournalButKeepsPlansAndRules() {
+    @Test fun wipeEmptiesEveryJournalButKeepsPlansAndRules() {
         val db = v9("j-wipe.db")
         seedLife(db, "lana"); seedSettings(db)
         assertEquals(Journals.TABLES.size, lifeRows(db))
@@ -68,6 +68,14 @@ class JournalsTest {
         db.execSQL("INSERT INTO meals (epochDay, mealType, name, kcal, protein, carbs, fat, grams, source, confidence, at, confirmed) VALUES (2, 1, 'Supă', 200, 5, 20, 5, 300, 'MANUAL', '—', 2, 1)")
         assertFalse(Journals.claim(db, "lana", previousOwner = "lana"))
         assertEquals(setOf<String?>("lana"), owners(db)); assertEquals(2, V8Schema.count(db, "meals"))
+    }
+
+    @Test fun theSameAccountComingBackKeepsEverything() {
+        // Ieși din cont și intri iar cu același cont: teritoriul, locurile, seturile, nopțile rămân.
+        val db = v9("j-return.db")
+        seedLife(db, "lana")
+        assertFalse(Journals.claim(db, "lana", previousOwner = "lana"))
+        assertEquals(Journals.TABLES.size, lifeRows(db))
     }
 
     @Test fun anotherAccountNeverInheritsTheJournals() {

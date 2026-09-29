@@ -154,6 +154,15 @@ private fun AnimatedContentTransitionScope<NavBackStackEntry>.isTabSwitch(): Boo
 private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
     val nav: NavHostController = rememberNavController()
     val navScope = rememberCoroutineScope()
+    // La intrarea în cont: jurnalele din Room trec la contul acesta (sau se golesc, dacă sunt ale altuia) înainte să se vadă.
+    val claimThenOpen: (() -> Unit) -> Unit = { open ->
+        navScope.launch {
+            app.auth.currentUid?.let { uid ->
+                try { withContext(Dispatchers.IO) { com.forja.app.core.data.Journals.claim(app, uid) } } catch (_: Exception) { }
+            }
+            open()
+        }
+    }
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
 
@@ -338,7 +347,7 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 popEnterTransition = riseEnter, popExitTransition = fadeExit
             ) {
                 AuthScreens(startInLogin = true, onAuthed = {
-                    nav.navigate(Route.DASHBOARD) { popUpTo(Route.LOGIN) { inclusive = true } }
+                    claimThenOpen { nav.navigate(Route.DASHBOARD) { popUpTo(Route.LOGIN) { inclusive = true } } }
                 })
             }
             composable(
@@ -347,7 +356,7 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 popEnterTransition = riseEnter, popExitTransition = fadeExit
             ) {
                 AuthScreens(startInLogin = false, onAuthed = {
-                    nav.navigate(Route.DASHBOARD) { popUpTo(Route.REGISTER) { inclusive = true } }
+                    claimThenOpen { nav.navigate(Route.DASHBOARD) { popUpTo(Route.REGISTER) { inclusive = true } } }
                 })
             }
             composable(
@@ -492,9 +501,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                                 // Găsirea: telefonul iese de pe site-ul contului vechi acum, nu după 30 de zile.
                                 try { com.forja.app.core.recovery.LostPhoneRecovery.logout(app) } catch (_: Exception) { }
                                 app.auth.logout()
-                                // Jurnalele din Room (mese, somn, ture, antrenamente, concentrare, jocuri, teritoriu) sunt ale acestui
-                                // om: următorul cont nu le vede și nu le urcă în contul lui (Journals.claim prinde și ieșirile fără Profil).
-                                try { withContext(Dispatchers.IO) { com.forja.app.core.data.Journals.wipe(app) } } catch (_: Exception) { }
+                                // Jurnalele din Room rămân pe telefon, cu stăpânul lor: dacă revine același cont, le regăsește;
+                                // dacă intră altul, Journals.claim le golește la intrare, înainte de „Azi” (claimThenOpen).
                                 // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni. Contractul e al contului: se semnează din nou.
                                 app.prefs.resetFirstRun()
                                 // Alt om pe același telefon: ghidajele de la prima vizită pornesc din nou.

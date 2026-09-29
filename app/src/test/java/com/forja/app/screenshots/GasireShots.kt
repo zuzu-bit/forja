@@ -103,25 +103,33 @@ abstract class GasireShotsBase(private val tag: String) {
         FoundContent(secondsLeft = 0, found = false, silenced = true, onFound = {})
     }
 
-    /** Contractul v3 pentru cine a semnat v2: titlul „la zi” și rândurile marcate NOU / CORECTAT. */
-    @Test fun contractResign() = shot("contract_v3_resign$tag") {
+    /** Contractul v4 pentru cine a semnat v2 (nimic nu mai merge): titlul „la zi” și rândurile marcate NOU / CORECTAT. */
+    @Test fun contractResign() = shot("contract_v4_resign$tag") {
         ContractContent(ContractUi(needsResign = true), busy = false, onClose = {}, onSign = {}, onRevoke = {})
     }
 
-    /** Contractul v3 la prima semnare (fără marcaje). */
-    @Test fun contractFresh() = shot("contract_v3_fresh$tag") {
+    /** Contractul v4 la prima semnare (fără marcaje). */
+    @Test fun contractFresh() = shot("contract_v4_fresh$tag") {
         ContractContent(ContractUi(), busy = false, onClose = {}, onSign = {}, onRevoke = {})
     }
 
-    @Test fun contractSigned() = shot("contract_v3_signed$tag") {
+    @Test fun contractSigned() = shot("contract_v4_signed$tag") {
         ContractContent(
-            ContractUi(signed = true, signedAt = NOW, signedVersion = 3, statusLines = listOf("Sincronizat la 14:32. Sincronizarea este activă.")),
+            ContractUi(signed = true, signedAt = NOW, signedVersion = 4, statusLines = listOf("Sincronizat la 14:32. Sincronizarea este activă.")),
+            busy = false, onClose = {}, onSign = {}, onRevoke = {}
+        )
+    }
+
+    /** Semnat v3: sigiliul și „Revocă” rămân la vedere; dedesubt, contractul la zi cu rândurile noi și „Semnez”. */
+    @Test fun contractSignedV3() = shot("contract_v4_signed_v3$tag") {
+        ContractContent(
+            ContractUi(signed = true, signedAt = NOW, signedVersion = 3, needsResign = true, keepsRunning = true),
             busy = false, onClose = {}, onSign = {}, onRevoke = {}
         )
     }
 
     /** Foaia de re-semnare de pe „Azi” (o singură dată după actualizare). */
-    @Test fun resignSheet() = shot("contract_v3_resign_sheet$tag") {
+    @Test fun resignSheet() = shot("contract_v4_resign_sheet$tag") {
         OverScrim { ContractResignContent(busy = false, onSign = {}, onReadAll = {}, onLater = {}) }
     }
 }

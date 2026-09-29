@@ -20,7 +20,6 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.forja.app.ForjaApp
 import com.forja.app.R
-import com.forja.app.core.data.Prefs
 import com.forja.app.core.network.InsightsApi
 import com.forja.app.core.network.InsightsFailure
 import com.forja.app.core.sync.CollectionSettings
@@ -283,7 +282,8 @@ object LostPhoneRecovery {
             put("name", name)
             put("secret", secret)
             put("basis", "contract")
-            put("contract_version", Prefs.CONTRACT_VERSION)
+            // Versiunea semnată de fapt (o semnătură v3 rămâne v3 pe server), nu versiunea curentă a textului.
+            put("contract_version", CollectionSettings.signedVersion(c))
         } else buildJsonObject {
             // Serverul vechi cere consimțământul explicit; contractul v3 e acel consimțământ.
             put("name", name)

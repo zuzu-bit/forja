@@ -10,8 +10,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Textul contractului v3 și al găsirii, verificat ca text (fără randare): diacritice cu virgulă, fără „!”,
- * propoziții încheiate, rândurile noi cerute de DESIGN-4.4 §3.6 și corecturile din auditul contractului.
+ * Textul contractului v4 și al găsirii, verificat ca text (fără randare): diacritice cu virgulă, fără „!”,
+ * propoziții încheiate, rândurile noi ale oglinzii (v4, marcate față de v3) și corecturile din auditul contractului.
  */
 class ContractCopyTest {
 
@@ -20,7 +20,10 @@ class ContractCopyTest {
         RESIGN_POINTS.flatMap { listOf(it.first, it.second) } +
         FinderState.entries.map { it.word } + listOf(FinderLogic.locateText(60_000L, 0L))
 
-    @Test fun versionIsThree() = assertEquals(3, Prefs.CONTRACT_VERSION)
+    @Test fun versionIsFourOnTopOfThree() {
+        assertEquals(4, Prefs.CONTRACT_VERSION)
+        assertEquals(3, Prefs.CONTRACT_BASE)
+    }
 
     @Test fun commaBelowDiacriticsNoExclamationNoEmoji() {
         for (t in all) {
@@ -36,7 +39,7 @@ class ContractCopyTest {
     }
 
     @Test fun resignSheetStaysShortForTheS23() {
-        assertEquals(4, RESIGN_POINTS.size)
+        assertEquals(5, RESIGN_POINTS.size)
         RESIGN_POINTS.forEach { (title, brief) ->
             assertTrue("titlu lung: $title", title.length <= 24)
             assertTrue("rând lung (peste 2 rânduri pe 360 dp): $brief", brief.length <= 90)
@@ -45,11 +48,19 @@ class ContractCopyTest {
 
     @Test fun newLinesCoverTheNewAbilities() {
         val fresh = CONTRACT_CLAUSES.flatMap { it.lines }.filter { it.mark == ClauseMark.New }.map { it.text }
-        listOf("Găsirea telefonului", "Inventarul", "Muzica", "Ținta de calorii").forEach { head ->
+        listOf(
+            "Cât îl cauți", "Poza mesei", "Câte poze", "Coperțile", "Concentrarea", "Cuvintele", "Casca",
+            "Jurnalul de ascultare", "Jocurile", "Cronologia nopții",
+        ).forEach { head ->
             assertTrue("lipsește rândul nou „$head”", fresh.any { it.startsWith(head) })
         }
-        // Fiecare rând nou din „Ce se încarcă” are un punct scurt în foaia de re-semnare (4 puncte, ținta e lângă antrenamente).
-        assertEquals(4, CONTRACT_CLAUSES.first().lines.count { it.mark == ClauseMark.New })
+        // Ce era nou în v3 (găsirea, Inventarul, muzica, ținta) nu mai e marcat.
+        listOf("Găsirea telefonului", "Inventarul", "Muzica", "Ținta de calorii").forEach { head ->
+            assertFalse("„$head” e din v3, nu e nou", fresh.any { it.startsWith(head) })
+        }
+        // Cele 10 rânduri noi din „Ce se încarcă” încap în cele 5 puncte ale foii de re-semnare.
+        assertEquals(10, CONTRACT_CLAUSES.first().lines.count { it.mark == ClauseMark.New })
+        assertTrue("cuvintele detoxului: implicit oprit", fresh.any { it.startsWith("Cuvintele") && "Implicit e oprit" in it })
     }
 
     @Test fun auditFixesAreInTheText() {
@@ -61,6 +72,14 @@ class ContractCopyTest {
         assertTrue("revocarea scoate telefonul din Găsire", lines.any { it.startsWith("Profil → Contract → Revocă") && "Găsire" in it })
         assertTrue("familia la „Cine vede”", CONTRACT_CLAUSES.first { it.label == "Cine vede" }.lines.any { "Familia" in it.text })
         assertFalse("galeria nu mai e „întreagă”", "Galeria întreagă" in text)
+        val friends = CONTRACT_CLAUSES.first { it.label == "Cine vede" }.lines.joinToString(" ") { it.text }
+        listOf("kilometrii săptămânii", "ultima activitate", "zone", "recomanzi").forEach {
+            assertTrue("„Cine vede” trebuie să spună: $it", it in friends)
+        }
+        // Revocarea nu promite ce nu poate șterge: pozele meselor stau cu jurnalele, cât ai contul.
+        val revoke = lines.first { it.startsWith("Profil → Contract → Revocă") }
+        assertFalse("revocarea nu șterge pozele meselor", "pozele meselor" in revoke)
+        assertTrue("pozele meselor rămân cu jurnalele", lines.any { it.startsWith("Nopțile expiră") && "pozele meselor" in it })
     }
 
     @Test fun finderCopyMatchesTheDesign() {

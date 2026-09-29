@@ -111,7 +111,7 @@ val CONTRACT_CLAUSES: List<Clause> = listOf(
             keep("Ultima poziție a telefonului, pentru găsire: 7 zile, un singur punct."),
             new("Urma telefonului căutat: 24 de ore."),
             keep("Pozițiile și opririle pe site: 24 de ore. Pentru prieteni rămâne doar ultima poziție."),
-            fixed("Jurnalele (mese, somn, mișcare, concentrare, ascultare, jocuri) și pozele meselor: cât ai contul."),
+            fixed("Jurnalele meselor, somnului și mișcării și pozele meselor: cât ai contul. Concentrarea, ascultarea și jocurile: cât ai contul sau până revoci."),
             new("Coperțile dosarelor: cât rămâne rularea pe site."),
             keep("Amprenta numărului tău: 30 de zile, reînnoită cât timp contractul e semnat.")
         )
@@ -129,8 +129,8 @@ val CONTRACT_CLAUSES: List<Clause> = listOf(
     ),
     Clause(
         "Cum revoci", listOf(
-            fixed("Profil → Contract → Revocă. Oprește tot pe loc și șterge de pe site ce ține de contract: sesiunea de sincronizare, telefonul din Găsire, listarea după număr, timpul pe ecran, ziua pe hartă, copiile galeriei, coperțile, pozele meselor, concentrarea, detoxul, Casca, jocurile și ce ai ascultat."),
-            fixed("Nopțile expiră singure în 7 zile. Jurnalele (mese, somn, mișcare) rămân în contul tău până îl închizi.")
+            fixed("Profil → Contract → Revocă. Oprește tot pe loc și șterge de pe site ce ține de contract: sesiunea de sincronizare, telefonul din Găsire, listarea după număr, timpul pe ecran, ziua pe hartă, copiile galeriei, coperțile, concentrarea, detoxul, Casca, jocurile și ce ai ascultat."),
+            fixed("Nopțile expiră singure în 7 zile. Jurnalele (mese, somn, mișcare) și pozele meselor rămân în contul tău până îl închizi.")
         )
     )
 )
@@ -203,8 +203,9 @@ fun ContractScreen(onBack: () -> Unit) {
 
     val signedAt by app.prefs.contractSignedAt.collectAsState(initial = -1L)
     // null = DataStore încă necitit: nu arătăm nici contractul întreg, nici sigiliul, ca să nu clipească unul în altul.
-    // „Semnat.” doar la versiunea curentă; o semnătură v3 vede contractul la zi, cu rândurile noi marcate.
-    val signedOrNull by app.prefs.contractCurrent.collectAsState(initial = null)
+    // Semnat = cel puțin v3 (ce merge mai departe): sigiliul și „Revocă” rămân; o semnătură v3 vede dedesubt
+    // contractul la zi, cu rândurile noi marcate, și „Semnez” — revocarea nu cere întâi re-semnarea.
+    val signedOrNull by app.prefs.contractSigned.collectAsState(initial = null)
     val version by app.prefs.contractVersion.collectAsState(initial = 0)
     val needsResign by app.prefs.contractNeedsResign.collectAsState(initial = false)
     val syncStatus by app.prefs.syncStatus.collectAsState(initial = "")
@@ -266,7 +267,7 @@ fun ContractContent(ui: ContractUi, busy: Boolean, onClose: () -> Unit, onSign: 
     var confirmRevoke by remember { mutableStateOf(false) }
     var reread by remember { mutableStateOf(false) }
     // După semnare sau revocare, confirmarea și bifa se închid.
-    LaunchedEffect(ui.signed) { confirmRevoke = false; accepted = false }
+    LaunchedEffect(ui.signed, ui.needsResign) { confirmRevoke = false; accepted = false }
 
     Box(Modifier.fillMaxSize().topoBackground(decor = false)) {
         Column(
@@ -318,13 +319,21 @@ fun ContractContent(ui: ContractUi, busy: Boolean, onClose: () -> Unit, onSign: 
                     Text(line, style = BodyTiny.copy(color = TextSecondary))
                 }
 
+                if (ui.needsResign) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("Versiunea ${Prefs.CONTRACT_VERSION} are rânduri noi, marcate mai jos.", style = BodyTiny.copy(color = EmberHot))
+                }
+
                 Spacer(Modifier.height(18.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    SecondaryButton(
-                        if (reread) "Ascunde" else "Recitește", onClick = { reread = !reread },
-                        modifier = Modifier.weight(1f), padV = 10.dp
-                    )
-                    Spacer(Modifier.width(10.dp))
+                    // Cu o versiune nouă, textul întreg e oricum mai jos: nu mai e nevoie de „Recitește”.
+                    if (!ui.needsResign) {
+                        SecondaryButton(
+                            if (reread) "Ascunde" else "Recitește", onClick = { reread = !reread },
+                            modifier = Modifier.weight(1f), padV = 10.dp
+                        )
+                        Spacer(Modifier.width(10.dp))
+                    }
                     SecondaryButton(
                         "Revocă", onClick = { confirmRevoke = true }, textColor = LogoutText,
                         modifier = Modifier.weight(1f), padV = 10.dp
@@ -343,7 +352,12 @@ fun ContractContent(ui: ContractUi, busy: Boolean, onClose: () -> Unit, onSign: 
                         }
                     }
                 }
-                if (reread) {
+                if (ui.needsResign) {
+                    Spacer(Modifier.height(18.dp))
+                    ContractText(reveal = false, marks = true)
+                    Spacer(Modifier.height(18.dp))
+                    SignFooter(accepted, { accepted = !accepted }, busy, ui.loggedIn, onSign)
+                } else if (reread) {
                     Spacer(Modifier.height(18.dp))
                     ContractText(reveal = false, marks = false)
                 }
@@ -368,30 +382,34 @@ fun ContractContent(ui: ContractUi, busy: Boolean, onClose: () -> Unit, onSign: 
                 Spacer(Modifier.height(18.dp))
                 ContractText(reveal = true, marks = ui.needsResign)
                 Spacer(Modifier.height(18.dp))
-
-                Row(
-                    Modifier.fillMaxWidth().pressable({ accepted = !accepted }, scaleDown = 0.99f, haptic = false),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    ContractCheckbox(on = accepted)
-                    Spacer(Modifier.width(12.dp))
-                    Text("Am citit și îmi asum", style = BodyStrong.copy(fontSize = 15.sp))
-                }
-                Spacer(Modifier.height(14.dp))
-                PrimaryButton(
-                    if (busy) "Se semnează" else "Semnez",
-                    onClick = onSign, enabled = accepted && !busy && ui.loggedIn, modifier = Modifier.fillMaxWidth()
-                )
-                if (!ui.loggedIn) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("Intră în cont ca să semnezi. Contractul e legat de contul tău.", style = BodyTiny.copy(color = EmberHot))
-                }
-
-                Spacer(Modifier.height(16.dp))
-                Text("Nimeni nu te grăbește. Citește tot.", style = BodyTiny.copy(color = TextDim))
+                SignFooter(accepted, { accepted = !accepted }, busy, ui.loggedIn, onSign)
             }
         }
     }
+}
+
+/** Bifa, „Semnez” și nota de sub ele — la prima semnare și la re-semnarea peste o semnătură veche. */
+@Composable
+private fun SignFooter(accepted: Boolean, onToggle: () -> Unit, busy: Boolean, loggedIn: Boolean, onSign: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().pressable(onToggle, scaleDown = 0.99f, haptic = false),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ContractCheckbox(on = accepted)
+        Spacer(Modifier.width(12.dp))
+        Text("Am citit și îmi asum", style = BodyStrong.copy(fontSize = 15.sp))
+    }
+    Spacer(Modifier.height(14.dp))
+    PrimaryButton(
+        if (busy) "Se semnează" else "Semnez",
+        onClick = onSign, enabled = accepted && !busy && loggedIn, modifier = Modifier.fillMaxWidth()
+    )
+    if (!loggedIn) {
+        Spacer(Modifier.height(8.dp))
+        Text("Intră în cont ca să semnezi. Contractul e legat de contul tău.", style = BodyTiny.copy(color = EmberHot))
+    }
+    Spacer(Modifier.height(16.dp))
+    Text("Nimeni nu te grăbește. Citește tot.", style = BodyTiny.copy(color = TextDim))
 }
 
 /** Textul integral: clauzele, fiecare rând o propoziție sau două, plus nota despre permisiuni. */

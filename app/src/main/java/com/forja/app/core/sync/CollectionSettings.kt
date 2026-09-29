@@ -58,6 +58,11 @@ object CollectionSettings {
      * (locație refuzată, fără acces la utilizare), serviciul rulează doar pentru găsire.
      */
     private const val KEY_USER_STOPPED = "user_stopped"
+    /**
+     * Revocarea a cerut ștergerea de pe site (POST /v2/site/forget) pentru acest uid și serverul încă n-a confirmat
+     * (fără net, 5xx). Rămâne și după ieșirea din cont; se reîncearcă la fiecare ON_START cât e conectat același cont.
+     */
+    internal const val KEY_FORGET_PENDING = "site_forget_pending"
 
     fun prefs(c: Context): SharedPreferences = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
     fun enabled(c: Context): Set<String> = prefs(c).getStringSet("enabled", emptySet()).orEmpty().toSet().intersect(categories)
@@ -68,6 +73,9 @@ object CollectionSettings {
     fun setUserStopped(c: Context, on: Boolean) { prefs(c).edit().putBoolean(KEY_USER_STOPPED, on).apply() }
     /** Contractul e semnat pe acest telefon, cel puțin la v3 (oglinda sincronă a Prefs.contractSigned). */
     fun contractOn(c: Context): Boolean = contractAtLeast(c, Prefs.CONTRACT_BASE)
+    /** Versiunea semnată de fapt pe acest telefon (0 = nesemnat), nu versiunea curentă a textului. */
+    fun signedVersion(c: Context): Int =
+        if (prefs(c).getBoolean("contract", false)) prefs(c).getInt(KEY_CONTRACT_VERSION, 0) else 0
     /** Oglinda sincronă a Prefs.contractAtLeast(v), pentru serviciu, lucrători și receptoare. */
     fun contractAtLeast(c: Context, v: Int): Boolean =
         prefs(c).getBoolean("contract", false) && prefs(c).getInt(KEY_CONTRACT_VERSION, 0) >= v
@@ -120,6 +128,11 @@ object CollectionSettings {
     fun logout(c: Context) {
         stop(c)
         GalleryUploader.cancel(c)
+        // O tură, o noapte sau o concentrare în curs se închid acum, pe contul care iese (Journals.claim le vede ca ale lui).
+        // Doar dacă rulează: un startForegroundService doar ca să oprească ar cere startForeground în 5 s.
+        try { if (com.forja.app.core.location.GoTrackService.state.value.recording) com.forja.app.core.location.GoTrackService.stop(c) } catch (_: Exception) { }
+        try { com.forja.app.core.sleep.SleepTrackService.stop(c) } catch (_: Exception) { }
+        try { c.stopService(Intent(c, com.forja.app.core.focus.FocusMonitorService::class.java)) } catch (_: Exception) { }
         prefs(c).edit().remove("owner").putBoolean("seen", false).remove("photos").remove("files").remove("contract")
             .remove(KEY_CONTRACT_VERSION).remove(KEY_PAUSED).remove(KEY_USER_STOPPED)
             .remove("session_id").remove("session_at").remove("session_consent").remove("session_revision")
@@ -211,7 +224,9 @@ object CollectionSettings {
         val version = try { app.prefs.contractVersion.first() } catch (e: CancellationException) { throw e } catch (_: Exception) { 0 }
             .takeIf { it > 0 } ?: Prefs.CONTRACT_VERSION
         prefs(app).edit().putString("owner", uid).putBoolean("contract", true).putInt(KEY_CONTRACT_VERSION, version)
-            .remove(KEY_PAUSED).remove(KEY_USER_STOPPED).putBoolean(GalleryUploader.KEY_ON, true).apply()
+            .remove(KEY_PAUSED).remove(KEY_USER_STOPPED).putBoolean(GalleryUploader.KEY_ON, true)
+            // Semnat din nou: o ștergere rămasă de la revocare nu mai are voie să ia ce urcă semnătura nouă.
+            .remove(KEY_FORGET_PENDING).apply()
         // O semnătură nouă readuce telefonul scos de pe site și confirmă din nou înrolarea existentă (temei „contract” v3).
         LostPhoneRecovery.onSigned(app)
         save(app, wanted(app))
@@ -262,7 +277,21 @@ object CollectionSettings {
         // În fundal: ecranul contractului nu așteaptă listările Firestore (fără net, până la 20 s pe colecție).
         if (uid != null) app.appScope.launch { try { SiteMirror.forget(app, uid) } catch (_: Exception) { } }
         // Site-ul șterge acum, nu la expirare: timpul pe ecran (14 zile), ziua pe hartă, copiile galeriei, coperțile dosarelor.
-        if (uid != null) app.appScope.launch { try { forgetSite() } catch (_: Exception) { } }
+        // Cererea rămâne în așteptare până la un 2xx: fără net sau cu serverul căzut se reia la următorul ON_START.
+        if (uid != null) {
+            prefs(app).edit().putString(KEY_FORGET_PENDING, uid).apply()
+            app.appScope.launch { retryForgetSite(app) }
+        }
+    }
+
+    /** Reia ștergerea de pe site cerută la revocare, doar pentru contul care a cerut-o. Idempotentă pe server. */
+    suspend fun retryForgetSite(app: ForjaApp) {
+        val pending = prefs(app).getString(KEY_FORGET_PENDING, null) ?: return
+        if (pending != app.auth.currentUid) return
+        try {
+            forgetSite()
+            if (prefs(app).getString(KEY_FORGET_PENDING, null) == pending) prefs(app).edit().remove(KEY_FORGET_PENDING).apply()
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { }
     }
 
     /** POST /v2/site/forget pe serverul site-ului (contul DO al celui conectat). Fără net: expiră singure (24 h – 14 zile). */
@@ -298,6 +327,7 @@ object CollectionSettings {
      */
     suspend fun reconcile(app: ForjaApp) {
         val uid = app.auth.currentUid ?: return
+        if (prefs(app).getString(KEY_FORGET_PENDING, null) == uid) app.appScope.launch { retryForgetSite(app) }
         val signer = app.prefs.contractUid.first()
         if (signer != null && signer != uid && app.prefs.contractSignedAt.first() > 0L) app.prefs.clearContract()
         val signed = app.prefs.contractSigned.first()

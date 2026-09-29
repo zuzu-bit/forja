@@ -7,9 +7,11 @@ import com.forja.app.ForjaApp
 /**
  * Jurnalele din Room sunt ale unui singur om. Pe același telefon, alt cont nu le vede și nu le urcă în contul lui
  * (până la mirror P0, SiteMirror completa antrenamentele ultimelor 60 de zile ale celui dinainte).
- *  - la ieșirea din cont (Profil → Ieși): [wipe] golește toate jurnalele;
- *  - la fiecare cont conectat (pornire, schimbare de cont fără Profil): [claim] — dacă baza e a altui cont, se golește;
- *    altfel rândurile fără stăpân (ownerUid null: cele de dinainte de v9 și cele scrise de atunci) trec la contul acesta.
+ *  - la ieșirea din cont (Profil → Ieși) nu se șterge nimic: stăpânul rămâne știut, iar teritoriul, locurile, seturile și
+ *    evenimentele nopții (doar pe telefon) nu se pierd dacă revine același cont;
+ *  - la fiecare cont conectat (intrarea în cont, înainte de „Azi”; pornire; schimbare de cont fără Profil): [claim] — dacă
+ *    baza e a altui cont, se golește; altfel rândurile fără stăpân (ownerUid null: cele de dinainte de v9 și cele scrise de
+ *    atunci) trec la contul acesta.
  * Planurile și exercițiile (date de start) și regulile de concentrare (setări) rămân.
  */
 object Journals {
@@ -54,14 +56,6 @@ object Journals {
     }
 
     private fun prefs(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-
-    /** Ieșirea din cont: golește jurnalele și uită stăpânul; ecranele deschise se reîmprospătează. */
-    @Synchronized
-    fun wipe(app: ForjaApp) {
-        wipe(app.db.openHelper.writableDatabase)
-        prefs(app).edit().remove(KEY_OWNER).apply()
-        try { app.db.invalidationTracker.refreshVersionsAsync() } catch (_: Exception) { }
-    }
 
     /** Contul conectat preia baza (sau o golește, dacă e a altuia). Ieftin când stăpânul e deja el. */
     @Synchronized
