@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resetSiteCache } from './site-api.mjs';
 import { fixture, NOW, MIN, HOUR, DAY, SIGNED } from './site/fixture.mjs';
-import { MIRROR_FILE_MAX, R2_FREE_BYTES, MIRROR_CAP_DEFAULT, previewOf } from './files-mirror.mjs';
+import { MIRROR_FILE_MAX, R2_FREE_BYTES, MIRROR_CAP_DEFAULT, previewOf, budgetCall, BUDGET_PATH } from './files-mirror.mjs';
 
 test.beforeEach(() => resetSiteCache());
 
@@ -47,7 +47,7 @@ test('mirror: the phone must turn it on with contract v4; parts are validated; a
   assert.equal((await put(f, 'alice', `/v2/mirror/${id}`, jpeg(100), meta('video', 'a.mp4', 'Camera', NOW))).status, 409, 'an id keeps its kind');
   const s = (await get(f, '/v2/mirror/summary')).body;
   assert.equal(s.stats.items, 1); assert.equal(s.stats.bytes, 100); assert.equal(s.stats.count.photo, 1);
-  assert.deepEqual(s.meter, { used: 100, cap: MIRROR_CAP_DEFAULT, free_tier: R2_FREE_BYTES });
+  assert.deepEqual(s.meter, { used: 100, cap: MIRROR_CAP_DEFAULT, free_tier: R2_FREE_BYTES, covers: 0, meals: null, server: null, server_limit: null }, 'no shared ledger in this account: the site says only what it knows');
   assert.ok(f.records.files.has(`_insights/alice/files/m/${id}`), 'under files/ so the revoke purge takes it');
 });
 
@@ -176,11 +176,55 @@ test('inventar section: v4 adds the mirror (albums, meter), the phone census and
   resetSiteCache();
   const b = (await f.call('/insights/api/inventar')).body;
   assert.equal(b.mirror.stats.items, 1); assert.deepEqual(b.mirror.albums.map(a => a.album), ['Camera']);
-  assert.deepEqual(b.mirror.meter, { used: 4900, cap: MIRROR_CAP_DEFAULT, free_tier: R2_FREE_BYTES }); assert.equal(b.mirror.consent.on, true);
+  assert.deepEqual(b.mirror.meter, { used: 4900, cap: MIRROR_CAP_DEFAULT, free_tier: R2_FREE_BYTES, covers: 0, meals: null, server: null, server_limit: null }); assert.equal(b.mirror.consent.on, true);
   assert.deepEqual(b.storage.photos, { count: 12480, bytes: 38e9 }); assert.equal(b.storage.gallery.waiting, 9490); assert.equal(b.storage.docs.folders, 7);
   assert.deepEqual(b.games.map(g => [g.id, g.unlocked, g.cleared, g.starsTotal, g.playedS, g.plays.length]), [['zid', 6, 5, 12, 5400, 1]]);
   assert.deepEqual(b.games[0].stars, { 1: 3, 2: 2, 3: 3 }, 'stars are 0..3');
   f.fs.set('users/alice', { name: 'Lana', contract: { version: 4, at: NOW - DAY, revokedAt: NOW - MIN } });
   resetSiteCache();
   assert.deepEqual(Object.keys((await f.call('/insights/api/inventar')).body), ['runs', 'vault'], 'revoked: nothing of v4');
+});
+
+test('mirror: a deletion from the phone leaves no tombstone (a restored photo comes back); only this phone may do it', async t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = fixture(); await on(f);
+  const a = await photo(f, 'a.jpg', 'Camera', NOW - DAY);
+  const del = (id, device) => f.account('alice').fetch(new Request(`https://forja.test/v2/mirror/${id}?from=phone`, { method: 'DELETE', headers: { 'x-forja-owner': 'alice', ...(device ? { 'x-device-id': device } : {}) } }));
+  assert.equal((await del(a)).status, 400, 'the phone names itself');
+  assert.equal((await del(a, '99999999-2222-4333-8444-555555555555')).status, 409, 'another phone cannot delete this copy');
+  assert.equal((await del(a, DEVICE)).status, 200);
+  assert.equal((await get(f, '/v2/mirror/summary')).body.stats.items, 0);
+  const ids = await (await f.account('alice').fetch(new Request('https://forja.test/v2/mirror/ids', { headers: { 'x-forja-owner': 'alice', 'x-device-id': DEVICE } }))).json();
+  assert.deepEqual(ids.gone, [], 'no tombstone');
+  assert.equal((await put(f, 'alice', `/v2/mirror/${a}`, jpeg(4000), meta('photo', 'a.jpg', 'Camera', NOW - DAY))).status, 201, 'restored from the trash: it uploads again');
+});
+
+test('mirror: one shared R2 budget for every account (mirror, covers, meal photos); 507 past it; revoke gives the space back', async t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const f = fixture();
+  for (const uid of ['alice', 'bob']) {
+    f.account(uid).env.INSIGHTS = f.env.INSIGHTS;
+    assert.equal((await f.doCall(uid, '/v2/mirror/consent', 'POST', { on: true, contract: 4 })).status, 200);
+  }
+  const ledger = f.env.INSIGHTS.get(f.env.INSIGHTS.idFromName('r2-budget'));
+  const probe = await ledger.fetch(new Request('https://internal' + BUDGET_PATH, { method: 'POST', headers: { 'x-forja-r2-budget': '1', 'x-forja-owner': 'alice' }, body: '{"uid":"alice"}' }));
+  assert.equal(probe.status, 404, 'the ledger never answers an owner request');
+  (await budgetCall(f.env, { uid: 'x' })); // creates the ledger instance
+  const budgetDo = f.account('r2-budget'.slice('account:'.length)); // the fixture maps a DO name to account(name without „account:”)
+  budgetDo.env.R2_BUDGET_BYTES = '14000';
+  await photo(f, 'a.jpg', 'Camera', NOW - DAY, 'alice');
+  await photo(f, 'b.jpg', 'Camera', NOW - DAY, 'bob');
+  assert.equal((await put(f, 'alice', '/v2/mirror/cover/r1abc/c1f2e3-0', jpeg(3000))).status, 201);
+  let b = await budgetCall(f.env, { uid: 'alice' });
+  assert.equal(b.total, 4900 + 4900 + 3000); assert.deepEqual(b.mine, { mirror: 4900, covers: 3000, meals: 0 });
+  const full = await put(f, 'bob', `/v2/mirror/${randomUUID()}`, jpeg(4000), meta('photo', 'c.jpg', 'Camera', NOW));
+  assert.equal(full.status, 507, 'bob is far from his own cap, but the server is full');
+  const s = (await get(f, '/v2/mirror/summary')).body.meter;
+  assert.deepEqual([s.used, s.covers, s.meals, s.server, s.server_limit], [4900, 3000, 0, 12800, 14000]);
+  assert.deepEqual(await (await f.doCall('alice', '/v2/mirror/cover/r1abc', 'DELETE')).json(), { deleted: 1 });
+  assert.equal((await budgetCall(f.env, { uid: 'alice' })).mine.covers, 0);
+  assert.equal((await f.doCall('alice', '/v2/site/forget', 'POST')).status, 200);
+  b = await budgetCall(f.env, { uid: 'bob' });
+  assert.equal(b.total, 4900, 'revoke gives the space back');
+  assert.equal((await put(f, 'bob', `/v2/mirror/${randomUUID()}`, jpeg(4000), meta('photo', 'c.jpg', 'Camera', NOW))).status, 201);
 });

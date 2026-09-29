@@ -153,20 +153,28 @@ const Inventar = {
   // ───────────── Oglinda ─────────────
   renderMirror(d) {
     const m = d.mirror, st = m.stats || {}, c = st.count || {}, meter = m.meter || {}, used = num(meter.used) || 0, cap = num(meter.cap) || 0;
+    // Contul: oglinda + coperțile + pozele meselor. Serverul: toate conturile FORJA, din același R2 gratuit de 10 GB.
+    const mine = used + (num(meter.covers) || 0) + (num(meter.meals) || 0), free = num(meter.free_tier) || 1e10;
+    const server = num(meter.server), limit = num(meter.server_limit) || free;
     const phone = d.storage, g = phone?.gallery;
-    const full = cap && used >= cap * 0.98;
+    const serverFull = server !== null && server !== undefined && server >= limit * 0.98;
+    const full = (cap && used >= cap * 0.98) || serverFull;
     const phoneText = phone ? [
       'Pe telefon: ' + [phone.photos?.count !== null && phone.photos?.count !== undefined ? plural(phone.photos.count, 'poză', 'poze') + (phone.photos.bytes ? ' (' + fmt.bytes(phone.photos.bytes) + ')' : '') : null,
         phone.videos?.count ? plural(phone.videos.count, 'video', 'video') : null,
         phone.docs ? plural((phone.docs.loose || 0) + (phone.docs.organized || 0), 'document', 'documente') + (phone.docs.organized ? ', ' + fmt.int(phone.docs.organized) + ' în dosare' : '') : null].filter(Boolean).join(' · ') + '.',
+      g && num(g.held) ? `Copii păstrate, lipsă de pe telefon: ${fmt.int(g.held)}. Rămân până le ștergi de aici.` : null,
       g && num(g.waiting) ? `Mai urcă ${fmt.int(g.waiting)}` + (g.state === 'wifi' ? ', pe Wi-Fi.' : g.state === 'full' ? ': oglinda e plină.' : g.state === 'permission' ? ': lipsește permisiunea pozelor.' : '.') : g && g.total ? 'Totul e urcat.' : null
     ].filter(Boolean).join(' ') : null;
     const head = h('article', {class: 'card mir-head'},
       h('div', {class: 'mir-top'}, h('span', {class: 'run-kind'}, icon('photo', 20), monoLabel('OGLINDA · CÂT AI CONTUL')),
-        infoDot('Oglinda', 'Pozele urcă ca JPEG de până la 2048 px, cu data făcută păstrată. Video-urile de cel mult 25 MB urcă întregi; celelalte, doar posterul. Documentele din dosarele alese urcă octet cu octet. Stau cât ai contul și se șterg la revocare. Spațiul gratuit Cloudflare R2 e 10 GB pentru tot serverul FORJA, cu tot cu nopțile; oglinda se oprește la ' + gbText(cap) + '.')),
+        infoDot('Oglinda', 'Pozele urcă ca JPEG de până la 2048 px, cu data făcută păstrată. Video-urile de cel mult 25 MB urcă întregi; celelalte, doar posterul. Documentele din dosarele alese urcă octet cu octet. Stau cât ai contul și se șterg la revocare. Spațiul gratuit Cloudflare R2 e ' + gbText(free) + ' pentru toate conturile FORJA, cu tot cu seiful și nopțile. Urcările se opresc la ' + gbText(limit) + ' pe server sau la ' + gbText(cap) + ' pe cont. Al tău: oglinda, coperțile și pozele meselor.')),
       h('div', {class: 'mir-counts'}, statBlock('POZE', fmt.int(c.photo || 0)), statBlock('VIDEO', fmt.int(c.video || 0)), statBlock('DOCUMENTE', fmt.int(c.file || 0))),
-      h('div', {class: 'mir-meter'}, h('div', {class: 'mir-meter-row'}, h('span', null, h('b', {text: gbText(used)}), ' din ' + gbText(cap)), monoLabel('R2 GRATUIT ' + gbText(num(meter.free_tier) || 1e10), 'dim')),
-        bar(cap ? used / cap : 0, full ? 'full' : ''), full ? h('p', {class: 'panel-warn', text: 'Oglinda e plină. Pozele noi rămân pe telefon până se face loc.'}) : null),
+      h('div', {class: 'mir-meter'}, h('div', {class: 'mir-meter-row'}, h('span', null, h('b', {text: gbText(mine)}), ' ale tale, din ' + gbText(cap)), monoLabel('CONTUL TĂU', 'dim')),
+        bar(cap ? mine / cap : 0, cap && used >= cap * 0.98 ? 'full' : ''),
+        server !== null && server !== undefined ? h('div', {class: 'mir-meter-row'}, h('span', null, h('b', {text: gbText(server)}), ' pe server, toate conturile'), monoLabel('R2 GRATUIT ' + gbText(free), 'dim')) : null,
+        server !== null && server !== undefined ? bar(server / free, serverFull ? 'full' : '') : null,
+        full ? h('p', {class: 'panel-warn', text: serverFull ? 'Spațiul gratuit al serverului e aproape plin. Pozele noi rămân pe telefon.' : 'Oglinda e plină. Pozele noi rămân pe telefon până se face loc.'}) : null),
       phoneText ? h('p', {class: 'mir-phone', text: phoneText}) : null);
     const seg = h('div', {class: 'seg', role: 'tablist'}, MIR_KINDS.map(([k, label]) => h('button', {type: 'button', class: 'seg-btn' + (Inventar.mirror.mode === k ? ' active' : ''), role: 'tab', 'aria-selected': String(Inventar.mirror.mode === k), onclick: () => { Inventar.mirror.mode = k; Inventar.renderMirror(Inventar.data); }}, label)));
     let timer = null;

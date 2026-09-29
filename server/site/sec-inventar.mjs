@@ -13,7 +13,7 @@ function censusOf(d) {
   if (!d) return null;
   const pair = x => (x && typeof x === 'object' ? { count: count(x.count), bytes: count(x.bytes) } : null);
   const docs = d.docs && typeof d.docs === 'object' ? { loose: count(d.docs.loose), organized: count(d.docs.organized), bytes: count(d.docs.bytes), folders: count(d.docs.folders) } : null;
-  const g = d.gallery && typeof d.gallery === 'object' ? { total: count(d.gallery.total), mirrored: count(d.gallery.mirrored), waiting: count(d.gallery.waiting),
+  const g = d.gallery && typeof d.gallery === 'object' ? { total: count(d.gallery.total), mirrored: count(d.gallery.mirrored), waiting: count(d.gallery.waiting), held: count(d.gallery.held),
     state: str(d.gallery.state, 20), cellular: d.gallery.cellular === true, lastAt: time(d.gallery.lastAt) } : null;
   return { photos: pair(d.photos), videos: pair(d.videos), docs, gallery: g, updatedAt: time(d.updatedAt) };
 }

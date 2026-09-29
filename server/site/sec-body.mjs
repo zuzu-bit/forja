@@ -4,6 +4,7 @@
 // mai veche de 90 de zile, în pagini (`?before=`).
 import { SITE_RULES, HOUR, num, int, str, round1, time, sum, where, account, simplifyPolyline, dayParam, mealDate, contractGate, reply, failure } from './shared.mjs';
 import { localDate, localMidnight, DAY } from '../site-time.mjs';
+import { budgetCall } from '../files-mirror.mjs';
 
 /** The app writes the meal type as an Int (Entities.kt: 0 mic dejun · 1 prânz · 2 cină · 3 gustare); the site labels by index. */
 const mealType = v => (Number.isInteger(v) && v >= 0 && v <= 3 ? v : null);
@@ -86,14 +87,27 @@ export async function ratiePhoto({ request, env, fs, uid }, id) {
     if (!o) return failure('Poza nu mai este aici.', 404);
     return new Response(o.body, { headers: { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=86400', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox" } });
   }
-  if (request.method === 'DELETE') { await bucket.delete(key); return reply({ deleted: true }); }
+  if (request.method === 'DELETE') {
+    const was = (await bucket.head?.(key))?.size || 0;
+    await bucket.delete(key);
+    if (was) try { await budgetCall(env, { uid, part: 'meals', delta: -was }); } catch { }
+    return reply({ deleted: true });
+  }
   const me = await fs.get(`users/${uid}`, ['contract']);
   if (!contractGate(me?.contract, 4)) return failure('Poza mesei cere contractul v4 semnat.', 403);
   if (Number(request.headers.get('content-length')) > MEAL_PHOTO_MAX) return failure('Poza e prea mare.', 413);
   const bytes = new Uint8Array(await request.arrayBuffer());
   if (bytes.length > MEAL_PHOTO_MAX) return failure('Poza e prea mare.', 413);
   if (bytes.length < 4 || bytes[0] !== 255 || bytes[1] !== 216 || bytes[2] !== 255) return failure('Poza mesei vine ca JPEG.', 400);
+  // Registrul comun al spațiului R2 (cei 10 GB gratuiți sunt ai tuturor conturilor): poza mesei se numără la cont.
+  const delta = bytes.length - ((await bucket.head?.(key))?.size || 0);
+  if (delta > 0) {
+    let b; try { b = await budgetCall(env, { uid, part: 'meals', delta }); } catch { return failure('Spațiul serverului nu se poate verifica acum.', 503); }
+    if (b?.status === 507) return failure('Spațiul gratuit al serverului FORJA e plin.', 507);
+    if (b && b.status >= 400) return failure('Spațiul serverului nu se poate verifica acum.', 503);
+  }
   await bucket.put(key, bytes, { httpMetadata: { contentType: 'image/jpeg' } });
+  if (delta < 0) try { await budgetCall(env, { uid, part: 'meals', delta }); } catch { }
   return reply({ ok: true, bytes: bytes.length }, 201);
 }
 

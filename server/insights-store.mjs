@@ -11,7 +11,7 @@ import { TTL, idPattern, categories, bad, keys, n, validatePhoneData } from './p
 import { handleSiteStore, applyUsageRollup, sweepSite } from './site-store.mjs';
 import { applyLocationRollup, LOC_DAY_PREFIX } from './site-location.mjs';
 import { eraseFile } from './files-vault.mjs';
-import { handleMirror, forgetMirror, MIRROR_FILE_MAX, MIRROR_POSTER_MAX, MIRROR_THUMB_MAX, MIRROR_COVER_MAX } from './files-mirror.mjs';
+import { handleMirror, forgetMirror, handleBudget, syncBudget, BUDGET_PATH, MIRROR_FILE_MAX, MIRROR_POSTER_MAX, MIRROR_THUMB_MAX, MIRROR_COVER_MAX } from './files-mirror.mjs';
 
 const MAX_SESSION = 32 * 1024 * 1024;
 export const reply = (data, status = 200) => Response.json(data, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
@@ -94,6 +94,7 @@ export class InsightsAccount {
     out.locDays = await drop(LOC_DAY_PREFIX);
     // Oglinda galeriei și a documentelor (pachetul C): rândurile `mf*`; obiectele R2 sunt sub files/m/, golite mai jos.
     out.files += await forgetMirror(s);
+    await syncBudget(this.env, uid, 'mirror', 0); await syncBudget(this.env, uid, 'covers', 0);
     for (const item of (await s.list({ prefix: 'cloud-file:' })).values()) {
       if (bucket) await eraseFile(s, bucket, item); else await s.delete('cloud-file:' + item.id);
       out.files++;
@@ -129,6 +130,8 @@ export class InsightsAccount {
   }); }
   publicRecord(r) { const { prefix, ...rest } = r; return rest; }
   async handle(request, recordingBytes = null) {
+    // Registrul comun al spațiului R2 (pachetul C): doar instanța „r2-budget”, doar din interior (Worker-ul nu o expune).
+    if (new URL(request.url).pathname === BUDGET_PATH) return handleBudget(request, this.ctx.storage, this.env);
     const uid = request.headers.get('x-forja-owner');
     if (!uid || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) bad('Invalid owner', 403);
     const owner = await this.ctx.storage.get('owner');

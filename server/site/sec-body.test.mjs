@@ -6,6 +6,7 @@ import { resetSiteCache, SITE_RULES } from '../site-api.mjs';
 import { applyUsageRollup, usageDays } from '../site-store.mjs';
 import { localDate, localMidnight } from '../site-time.mjs';
 import { fixture, seedCircle, Storage, NOW, MIN, HOUR, DAY, SIGNED } from './fixture.mjs';
+import { budgetCall } from '../files-mirror.mjs';
 
 test.beforeEach(() => resetSiteCache());
 
@@ -122,11 +123,13 @@ test('ratie photo: PUT needs contract v4 and a JPEG, the key comes from the veri
   assert.equal((await put('alice', jpeg(300 * 1024))).status, 413);
   assert.equal((await put('alice', jpeg(2000))).status, 201);
   assert.ok(f.records.files.has('_insights/alice/meals/c-1.jpg'));
+  assert.equal((await budgetCall(f.env, { uid: 'alice' })).mine.meals, 2000, 'the meal photo counts in the shared R2 budget');
   assert.equal((await put('alice', jpeg(10), 'a.b')).status, 404);
   const got = await handle(f, 'alice', '/insights/api/ratie/photo/c-1');
   assert.equal(got.status, 200); assert.equal(got.headers.get('content-type'), 'image/jpeg');
   assert.equal((await handle(f, 'bob', '/insights/api/ratie/photo/c-1')).status, 404, 'another account never reads it');
   assert.equal((await handle(f, 'alice', '/insights/api/ratie/photo/c-1', 'DELETE')).status, 200);
+  assert.equal((await budgetCall(f.env, { uid: 'alice' })).mine.meals, 0);
   assert.equal((await handle(f, 'alice', '/insights/api/ratie/photo/c-1')).status, 404);
   assert.equal((await handle(f, 'alice', '/insights/api/ratie', 'PUT', jpeg(10))).status, 405, 'only the photo route takes a PUT');
   await f.records.put('_insights/alice/meals/c-9.jpg', jpeg(10));

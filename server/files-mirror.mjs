@@ -11,10 +11,15 @@
 //   mf-t:{inv}:{id}                  indexul „cele mai noi primele” (inv = 9999999999999 − data făcută, 13 cifre)
 //   mf-k:{kind}:{inv}:{id}           același index, pe fel (photo · video · file)
 //   mf-a:{albumKey}:{inv}:{id}       același index, pe album (albumKey = 16 hex din SHA-256 de „grup/album”)
-//   mf-gone:{id}                     o copie ștearsă (de pe site sau de pe telefon) nu revine dintr-o reîncercare întârziată
+//   mf-gone:{id}                     o copie ștearsă de pe site („Șterge copia”) nu revine dintr-o reîncercare întârziată;
+//                                    o ștergere venită de pe telefon (`?from=phone`) nu lasă tombstone: poza recuperată urcă iar
+//   mf-cv:{run}/{name}               octeții unei coperți (contorul coperților: mf-covers-bytes)
 //   mf-stats · mf-albums · mf-consent · mf-budget
 // Contorul de spațiu e cinstit: octeții tuturor părților urcate (fișier + miniatură + poster), față de plafonul oglinzii
-// (MIRROR_CAP_BYTES, implicit 8 GB) și de cei 10 GB gratuiți ai Cloudflare R2, care sunt ai întregului cont Cloudflare FORJA.
+// (MIRROR_CAP_BYTES, implicit 8 GB), plus coperțile și pozele meselor. Cei 10 GB gratuiți ai Cloudflare R2 sunt ai întregului
+// cont Cloudflare FORJA, pentru toate conturile: un registru comun (un DO `r2-budget`, vezi handleBudget) ține octeții
+// fiecărui cont (oglindă, coperți, mese) și refuză cu 507 o urcare care ar trece totalul peste R2_BUDGET_BYTES (implicit 9 GB,
+// ca seiful de 24 h, înregistrările sesiunilor și nopțile să aibă loc în ultimul GB).
 import { bad, keys, idPattern } from './phone-schema.mjs';
 
 export const MIRROR_FILE_MAX = 25 * 1024 * 1024;
@@ -23,6 +28,9 @@ export const MIRROR_POSTER_MAX = 2 * 1024 * 1024;
 export const MIRROR_COVER_MAX = 64 * 1024;
 export const MIRROR_CAP_DEFAULT = 8e9;
 export const R2_FREE_BYTES = 10e9;
+export const R2_BUDGET_DEFAULT = 9e9;
+export const BUDGET_PATH = '/internal/r2-budget';
+const BUDGET_PARTS = ['mirror', 'covers', 'meals'];
 export const MIRROR_DAILY_PARTS = 8000;
 export const MIRROR_PAGE = 60;
 const PARTS = ['file', 'thumb', 'poster'];
@@ -39,6 +47,7 @@ const inv = takenAt => String(INV_BASE - Math.max(0, Math.min(INV_BASE, Math.flo
 export const groupOf = kind => (kind === 'file' ? 'docs' : 'gallery');
 export async function albumKey(group, album) { return (await sha256(new TextEncoder().encode(group + '/' + album))).slice(0, 16); }
 export const mirrorCap = env => { const v = Number(env?.MIRROR_CAP_BYTES); return Number.isFinite(v) && v > 0 ? v : MIRROR_CAP_DEFAULT; };
+export const r2Budget = env => { const v = Number(env?.R2_BUDGET_BYTES); return Number.isFinite(v) && v > 0 ? v : R2_BUDGET_DEFAULT; };
 const r2Key = (uid, id, part) => `_insights/${uid}/files/m/${id}${part === 'file' ? '' : '.' + part}`;
 
 function header(request, name, fallback = '') {
@@ -54,6 +63,59 @@ function intHeader(request, name, min = 0, max = 253402300799999) {
   const n = Number(raw);
   if (n < min || n > max) bad('Metadate invalide.');
   return n;
+}
+
+// ─────────────── registrul comun al spațiului R2 (toate conturile) ───────────────
+
+/** Instanța unică a registrului: un InsightsAccount numit „r2-budget” (conturile sunt „account:{uid}”, nu se pot ciocni). */
+function budgetStub(env) {
+  try { return env?.INSIGHTS?.idFromName && env.INSIGHTS.get ? env.INSIGHTS.get(env.INSIGHTS.idFromName('r2-budget')) : null; } catch { return null; }
+}
+/**
+ * Întreabă registrul. `{ uid, part, bytes }` = octeții absoluți ai părții pentru cont (se repară singur după o eroare),
+ * `{ uid, part, delta }` = o schimbare (pozele mesei, de la site), `{ uid }` = doar citire. Null când registrul lipsește
+ * (teste, medii fără legătura INSIGHTS): atunci rămâne doar plafonul contului.
+ */
+export async function budgetCall(env, body) {
+  const stub = budgetStub(env); if (!stub) return null;
+  const r = await stub.fetch(new Request('https://internal' + BUDGET_PATH, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forja-r2-budget': '1' }, body: JSON.stringify(body) }));
+  let out = {}; try { out = await r.json(); } catch { }
+  return { status: r.status, ...out };
+}
+/** O rezervare înainte de o urcare: refuză cu 507 când serverul FORJA ar trece de bugetul R2, cu 503 când registrul nu răspunde. */
+export async function reserveBudget(env, body) {
+  let b;
+  try { b = await budgetCall(env, body); } catch { bad('Spațiul serverului nu se poate verifica acum. Reîncearcă.', 503); }
+  if (!b) return null;
+  if (b.status === 507) bad('Spațiul gratuit al serverului FORJA e plin.', 507);
+  if (b.status >= 400) bad('Spațiul serverului nu se poate verifica acum. Reîncearcă.', 503);
+  return b;
+}
+/** După o ștergere: octeții absoluți, fără să oprească ștergerea dacă registrul nu răspunde (următoarea urcare îi repară). */
+export async function syncBudget(env, uid, part, bytes) { try { await budgetCall(env, { uid, part, bytes }); } catch { } }
+
+/** Registrul (rulează în instanța „r2-budget”): `r2b:{uid}` = { mirror, covers, meals }; totalul se adună din toate conturile. */
+export async function handleBudget(request, storage, env) {
+  if (request.method !== 'POST' || request.headers.get('x-forja-r2-budget') !== '1' || request.headers.get('x-forja-owner')) bad('Not found', 404);
+  if (await storage.get('owner')) bad('Not found', 404);
+  let v; try { v = await request.json(); } catch { bad('Registru invalid.'); }
+  if (!v || typeof v.uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(v.uid)) bad('Registru invalid.');
+  const limit = r2Budget(env), key = 'r2b:' + v.uid;
+  const rows = await storage.list({ prefix: 'r2b:' });
+  const sumOf = r => BUDGET_PARTS.reduce((n, p) => n + (Number(r?.[p]) || 0), 0);
+  let total = 0; for (const r of rows.values()) total += sumOf(r);
+  const mine = { mirror: 0, covers: 0, meals: 0, ...(rows.get(key) || {}) };
+  if (v.part !== undefined) {
+    if (!BUDGET_PARTS.includes(v.part)) bad('Registru invalid.');
+    const before = Number(mine[v.part]) || 0;
+    const after = v.bytes !== undefined ? v.bytes : before + v.delta;
+    if (!Number.isFinite(after) || (v.bytes !== undefined && v.bytes < 0) || (v.bytes === undefined && !Number.isFinite(v.delta))) bad('Registru invalid.');
+    const next = Math.max(0, Math.floor(after));
+    if (next > before && total - before + next > limit) return json({ error: 'Spațiul gratuit al serverului FORJA e plin.', total, limit, mine }, 507);
+    mine[v.part] = next; total += next - before;
+    if (sumOf(mine) > 0) await storage.put(key, mine); else await storage.delete(key);
+  }
+  return json({ total, limit, free_tier: R2_FREE_BYTES, mine });
 }
 
 /** Rândul fără cheile interne (R2, dispozitiv). */
@@ -110,8 +172,9 @@ async function refillCover(storage, group, album) {
   }
   await storage.put('mf-albums', a);
 }
-export async function eraseMirrorItem(storage, bucket, uid, row, now = Date.now()) {
-  await storage.put('mf-gone:' + row.id, now);
+/** [tombstone] = false pentru o ștergere venită de pe telefon: copia poate urca din nou când poza revine (coș, „De aruncat”). */
+export async function eraseMirrorItem(storage, bucket, uid, row, now = Date.now(), tombstone = true) {
+  if (tombstone) await storage.put('mf-gone:' + row.id, now);
   if (bucket) await bucket.delete(PARTS.filter(p => row.parts[p]).map(p => r2Key(uid, row.id, p)));
   await storage.delete([...(await indexKeys(row)), 'mf:' + row.id]);
   await tally(storage, row, -1, now);
@@ -121,20 +184,29 @@ export async function eraseMirrorItem(storage, bucket, uid, row, now = Date.now(
 /** Pentru /v2/site/forget: fiecare rând și index `mf*` (R2 se golește acolo, după prefix). Întoarce câte copii erau. */
 export async function forgetMirror(storage) {
   let items = 0;
-  for (const prefix of ['mf:', 'mf-t:', 'mf-k:', 'mf-a:', 'mf-gone:']) {
+  for (const prefix of ['mf:', 'mf-t:', 'mf-k:', 'mf-a:', 'mf-gone:', 'mf-cv:']) {
     const list = [...(await storage.list({ prefix })).keys()];
     if (prefix === 'mf:') items = list.length;
     for (let i = 0; i < list.length; i += 128) await storage.delete(list.slice(i, i + 128));
   }
-  await storage.delete(['mf-stats', 'mf-albums', 'mf-consent', 'mf-budget']);
+  await storage.delete(['mf-stats', 'mf-albums', 'mf-consent', 'mf-budget', 'mf-covers-bytes']);
   return items;
 }
 
-export async function mirrorSummary(storage, env) {
+/**
+ * Rezumatul oglinzii. `meter`: `used` = oglinda contului (față de `cap`), `covers` și `meals` = celelalte copii ale contului
+ * pe server, `server` = tot ce ține registrul comun pentru toate conturile, față de `server_limit` (null când registrul nu
+ * răspunde: site-ul spune atunci doar ce știe).
+ */
+export async function mirrorSummary(storage, env, uid) {
   const s = await stats(storage), a = await albums(storage), consent = await storage.get('mf-consent');
   const list = Object.values(a).map(e => ({ album: e.album, group: e.group, count: e.count, bytes: e.bytes, latestAt: e.latestAt || null, cover: e.cover || null, kinds: e.kinds }))
     .sort((x, y) => (y.latestAt || 0) - (x.latestAt || 0) || y.count - x.count);
-  return { stats: s, albums: list, meter: { used: s.bytes, cap: mirrorCap(env), free_tier: R2_FREE_BYTES }, consent: { on: !!consent?.on, at: consent?.at || null } };
+  const covers = (await storage.get('mf-covers-bytes')) || 0;
+  let b = null; try { b = uid ? await budgetCall(env, { uid }) : null; } catch { }
+  const ok = b && b.status === 200;
+  return { stats: s, albums: list, meter: { used: s.bytes, cap: mirrorCap(env), free_tier: R2_FREE_BYTES, covers, meals: ok ? Number(b.mine?.meals) || 0 : null,
+    server: ok ? b.total : null, server_limit: ok ? b.limit : null }, consent: { on: !!consent?.on, at: consent?.at || null } };
 }
 
 /** Pagini din index (cele mai noi primele). Fără `q` citește doar cheile paginii; cu `q` caută în toate rândurile. */
@@ -181,7 +253,7 @@ export async function handleMirror(request, account, uid, bytes, readJSON) {
   const storage = account.ctx.storage, bucket = account.env.RECORDS, now = Date.now();
   if (path === '/v2/mirror/summary') {
     if (request.method !== 'GET') bad('Method not allowed', 405);
-    return json({ ...(await mirrorSummary(storage, account.env)), server_at: now });
+    return json({ ...(await mirrorSummary(storage, account.env, uid)), server_at: now });
   }
   if (path === '/v2/mirror/consent') {
     if (request.method === 'GET') return json((await storage.get('mf-consent')) || { on: false });
@@ -209,6 +281,12 @@ export async function handleMirror(request, account, uid, bytes, readJSON) {
     if (request.method === 'DELETE' && !name) {
       let n = 0, c;
       do { const page = await bucket.list({ prefix, cursor: c }); if (page.objects.length) { await bucket.delete(page.objects.map(o => o.key)); n += page.objects.length; } c = page.truncated ? page.cursor : undefined; } while (c);
+      const kept = [...(await storage.list({ prefix: `mf-cv:${run}/` })).entries()];
+      if (kept.length) {
+        const total = Math.max(0, ((await storage.get('mf-covers-bytes')) || 0) - kept.reduce((x, [, v]) => x + (Number(v) || 0), 0));
+        await storage.delete(kept.map(([k]) => k)); await storage.put('mf-covers-bytes', total);
+        await syncBudget(account.env, uid, 'covers', total);
+      }
       return json({ deleted: n });
     }
     if (!name) bad('Not found', 404);
@@ -219,7 +297,10 @@ export async function handleMirror(request, account, uid, bytes, readJSON) {
     if (request.method !== 'PUT') bad('Method not allowed', 405);
     if (!(await storage.get('mf-consent'))?.on) bad('Oglinda nu este pornită pe telefon.', 403);
     if (!bytes?.length || bytes.length > MIRROR_COVER_MAX || !isJpeg(bytes)) bad('Copertă JPEG invalidă.');
+    const ck = `mf-cv:${run}/${name}`, was = Number(await storage.get(ck)) || 0, total = Math.max(0, ((await storage.get('mf-covers-bytes')) || 0) + bytes.length - was);
+    if (bytes.length > was) await reserveBudget(account.env, { uid, part: 'covers', bytes: total });
     await bucket.put(prefix + name + '.jpg', bytes, { httpMetadata: { contentType: 'image/jpeg' } });
+    await storage.put({ [ck]: bytes.length, 'mf-covers-bytes': total });
     return json({ ok: true, bytes: bytes.length }, 201);
   }
   const match = /^\/v2\/mirror\/([0-9a-f-]{36})(?:\/(thumb|poster))?$/.exec(path);
@@ -237,7 +318,15 @@ export async function handleMirror(request, account, uid, bytes, readJSON) {
       'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox" } });
   }
   if (request.method === 'DELETE' && part === 'file') {
-    if (old) await eraseMirrorItem(storage, bucket, uid, old, now); else await storage.put('mf-gone:' + id, now);
+    // De pe telefon (poza a dispărut din galerie): doar copia acestui telefon, fără tombstone. De pe site: tombstone.
+    const phone = url.searchParams.get('from') === 'phone';
+    if (phone) {
+      const device = request.headers.get('x-device-id');
+      if (!device || !idPattern.test(device)) bad('Dispozitiv invalid.');
+      if (old && old.device_id !== device) bad('Copia e a altui telefon.', 409);
+      if (old) await eraseMirrorItem(storage, bucket, uid, old, now, false);
+    } else if (old) await eraseMirrorItem(storage, bucket, uid, old, now); else await storage.put('mf-gone:' + id, now);
+    if (old) await syncBudget(account.env, uid, 'mirror', (await stats(storage)).bytes);
     return json({ deleted: true, phone_original_unchanged: true });
   }
   if (request.method === 'PATCH' && part === 'file') {
@@ -285,6 +374,8 @@ export async function handleMirror(request, account, uid, bytes, readJSON) {
   if (delta > 0 && s.bytes + delta > mirrorCap(account.env)) bad('Oglinda a atins plafonul de spațiu.', 507);
   const day = Math.floor(now / DAY_MS), budget = await storage.get('mf-budget'), used = budget?.day === day ? budget.used : 0;
   if (used >= MIRROR_DAILY_PARTS) bad('Limita zilnică a oglinzii a fost atinsă. Continuă mâine.', 429);
+  // Registrul comun: cei 10 GB gratuiți sunt ai tuturor conturilor FORJA (octeții absoluți ai oglinzii după urcare).
+  if (delta > 0) await reserveBudget(account.env, { uid, part: 'mirror', bytes: s.bytes + delta });
   await bucket.put(r2Key(uid, id, part), bytes, { httpMetadata: { contentType: part === 'file' ? 'application/octet-stream' : 'image/jpeg' } });
   await storage.put('mf-budget', { day, used: used + 1 });
   const base = old || { id, kind, group: groupOf(kind), parts: {}, bytes: 0, received_at: now, device_id: device };
@@ -298,6 +389,7 @@ export async function handleMirror(request, account, uid, bytes, readJSON) {
   for (const k of await indexKeys(next)) await storage.put(k, 1);
   await storage.put('mf:' + id, next);
   await tally(storage, next, +1, now);
+  if (delta < 0) await syncBudget(account.env, uid, 'mirror', (await stats(storage)).bytes);
   if (old && (old.album !== next.album || old.group !== next.group)) await refillCover(storage, old.group, old.album);
   return json(publicItem(next), old ? 200 : 201);
 }
