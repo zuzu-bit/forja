@@ -13,9 +13,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WorkoutSessionEntity::class, SetLogEntity::class,
         MealEntity::class, SleepSessionEntity::class, SleepEventEntity::class,
         ActivityEntity::class, FocusRuleEntity::class,
-        ExploreCellEntity::class, PlaceEntity::class
+        ExploreCellEntity::class, PlaceEntity::class,
+        FocusSessionEntity::class, BreathSessionEntity::class, GamePlayEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class ForjaDatabase : RoomDatabase() {
@@ -25,6 +26,9 @@ abstract class ForjaDatabase : RoomDatabase() {
     abstract fun activityDao(): ActivityDao
     abstract fun focusDao(): FocusDao
     abstract fun exploreDao(): ExploreDao
+    abstract fun focusSessionDao(): FocusSessionDao
+    abstract fun breathSessionDao(): BreathSessionDao
+    abstract fun gamePlayDao(): GamePlayDao
 
     companion object {
         @Volatile private var instance: ForjaDatabase? = null
@@ -68,13 +72,44 @@ abstract class ForjaDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v9 (mirror): jurnalele noi pentru site (concentrare, respirație, jocuri), detaliile analizei mesei, id-uri stabile
+         * pentru site (cloudId) și contul al cui e fiecare rând (ownerUid, vezi Journals.claim). Doar adăugări: nimic nu se pierde.
+         */
+        internal val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (sql in MIGRATION_8_9_SQL) db.execSQL(sql)
+            }
+        }
+
+        /** Instrucțiunile v8 → v9, în ordine (testul le rulează pe o bază v8 reală). */
+        internal val MIGRATION_8_9_SQL: List<String> = listOf(
+            "ALTER TABLE meals ADD COLUMN details TEXT",
+            "ALTER TABLE meals ADD COLUMN cloudId TEXT",
+            "ALTER TABLE meals ADD COLUMN ownerUid TEXT",
+            "ALTER TABLE activities ADD COLUMN cloudId TEXT",
+            "ALTER TABLE activities ADD COLUMN ownerUid TEXT",
+            "ALTER TABLE workout_sessions ADD COLUMN cloudId TEXT",
+            "ALTER TABLE workout_sessions ADD COLUMN ownerUid TEXT",
+            "ALTER TABLE sleep_sessions ADD COLUMN ownerUid TEXT",
+            "CREATE TABLE IF NOT EXISTS `focus_sessions` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startAt` INTEGER NOT NULL, " +
+                "`endAt` INTEGER, `kind` TEXT NOT NULL, `plannedMin` INTEGER NOT NULL, `rules` TEXT NOT NULL, `grown` INTEGER NOT NULL, " +
+                "`withered` INTEGER NOT NULL, `blockHits` TEXT NOT NULL, `endedBy` TEXT, `cloudId` TEXT, `ownerUid` TEXT)",
+            "CREATE TABLE IF NOT EXISTS `breath_sessions` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startAt` INTEGER NOT NULL, " +
+                "`endAt` INTEGER NOT NULL, `pattern` TEXT NOT NULL, `cycles` INTEGER NOT NULL, `durationS` INTEGER NOT NULL, " +
+                "`completed` INTEGER NOT NULL, `ownerUid` TEXT)",
+            "CREATE TABLE IF NOT EXISTS `game_plays` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `at` INTEGER NOT NULL, " +
+                "`game` TEXT NOT NULL, `level` INTEGER NOT NULL, `outcome` TEXT NOT NULL, `stars` INTEGER NOT NULL, `score` INTEGER NOT NULL, " +
+                "`durationS` INTEGER NOT NULL, `ownerUid` TEXT)"
+        )
+
         fun get(context: Context): ForjaDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     ForjaDatabase::class.java,
                     "forja.db"
-                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                ).addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .fallbackToDestructiveMigration()
                     .build().also { instance = it }
             }

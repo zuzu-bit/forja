@@ -13,13 +13,17 @@ import com.forja.app.core.cleanup.OrganizerSettings
 import com.forja.app.core.data.Prefs
 import com.forja.app.core.data.SiteMirror
 import com.forja.app.core.explore.ExploreSync
+import com.forja.app.core.network.InsightsApi
 import com.forja.app.core.recovery.Finder
 import com.forja.app.core.recovery.LostPhoneRecovery
 import com.forja.app.core.recovery.LostPhoneService
 import com.forja.app.core.social.ContactsSync
 import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.buildJsonObject
 import org.json.JSONArray
 
 /**
@@ -62,9 +66,11 @@ object CollectionSettings {
     fun owner(c: Context): String? = prefs(c).getString("owner", null)
     fun userStopped(c: Context): Boolean = prefs(c).getBoolean(KEY_USER_STOPPED, false)
     fun setUserStopped(c: Context, on: Boolean) { prefs(c).edit().putBoolean(KEY_USER_STOPPED, on).apply() }
-    /** Contractul e semnat pe acest telefon, la versiunea curentă (oglinda sincronă a Prefs.contractSigned). */
-    fun contractOn(c: Context): Boolean =
-        prefs(c).getBoolean("contract", false) && prefs(c).getInt(KEY_CONTRACT_VERSION, 0) >= Prefs.CONTRACT_VERSION
+    /** Contractul e semnat pe acest telefon, cel puțin la v3 (oglinda sincronă a Prefs.contractSigned). */
+    fun contractOn(c: Context): Boolean = contractAtLeast(c, Prefs.CONTRACT_BASE)
+    /** Oglinda sincronă a Prefs.contractAtLeast(v), pentru serviciu, lucrători și receptoare. */
+    fun contractAtLeast(c: Context, v: Int): Boolean =
+        prefs(c).getBoolean("contract", false) && prefs(c).getInt(KEY_CONTRACT_VERSION, 0) >= v
 
     /**
      * Poze sau fișiere alese anume pentru sincronizare (lista de URI-uri din `photos` / `files`). Doar ele cer
@@ -201,7 +207,10 @@ object CollectionSettings {
      */
     suspend fun enableAll(app: ForjaApp) {
         val uid = app.auth.currentUid ?: return
-        prefs(app).edit().putString("owner", uid).putBoolean("contract", true).putInt(KEY_CONTRACT_VERSION, Prefs.CONTRACT_VERSION)
+        // Oglinda poartă versiunea semnată de fapt (reconcile pornește și o semnătură v3), nu versiunea curentă a textului.
+        val version = try { app.prefs.contractVersion.first() } catch (e: CancellationException) { throw e } catch (_: Exception) { 0 }
+            .takeIf { it > 0 } ?: Prefs.CONTRACT_VERSION
+        prefs(app).edit().putString("owner", uid).putBoolean("contract", true).putInt(KEY_CONTRACT_VERSION, version)
             .remove(KEY_PAUSED).remove(KEY_USER_STOPPED).putBoolean(GalleryUploader.KEY_ON, true).apply()
         // O semnătură nouă readuce telefonul scos de pe site și confirmă din nou înrolarea existentă (temei „contract” v3).
         LostPhoneRecovery.onSigned(app)
@@ -226,8 +235,9 @@ object CollectionSettings {
 
     /**
      * Revocarea: oprește tot și cere ștergerea a ce se poate șterge de pe site (sesiunea de sincronizare,
-     * telefonul din Găsire, listarea după număr, documentele Firestore urcate doar cu contractul v3 — muzica, rația,
-     * antrenamentele, Inventarul). Miniaturile expiră singure în 24 h, nopțile în 7 zile.
+     * telefonul din Găsire, listarea după număr, documentele Firestore urcate cu contractul — [SiteMirror.MIRRORED] —,
+     * iar pe serverul site-ului timpul pe ecran, ziua pe hartă, copiile galeriei și coperțile: [forgetSite]).
+     * Nopțile expiră singure în 7 zile.
      */
     suspend fun disableAll(app: ForjaApp) {
         val sessionId = prefs(app).getString("session_id", null)
@@ -251,6 +261,13 @@ object CollectionSettings {
         } catch (_: Exception) { }
         // În fundal: ecranul contractului nu așteaptă listările Firestore (fără net, până la 20 s pe colecție).
         if (uid != null) app.appScope.launch { try { SiteMirror.forget(app, uid) } catch (_: Exception) { } }
+        // Site-ul șterge acum, nu la expirare: timpul pe ecran (14 zile), ziua pe hartă, copiile galeriei, coperțile dosarelor.
+        if (uid != null) app.appScope.launch { try { forgetSite() } catch (_: Exception) { } }
+    }
+
+    /** POST /v2/site/forget pe serverul site-ului (contul DO al celui conectat). Fără net: expiră singure (24 h – 14 zile). */
+    suspend fun forgetSite() {
+        withTimeout(20_000L) { InsightsApi.json("/v2/site/forget", buildJsonObject { }, "POST") }
     }
 
     /**

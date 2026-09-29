@@ -39,7 +39,11 @@ data class WorkoutSessionEntity(
     val planName: String,
     val startedAt: Long,
     val endedAt: Long? = null,
-    val totalSets: Int = 0
+    val totalSets: Int = 0,
+    /** v9: id stabil pentru site (UUID), în locul lui w{id}; null până îl dă pachetul C. */
+    val cloudId: String? = null,
+    /** v9: contul Firebase al cui e rândul (Journals.claim); null = încă neatribuit. */
+    val ownerUid: String? = null
 )
 
 @Entity(tableName = "set_logs")
@@ -70,7 +74,13 @@ data class MealEntity(
     val at: Long,
     val confirmed: Boolean = true,
     val barcode: String? = null,
-    val photoPath: String? = null    // miniatura mesei, salvată în aplicație
+    val photoPath: String? = null,   // miniatura mesei, salvată în aplicație
+    /** v9: ce a găsit analiza (JSON: componente[], scor, sfat, model); null la mesele manuale sau mai vechi. */
+    val details: String? = null,
+    /** v9: id stabil pentru site (UUID), în locul lui m{id}. */
+    val cloudId: String? = null,
+    /** v9: contul Firebase al cui e rândul (Journals.claim). */
+    val ownerUid: String? = null
 )
 
 @Entity(tableName = "sleep_sessions")
@@ -85,7 +95,9 @@ data class SleepSessionEntity(
     val remMin: Int = 0,
     val phases: String = "", // hipnogramă: „startMin,endMin,tip;…" (deep|light|rem|awake)
     val summary: String = "",        // rezumatul de dimineață (AI, două propoziții)
-    val recordedUntil: Long = 0L     // înregistrarea completă e disponibilă până la…
+    val recordedUntil: Long = 0L,    // înregistrarea completă e disponibilă până la…
+    /** v9: contul Firebase al cui e noaptea (Journals.claim). */
+    val ownerUid: String? = null
 )
 
 /** Eveniment de somn detectat local: sforăit / vorbit / sunet / mișcare, cu clip de 5s. */
@@ -110,7 +122,11 @@ data class ActivityEntity(
     val durationS: Long,
     val kcal: Int,
     val polyline: String,    // „lat,lng;lat,lng;…"
-    val type: String = "run" // run · walk · ride
+    val type: String = "run", // run · walk · ride
+    /** v9: id stabil pentru site (UUID), în locul lui a{id}. */
+    val cloudId: String? = null,
+    /** v9: contul Firebase al cui e tura (Journals.claim). */
+    val ownerUid: String? = null
 )
 
 @Entity(tableName = "focus_rules")
@@ -158,4 +174,58 @@ data class PlaceEntity(
     val updatedAt: Long = 0L,
     /** De câte ori ai fost aici (o ședere nouă la > 6 h de ultima = o vizită în plus). */
     val visits: Int = 1
+)
+
+// ── Mirror (v9): jurnalele noi pentru site; le umplu pachetele C și D ──
+
+/** O sesiune de concentrare sau o pauză de detox, cu ce s-a blocat și de câte ori ai încercat să intri. */
+@Entity(tableName = "focus_sessions")
+data class FocusSessionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val startAt: Long,
+    val endAt: Long? = null,
+    /** focus · detox */
+    val kind: String = "focus",
+    val plannedMin: Int = 0,
+    /** JSON: pachetele blocate, ["com.instagram.android", …]. */
+    val rules: String = "[]",
+    /** Copacul a crescut (sesiune dusă la capăt) / s-a uscat (ieșire înainte). */
+    val grown: Boolean = false,
+    val withered: Boolean = false,
+    /** JSON: încercări de deschidere pe pachet, {"com.instagram.android": 3}. */
+    val blockHits: String = "{}",
+    /** timer · user · system; null cât rulează. */
+    val endedBy: String? = null,
+    val cloudId: String? = null,
+    val ownerUid: String? = null
+)
+
+/** O sesiune de respirație. */
+@Entity(tableName = "breath_sessions")
+data class BreathSessionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val startAt: Long,
+    val endAt: Long,
+    /** Tiparul ales (ex. „4-7-8”, „box”). */
+    val pattern: String = "",
+    val cycles: Int = 0,
+    val durationS: Int = 0,
+    val completed: Boolean = false,
+    val ownerUid: String? = null
+)
+
+/** Un joc terminat în ZID sau ASALT (GameStore păstrează progresul; aici e jurnalul, pentru site). */
+@Entity(tableName = "game_plays")
+data class GamePlayEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val at: Long,
+    /** zid · asalt */
+    val game: String,
+    val level: Int = 0,
+    /** won · lost · quit */
+    val outcome: String = "",
+    val stars: Int = 0,
+    val score: Int = 0,
+    val durationS: Int = 0,
+    val ownerUid: String? = null
 )

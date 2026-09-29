@@ -46,6 +46,18 @@ object SiteMirror {
     private val started = AtomicBoolean(false)
     private val workoutsLock = Mutex()
 
+    /**
+     * Tot ce oglindește site-ul în Firestore sub users/{uid}/… și șterge revocarea ([forget]): colecții (adâncime 2, ca
+     * regula users/{uid}/{sub}/{docId} să le acopere — nimic mai adânc) și documentele din settings/. Jurnalele (meals,
+     * sleep, activities) nu sunt aici: rămân în cont. Pachetele A–D scriu doar în numele de aici:
+     *  workouts, inventory (v3) · focus/{zi}, detox/{zi}, breath/{zi} (D) · nudges/{zi}, listens/{zi} (D) · games/{zid|asalt} (C)
+     *  · sleepEvents/s{id} (B) · live/go (A) · settings/music, targets (v3) · settings/presence, contacts (A), storage (C).
+     */
+    val MIRRORED: List<String> = listOf(
+        "workouts", "inventory", "focus", "detox", "breath", "nudges", "listens", "games", "sleepEvents", "live",
+        "settings/music", "settings/targets", "settings/presence", "settings/contacts", "settings/storage",
+    )
+
     /** Pornește ascultătorii o singură dată pe proces. Sigur din orice fir. */
     fun start(app: ForjaApp) {
         if (!started.compareAndSet(false, true)) return
@@ -78,17 +90,30 @@ object SiteMirror {
             } catch (_: Exception) { }
         }
 
-        // Emailul: o singură dată pe cont, la prima pornire cu contul conectat.
+        // Emailul: o singură dată pe cont, la prima pornire cu contul conectat. Întâi jurnalele din Room trec la acest cont
+        // (sau se golesc, dacă sunt ale altuia): nimic din telefonul altcuiva nu urcă în contul lui.
         app.appScope.launch {
             try {
-                uids.collect { uid -> if (uid != null) accountPass(app, uid) }
+                uids.collect { uid ->
+                    if (uid == null) return@collect
+                    try { Journals.claim(app, uid) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+                    accountPass(app, uid)
+                }
             } catch (_: Exception) { }
         }
+
+        // Oglinzile noi (goale până le umplu pachetele): fiecare își pornește singură ascultătorii, o dată pe proces.
+        FocusMirror.start(app)
+        ListenMirror.start(app)
+        GamesMirror.start(app)
+        StorageMirror.start(app)
     }
 
     /** Trimite antrenamentele terminate după ultimul trimis (prima dată: ultimele 60 de zile). */
     private suspend fun workoutsPass(app: ForjaApp, uid: String) = workoutsLock.withLock {
         try {
+            // Room poate fi încă al contului dinainte (ieșire fără Profil): se golește înainte de orice completare.
+            Journals.claim(app, uid)
             val store = SiteSyncStore.of(app)
             val key = SiteSyncStore.workoutsSince(uid)
             val since = store.getLong(key, 0L)
@@ -101,9 +126,10 @@ object SiteMirror {
     }
 
     /**
-     * Revocarea contractului: ce a urcat pentru site doar cu contractul v3 se șterge din Firestore — topul muzicii,
-     * rația, antrenamentele, rezumatele Inventarului — iar ceasurile locale se uită, ca o semnătură nouă să retrimită
-     * tot. Jurnalele (mese, somn, activități) rămân: nu țin de contract. Ștergerile trec prin cache-ul offline (fără net,
+     * Revocarea contractului: tot ce e în [MIRRORED] se șterge din Firestore — topul muzicii, rația, antrenamentele,
+     * rezumatele Inventarului și, după v4, concentrarea, detoxul, respirația, Casca, ascultarea, jocurile, cronologia
+     * nopților, GO-ul live și setările site-ului — iar ceasurile locale se uită, ca o semnătură nouă să retrimită tot.
+     * Jurnalele (mese, somn, activități) rămân: nu țin de contract. Ștergerile trec prin cache-ul offline (fără net,
      * pleacă la revenire); regulile permit proprietarului orice ștergere în users/{uid}/…
      */
     suspend fun forget(app: ForjaApp, uid: String) {
@@ -112,8 +138,11 @@ object SiteMirror {
         } catch (_: Exception) { }
         try { MusicStats.setSummaryAt(app, 0L) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
         val user = FirebaseFirestore.getInstance().collection("users").document(uid)
-        for (doc in listOf("music", "targets")) try { user.collection("settings").document(doc).delete() } catch (_: Exception) { }
-        for (name in listOf("workouts", "inventory")) {
+        for (name in MIRRORED) {
+            if (name.startsWith("settings/")) {
+                try { user.collection("settings").document(name.removePrefix("settings/")).delete() } catch (_: Exception) { }
+                continue
+            }
             val col = user.collection(name)
             var after: DocumentSnapshot? = null
             // Pagini după id (cel mult 20 × 200): o ștergere încă neconfirmată nu face ca aceeași pagină să revină la nesfârșit.

@@ -13,7 +13,6 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.forja.app.ForjaApp
-import com.forja.app.core.data.CloudSync
 import com.forja.app.core.network.SleepApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -281,7 +280,7 @@ class SleepUploadWorker(
                 val updated = if (!summary.isNullOrBlank()) s.copy(summary = summary) else s
                 if (updated != s) dao.update(updated)
                 try {
-                    CloudSync.sleep(
+                    SleepCloud.sleep(
                         app.auth.currentUid, updated,
                         snoreCount = maxOf(snoreLocal, t.stats.snoreEpisodes),
                         talkCount = maxOf(talkLocal, t.stats.talkCount),

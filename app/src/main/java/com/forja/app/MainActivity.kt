@@ -56,6 +56,7 @@ import com.forja.app.feature.splash.SplashScreen
 import com.forja.app.feature.workout.WorkoutLiveScreen
 import com.forja.app.feature.workout.WorkoutScreen
 import com.forja.app.navigation.Route
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -491,6 +492,9 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                                 // Găsirea: telefonul iese de pe site-ul contului vechi acum, nu după 30 de zile.
                                 try { com.forja.app.core.recovery.LostPhoneRecovery.logout(app) } catch (_: Exception) { }
                                 app.auth.logout()
+                                // Jurnalele din Room (mese, somn, ture, antrenamente, concentrare, jocuri, teritoriu) sunt ale acestui
+                                // om: următorul cont nu le vede și nu le urcă în contul lui (Journals.claim prinde și ieșirile fără Profil).
+                                try { withContext(Dispatchers.IO) { com.forja.app.core.data.Journals.wipe(app) } } catch (_: Exception) { }
                                 // Ieșirea din cont = de la capăt, cu tot cu prezentare și permisiuni. Contractul e al contului: se semnează din nou.
                                 app.prefs.resetFirstRun()
                                 // Alt om pe același telefon: ghidajele de la prima vizită pornesc din nou.

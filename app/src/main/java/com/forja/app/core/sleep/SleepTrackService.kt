@@ -643,7 +643,7 @@ class SleepTrackService : Service(), SensorEventListener {
                 // Raportul urcă în baza companiei — cifrele + rezumatul, nu audio-ul brut.
                 // Minutele de sforăit/acoperirea se completează după analiza serverului (SleepUpload).
                 try {
-                    com.forja.app.core.data.CloudSync.sleep(
+                    SleepCloud.sleep(
                         app.auth.currentUid, updated,
                         snoreCount = snoreCount,
                         talkCount = talkCount,

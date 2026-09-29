@@ -82,6 +82,8 @@ class Prefs(private val context: Context) {
         val contractPromptVersion = intPreferencesKey("contract_prompt_version")
         // v4.4 — contul care a semnat (semnătura e a contului, nu a telefonului)
         val contractUid = stringPreferencesKey("contract_uid")
+        // mirror (contract v4) — cuvintele de care te lași și scrisoarea, pe site: acord separat, oprit implicit
+        val detoxWordsOnSite = booleanPreferencesKey("detox_words_on_site")
     }
 
     companion object {
@@ -92,8 +94,15 @@ class Prefs(private val context: Context) {
         /**
          * Versiunea textului contractului de securitate; o versiune nouă cere semnătură nouă.
          * v3 (4.4): găsirea telefonului, Inventarul pe site, muzica, antrenamentele și ținta, plus corecturile de text.
+         * v4 (mirror): urma Găsirii, cronologia nopții, concentrarea / detoxul / respirația, Casca, jurnalul de ascultare,
+         * jocurile, numărătorile galeriei, poza mesei și coperțile dosarelor; „Cine vede” corectat.
          */
-        const val CONTRACT_VERSION = 3
+        const val CONTRACT_VERSION = 4
+        /**
+         * Tot ce a pornit cu v3 merge mai departe cu o semnătură v3, și după trecerea la v4, până la re-semnare
+         * ([contractSigned] = [contractAtLeast] (CONTRACT_BASE)). Ce e nou în v4 întreabă contractAtLeast(4).
+         */
+        const val CONTRACT_BASE = 3
     }
 
     val onboardingDone: Flow<Boolean> = context.dataStore.data.map { it[K.onboardingDone] ?: false }
@@ -316,10 +325,17 @@ class Prefs(private val context: Context) {
     val contractSignedAt: Flow<Long> = context.dataStore.data.map { it[K.contractSignedAt] ?: 0L }
     /** Versiunea semnată (0 = nesemnat). */
     val contractVersion: Flow<Int> = context.dataStore.data.map { it[K.contractVersion] ?: 0 }
-    /** Semnat și la versiunea curentă — singura condiție pentru ca ceva să plece pe site. */
-    val contractSigned: Flow<Boolean> = context.dataStore.data.map {
-        (it[K.contractSignedAt] ?: 0L) > 0L && (it[K.contractVersion] ?: 0) >= CONTRACT_VERSION
+    /** Semnat cel puțin la versiunea `v` (și nerevocat: revocarea șterge semnătura). Ce e nou în v4: contractAtLeast(4). */
+    fun contractAtLeast(v: Int): Flow<Boolean> = context.dataStore.data.map {
+        (it[K.contractSignedAt] ?: 0L) > 0L && (it[K.contractVersion] ?: 0) >= v
     }
+    /**
+     * Semnat cel puțin la v3 ([CONTRACT_BASE]) — condiția pentru tot ce pleacă pe site din v3 (sincronizarea, galeria,
+     * explorarea, agenda, găsirea, muzica, antrenamentele, Inventarul). Nu se oprește nimic la trecerea la v4.
+     */
+    val contractSigned: Flow<Boolean> = contractAtLeast(CONTRACT_BASE)
+    /** Semnat la versiunea curentă ([CONTRACT_VERSION]): ecranul contractului arată „Semnat.” doar atunci. */
+    val contractCurrent: Flow<Boolean> = contractAtLeast(CONTRACT_VERSION)
     /** Semnat, dar o versiune mai veche: contractul are rânduri noi; lucrul legat de contract stă până la re-semnare. */
     val contractNeedsResign: Flow<Boolean> = context.dataStore.data.map {
         (it[K.contractSignedAt] ?: 0L) > 0L && (it[K.contractVersion] ?: 0) in 1 until CONTRACT_VERSION
@@ -334,11 +350,19 @@ class Prefs(private val context: Context) {
         it[K.contractVersion] = version
         if (uid != null) it[K.contractUid] = uid else it.remove(K.contractUid)
     }
+    /**
+     * Cuvintele de care te lași și scrisoarea (detox), pe site. Oprit implicit: sunt promise „Rămân pe telefon”; pleacă
+     * doar cu contractul v4 și cu acest acord separat, pornit de ea.
+     */
+    val detoxWordsOnSite: Flow<Boolean> = context.dataStore.data.map { it[K.detoxWordsOnSite] ?: false }
+    suspend fun setDetoxWordsOnSite(v: Boolean) = context.dataStore.edit { it[K.detoxWordsOnSite] = v }
     /** Revocare sau ieșire din cont: semnătura dispare de pe telefon. */
     suspend fun clearContract() = context.dataStore.edit {
         it.remove(K.contractSignedAt)
         it.remove(K.contractVersion)
         it.remove(K.contractUid)
+        // Acordul separat pentru cuvintele detoxului ține de semnătură: revocat sau alt cont, pornește iar oprit.
+        it.remove(K.detoxWordsOnSite)
     }
 
     /** Ecranul de pornire cu permisiuni a fost arătat o dată. */

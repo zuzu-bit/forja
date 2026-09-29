@@ -365,8 +365,9 @@ fun ProfileScreen(
                 SettingRow(
                     icon = Icons.Outlined.VerifiedUser,
                     title = "Contract",
-                    state = contractSigned?.let { if (it) "semnat" else if (contractNeedsResign) "versiune nouă" else "nesemnat" },
-                    stateColor = if (contractSigned == true) Positive else EmberHot,
+                    // O semnătură v3 merge mai departe (contractSigned), dar are rânduri noi de semnat: „versiune nouă”.
+                    state = contractSigned?.let { if (contractNeedsResign) "versiune nouă" else if (it) "semnat" else "nesemnat" },
+                    stateColor = if (contractSigned == true && !contractNeedsResign) Positive else EmberHot,
                     onClick = onOpenContract
                 )
                 RowDivider()

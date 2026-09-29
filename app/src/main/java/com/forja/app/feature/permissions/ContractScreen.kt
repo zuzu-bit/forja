@@ -62,50 +62,64 @@ private fun new(t: String) = ClauseLine(t, ClauseMark.New)
 private fun fixed(t: String) = ClauseLine(t, ClauseMark.Fixed)
 
 /**
- * Contractul v3 (4.4). Fiecare rând spune exact ce face telefonul (auditul din understanding44/data-contract.md §5):
- * fără „pași” (nu există), codul de bare la OpenFoodFacts, Firebase vs Cloudflare, numerele de telefon, galeria pe site
- * 24 h / 500, locația pe site 24 h; nou: găsirea, Inventarul pe site, muzica, antrenamentele, ținta de calorii.
+ * Contractul v4 (mirror): ce era în v3 rămâne; nou: urma Găsirii, cronologia nopții, concentrarea / detoxul / respirația,
+ * Casca, jurnalul de ascultare, jocurile, numărătorile galeriei, poza mesei, coperțile dosarelor și acordul separat pentru
+ * cuvintele detoxului. Corectat: ce văd prietenii, mesele, timpul pe ecran, unde stau datele și ce șterge revocarea.
+ * Marcajele (NOU / CORECTAT) sunt față de v3.
  */
 val CONTRACT_CLAUSES: List<Clause> = listOf(
     Clause(
         "Ce se încarcă", listOf(
             keep("Locația și opririle: pozițiile, locurile unde ai stat, zonele pe care le deblochezi."),
-            new("Găsirea telefonului: ultima poziție și bateria, doar pentru tine, ca să-l găsești de pe site. Când îl cauți sau îl suni, telefonul arată o notificare. Se păstrează 7 zile."),
-            fixed("Mișcarea: alergări, plimbări, ture și antrenamente, cu durata, distanța și caloriile — jurnalul de marș."),
-            fixed("Mesele: poza farfuriei și ce scrii merg la analiză pe serverul FORJA și nu rămân acolo. Codul de bare merge la OpenFoodFacts. Jurnalul meselor stă în contul tău."),
-            new("Ținta de calorii și de macro, ca pe site să vezi ziua față de ea."),
-            fixed("Galeria: fiecare poză ca miniatură de cel mult 512 px, treptat, în loturi de 50, pe Wi-Fi implicit. Site-ul arată ultimele 24 de ore, cel mult 500. Originalul nu pleacă niciodată."),
-            fixed("Documentele, la Inventar: PDF-urile de cel mult 4 MB și fragmente scurte din fișierele text merg la analiză pe serverul FORJA. Nu rămân acolo."),
-            new("Inventarul: numele dosarelor, câte fișiere are fiecare și locul ales, la fiecare rulare, ca să le vezi pe site. Rămân ultimele 20 de rulări."),
-            keep("Activitatea în aplicații: numele aplicațiilor și timpul petrecut în ele — numai dacă dai accesul la utilizare din Setări Android."),
-            fixed("Agenda: numerele pleacă pe o conexiune criptată, iar serverul păstrează doar o amprentă a lor, ca prietenii cu FORJA să apară singuri. Numele rămân pe telefon."),
-            fixed("Ce asculți: titlul, artistul și aplicația, ca prietenii să vadă pe hartă."),
-            new("Muzica: topul săptămânii (titlu, artist, de câte ori) pe site-ul tău. Încercările de pornire (aplicația și rezultatul, fără titluri) merg la serverul FORJA, ca „Pornește muzica” să meargă."),
+            keep("Găsirea telefonului: ultima poziție și bateria, doar pentru tine, ca să-l găsești de pe site. Când îl cauți sau îl suni, telefonul arată o notificare. Se păstrează 7 zile."),
+            new("Cât îl cauți, telefonul își lasă urma pe hartă, ca să vezi pe unde a fost."),
+            keep("Mișcarea: alergări, plimbări, ture și antrenamente, cu durata, distanța și caloriile — jurnalul de marș."),
+            fixed("Mesele: poza farfuriei și ce scrii merg la analiză pe serverul FORJA. Codul de bare merge la OpenFoodFacts. Jurnalul meselor, cu ce a găsit analiza, stă în contul tău."),
+            new("Poza mesei: o miniatură de cel mult 512 px, ca s-o vezi pe site lângă masă."),
+            keep("Ținta de calorii și de macro, ca pe site să vezi ziua față de ea."),
+            keep("Galeria: fiecare poză ca miniatură de cel mult 512 px, treptat, în loturi de 50, pe Wi-Fi implicit. Site-ul arată ultimele 24 de ore, cel mult 500. Originalul nu pleacă niciodată."),
+            new("Câte poze și documente ai pe telefon și cât ocupă. Fără nume de fișiere."),
+            keep("Documentele, la Inventar: PDF-urile de cel mult 4 MB și fragmente scurte din fișierele text merg la analiză pe serverul FORJA. Nu rămân acolo."),
+            keep("Inventarul: numele dosarelor, câte fișiere are fiecare și locul ales, la fiecare rulare, ca să le vezi pe site. Rămân ultimele 20 de rulări."),
+            new("Coperțile dosarelor: 4 miniaturi pe dosar, la fiecare rulare."),
+            fixed("Activitatea în aplicații: numele aplicațiilor, timpul și orele în care le folosești — numai dacă dai accesul la utilizare din Setări Android. Din ore se vede și când te culci și când te trezești."),
+            new("Concentrarea și detoxul: sesiunile, cât au ținut, aplicațiile blocate și de câte ori ai încercat să le deschizi. Respirația: sesiunile și durata."),
+            new("Cuvintele de care te lași și scrisoarea rămân pe telefon. Pleacă pe site doar dacă pornești separat „Cuvintele pe site”. Implicit e oprit."),
+            new("Casca: mesajele pe care ți le-a trimis FORJA și ce ai făcut cu ele."),
+            keep("Agenda: numerele pleacă pe o conexiune criptată, iar serverul păstrează doar o amprentă a lor, ca prietenii cu FORJA să apară singuri. Numele rămân pe telefon."),
+            keep("Ce asculți: titlul, artistul și aplicația, ca prietenii să vadă pe hartă."),
+            keep("Muzica: topul săptămânii (titlu, artist, de câte ori) pe site-ul tău. Încercările de pornire (aplicația și rezultatul, fără titluri) merg la serverul FORJA, ca „Pornește muzica” să meargă."),
+            new("Jurnalul de ascultare: piesele din fiecare zi, cel mult 300 pe zi."),
+            new("Jocurile: nivelurile, stelele, scorurile și cât ai jucat în ZID și ASALT."),
             keep("Înregistrările nopții: sunetul dormitorului, în bucăți de 30 de minute, urcate dimineața pe Wi-Fi — doar când pornești tu Stingerea cu microfonul."),
+            new("Cronologia nopții: fazele, trezirile, sforăitul și vorbitul din somn, cu ce s-a înțeles din vorbe."),
             keep("Microfonul live, ziua, nu pornește prin acest contract. Are permisiune și acord separat și rămâne oprit.")
         )
     ),
     Clause(
         "Unde", listOf(
-            fixed("Jurnalele (mese, somn, mișcare), poziția pentru prieteni și prietenii tăi: în Google Firebase."),
-            fixed("Site-ul, nopțile, găsirea și analiza cu model: pe serverul FORJA, găzduit pe Cloudflare."),
+            fixed("Jurnalele (mese, somn, mișcare, concentrare, ascultare, jocuri), poziția pentru prieteni și prietenii tăi: în Google Firebase."),
+            fixed("Site-ul, nopțile, găsirea, pozele meselor, coperțile și analiza cu model: pe serverul FORJA, găzduit pe Cloudflare."),
             keep("Analiza cu model se face pe serverul FORJA cu modele Gemini (Google), Groq și Cloudflare. Modelele primesc doar materialul de analizat: miniatura, fragmentul, bucata de sunet.")
         )
     ),
     Clause(
         "Cât se păstrează", listOf(
-            fixed("Miniaturile galeriei: 24 de ore pe site, apoi dispar."),
+            keep("Miniaturile galeriei: 24 de ore pe site, apoi dispar."),
             keep("Înregistrarea nopții: 7 zile pe server, apoi dispare. Pe telefon stă 24 de ore."),
-            new("Ultima poziție a telefonului, pentru găsire: 7 zile, un singur punct."),
-            fixed("Pozițiile și opririle pe site: 24 de ore. Pentru prieteni rămâne doar ultima poziție."),
-            fixed("Jurnalele (mese, somn, mișcare): cât ai contul."),
+            new("Cronologia nopții, fără sunet: cât ai contul."),
+            keep("Ultima poziție a telefonului, pentru găsire: 7 zile, un singur punct."),
+            new("Urma telefonului căutat: 24 de ore."),
+            keep("Pozițiile și opririle pe site: 24 de ore. Pentru prieteni rămâne doar ultima poziție."),
+            fixed("Jurnalele (mese, somn, mișcare, concentrare, ascultare, jocuri) și pozele meselor: cât ai contul."),
+            new("Coperțile dosarelor: cât rămâne rularea pe site."),
             keep("Amprenta numărului tău: 30 de zile, reînnoită cât timp contractul e semnat.")
         )
     ),
     Clause(
         "Cine vede", listOf(
             keep("Doar tu, pe site-ul tău, cu contul tău."),
-            fixed("Prietenii văd poziția, când nu ești fantomă, starea, kilometrii săptămânii și, dacă lași „Pe hartă” pornit, ce asculți. Familia îți vede poziția și în modul fantomă. Nimic altceva.")
+            fixed("Prietenii văd poziția și starea, când nu ești fantomă, kilometrii săptămânii, ultima activitate, câte zone și locuri ai, locurile pe care le recomanzi și, dacă lași „Pe hartă” pornit, ce asculți. Familia îți vede poziția și în modul fantomă. Nimic altceva.")
         )
     ),
     Clause(
@@ -115,8 +129,8 @@ val CONTRACT_CLAUSES: List<Clause> = listOf(
     ),
     Clause(
         "Cum revoci", listOf(
-            fixed("Profil → Contract → Revocă. Oprește tot pe loc și cere ștergerea a ce se poate șterge de pe site: sesiunea de sincronizare, telefonul din Găsire și listarea după număr."),
-            fixed("Miniaturile expiră singure în 24 de ore, nopțile în 7 zile. Jurnalele și rulările Inventarului rămân în contul tău până îl închizi.")
+            fixed("Profil → Contract → Revocă. Oprește tot pe loc și șterge de pe site ce ține de contract: sesiunea de sincronizare, telefonul din Găsire, listarea după număr, timpul pe ecran, ziua pe hartă, copiile galeriei, coperțile, pozele meselor, concentrarea, detoxul, Casca, jocurile și ce ai ascultat."),
+            fixed("Nopțile expiră singure în 7 zile. Jurnalele (mese, somn, mișcare) rămân în contul tău până îl închizi.")
         )
     )
 )
@@ -126,18 +140,19 @@ private const val PERMISSIONS_NOTE =
     "Permisiunile Android (locație, poze, microfon, agendă) se dau separat, în Echipare. Contractul spune ce facem cu ele; " +
         "fără o permisiune, categoria ei rămâne pe telefon. Ce nu e limitat la Wi-Fi poate consuma internet mobil."
 
-/** Ce s-a corectat în v3, într-un rând (foaia de re-semnare). */
-internal const val FIXED_SUMMARY = "Corectat: mișcarea, mesele, galeria, agenda, unde stau datele și cine le vede."
+/** Ce s-a corectat în v4, într-un rând (foaia de re-semnare). */
+internal const val FIXED_SUMMARY = "Corectat: ce văd prietenii, mesele, timpul pe ecran și ce șterge revocarea."
 
 /**
  * Rândurile noi, pe scurt, pentru foaia de re-semnare (textul întreg e la „Tot contractul”): titlu + o propoziție,
  * ca foaia să încapă pe S23 cu „Semnează” la vedere.
  */
 internal val RESIGN_POINTS: List<Pair<String, String>> = listOf(
-    "Găsirea telefonului" to "Ultima poziție și bateria, doar pentru tine. Când îl cauți, telefonul arată o notificare.",
-    "Inventarul pe site" to "Dosarele, câte fișiere și locul ales. Ultimele 20 de rulări.",
-    "Muzica" to "Topul săptămânii pe site. Pornirile, fără titluri, la serverul FORJA.",
-    "Antrenamente și țintă" to "Antrenamentele terminate și ținta de calorii, pe site."
+    "Concentrare și detox" to "Sesiunile, aplicațiile blocate, respirația. Cuvintele, doar cu acord separat.",
+    "Noaptea" to "Cronologia rămâne și după ce sunetul expiră.",
+    "Găsirea" to "Urma telefonului cât îl cauți, 24 de ore.",
+    "Casca și muzica" to "Mesajele Căștii și ce ai ascultat în fiecare zi.",
+    "Jocuri, mese, dosare" to "Nivelurile din jocuri, poza mesei, coperțile dosarelor."
 )
 
 /** Semnătura: versiunea + momentul, pe telefon (Prefs) și în users/{uid}.contract; apoi pornește tot. */
@@ -166,6 +181,8 @@ data class ContractUi(
     val signedVersion: Int = 0,
     /** Semnat o versiune mai veche: rândurile noi și corectate se marchează. */
     val needsResign: Boolean = false,
+    /** Semnătura veche e cel puțin v3: ce a semnat merge mai departe până la re-semnare (doar v2 stă). */
+    val keepsRunning: Boolean = true,
     val loggedIn: Boolean = true,
     /** Starea sincronizării și a galeriei, doar când spun ceva. */
     val statusLines: List<String> = emptyList(),
@@ -186,7 +203,8 @@ fun ContractScreen(onBack: () -> Unit) {
 
     val signedAt by app.prefs.contractSignedAt.collectAsState(initial = -1L)
     // null = DataStore încă necitit: nu arătăm nici contractul întreg, nici sigiliul, ca să nu clipească unul în altul.
-    val signedOrNull by app.prefs.contractSigned.collectAsState(initial = null)
+    // „Semnat.” doar la versiunea curentă; o semnătură v3 vede contractul la zi, cu rândurile noi marcate.
+    val signedOrNull by app.prefs.contractCurrent.collectAsState(initial = null)
     val version by app.prefs.contractVersion.collectAsState(initial = 0)
     val needsResign by app.prefs.contractNeedsResign.collectAsState(initial = false)
     val syncStatus by app.prefs.syncStatus.collectAsState(initial = "")
@@ -199,6 +217,7 @@ fun ContractScreen(onBack: () -> Unit) {
         signedAt = signedAt,
         signedVersion = version,
         needsResign = needsResign,
+        keepsRunning = version >= Prefs.CONTRACT_BASE,
         loggedIn = app.auth.currentUid != null,
         statusLines = listOf(syncStatus, galleryStatus).filter { it.isNotBlank() },
     )
@@ -339,7 +358,8 @@ fun ContractContent(ui: ContractUi, busy: Boolean, onClose: () -> Unit, onSign: 
                 Spacer(Modifier.height(6.dp))
                 Reveal(index = 2) {
                     Text(
-                        if (ui.needsResign) "Rândurile noi sunt marcate. Până semnezi, sincronizarea stă; jurnalele merg mai departe."
+                        if (ui.needsResign) (if (ui.keepsRunning) "Rândurile noi sunt marcate. Ce ai semnat merge mai departe; ce e nou pornește după semnare."
+                            else "Rândurile noi sunt marcate. Până semnezi, sincronizarea stă; jurnalele merg mai departe.")
                         else "Un singur acord, în locul comutatoarelor. Tot ce pleacă de pe telefon e scris aici, fără ocolișuri.",
                         style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp)
                     )
@@ -459,8 +479,8 @@ private fun ContractCheckbox(on: Boolean) {
 // ───────────────────────────── Re-semnarea (o singură foaie după actualizare) ─────────────────────────────
 
 /**
- * Pe ecranul „Azi”, o singură dată după actualizare: cine a semnat contractul v2 vede rândurile noi și semnează v3
- * dintr-o atingere. Închisă, nu mai apare; Profilul arată „versiune nouă” la Contract până la semnare.
+ * Pe ecranul „Azi”, o singură dată după actualizare: cine a semnat o versiune mai veche vede rândurile noi și semnează
+ * versiunea curentă dintr-o atingere. Închisă, nu mai apare; Profilul arată „versiune nouă” la Contract până la semnare.
  */
 @Composable
 fun ContractResignHost(active: Boolean, onOpenContract: () -> Unit) {
@@ -471,6 +491,7 @@ fun ContractResignHost(active: Boolean, onOpenContract: () -> Unit) {
     val needs by app.prefs.contractNeedsResign.collectAsState(initial = false)
     var open by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    val signedVersion by app.prefs.contractVersion.collectAsState(initial = 0)
     LaunchedEffect(active, needs) {
         if (!active || !needs || app.auth.currentUid == null) return@LaunchedEffect
         if (app.prefs.contractPromptVersion.first() >= Prefs.CONTRACT_VERSION) return@LaunchedEffect
@@ -482,6 +503,7 @@ fun ContractResignHost(active: Boolean, onOpenContract: () -> Unit) {
     if (open) {
         ContractResignSheet(
             busy = busy,
+            keepsRunning = signedVersion >= Prefs.CONTRACT_BASE,
             onSign = {
                 busy = true
                 scope.launch {
@@ -499,7 +521,7 @@ fun ContractResignHost(active: Boolean, onOpenContract: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ContractResignSheet(busy: Boolean, onSign: () -> Unit, onReadAll: () -> Unit, onDismiss: () -> Unit) {
+private fun ContractResignSheet(busy: Boolean, keepsRunning: Boolean, onSign: () -> Unit, onReadAll: () -> Unit, onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -508,13 +530,13 @@ private fun ContractResignSheet(busy: Boolean, onSign: () -> Unit, onReadAll: ()
         shape = SheetShape,
         scrimColor = Color.Black.copy(alpha = 0.6f),
     ) {
-        ContractResignContent(busy, onSign, onReadAll, onDismiss)
+        ContractResignContent(busy, onSign, onReadAll, onDismiss, keepsRunning)
     }
 }
 
 /** Conținutul foii de re-semnare: ce e nou, pe scurt, un rând cu ce s-a corectat, „Semnează”. Capturat în GasireShots. */
 @Composable
-fun ContractResignContent(busy: Boolean, onSign: () -> Unit, onReadAll: () -> Unit, onLater: () -> Unit) {
+fun ContractResignContent(busy: Boolean, onSign: () -> Unit, onReadAll: () -> Unit, onLater: () -> Unit, keepsRunning: Boolean = true) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -526,7 +548,7 @@ fun ContractResignContent(busy: Boolean, onSign: () -> Unit, onReadAll: () -> Un
         Spacer(Modifier.height(10.dp))
         Text("Contractul, la zi.", style = TitleModule.copy(fontSize = 26.sp, lineHeight = 29.sp))
         Spacer(Modifier.height(6.dp))
-        Text("Până semnezi, sincronizarea stă. Jurnalele merg mai departe.", style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp))
+        Text(if (keepsRunning) "Ce ai semnat merge mai departe. Ce e nou pornește după semnare." else "Până semnezi, sincronizarea stă. Jurnalele merg mai departe.", style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp))
         Spacer(Modifier.height(14.dp))
         ForjaCard(Modifier.fillMaxWidth(), fill = Surface2, stroke = StrokeCard, padding = 12.dp) {
             RESIGN_POINTS.forEachIndexed { i, (title, brief) ->

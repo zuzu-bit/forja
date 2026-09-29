@@ -2,7 +2,6 @@ package com.forja.app.core.data
 
 import com.forja.app.core.data.db.ActivityEntity
 import com.forja.app.core.data.db.MealEntity
-import com.forja.app.core.data.db.SleepSessionEntity
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 
@@ -12,6 +11,7 @@ import com.google.firebase.firestore.SetOptions
  * antrenamentele (users/{uid}/workouts), rația (users/{uid}/settings/targets) și emailul contului
  * (users/{uid}/settings/account). Tot sub users/{uid}/…: regulile le dau doar proprietarului.
  * Pozele și clipurile audio NU se stochează nicăieri: se analizează și dispar.
+ * Nopțile (users/{uid}/sleep) urcă prin [com.forja.app.core.sleep.SleepCloud].
  * Scrierile folosesc cache-ul offline Firestore — fără net, se trimit la revenire.
  */
 object CloudSync {
@@ -43,39 +43,6 @@ object CloudSync {
         uid ?: return
         try {
             db.collection("users").document(uid).collection("meals").document("m$localId").delete()
-        } catch (_: Exception) { }
-    }
-
-    /**
-     * `snoreMin` / `talkCount` / `coverageMin` vin din cronologia serverului („Noaptea, ascultată”);
-     * până la analiză, minutele de sforăit sunt cele din clipurile locale și acoperirea e 0.
-     */
-    fun sleep(
-        uid: String?, s: SleepSessionEntity, snoreCount: Int, talkCount: Int, soundCount: Int,
-        snoreMin: Int = 0, coverageMin: Int = 0
-    ) {
-        uid ?: return
-        try {
-            db.collection("users").document(uid).collection("sleep").document("s${s.id}").set(
-                mapOf(
-                    "startAt" to s.startAt,
-                    "endAt" to (s.endAt ?: 0L),
-                    "score" to s.score,
-                    "deepMin" to s.deepMin,
-                    "lightMin" to s.lightMin,
-                    "remMin" to s.remMin,
-                    "movements" to s.movements,
-                    "snoreEvents" to snoreCount,
-                    "talkEvents" to talkCount,
-                    "soundEvents" to soundCount,
-                    "summary" to s.summary,
-                    "snoreMin" to snoreMin,
-                    "talkCount" to talkCount,
-                    "coverageMin" to coverageMin,
-                    "measurement" to "estimated"
-                ),
-                SetOptions.merge()
-            )
         } catch (_: Exception) { }
     }
 
