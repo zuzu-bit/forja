@@ -1,5 +1,5 @@
 // FORJA 4.4 — „azi” (ziua de azi, noaptea, o legătură pe secțiune) și „cont” (contractul, ultima dată pe fiecare conductă).
-import { SITE_RULES, MIN, HOUR, int, str, round1, time, sum, where, recall, remember, account, summaryOf, socialMeta, mealDate, latest, contractOf, contractLink } from './shared.mjs';
+import { SITE_RULES, MIN, HOUR, int, str, round1, time, sum, where, recall, remember, account, summaryOf, socialMeta, mealDate, latest, contractOf, contractLink, contractGate } from './shared.mjs';
 import { localDate, localMidnight, DAY } from '../site-time.mjs';
 import { cachedFriends } from './sec-cerc.mjs';
 
@@ -43,7 +43,7 @@ export async function azi({ env, fs, uid, now, request }) {
   const me = docs.get(`users/${uid}`), targets = docs.get(`users/${uid}/settings/targets`), music = docs.get(`users/${uid}/settings/music`);
   const todays = (meals || []).filter(m => time(m.at) && mealDate(m) === today);
   const lastMeal = (meals || []).reduce((m, r) => latest(m, r.at), null) || (await lastOf(fs, uid, 'meals', 'at', ['at']))?.at || null;
-  const contract = contractOf(me?.contract), gated = contractLink(contract, now).state === 'on';
+  const contract = contractOf(me?.contract), gated = contractGate(me?.contract);
   // Contract-v3 uploads (target, workouts, music top, Inventar runs) only while it is signed; journals always.
   const activities = (acts || []).filter(a => time(a.startAt)), workouts = gated ? (works || []).filter(w => time(w.startAt)) : [];
   const aToday = activities.filter(a => localDate(a.startAt) === today), wToday = workouts.filter(w => localDate(w.startAt) === today);

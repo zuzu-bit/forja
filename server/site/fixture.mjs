@@ -114,7 +114,7 @@ export function fixture() {
   };
   const doCall = (uid, path, method = 'GET', body) => account(uid).fetch(new Request('https://forja.test' + path, { method, headers: { 'x-forja-owner': uid, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
   const socialCall = (uid, path, method = 'GET', body) => social.fetch(new Request('https://forja.test/v2/social/' + path, { method, headers: { 'x-forja-owner': uid, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
-  return { fs, sleep, env, call, doCall, socialCall, account, doRequests: () => doRequests };
+  return { fs, sleep, records, env, call, doCall, socialCall, account, doRequests: () => doRequests };
 }
 // 28 Sept 2026, 15:00 in Bucharest (12:00 UTC).
 export const NOW = Date.UTC(2026, 8, 28, 12, 0);

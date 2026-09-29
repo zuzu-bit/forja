@@ -230,6 +230,13 @@ async function suite(name, rules, { tightened }) {
   await check('destinatarul vede de la cine (to == me, from == el)', () =>
     assertSucceeds(getDocs(query(collection(bogdan, 'energy'), where('to', '==', BOGDAN), where('from', '==', ANA)))));
   await check('străinul NU o citește', () => assertFails(getDoc(doc(cristi, 'energy', eid))));
+  // Nou (mirror P0, site-ul arată energia trimisă): regulile vechi nu aveau lista după from.
+  if (tightened) await check('expeditorul își listează energia trimisă (from == me)', () =>
+    assertSucceeds(getDocs(query(collection(ana, 'energy'), where('from', '==', ANA)))));
+  await check('străinul NU listează energia trimisă de altcineva (from == altul)', () =>
+    assertFails(getDocs(query(collection(cristi, 'energy'), where('from', '==', ANA)))));
+  await check('nimeni nu listează toată energia (fără filtru pe to/from)', () =>
+    assertFails(getDocs(query(collection(ana, 'energy'), where('day', '==', DAY)))));
   await check('străinul NU ghicește energia altora (document lipsă)', () => assertFails(getDoc(doc(cristi, 'energy', `${ANA}_${DAY}_${BOGDAN}`))));
   await check('nu trimit în numele altcuiva', () => assertFails(setDoc(doc(cristi, 'energy', `${ANA}_${DAY}_${BOGDAN}`), { to: ANA, from: BOGDAN, day: DAY, at: 13 })));
 

@@ -29,7 +29,7 @@ const Cont = {
     const contract = h('article', {class: 'card contract-card ' + state},
       h('div', {class: 'contract-top'}, stamp('CONTRACT', state === 'ok' ? '' : state === 'old' ? 'amber' : 'ember'), monoLabel(state === 'ok' || state === 'old' ? 'VERSIUNEA ' + c.version : '')),
       h('p', {class: 'contract-title', text: {ok: 'Semnat.', old: 'Semnat, dar vechi.', revoked: 'Revocat.', none: 'Nesemnat.'}[state]}),
-      h('p', {class: 'contract-text', text: {ok: since(c.at) + 'Totul pleacă doar pentru tine.', old: 'Deschide FORJA și semnează versiunea ' + current + '. Până atunci, site-ul primește doar jurnalele.', revoked: since(c.revokedAt) + 'Nimic nu mai pleacă spre site.', none: 'Semnează-l în FORJA. Posturile se aprind singure.'}[state]}));
+      h('p', {class: 'contract-text', text: {ok: since(c.at) + 'Totul pleacă doar pentru tine.', old: 'Deschide FORJA și semnează versiunea ' + current + (c.version >= 3 ? '. Ce ai semnat merge mai departe; rândurile noi pornesc după semnare.' : '. Până atunci, site-ul primește doar jurnalele.'), revoked: since(c.revokedAt) + 'Nimic nu mai pleacă spre site.', none: 'Semnează-l în FORJA. Posturile se aprind singure.'}[state]}));
     const pipes = h('div', {class: 'card pipes'}, h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Ce pleacă din telefon'}), monoLabel('ULTIMA DATĂ')),
       h('ul', {class: 'pipe-list'}, (d.pipes || []).map(p => {
         const [label, ic] = PIPES[p.key] || [p.key, 'info'];

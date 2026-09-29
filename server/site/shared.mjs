@@ -10,7 +10,7 @@ export const BASE = `https://firestore.googleapis.com/v1/${DOCS}`;
 export const MIN = 60000, HOUR = 3600000;
 export const SITE_RULES = Object.freeze({
   cerc_live_ms: 20000, cerc_slow_ms: 10 * MIN, friends_ms: 10 * MIN, azi_ms: 20000, now_playing_ms: 10 * MIN,
-  contract_current: 3, friends_max: 100, routes: 30, route_points: 300, mini_route_points: 120, route_page: 5, route_bytes: 600 * 1024,
+  contract_current: 4, contract_base: 3, friends_max: 100, routes: 30, route_points: 300, mini_route_points: 120, route_page: 5, route_bytes: 600 * 1024,
   routes_check_ms: DAY, mars_polylines: 8, mars_cached: 250, stale_max_ms: CERC_LIVE_MAX_MS,
   somn_days: [1, 60, 14], ratie_days: [1, 90, 30], mars_days: [1, 90, 30], inventar_runs: 20, events_max: 1000,
 });
@@ -203,12 +203,18 @@ export function contractOf(c) {
   // A new signature is written with merge, so an older revokedAt stays next to it: a revoke before the signature is history.
   return { version: int(c?.version), at, revokedAt: revokedAt && (!at || revokedAt >= at) ? revokedAt : null, current: SITE_RULES.contract_current };
 }
+/** Semnat și nerevocat (o revocare mai veche decât semnătura e istorie). */
+const signedOf = c => c.version !== null && !!c.at && (!c.revokedAt || c.revokedAt < c.at);
 export function contractLink(c, now) {
-  const signed = c.version !== null && c.at && (!c.revokedAt || c.revokedAt < c.at);
+  // „on” doar la versiunea curentă (v4); v3 semnat e „stale”: merge mai departe, dar are rânduri noi de semnat.
+  const signed = signedOf(c);
   return { key: 'cont', state: !signed ? 'off' : c.version >= SITE_RULES.contract_current ? 'on' : 'stale', lastAt: signed ? c.at : c.revokedAt || null, count: null };
 }
 /**
- * Contract v3 signed and not revoked (users/{uid}.contract): the uploads it covers — targets, workouts, the music top,
- * Inventar runs — are shown. Revoked, never signed or still v2: they are not, even if the documents are still in Firestore.
+ * Contract semnat cel puțin la versiunea `min` și nerevocat (users/{uid}.contract). Implicit v3: ce a pornit cu v3 — ținte,
+ * antrenamente, topul muzicii, rulările Inventarului — rămâne pe site și după ce contractul curent a trecut la v4, până la
+ * re-semnare. Ce pornește abia cu v4 (focus, detox, respirație, Casca, jurnalul de ascultare, jocuri, urma Găsirii, poza
+ * mesei, coperțile dosarelor) întreabă contractGate(raw, 4). Revocat, nesemnat sau sub `min`: nu se arată, chiar dacă
+ * documentele sunt încă în Firestore.
  */
-export function contractGate(raw, now) { return contractLink(contractOf(raw), now).state === 'on'; }
+export function contractGate(raw, min = SITE_RULES.contract_base) { const c = contractOf(raw); return signedOf(c) && c.version >= min; }

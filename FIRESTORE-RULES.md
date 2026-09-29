@@ -52,7 +52,7 @@ anterioară din istoricul din stânga și apeși **Publish**.
 | `friendships/{a_b}` la creare | oricine, cu orice cont alături de al lui | unul dintre cei doi, cu id-ul sortat și cu dovada: codul lui din profil sau cererea lui din agendă |
 | `friendRequests/{de-la_către}` (nou) | — | o scrie doar expeditorul, cu ora serverului; o citesc și o șterg cei doi |
 | `users/{uid}/…` (jurnale, antrenamente, rație, cont) | doar tu | doar tu (neschimbat) |
-| `energy/{id}` | doar destinatarul; trimiterea eșua | destinatarul și expeditorul; trimiterea merge |
+| `energy/{id}` | doar destinatarul; trimiterea eșua | destinatarul și expeditorul; trimiterea merge; lista: primite (`to == eu`) și, din mirror P0, trimise (`from == eu`) |
 | `places/{id}` la actualizare | proprietarul, orice câmpuri | proprietarul, aceleași verificări ca la creare; locul nu poate fi dat altcuiva |
 | `inviteCodes/{cod}` | oricine le putea lista pe toate (cu uid-ul fiecărui cont) și putea rescrie un cod existent | se citește doar cine știe codul; codul rămâne al celui care l-a creat; proprietarul își poate șterge codul vechi |
 | `familyLoc` | — | neschimbat |

@@ -28,7 +28,8 @@
 //   muzica    2 · paza 0 · inventar 1 + ≤ 20 · cont 7
 // Secțiunile în afară de Teren/Camarazi (și Azi, la 5 min) se citesc la deschidere, nu în buclă.
 // Ce a urcat doar cu contractul v3 (ținte, antrenamente, topul muzicii, rulările Inventarului) se arată doar cât contractul
-// e semnat la versiunea curentă și nerevocat (contractGate); jurnalele (mese, activități, nopți) nu țin de contract.
+// e semnat cel puțin la v3 și nerevocat (contractGate(raw), min = 3; ce e nou în v4 cere contractGate(raw, 4)); jurnalele
+// (mese, activități, nopți) nu țin de contract.
 //
 // Împărțirea (mirror P0): aici rămân ruterul și ce e comun (reexportat din site/shared.mjs: FirestoreReader, memoria scurtă,
 // contractGate, ajutoarele); fiecare secțiune stă în site/sec-*.mjs și primește același `ctx` { request, env, uid, url, now, fs }.
@@ -36,18 +37,18 @@ import { failure, reply, FirestoreReader } from './site/shared.mjs';
 import { cerc } from './site/sec-cerc.mjs';
 import { somn, somnNight, somnChunk } from './site/sec-somn.mjs';
 import { ratie, mars } from './site/sec-body.mjs';
-import { muzica, paza } from './site/sec-mind.mjs';
+import { muzica, paza, concentrare } from './site/sec-mind.mjs';
 import { inventar } from './site/sec-inventar.mjs';
 import { azi, cont } from './site/sec-azi-cont.mjs';
 
 export { SITE_RULES, FirestoreReader, where, resetSiteCache, initials, simplifyPolyline, contractGate } from './site/shared.mjs';
 
-const SECTIONS = ['azi', 'cerc', 'somn', 'ratie', 'mars', 'muzica', 'paza', 'inventar', 'cont'];
+const SECTIONS = ['azi', 'cerc', 'somn', 'ratie', 'mars', 'muzica', 'paza', 'inventar', 'concentrare', 'cont'];
 const SITE_PATH = new RegExp('^/insights/api/(' + SECTIONS.join('|') + ')(?:/(.*))?$');
 /** True for the 4.4 section routes this module answers (the older /insights/api/* routes stay in insights-ai.mjs). */
 export function isSiteApi(path) { return SITE_PATH.test(path); }
 /** Secțiunea → funcția ei (ctx → date JSON). Sub-rutele somnului (noaptea, bucata de sunet) sunt tratate înainte. */
-const HANDLERS = { azi, cerc, somn, ratie, mars, muzica, paza, inventar, cont };
+const HANDLERS = { azi, cerc, somn, ratie, mars, muzica, paza, inventar, concentrare, cont };
 
 // ─────────────────────────────── intrarea ───────────────────────────────
 /**

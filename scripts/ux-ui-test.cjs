@@ -15,7 +15,7 @@ try { ({JSDOM} = require(process.env.FORJA_JSDOM || require.resolve('jsdom', {pa
 catch { throw Error('Run npm ci --prefix server, or set FORJA_JSDOM to an installed jsdom package path.'); }
 const html = fs.readFileSync(path.join(server, 'insights.html'), 'utf8');
 const source = clientSource();
-const SECTIONS = ['azi', 'teren', 'camarazi', 'gasire', 'inventar', 'somn', 'ratie', 'mars', 'muzica', 'paza', 'cont'];
+const SECTIONS = ['azi', 'teren', 'camarazi', 'gasire', 'inventar', 'somn', 'ratie', 'mars', 'muzica', 'paza', 'concentrare', 'cont'];
 const tick = (ms = 20) => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, label, ms = 3000) { const start = Date.now(); while (Date.now() - start < ms) { if (fn()) return; await tick(10); } throw Error('Timed out: ' + label); }
 
@@ -195,13 +195,13 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     clean(p);
   });
 
-  await check('navigation: 11 sections by hash, sidebar groups, phone bar Azi · Teren · Găsire · Mai mult, unknown hash → #azi', async () => {
+  await check('navigation: 12 sections by hash, sidebar groups, phone bar Azi · Teren · Găsire · Mai mult, unknown hash → #azi', async () => {
     const p = page();
     await tick(20); await login(p);
     const groups = [...p.w.document.querySelectorAll('#rail-nav .nav-label')].map(n => n.textContent);
     assert.deepEqual(groups, ['ZIUA', 'LUMEA', 'CORPUL', 'TELEFONUL']);
     assert.deepEqual([...p.w.document.querySelectorAll('#tabbar-items .tab-item')].map(n => n.textContent.trim()), ['Azi', 'Teren', 'Găsire', 'Mai mult']);
-    assert.deepEqual([...p.w.document.querySelectorAll('#more-grid a')].map(a => a.getAttribute('href')), ['#camarazi', '#somn', '#ratie', '#mars', '#inventar', '#muzica', '#paza', '#cont'], 'the sheet follows the sidebar groups');
+    assert.deepEqual([...p.w.document.querySelectorAll('#more-grid a')].map(a => a.getAttribute('href')), ['#camarazi', '#somn', '#ratie', '#mars', '#inventar', '#muzica', '#paza', '#concentrare', '#cont'], 'the sheet follows the sidebar groups');
     for (const id of SECTIONS) {
       await open(p, id);
       for (const other of SECTIONS) assert.equal(p.$('s-' + other).hidden, other !== id, `${other} while on ${id}`);
@@ -496,7 +496,7 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
   await check('empty account: every section shows an honest empty state, never an error', async () => {
     const p = page({profile: 'empty'});
     await tick(20); await login(p);
-    const expect = {azi: /FĂRĂ SEMNAL|0 DIN 10/, camarazi: /Niciun camarad încă/, gasire: /Semnează contractul în FORJA\. Telefonul apare aici singur\./, inventar: /Niciun inventar încă/, somn: /Prima noapte apare aici/, ratie: /Prima masă apare aici/, mars: /Prima tură apare aici/, muzica: /Liniște pe post/, paza: /Niciun raport de pază/, cont: /Nesemnat/};
+    const expect = {azi: /FĂRĂ SEMNAL|0 DIN 10/, camarazi: /Niciun camarad încă/, gasire: /Semnează contractul în FORJA\. Telefonul apare aici singur\./, inventar: /Niciun inventar încă/, somn: /Prima noapte apare aici/, ratie: /Prima masă apare aici/, mars: /Prima tură apare aici/, muzica: /Liniște pe post/, paza: /Niciun raport de pază/, concentrare: /Nicio sesiune de concentrare/, cont: /Nesemnat/};
     for (const [id, re] of Object.entries(expect)) {
       await open(p, id);
       await until(() => re.test(p.$('s-' + id).textContent), id, 3000);

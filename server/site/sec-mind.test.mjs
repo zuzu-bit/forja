@@ -88,3 +88,12 @@ test('paza: the session upload feeds the rollup; the site reads the last 7 days'
   assert.equal(await f.account('alice').ctx.storage.get('usage-last:' + session), undefined);
   assert.equal((await f.call('/insights/api/paza')).body.days.length, 1);
 });
+
+test('concentrare: the section exists and answers an empty object until package D fills it', async () => {
+  const f = fixture();
+  const r = await f.call('/insights/api/concentrare');
+  assert.equal(r.status, 200); assert.equal(r.res.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(r.body, {});
+  assert.equal(f.fs.reads, 0);
+  assert.equal((await f.call('/insights/api/concentrare/x')).status, 404);
+});

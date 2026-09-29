@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { resetSiteCache, SITE_RULES } from '../site-api.mjs';
+import { resetSiteCache, SITE_RULES, contractGate } from '../site-api.mjs';
 import { applyUsageRollup, usageDays } from '../site-store.mjs';
 import { localDate, localMidnight } from '../site-time.mjs';
 import { fixture, seedCircle, Storage, NOW, MIN, HOUR, DAY, SIGNED } from './fixture.mjs';
@@ -46,7 +46,10 @@ test('azi: today, last night, and one link per section with on / stale / off', a
   assert.deepEqual(L.mars, { key: 'mars', state: 'on', lastAt: midnight + 11 * HOUR, count: 3 });
   assert.deepEqual(L.muzica, { key: 'muzica', state: 'on', lastAt: NOW - 3 * MIN, count: null }, 'the fresher of the weekly top and the live song');
   assert.deepEqual(L.paza, { key: 'paza', state: 'off', lastAt: null, count: null });
-  assert.deepEqual(L.cont, { key: 'cont', state: 'on', lastAt: NOW - DAY, count: null });
+  assert.deepEqual(L.cont, { key: 'cont', state: 'stale', lastAt: NOW - DAY, count: null }, 'v3 keeps running, v4 is still to be signed');
+  resetSiteCache();
+  f.fs.set('users/alice', { ...f.fs.docs.get('users/alice'), contract: { version: 4, at: NOW - DAY } });
+  assert.deepEqual((await f.call('/insights/api/azi')).body.links.at(-1), { key: 'cont', state: 'on', lastAt: NOW - DAY, count: null }, 'v4 is the current contract');
   // contract v2 → stale (re-sign), revoked → off
   resetSiteCache();
   f.fs.set('users/alice', { ...f.fs.docs.get('users/alice'), contract: { version: 2, at: NOW - 9 * DAY } });
@@ -83,7 +86,7 @@ test('cont: contract, one "last time" per pipe, and the intake pause', async t =
   const b = (await f.call('/insights/api/cont')).body;
   assert.deepEqual(Object.keys(b), ['me', 'contract', 'pipes', 'intake']);
   assert.deepEqual(b.me, { uid: 'alice', name: 'Lana', email: 'alice@example.com' }, 'the email comes from the token, not from the public profile');
-  assert.deepEqual(b.contract, { version: 3, at: NOW - 3 * DAY, revokedAt: null, current: 3 });
+  assert.deepEqual(b.contract, { version: 3, at: NOW - 3 * DAY, revokedAt: null, current: 4 });
   assert.deepEqual(b.pipes.map(p => p.key), ['sesiune', 'galerie', 'explorare', 'agenda', 'somn', 'gasire', 'mese', 'miscare', 'muzica', 'inventar']);
   const P = Object.fromEntries(b.pipes.map(p => [p.key, p.lastAt]));
   assert.deepEqual(P, { sesiune: null, galerie: null, explorare: NOW, agenda: null, somn: NOW - 4 * HOUR, gasire: null, mese: NOW - 2 * HOUR, miscare: NOW - 2.5 * HOUR, muzica: NOW - 5 * HOUR, inventar: NOW - 6 * HOUR });
@@ -95,12 +98,12 @@ test('contract: a re-signature after a revoke is signed everywhere (Livret and A
   t.mock.method(Date, 'now', () => NOW);
   const f = fixture();
   // signContract writes {version, at} with merge: the old revokedAt stays in the document.
-  f.fs.set('users/alice', { name: 'Lana', contract: { version: 3, at: NOW - DAY, revokedAt: NOW - 5 * DAY } });
-  assert.deepEqual((await f.call('/insights/api/cont')).body.contract, { version: 3, at: NOW - DAY, revokedAt: null, current: 3 });
+  f.fs.set('users/alice', { name: 'Lana', contract: { version: 4, at: NOW - DAY, revokedAt: NOW - 5 * DAY } });
+  assert.deepEqual((await f.call('/insights/api/cont')).body.contract, { version: 4, at: NOW - DAY, revokedAt: null, current: 4 });
   assert.equal((await f.call('/insights/api/azi')).body.links.at(-1).state, 'on');
   resetSiteCache();
-  f.fs.set('users/alice', { name: 'Lana', contract: { version: 3, at: NOW - 5 * DAY, revokedAt: NOW - DAY } });
-  assert.deepEqual((await f.call('/insights/api/cont')).body.contract, { version: 3, at: NOW - 5 * DAY, revokedAt: NOW - DAY, current: 3 });
+  f.fs.set('users/alice', { name: 'Lana', contract: { version: 4, at: NOW - 5 * DAY, revokedAt: NOW - DAY } });
+  assert.deepEqual((await f.call('/insights/api/cont')).body.contract, { version: 4, at: NOW - 5 * DAY, revokedAt: NOW - DAY, current: 4 });
   assert.equal((await f.call('/insights/api/azi')).body.links.at(-1).state, 'off');
 });
 
@@ -133,4 +136,17 @@ test('contract gate: targets, workouts, the music top and Inventar runs only whi
   assert.deepEqual(await read(), hidden, 'never signed');
   f.fs.set('users/alice', { name: 'Lana', contract: { version: 3, at: NOW - HOUR, revokedAt: NOW - 3 * DAY } });
   assert.deepEqual(await read(), shown, 'signed again after an old revoke');
+  f.fs.set('users/alice', { name: 'Lana', contract: { version: 4, at: NOW - HOUR } });
+  assert.deepEqual(await read(), shown, 'v4 covers everything v3 did');
+});
+
+test('contractGate(raw, min = 3): v3 keeps every v3 feature on after the bump to v4; v4-only features ask for min 4', () => {
+  assert.equal(SITE_RULES.contract_current, 4);
+  const v3 = { version: 3, at: NOW - DAY }, v4 = { version: 4, at: NOW - DAY };
+  assert.equal(contractGate(v3), true); assert.equal(contractGate(v3, 3), true); assert.equal(contractGate(v3, 4), false);
+  assert.equal(contractGate(v4), true); assert.equal(contractGate(v4, 4), true);
+  assert.equal(contractGate({ version: 2, at: NOW - DAY }), false);
+  assert.equal(contractGate({ ...v4, revokedAt: NOW - HOUR }, 4), false, 'revoked after signing');
+  assert.equal(contractGate({ ...v4, revokedAt: NOW - 2 * DAY }, 4), true, 'an older revoke is history');
+  assert.equal(contractGate(undefined), false); assert.equal(contractGate({ version: 4 }), false, 'no signing time');
 });

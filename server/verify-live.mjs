@@ -22,7 +22,7 @@ if (process.argv.includes('--before')) {
 } else {
   const html = await readFile(new URL('./insights.html', import.meta.url), 'utf8');
   // Aceeași listă și ordine ca CLIENT_FILES din site-static.mjs și clients din scripts/ux-fixture.cjs.
-  const scripts = ['site-core.js.txt', 'site-mascot.js.txt', 'files-preview.js.txt', 'site-azi.js.txt', 'site-teren.js.txt', 'site-camarazi.js.txt', 'site-gasire.js.txt', 'site-inventar.js.txt', 'site-somn.js.txt', 'site-ratie.js.txt', 'site-mars.js.txt', 'site-muzica.js.txt', 'site-paza.js.txt', 'site-cont.js.txt', 'site-boot.js.txt'];
+  const scripts = ['site-core.js.txt', 'site-mascot.js.txt', 'files-preview.js.txt', 'site-azi.js.txt', 'site-teren.js.txt', 'site-camarazi.js.txt', 'site-gasire.js.txt', 'site-inventar.js.txt', 'site-somn.js.txt', 'site-ratie.js.txt', 'site-mars.js.txt', 'site-muzica.js.txt', 'site-paza.js.txt', 'site-concentrare.js.txt', 'site-cont.js.txt', 'site-boot.js.txt'];
   const js = (await Promise.all(scripts.map(p => readFile(new URL(p, import.meta.url), 'utf8')))).join('\n');
   const assets = [['/insights/map-renderer.js', 'map-renderer.js.txt'], ['/insights/maplibre.js', 'vendor/maplibre-5.10.0.js.txt'], ['/insights/maplibre.css', 'vendor/maplibre-5.10.0.css.txt']];
   const fonts = ['barlowc-500', 'barlowc-600', 'barlowc-700', 'hanken-var', 'jbmono-var'];

@@ -8,8 +8,8 @@ import { fixture, NOW } from './site/fixture.mjs';
 // Ruterul și ce e comun. Fiecare secțiune are testele ei în site/sec-*.test.mjs (aceleași dubluri, din site/fixture.mjs).
 test.beforeEach(() => resetSiteCache());
 
-test('route guard: only the nine 4.4 sections go to site-api; the worker wires it and reports /health v18', async () => {
-  for (const p of ['/insights/api/azi', '/insights/api/cerc', '/insights/api/somn', '/insights/api/somn/s12', '/insights/api/somn/s12/chunk/0', '/insights/api/ratie', '/insights/api/mars', '/insights/api/muzica', '/insights/api/paza', '/insights/api/inventar', '/insights/api/cont'])
+test('route guard: only the ten site sections go to site-api; the worker wires it and reports /health v18', async () => {
+  for (const p of ['/insights/api/azi', '/insights/api/cerc', '/insights/api/somn', '/insights/api/somn/s12', '/insights/api/somn/s12/chunk/0', '/insights/api/ratie', '/insights/api/mars', '/insights/api/muzica', '/insights/api/paza', '/insights/api/inventar', '/insights/api/concentrare', '/insights/api/cont'])
     assert.equal(isSiteApi(p), true, p);
   for (const p of ['/insights/api/state', '/insights/api/intake', '/insights/api/phones', '/insights/api/recommendations', '/insights/api/azimut', '/v2/files']) assert.equal(isSiteApi(p), false, p);
   const src = await readFile(new URL('./insights-worker.mjs', import.meta.url), 'utf8');
@@ -44,6 +44,7 @@ test('errors: only GET, unknown sub-paths 404, Firestore down 503, always JSON w
     assert.equal(r.status, 503, p); assert.equal(r.res.headers.get('cache-control'), 'no-store'); assert.match(r.body.error, /[ăâîșț]/, 'Romanian message');
   }
   assert.equal((await f.call('/insights/api/paza')).status, 200, 'Pază needs no Firestore');
+  assert.equal((await f.call('/insights/api/concentrare')).status, 200, 'Concentrare reads nothing yet');
   for (const text of [JSON.stringify(r.body)]) assert(!/!/.test(text));
 });
 

@@ -8,5 +8,5 @@ export async function inventar({ env, fs, uid, now }) {
     summaryOf(env, uid),
   ]);
   // Run summaries went up only with contract v3; the gallery copies live in the account (24 h) and follow their own pipe.
-  return { runs: contractGate(me?.contract, now) ? runs || [] : [], vault: { total: s?.vault?.total ?? 0, latestAt: s?.vault?.latestAt ?? null } };
+  return { runs: contractGate(me?.contract) ? runs || [] : [], vault: { total: s?.vault?.total ?? 0, latestAt: s?.vault?.latestAt ?? null } };
 }

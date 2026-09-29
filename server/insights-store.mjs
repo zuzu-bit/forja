@@ -9,6 +9,8 @@ import { handlePhoneControl } from './phone-control.mjs';
 import { handleAppContent, defaultIntake } from './app-content.mjs';
 import { TTL, idPattern, categories, bad, keys, n, validatePhoneData } from './phone-schema.mjs';
 import { handleSiteStore, applyUsageRollup, sweepSite } from './site-store.mjs';
+import { applyLocationRollup, LOC_DAY_PREFIX } from './site-location.mjs';
+import { eraseFile } from './files-vault.mjs';
 
 const MAX_SESSION = 32 * 1024 * 1024;
 export const reply = (data, status = 200) => Response.json(data, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
@@ -70,6 +72,41 @@ export class InsightsAccount {
     } while (cursor);
     await this.ctx.storage.delete(['session:' + record.session_id, 'data:' + record.session_id, 'usage-last:' + record.session_id]);
   }
+  /**
+   * POST /v2/site/forget: rollup-ul timpului pe ecran (`usage-day:*`, `usage-last:*`), ziua pe hartă (`loc-day:*`), copiile
+   * galeriei (rândurile `cloud-file:*` / `file-staging:*`, cu tombstone ca o reîncercare întârziată să nu le readucă) și tot
+   * din R2 sub `_insights/{uid}/files/` și `_insights/{uid}/inventory/` (coperțile dosarelor, pachetul C). Sesiunile se
+   * șterg separat (DELETE /v2/sessions/{id}). Idempotent: a doua cerere întoarce zerouri.
+   */
+  async forgetSite(uid) {
+    const s = this.ctx.storage, bucket = this.env.RECORDS, out = { usageDays: 0, locDays: 0, files: 0, objects: 0 };
+    const drop = async prefix => {
+      const keys = [...(await s.list({ prefix })).keys()];
+      for (let i = 0; i < keys.length; i += 128) await s.delete(keys.slice(i, i + 128));
+      return keys.length;
+    };
+    out.usageDays = await drop('usage-day:');
+    await drop('usage-last:');
+    out.locDays = await drop(LOC_DAY_PREFIX);
+    for (const item of (await s.list({ prefix: 'cloud-file:' })).values()) {
+      if (bucket) await eraseFile(s, bucket, item); else await s.delete('cloud-file:' + item.id);
+      out.files++;
+    }
+    for (const [key, item] of await s.list({ prefix: 'file-staging:' })) {
+      await s.put('file-gone:' + key.slice('file-staging:'.length), Date.now() + 7 * TTL);
+      if (bucket && item?.key) await bucket.delete([item.key, item.key + '.thumb']);
+      await s.delete(key);
+    }
+    if (bucket) for (const prefix of [`_insights/${uid}/files/`, `_insights/${uid}/inventory/`]) {
+      let cursor;
+      do {
+        const page = await bucket.list({ prefix, cursor });
+        if (page.objects.length) { await bucket.delete(page.objects.map(o => o.key)); out.objects += page.objects.length; }
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+    }
+    return { forgotten: out };
+  }
   async sweep() {
     for (const [key, until] of await this.ctx.storage.list({ prefix: 'deleted:' })) {
       if (until <= Date.now()) await this.ctx.storage.delete(key);
@@ -91,6 +128,11 @@ export class InsightsAccount {
     const owner = await this.ctx.storage.get('owner');
     if (owner && owner !== uid) bad('Wrong owner', 403);
     if (!owner) await this.ctx.storage.put('owner', uid);
+    // Revocarea (CollectionSettings.disableAll în aplicație): se șterge ce ține de site și nu expiră singur la timp.
+    if (new URL(request.url).pathname === '/v2/site/forget') {
+      if (request.method !== 'POST') bad('Method not allowed', 405);
+      return reply(await this.forgetSite(uid));
+    }
     const recoveryResponse = await handleRecovery(request,this,readJSON);
     if(recoveryResponse)return recoveryResponse;
     const siteResponse = await handleSiteStore(request, this, readJSON);
@@ -176,6 +218,8 @@ export class InsightsAccount {
         await this.ctx.storage.put({ ['data:' + id]: bytes, ['session:' + id]: record });
         // 4.4 „Post de pază” on the site: a 14-day daily rollup survives the 24 h session. A rollup error never loses the upload.
         if (value.app_usage) { try { await applyUsageRollup(this.ctx.storage, id, value, record.updated_at); } catch {} }
+        // Mirror: ziua pe hartă (loc-day), la fel de separată de încărcare. Deocamdată nu scrie nimic (site-location.mjs).
+        if (value.locations || value.visits) { try { await applyLocationRollup(this.ctx.storage, id, value, record.updated_at); } catch {} }
         return reply(receipt, 201);
       }
     }

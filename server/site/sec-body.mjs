@@ -30,7 +30,7 @@ export async function ratie({ fs, uid, now, url }) {
     return { date, kcal: Math.round(sum(rows, r => r.kcal)), protein: round1(sum(rows, r => r.protein)), carbs: round1(sum(rows, r => r.carbs)), fat: round1(sum(rows, r => r.fat)), meals: rows };
   });
   // The meals are a journal; the calorie target went up only with contract v3.
-  return { targets: contractGate(me?.contract, now) ? targetsOf(targets) : null, days: list };
+  return { targets: contractGate(me?.contract) ? targetsOf(targets) : null, days: list };
 }
 const ACTIVITY_FIELDS = ['type', 'startAt', 'endAt', 'distanceM', 'durationS', 'kcal', 'polyline'];
 const WORKOUT_FIELDS = ['startAt', 'endAt', 'durationS', 'title', 'kind', 'sets', 'volumeKg', 'kcal'];
@@ -71,7 +71,7 @@ export async function mars({ env, fs, uid, now, url }) {
   const activities = allActs.map(a => ({ id: a.id, type: str(a.type, 20), startAt: a.startAt, endAt: time(a.endAt), distanceM: num(a.distanceM) ?? 0,
     durationS: num(a.durationS) ?? 0, kcal: int(a.kcal), polyline: a.startAt >= since ? polylineOf(a.id) : null }));
   // Activities are a journal; workouts went up only with contract v3.
-  const workouts = (contractGate(me?.contract, now) ? works || [] : []).filter(w => time(w.startAt)).map(w => ({ id: w.id, startAt: w.startAt, endAt: time(w.endAt), durationS: num(w.durationS) ?? 0, title: str(w.title, 80),
+  const workouts = (contractGate(me?.contract) ? works || [] : []).filter(w => time(w.startAt)).map(w => ({ id: w.id, startAt: w.startAt, endAt: time(w.endAt), durationS: num(w.durationS) ?? 0, title: str(w.title, 80),
     kind: str(w.kind, 30), sets: int(w.sets) ?? 0, volumeKg: num(w.volumeKg), kcal: int(w.kcal) }));
   return { activities: activities.filter(a => a.startAt >= since), workouts: workouts.filter(w => w.startAt >= since), week: weekOf(activities, workouts, now) };
 }

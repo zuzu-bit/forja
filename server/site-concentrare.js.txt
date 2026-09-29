@@ -1,0 +1,13 @@
+// CONCENTRARE · Focus și detox — sesiunile de concentrare, detoxul și respirația, prin /insights/api/concentrare.
+// Deocamdată doar cusătura (mirror P0): secțiunea există în navigare, răspunsul e gol; pachetul D o umple.
+const Concentrare = {
+  data: null, body: null,
+  mount(body) { Concentrare.body = body; },
+  enter() { loadInto('concentrare', Concentrare.body, () => api('/insights/api/concentrare'), d => { Concentrare.data = d; Concentrare.render(); }, {replaceOnError: !Concentrare.data}); },
+  render() {
+    setLine('concentrare', '');
+    fill(Concentrare.body, emptyState('Nicio sesiune de concentrare.', 'Vine cu contractul v4 semnat.', null, 'idle'));
+  },
+  reset() { Concentrare.data = null; if (Concentrare.body) delete Concentrare.body.dataset.loaded; }
+};
+Site.register('concentrare', Concentrare);

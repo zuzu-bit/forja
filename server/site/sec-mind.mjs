@@ -11,9 +11,17 @@ export async function muzica({ fs, uid, now }) {
   const docs = await fs.batchGet([`users/${uid}`, `users/${uid}/settings/music`], ['nowPlaying', 'contract', 'updatedAt', 'windowDays', 'totalMinutes', 'top']);
   const me = docs.get(`users/${uid}`);
   // The live song is the one friends see too; the weekly top went up only with contract v3.
-  return { now: nowPlaying(me?.nowPlaying, now), summary: contractGate(me?.contract, now) ? musicSummary(docs.get(`users/${uid}/settings/music`)) : null };
+  return { now: nowPlaying(me?.nowPlaying, now), summary: contractGate(me?.contract) ? musicSummary(docs.get(`users/${uid}/settings/music`)) : null };
 }
 export async function paza({ env, uid }) {
   const s = await summaryOf(env, uid);
   return { updated_at: s?.usage?.updated_at ?? null, days: s?.usage?.days || [] };
+}
+
+/**
+ * „concentrare”: sesiunile de concentrare, detoxul, respirația (contract v4). Deocamdată gol: e cusătura pe care pachetul D
+ * o umple (focus/{zi}, detox/{zi}, breath, încrucișat cu usage-day din DO), cu contractGate(me?.contract, 4).
+ */
+export async function concentrare() {
+  return {};
 }

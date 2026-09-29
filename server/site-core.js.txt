@@ -50,6 +50,7 @@ const ICONS = {
   mars: 'M5 19c2.5 0 3-3 5.5-3S14 19 17 19s3-2 3-2M8 8a2 2 0 1 0 0-4a2 2 0 1 0 0 4zM16 13a2 2 0 1 0 0-4a2 2 0 1 0 0 4zM9.3 7.3l5.4 3.4',
   muzica: 'M9 18V6l11-2v12M9 18a3 3 0 1 1-6 0a3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0a3 3 0 0 1 6 0z',
   paza: 'M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6l-7-3zM9 12l2 2 4-4',
+  concentrare: 'M12 21v-5M12 16c-3.3 0-6-2.4-6-5.6C6 6.9 8.7 3 12 3s6 3.9 6 7.4c0 3.2-2.7 5.6-6 5.6zM9 21h6',
   cont: 'M4 5h16v14H4zM8 10a2 2 0 1 0 4 0a2 2 0 1 0-4 0M6.5 15.5c.6-1.5 1.8-2.3 3.5-2.3s2.9.8 3.5 2.3M15 9.5h3M15 13h3',
   more: 'M5 12h.01M12 12h.01M19 12h.01',
   grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
@@ -291,6 +292,7 @@ const SECTIONS = [
   {id: 'inventar', nav: 'Inventar', stamp: 'INVENTAR', title: 'Poze și documente', group: 'Telefonul', icon: 'inventar'},
   {id: 'muzica', nav: 'Muzică', stamp: 'MUZICĂ', title: 'Ce asculți', group: 'Telefonul', icon: 'muzica'},
   {id: 'paza', nav: 'Pază', stamp: 'POST DE PAZĂ', title: 'Timp pe ecran', group: 'Telefonul', icon: 'paza'},
+  {id: 'concentrare', nav: 'Concentrare', stamp: 'CONCENTRARE', title: 'Focus și detox', group: 'Telefonul', icon: 'concentrare'},
   {id: 'cont', nav: 'Cont', stamp: 'LIVRET', title: 'Cont și contract', group: 'Cont', icon: 'cont'}
 ];
 const SECTION = Object.fromEntries(SECTIONS.map(x => [x.id, x]));
@@ -306,6 +308,7 @@ const INFO = {
   mars: 'Turele cu GPS (mers, alergare, bicicletă) și antrenamentele terminate în FORJA. Traseele se văd și pe Teren, la Străzile tale.',
   muzica: 'Topul săptămânii se calculează pe telefon din ce asculți și pleacă aici cel mult o dată la 6 ore: titlu, artist, de câte ori. „Acum” apare cât muzica e pornită.',
   paza: 'Timpul pe ecran vine din Accesul la utilizare, cu contractul semnat. Ziua se închide la miezul nopții; păstrăm ultimele 7 zile.',
+  concentrare: 'Sesiunile de concentrare, pauzele de detox și respirația, cu contractul v4 semnat. Cuvintele de care te lași apar doar dacă le pornești separat, în FORJA.',
   cont: 'Contractul spune ce pleacă din telefon. Fiecare rând de mai jos arată când a ajuns ultima dată ceva pe site. Pauza oprește primirea pe site (sesiuni și copii), fără să atingă telefonul.'
 };
 const LINK_LABELS = {teren: 'Teren', camarazi: 'Camarazi', gasire: 'Găsire', inventar: 'Inventar', somn: 'Somn', ratie: 'Rație', mars: 'Marș', muzica: 'Muzică', paza: 'Pază', cont: 'Contract'};

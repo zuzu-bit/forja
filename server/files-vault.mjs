@@ -19,7 +19,7 @@ export function previewType(mime) {
   if(mime==='application/vnd.openxmlformats-officedocument.wordprocessingml.document')return 'docx';
   return 'download';
 }
-async function eraseFile(storage,bucket,item) {
+export async function eraseFile(storage,bucket,item) {
   // Retain the ID alone so delayed retries cannot resurrect expired/deleted copies.
   await storage.put('file-gone:'+item.id,Date.now()+7*TTL);
   await bucket.delete([item.key,item.key+'.thumb']);

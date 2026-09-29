@@ -96,7 +96,8 @@ service cloud.firestore {
                  && (resource == null
                      ? id.split('_').size() == 3 && id.split('_')[2] == request.auth.uid
                      : (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid));
-      allow list: if signedIn() && resource.data.to == request.auth.uid;
+      // Primite (to == eu) și, pentru site („Energie trimisă”), trimise (from == eu). Interogarea trebuie să filtreze pe una din ele.
+      allow list: if signedIn() && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
       allow create: if signedIn() && request.resource.data.from == request.auth.uid;
       allow update, delete: if false;
     }
