@@ -263,14 +263,13 @@ object MusicStarter {
     private fun cls(e: Throwable): String = e.javaClass.simpleName.ifEmpty { "Exception" }
 
     /**
-     * Un link Spotify la care nu răspunde nicio activitate, iar ambele întrebări către PackageManager spun „nu e”:
-     * Spotify chiar lipsește — până la repornirea aplicației, planurile merg la celălalt player (sau la nimic).
+     * Un link VIEW Spotify la care nu răspunde nicio activitate, iar ambele întrebări către PackageManager spun „nu e”:
+     * Spotify chiar lipsește — până la repornirea aplicației, planurile merg la celălalt player (sau la nimic). O căutare
+     * fără răspuns nu dovedește nimic ([Planner.provesSpotifyMissing]).
      */
     private fun noteAbsent(step: Step, r: SendResult) {
         if (r !is SendResult.Skipped || r.reason != "no-activity") return
-        if (step.pkg != MusicKind.SPOTIFY || !step.rung.visible || step.rung == Rung.O_SESSION) return
-        if (spotifyProbe?.any == true) return
-        absent += MusicKind.SPOTIFY
+        if (Planner.provesSpotifyMissing(step, probedAny = spotifyProbe?.any == true)) absent += MusicKind.SPOTIFY
     }
 
     private fun foreground(): Boolean = try {

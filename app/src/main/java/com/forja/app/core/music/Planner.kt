@@ -14,6 +14,9 @@ object Planner {
 
     private val SPOTIFY = MusicKind.SPOTIFY
 
+    /** Linkurile VIEW spotify: la care un Spotify instalat răspunde mereu ([provesSpotifyMissing]). */
+    private val MISSING_PROOF = setOf(Rung.V_TRACK, Rung.V_LIKED_PLAY, Rung.O_LIKED_PAGE)
+
     fun plan(want: Want, s: Snapshot): List<Step> = when (want) {
         is Want.Resume -> resume(want, s)
         Want.MyMusic -> myMusic(s)
@@ -172,6 +175,15 @@ object Planner {
         if (SPOTIFY !in absent) return Step(Rung.O_LIKED_PAGE, SPOTIFY)
         return null
     }
+
+    /**
+     * Un „no-activity” la pasul ăsta dovedește că Spotify lipsește, când nici PackageManager nu-l vede ([probedAny] =
+     * nu)? Doar la linkurile VIEW spotify:, la care un Spotify instalat răspunde mereu (V_TRACK, V_LIKED_PLAY, pagina
+     * finală). O căutare (V_PFS_*) poate rămâne fără răspuns și cu Spotify pe telefon (filtrul lui poate să nu declare
+     * forma cu date), deci nu ascunde Spotify.
+     */
+    fun provesSpotifyMissing(step: Step, probedAny: Boolean): Boolean =
+        !probedAny && step.pkg == SPOTIFY && step.rung in MISSING_PROOF
 
     // ───────────────────────────── TOP 1 ─────────────────────────────
 

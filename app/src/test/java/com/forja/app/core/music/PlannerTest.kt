@@ -137,6 +137,21 @@ class PlannerTest {
         assertTrue(plan.none { it.pkg == SPOTIFY })
     }
 
+    @Test fun onlyAViewLinkWithoutAnswerProvesSpotifyMissing() {
+        // PackageManager nu-l vede și un link VIEW spotify: n-are activitate: Spotify chiar lipsește.
+        for (r in listOf(Rung.V_TRACK, Rung.V_LIKED_PLAY, Rung.O_LIKED_PAGE)) {
+            assertTrue(r.id, Planner.provesSpotifyMissing(Step(r, SPOTIFY), probedAny = false))
+        }
+        // O căutare fără răspuns poate veni și de la un Spotify instalat (filtrul lui nu declară forma cu date).
+        for (r in listOf(Rung.V_PFS_DATA, Rung.V_PFS_TOP, Rung.V_PFS_ANY)) {
+            assertFalse(r.id, Planner.provesSpotifyMissing(Step(r, SPOTIFY), probedAny = false))
+        }
+        // Sesiunea, alt player sau o detecție care îl vede: nimic dovedit.
+        assertFalse(Planner.provesSpotifyMissing(Step(Rung.O_SESSION, SPOTIFY, "sp"), probedAny = false))
+        assertFalse(Planner.provesSpotifyMissing(Step(Rung.O_LAUNCH, YTM), probedAny = false))
+        assertFalse(Planner.provesSpotifyMissing(Step(Rung.V_LIKED_PLAY, SPOTIFY), probedAny = true))
+    }
+
     @Test fun openStepNeverOpensAVideoForMusic() {
         val yt = session("yt", YOUTUBE, kind = MediaKind.VIDEO, state = PState.PLAYING, title = "Un video")
         val book = session("book", STORYTEL, kind = MediaKind.SPOKEN, title = "Fetele care ard")
