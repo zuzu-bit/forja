@@ -57,7 +57,7 @@ function createApi(fixture, assets, {fail = []} = {}) {
     if (method === 'GET') {
       if (path === '/insights/api/azi') return json(f.azi);
       if (path === '/insights/api/cerc') return json(f.cerc);
-      if (path === '/insights/api/somn') { const days = Number(q.get('days') || 14), from = f.now - days * 86400000; return json({nights: f.somn.nights.filter(n => n.startAt >= from - 86400000)}); }
+      if (path === '/insights/api/somn') { const days = Number(q.get('days') || 14), from = f.now - days * 86400000; return json({nights: f.somn.nights.filter(n => n.startAt >= from - 86400000), live: f.somn.live || null, days, timeline: f.somn.timeline !== false}); }
       let m = /^\/insights\/api\/somn\/([A-Za-z0-9_-]+)$/.exec(path);
       if (m) return f.somnDetail[m[1]] ? json(f.somnDetail[m[1]]) : json({error: 'Înregistrarea nu mai există.'}, 404);
       m = /^\/insights\/api\/somn\/([A-Za-z0-9_-]+)\/chunk\/(\d+)$/.exec(path);

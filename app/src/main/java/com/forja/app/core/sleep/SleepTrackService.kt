@@ -93,6 +93,17 @@ class SleepTrackService : Service(), SensorEventListener {
     private var alarmJob: Job? = null
     /** Amânare: după „Încă 10 minute” alarma revine la această oră (0 = fără amânare). */
     @Volatile private var snoozeUntil = 0L
+    // Pentru site (SleepNightDoc.Alarm / SoundUse): ce a făcut alarma și ce sunete au cântat în veghe.
+    @Volatile private var alarmTarget = 0L
+    @Volatile private var alarmWindowMin = 0
+    @Volatile private var alarmFiredAt = 0L
+    @Volatile private var alarmReason = ""
+    @Volatile private var snoozes = 0
+    private val soundMs = HashMap<String, Long>()
+    /** Sunetul care cântă acum și de când (sub lacătul lui [soundMs]) — finalul adaugă și bucata în curs. */
+    private var soundPlaying: String? = null
+    private var soundSince = 0L
+    private var soundJob: Job? = null
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     // Promovarea în prim-plan: tipul se decide după permisiuni, niciodată 0 pe Android 14+.
@@ -210,6 +221,7 @@ class SleepTrackService : Service(), SensorEventListener {
     private fun startSession(app: ForjaApp) {
         if (running) return
         running = true
+        alarmTarget = 0L; alarmWindowMin = 0; alarmFiredAt = 0L; alarmReason = ""; snoozes = 0
         // WakeLock parțial: fără el, Doze amână bucla de veghe și alarma inteligentă
         // ar dormi odată cu tine. Limită de 12h ca plasă de siguranță pentru baterie.
         try {
@@ -228,6 +240,15 @@ class SleepTrackService : Service(), SensorEventListener {
                 SleepSessionEntity(startAt = sessionStartAt)
             )
             if (existing != null) sessionStartAt = existing.startAt
+            // Site-ul (Somn, Azi): „Stingerea e activă de la …” cât ține veghea.
+            try {
+                val on = app.prefs.alarmEnabled.first()
+                val alarm = if (on) {
+                    val win = app.prefs.alarmWindowMin.first().coerceIn(10, 90)
+                    SleepNightDoc.Alarm(true, alarmDeadline(app.prefs.alarmHour.first(), app.prefs.alarmMinute.first(), sessionStartAt), win)
+                } else null
+                SleepCloud.started(app.auth.currentUid, sessionId, sessionStartAt, alarm, SleepCloud.bedtime(app))
+            } catch (_: Exception) { }
             // Înregistrarea completă a nopții (AAC, bucăți de ~30 min) — pornită după ce știm sesiunea.
             try {
                 val root = File(filesDir, "sleep_full").apply { mkdirs() }
@@ -251,6 +272,35 @@ class SleepTrackService : Service(), SensorEventListener {
         if (micType) startAudio()
         // Alarma deșteaptă
         startAlarmWatcher(app)
+        // Sunetele de adormit: cât a cântat fiecare în timpul veghei (doar cheia și minutele).
+        soundJob?.cancel()
+        synchronized(soundMs) { soundMs.clear(); soundPlaying = null; soundSince = 0L }
+        soundJob = scope.launch {
+            SleepSounds.current.collect { now ->
+                val t = System.currentTimeMillis()
+                synchronized(soundMs) {
+                    soundPlaying?.let { k -> soundMs[k] = (soundMs[k] ?: 0L) + (t - soundSince) }
+                    soundPlaying = now; soundSince = t
+                }
+            }
+        }
+    }
+
+    /** Ora-limită a alarmei (epoch ms): H:M azi sau, dacă a trecut de începutul veghei, mâine. */
+    private fun alarmDeadline(h: Int, m: Int, startAt: Long): Long {
+        val zone = ZoneId.systemDefault()
+        var deadline = LocalDate.now().atTime(h, m).atZone(zone).toInstant().toEpochMilli()
+        if (deadline <= startAt) deadline = LocalDate.now().plusDays(1).atTime(h, m).atZone(zone).toInstant().toEpochMilli()
+        return deadline
+    }
+
+    /** Minutele fiecărui sunet de adormit, cu sunetul care încă mai cântă. */
+    private fun soundUses(): List<SleepNightDoc.SoundUse> {
+        val t = System.currentTimeMillis()
+        val map = synchronized(soundMs) {
+            HashMap(soundMs).also { m -> soundPlaying?.let { k -> m[k] = (m[k] ?: 0L) + (t - soundSince).coerceAtLeast(0L) } }
+        }
+        return map.map { (k, ms) -> SleepNightDoc.SoundUse(k, ((ms + 30_000L) / 60_000L).toInt()) }
     }
 
     /**
@@ -479,6 +529,7 @@ class SleepTrackService : Service(), SensorEventListener {
                         if (now >= snoozeUntil) {
                             snoozeUntil = 0L
                             alarmFired = true
+                            // motivul rămâne al primei sunări (ciclu, mișcare, limită); amânările sunt în `snoozes`
                             fireAlarm()
                         }
                         continue
@@ -494,6 +545,8 @@ class SleepTrackService : Service(), SensorEventListener {
                         deadline = LocalDate.now().plusDays(1).atTime(h, m).atZone(zone).toInstant().toEpochMilli()
                     }
                     val windowStart = deadline - windowMs
+                    alarmTarget = deadline
+                    alarmWindowMin = (windowMs / 60_000L).toInt()
 
                     // Granițele ciclurilor: adormire ~15 min + k × 90 min.
                     var cycleTarget = 0L
@@ -508,6 +561,8 @@ class SleepTrackService : Service(), SensorEventListener {
                     val atCycleEnd = cycleTarget in 1..now
                     if (now >= deadline || (inWindow && (recentMovement || atCycleEnd))) {
                         alarmFired = true
+                        alarmFiredAt = now
+                        alarmReason = when { now >= deadline -> "deadline"; atCycleEnd -> "cycle"; else -> "movement" }
                         fireAlarm()
                     }
                 } catch (_: Exception) { }
@@ -520,6 +575,7 @@ class SleepTrackService : Service(), SensorEventListener {
         AlarmRinger.stop()
         cancelAlarmNotification()
         alarmFired = false
+        snoozes++
         snoozeUntil = System.currentTimeMillis() + SNOOZE_MS
         startAlarmWatcher(app)
     }
@@ -571,6 +627,9 @@ class SleepTrackService : Service(), SensorEventListener {
         AlarmRinger.stop()
         cancelAlarmNotification()
         alarmJob?.cancel()
+        val sounds = soundUses()
+        soundJob?.cancel()
+        val alarmOut = if (alarmTarget > 0L) SleepNightDoc.Alarm(true, alarmTarget, alarmWindowMin, alarmFiredAt, alarmReason, snoozes) else null
         try { wakeLock?.release() } catch (_: Exception) { }
         sensorManager?.unregisterListener(this)
         audioJob?.cancel()
@@ -649,8 +708,16 @@ class SleepTrackService : Service(), SensorEventListener {
                         talkCount = talkCount,
                         soundCount = events.count { it.type == "sound" },
                         snoreMin = snoreMinLocal,
-                        coverageMin = 0
+                        coverageMin = 0,
+                        extras = mapOf(
+                            "state" to "done",
+                            "alarm" to SleepNightDoc.alarmMap(alarmOut),
+                            "sounds" to SleepNightDoc.soundsList(sounds),
+                            "bedtime" to SleepCloud.bedtime(app)
+                        ) + SleepNightDoc.stagingMap(staging)
                     )
+                    SleepCloud.audio(app, s.id, recordedUntil, force = true)
+                    SleepCloud.timeline(app, s.id)
                 } catch (_: Exception) { }
             }
             try { ServiceCompat.stopForeground(this@SleepTrackService, ServiceCompat.STOP_FOREGROUND_REMOVE) } catch (_: Exception) { }
@@ -774,14 +841,26 @@ class SleepTrackService : Service(), SensorEventListener {
                     dao.activeSessionOnce()?.let { s ->
                         val end = System.currentTimeMillis()
                         val chunks = AacRecorder.manifestFor(context.filesDir, s.id, s.startAt)?.chunks?.filter { it.dur > 0L }.orEmpty()
-                        dao.update(
-                            s.copy(
-                                endAt = end,
-                                score = 0,
-                                summary = "Veghea s-a întrerupt peste noapte — telefonul a oprit FORJA. Scoate-o de la optimizarea bateriei.",
-                                recordedUntil = if (chunks.isNotEmpty()) end + 24 * 3600_000L else s.recordedUntil
-                            )
+                        val closed = s.copy(
+                            endAt = end,
+                            score = 0,
+                            summary = "Veghea s-a întrerupt peste noapte — telefonul a oprit FORJA. Scoate-o de la optimizarea bateriei.",
+                            recordedUntil = if (chunks.isNotEmpty()) end + 24 * 3600_000L else s.recordedUntil
                         )
+                        dao.update(closed)
+                        // Și noaptea întreruptă ajunge pe site („întreruptă”), nu doar cea încheiată cu „M-am trezit”.
+                        try {
+                            val events = dao.eventsForSessionOnce(s.id)
+                            SleepCloud.sleep(
+                                app.auth.currentUid, closed,
+                                snoreCount = events.count { it.type == "snore" },
+                                talkCount = events.count { it.type == "talk" },
+                                soundCount = events.count { it.type == "sound" },
+                                extras = mapOf("state" to "interrupted", "bedtime" to SleepCloud.bedtime(app))
+                            )
+                            SleepCloud.audio(app, s.id, closed.recordedUntil, force = true)
+                            SleepCloud.timeline(app, s.id)
+                        } catch (_: Exception) { }
                         // după ce rândul e închis (endAt) — lucrarea caută sesiunea printre cele încheiate
                         if (chunks.isNotEmpty() && app.forjaApi.available) {
                             try { SleepUpload.schedule(context, s.id) } catch (_: Exception) { }

@@ -639,7 +639,7 @@ fun SleepScreen() {
                         val snoreCount = events.count { it.type == "snore" }
                         if (talkPhrases.isNotEmpty() || snoreCount > 0) {
                             Spacer(Modifier.height(12.dp))
-                            SleepTalkSummary(talkPhrases, snoreCount, app)
+                            SleepTalkSummary(talkPhrases, snoreCount, app, lastId)
                         }
                     }
                 }
@@ -1381,11 +1381,13 @@ private fun Hypnogram(phases: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun SleepTalkSummary(phrases: List<String>, snoreCount: Int, app: ForjaApp) {
+private fun SleepTalkSummary(phrases: List<String>, snoreCount: Int, app: ForjaApp, sessionId: Long) {
     var summary by remember(phrases) { mutableStateOf<String?>(null) }
     LaunchedEffect(phrases) {
         if (phrases.isNotEmpty() && app.forjaApi.available) {
             summary = try { app.forjaApi.sleepTalkSummary(phrases) } catch (_: Exception) { null }
+            // Rezumatul rămâne și pe site, lângă cronologia nopții (doar cu contractul v4).
+            summary?.let { com.forja.app.core.sleep.SleepCloud.talkSummary(app, sessionId, it) }
         }
     }
     ForjaCard(
@@ -1488,6 +1490,8 @@ private fun SleepEventCard(ev: SleepEventEntity, app: ForjaApp) {
                     scope.launch {
                         ev.clipPath?.let { runCatching { File(it).delete() } }
                         app.db.sleepDao().deleteEvent(ev.id)
+                        // Și de pe site: cronologia nopții se rescrie fără momentul șters.
+                        com.forja.app.core.sleep.SleepCloud.timeline(app, ev.sessionId)
                         toast.show("Șters. Doar tu decizi ce rămâne.")
                     }
                 })

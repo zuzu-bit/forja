@@ -1,34 +1,50 @@
-// STINGEREA · Somn — paleta albastră a nopții (SleepBg): ultima noapte, cele 14 nopți, iar în detaliu cronologia
-// „Noaptea, ascultată” cu fiecare moment redat din bucata audio (7 zile), prin /insights/api/somn*.
+// STINGEREA · Somn — paleta albastră a nopții (SleepBg): veghea în curs, ultima noapte, nopțile din 14 / 30 / 60 de zile,
+// iar în detaliu hipnograma, „Ascultă noaptea” (un singur player peste toate bucățile, cu derulare pe ora nopții, prin
+// URL-uri semnate scurt) și cronologia „Noaptea, ascultată”, prin /insights/api/somn*.
 const KIND_TONE = {talk: 'talk', snore: 'snore', cough: 'cough', noise: 'noise'};
+const SOMN_DAYS = [14, 30, 60];
+const SOUND_NAMES = {rain: 'Ploaie', storm: 'Furtună', wind: 'Vânt', stream: 'Pârâu', fire: 'Foc', forest: 'Pădure'};
+const STAGE_ROW = {awake: 0, rem: 1, light: 2, deep: 3};
+const STAGE_NAME = {awake: 'Treaz', rem: 'REM', light: 'Ușor', deep: 'Profund'};
 const Somn = {
-  data: null, body: null, detail: null, audio: null, chunks: new Map(), playing: null,
+  data: null, body: null, detail: null, audio: null, chunks: new Map(), playing: null, days: 14, player: null,
   mount(body) { Somn.body = body; },
   enter(detail, changed) {
     if (detail) return Somn.openNight(detail);
     Somn.stop();
-    loadInto('somn', Somn.body, () => api('/insights/api/somn?days=14'), d => { Somn.data = d; Somn.render(d); }, {replaceOnError: !Somn.data});
+    loadInto('somn', Somn.body, () => api('/insights/api/somn?days=' + Somn.days), d => { Somn.data = d; Somn.render(d); }, {replaceOnError: !Somn.data});
   },
   leave() { Somn.stop(); },
   nights() { return [...(Somn.data?.nights || [])].filter(n => num(n.startAt) !== null).sort((a, b) => b.startAt - a.startAt); },
+  async setDays(days) {
+    if (days === Somn.days) return;
+    Somn.days = days;
+    try { Somn.data = await api('/insights/api/somn?days=' + days); if (Site.current === 'somn' && !Site.detail) Somn.render(); }
+    catch (e) { if (e?.name !== 'AbortError') toast(e?.message || 'Nopțile nu s-au încărcat.'); }
+  },
   render() {
-    const nights = Somn.nights();
-    if (!nights.length) { setLine('somn', ''); fill(Somn.body, emptyState('Prima noapte apare aici.', 'Pornește Stingerea în FORJA înainte de culcare.', null, 'idle')); return; }
-    const last = nights[0], avg = nights.reduce((a, n) => a + (n.minutes || 0), 0) / nights.length;
-    setLine('somn', 'Media: ' + fmt.dur(avg) + ' pe noapte');
-    fill(Somn.body, 
-      h('div', {class: 'somn-grid'}, nightHero(last), Somn.chart(nights)),
-      h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Nopțile'}), monoLabel(plural(nights.length, 'NOAPTE', 'NOPȚI'))),
-      h('div', {class: 'night-list'}, nights.map(n => h('a', {href: '#somn/' + encodeURIComponent(n.id), class: 'night-row'},
+    const nights = Somn.nights(), live = Somn.data?.live || null;
+    if (!nights.length && !live) { setLine('somn', ''); fill(Somn.body, emptyState('Prima noapte apare aici.', 'Pornește Stingerea în FORJA înainte de culcare.', null, 'idle')); return; }
+    const done = nights.filter(n => n.minutes > 0), avg = done.length ? done.reduce((a, n) => a + n.minutes, 0) / done.length : 0;
+    setLine('somn', done.length ? 'Media: ' + fmt.dur(avg) + ' pe noapte' : '');
+    const last = nights[0];
+    fill(Somn.body,
+      live ? liveCard(live) : null,
+      last ? h('div', {class: 'somn-grid'}, nightHero(last), Somn.chart(nights)) : null,
+      h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Nopțile'}),
+        h('div', {class: 'somn-head-right'}, monoLabel(plural(nights.length, 'NOAPTE', 'NOPȚI')),
+          h('div', {class: 'seg', role: 'group', 'aria-label': 'Câte zile'}, SOMN_DAYS.map(d => h('button', {type: 'button', class: 'seg-btn' + (d === Somn.days ? ' active' : ''), 'aria-pressed': String(d === Somn.days), onclick: () => Somn.setDays(d)}, d + ' z'))))),
+      nights.length ? h('div', {class: 'night-list'}, nights.map(n => h('a', {href: '#somn/' + encodeURIComponent(n.id), class: 'night-row'},
         h('span', {class: 'night-day'}, h('b', {text: fmt.weekday(n.endAt || n.startAt)}), h('span', {text: fmt.day(n.endAt || n.startAt).split(' ').slice(1).join(' ')})),
-        h('span', {class: 'night-dur', text: fmt.dur(n.minutes)}),
+        h('span', {class: 'night-dur', text: n.minutes ? fmt.dur(n.minutes) : '—'}),
         phaseBar(n, 'thin'),
-        h('span', {class: 'night-score', text: fmt.int(n.score)}),
-        audioBadge(n.audio),
-        icon('next', 16, 'dimmed')))));
+        h('span', {class: 'night-score', text: n.state === 'interrupted' && !n.score ? '—' : fmt.int(n.score)}),
+        n.state === 'interrupted' ? badge('întreruptă', 'dim') : audioBadge(n.audio),
+        icon('next', 16, 'dimmed')))) : h('p', {class: 'panel-empty', text: 'Nicio noapte încheiată în ' + Somn.days + ' de zile.'}));
   },
   chart(nights) {
-    const list = nights.slice(0, 14).reverse(), max = Math.max(9 * 60, ...list.map(n => n.minutes || 0));
+    const list = nights.filter(n => n.minutes > 0).slice(0, 14).reverse(), max = Math.max(9 * 60, ...list.map(n => n.minutes || 0));
+    if (!list.length) return null;
     return h('div', {class: 'card night-chart'}, monoLabel(plural(list.length, 'noapte', 'nopți').toUpperCase() + ' · DURATA'),
       h('div', {class: 'bars'}, list.map(n => h('a', {href: '#somn/' + encodeURIComponent(n.id), class: 'bar-col', title: fmt.day(n.endAt || n.startAt) + ' · ' + fmt.dur(n.minutes)},
         h('span', {class: 'bar-stack', style: {height: Math.round(((n.minutes || 0) / max) * 100) + '%'}},
@@ -42,21 +58,109 @@ const Somn = {
     fill(body, skeleton());
     setLine('somn', '');
     try {
-      if (!Somn.data) Somn.data = await api('/insights/api/somn?days=14');
-      const night = Somn.nights().find(n => String(n.id) === id);
+      if (!Somn.data) Somn.data = await api('/insights/api/somn?days=' + Somn.days);
+      const night = Somn.nights().find(n => String(n.id) === id) || (Somn.data?.live?.id === id ? {...Somn.data.live, state: 'live'} : null);
       let detail = null, expired = false;
-      if (!night || night.audio !== 'none') {
-        try { detail = await api('/insights/api/somn/' + encodeURIComponent(id)); }
-        catch (e) { if (e?.status === 404) expired = true; else if (e?.name !== 'AbortError') throw e; }
-      }
+      try { detail = await api('/insights/api/somn/' + encodeURIComponent(id)); }
+      catch (e) { if (e?.status === 404) expired = true; else if (e?.name !== 'AbortError') throw e; }
       if (Site.current !== 'somn' || Site.detail !== id) return;
       Somn.detail = detail;
-      if (!night && !detail) { fill(body, h('a', {href: '#somn', class: 'back-link'}, icon('back', 16), 'Nopțile'), emptyState('Noaptea nu mai e aici.', 'Site-ul arată ultimele 14 nopți.', null, 'sorry')); return; }
-      fill(body, h('a', {href: '#somn', class: 'back-link'}, icon('back', 16), 'Nopțile'), nightHero(night || {id, summary: detail?.summary}, true), Somn.timeline(night, detail, expired));
+      if (!night && !detail) { fill(body, h('a', {href: '#somn', class: 'back-link'}, icon('back', 16), 'Nopțile'), emptyState('Noaptea nu mai e aici.', 'Site-ul arată nopțile din ultimele ' + Somn.days + ' de zile.', null, 'sorry')); return; }
+      const n = {...(detail || {}), ...(night || {}), id, summary: night?.summary ?? detail?.summary, sleep: detail?.sleep || night?.sleep || null};
+      fill(body, h('a', {href: '#somn', class: 'back-link'}, icon('back', 16), 'Nopțile'),
+        nightHero(n, true),
+        hypnogram(detail?.phases, n),
+        Somn.listen(n, detail),
+        Somn.timeline(n, detail, expired),
+        detail?.talkSummary ? h('article', {class: 'card night-talk'}, monoLabel('VORBE DIN SOMN'), h('p', {text: detail.talkSummary})) : null);
     } catch (e) {
       if (e?.name === 'AbortError') return;
       fill(body, errorState(e?.message, () => Somn.openNight(id)));
     }
+  },
+  /** „Ascultă noaptea”: un player peste toate bucățile, cu bara pe ora nopții. Doar cu URL-uri semnate (Range). */
+  listen(night, detail) {
+    const chunks = (detail?.chunks || []).filter(c => c.url && num(c.startAt) !== null).sort((a, b) => a.startAt - b.startAt);
+    const state = audioLine(night, detail);
+    if (!chunks.length) return state ? h('p', {class: 'somn-audio-note', text: state}) : null;
+    const from = chunks[0].startAt, to = chunks.at(-1).startAt + (chunks.at(-1).durationMs || 0), span = Math.max(1000, to - from);
+    const playBtn = h('button', {type: 'button', class: 'play-btn big', 'aria-label': 'Ascultă noaptea', onclick: () => Somn.toggle()}, icon('play', 20));
+    const range = h('input', {type: 'range', class: 'listen-range', min: '0', max: String(Math.round(span / 1000)), value: '0', step: '1', 'aria-label': 'Ora din noapte'});
+    const clock = h('span', {class: 'listen-clock', text: fmt.time(from)});
+    range.addEventListener('input', () => { clock.textContent = fmt.time(from + Number(range.value) * 1000); });
+    range.addEventListener('change', () => Somn.seek(from + Number(range.value) * 1000, true));
+    Somn.player = {id: night.id, chunks, from, to, span, playBtn, range, clock, urlExpiresAt: detail.urlExpiresAt || 0, current: null, retried: false, dragging: false};
+    range.addEventListener('pointerdown', () => { if (Somn.player) Somn.player.dragging = true; });
+    range.addEventListener('pointerup', () => { if (Somn.player) Somn.player.dragging = false; });
+    return h('article', {class: 'card listen'},
+      h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Ascultă noaptea'}), state ? monoLabel(state.toUpperCase()) : null),
+      h('div', {class: 'listen-row'}, playBtn, h('div', {class: 'listen-bar'}, range, h('div', {class: 'tl-axis'}, h('span', {text: fmt.time(from)}), clock, h('span', {text: fmt.time(to)})))));
+  },
+  /** Reîmprospătează URL-urile semnate (10 min) și păstrează ora la care eram. */
+  async freshUrls() {
+    const p = Somn.player; if (!p) return false;
+    try {
+      const d = await api('/insights/api/somn/' + encodeURIComponent(p.id));
+      const byI = new Map((d.chunks || []).filter(c => c.url).map(c => [c.i, c.url]));
+      for (const c of p.chunks) if (byI.has(c.i)) c.url = byI.get(c.i);
+      p.urlExpiresAt = d.urlExpiresAt || 0;
+      return byI.size > 0;
+    } catch { return false; }
+  },
+  audioEl() {
+    const a = Somn.audio || (Somn.audio = h('audio', {preload: 'metadata'}));
+    return a;
+  },
+  /** Sare la o oră din noapte (epoch ms) și, dacă `play`, cântă de acolo mai departe, bucată după bucată. */
+  async seek(t, play = true) {
+    const p = Somn.player; if (!p) return;
+    const c = p.chunks.find(x => t >= x.startAt && t < x.startAt + (x.durationMs || Infinity)) || p.chunks.find(x => x.startAt > t) || p.chunks.at(-1);
+    if (!c) return;
+    if (Somn.playing?.button) Somn.stopClip();
+    if (p.urlExpiresAt && Date.now() > p.urlExpiresAt - 30000) await Somn.freshUrls();
+    const a = Somn.audioEl(), offset = Math.max(0, (Math.max(t, c.startAt) - c.startAt) / 1000);
+    try {
+      if (p.current !== c.i || !a.src.endsWith(c.url)) {
+        p.current = c.i; a.src = c.url;
+        await new Promise((ok, bad) => { a.onloadedmetadata = ok; a.onerror = () => bad(Error('Sunetul nu poate fi redat.')); a.load(); });
+      }
+      a.currentTime = offset;
+      a.ontimeupdate = () => Somn.tick();
+      a.onended = () => { const next = p.chunks.find(x => x.startAt > c.startAt); if (next) Somn.seek(next.startAt, true); else Somn.pause(); };
+      a.onerror = async () => {
+        // Link expirat sau întrerupt: o singură reîncercare cu URL-uri noi, de la aceeași oră.
+        if (p.retried) { Somn.pause(); toast('Sunetul nu poate fi redat.'); return; }
+        p.retried = true; const at = Somn.clockNow();
+        if (await Somn.freshUrls()) { p.current = null; Somn.seek(at, true); } else { Somn.pause(); toast('Sunetul a expirat. Se păstrează 7 zile.'); }
+      };
+      if (play) { await a.play(); p.retried = false; fill(p.playBtn, icon('pause', 20)); p.playBtn.setAttribute('aria-label', 'Pauză'); }
+      Somn.tick();
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      Somn.pause();
+      toast(err?.message || 'Sunetul nu poate fi redat.');
+    }
+  },
+  clockNow() {
+    const p = Somn.player, a = Somn.audio; if (!p) return 0;
+    const c = p.chunks.find(x => x.i === p.current);
+    return c && a ? c.startAt + (a.currentTime || 0) * 1000 : p.from + Number(p.range.value) * 1000;
+  },
+  tick() {
+    const p = Somn.player; if (!p || p.dragging) return;
+    const t = Somn.clockNow();
+    p.range.value = String(Math.round((t - p.from) / 1000));
+    p.clock.textContent = fmt.time(t);
+  },
+  toggle() {
+    const p = Somn.player, a = Somn.audio; if (!p) return;
+    if (a && !a.paused && p.current !== null) { Somn.pause(); return; }
+    Somn.seek(p.current === null ? p.from + Number(p.range.value) * 1000 : Somn.clockNow(), true);
+  },
+  pause() {
+    const p = Somn.player;
+    if (Somn.audio) { try { Somn.audio.pause(); } catch { /* deja oprit */ } }
+    if (p?.playBtn?.isConnected) { fill(p.playBtn, icon('play', 20)); p.playBtn.setAttribute('aria-label', 'Ascultă noaptea'); }
   },
   timeline(night, detail, expired) {
     const events = [...(detail?.events || [])].sort((a, b) => a.t - b.t);
@@ -64,26 +168,40 @@ const Somn = {
     const end = night?.endAt || (detail?.chunks?.length ? detail.chunks.at(-1).startAt + detail.chunks.at(-1).durationMs : events.at(-1)?.t) || start + 1;
     const span = Math.max(1, end - start);
     const chunks = new Map((detail?.chunks || []).map(c => [c.i, c]));
+    const a = detail?.analysis || null, limits = a?.limits || [];
+    const tag = a?.fallback ? badge('cronologie păstrată', 'night') : limits.length ? badge('analiză cu limite', 'dim') : badge('analiză cu model', 'night');
     const box = h('div', {class: 'card timeline'},
-      h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Noaptea, ascultată'}), badge('analiză cu model', 'night')),
+      h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Noaptea, ascultată'}), tag),
       h('div', {class: 'tl-track'},
         ...[...chunks.values()].map(c => h('span', {class: 'tl-chunk', style: {left: ((c.startAt - start) / span * 100) + '%', width: (c.durationMs / span * 100) + '%'}})),
-        ...events.map(e => h('button', {type: 'button', class: 'tl-dot ' + (KIND_TONE[e.kind] || 'noise'), style: {left: Math.max(0, Math.min(100, (e.t - start) / span * 100)) + '%'}, title: fmt.time(e.t) + ' · ' + (e.label || e.kind), 'aria-label': fmt.time(e.t) + ' ' + (e.label || e.kind), onclick: () => document.getElementById('ev-' + e.t)?.scrollIntoView({block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth'})}))),
-      h('div', {class: 'tl-axis'}, h('span', {text: fmt.time(start)}), h('span', {text: fmt.time(start + span / 2)}), h('span', {text: fmt.time(end)})));
-    if (expired || night?.audio === 'none' && !events.length) { box.append(h('p', {class: 'panel-empty', text: expired ? 'Înregistrarea a expirat. Se păstrează 7 zile.' : 'Noaptea asta nu are înregistrare.'})); return box; }
-    if (night?.audio === 'pending' && !events.length) { box.append(h('p', {class: 'panel-empty', text: 'Analiza e în lucru. Revine singură.'})); return box; }
-    if (!events.length) { box.append(h('p', {class: 'panel-empty', text: 'Liniște toată noaptea.'})); return box; }
-    box.append(h('ol', {class: 'events'}, events.map(e => {
-      const canPlay = chunks.has(e.chunk) || num(e.chunk) !== null;
-      const play = canPlay ? h('button', {type: 'button', class: 'play-btn', 'aria-label': 'Ascultă ' + fmt.time(e.t), onclick: ev => Somn.play(night?.id || detail.id, e, ev.currentTarget)}, icon('play', 16)) : null;
-      return h('li', {class: 'event ' + (KIND_TONE[e.kind] || 'noise'), id: 'ev-' + e.t},
+        ...events.map((e, i) => h('button', {type: 'button', class: 'tl-dot ' + (KIND_TONE[e.kind] || 'noise'), style: {left: Math.max(0, Math.min(100, (e.t - start) / span * 100)) + '%'}, title: fmt.time(e.t) + ' · ' + (e.label || e.kind), 'aria-label': fmt.time(e.t) + ' ' + (e.label || e.kind), onclick: () => document.getElementById('ev-' + i)?.scrollIntoView({block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth'})}))),
+      h('div', {class: 'tl-axis'}, h('span', {text: fmt.time(start)}), h('span', {text: fmt.time(start + span / 2)}), h('span', {text: fmt.time(end)})),
+      analysisFacts(a));
+    for (const l of limits) box.append(h('p', {class: 'tl-limit', text: l}));
+    if (!events.length) {
+      const why = night?.state === 'live' ? 'Stingerea e încă activă. Cronologia vine dimineața.'
+        : night?.audio === 'waiting' ? 'Sunetul încă n-a urcat de pe telefon. Cronologia vine după.'
+        : night?.audio === 'pending' ? 'Analiza e în lucru. Revine singură.'
+        : expired || night?.audio === 'expired' ? (detail?.timeline ? 'Sunetul a expirat și noaptea n-a lăsat momente de păstrat.' : 'Sunetul a expirat. Cronologia rămâne cu contractul v4.')
+        : night?.audio === 'failed' ? 'Urcarea sunetului n-a reușit.'
+        : night?.audio === 'none' ? 'Noaptea asta nu are înregistrare.'
+        : 'Liniște toată noaptea.';
+      box.append(h('p', {class: 'panel-empty', text: why}));
+      return box;
+    }
+    const player = !!Somn.player;
+    box.append(h('ol', {class: 'events'}, events.map((e, i) => {
+      const canPlay = num(e.chunk) !== null && chunks.has(e.chunk);
+      const play = canPlay ? h('button', {type: 'button', class: 'play-btn', 'aria-label': 'Ascultă ' + fmt.time(e.t), onclick: ev => player ? Somn.seek(e.t - 400, true) : Somn.play(night?.id || detail.id, e, ev.currentTarget)}, icon('play', 16)) : null;
+      return h('li', {class: 'event ' + (KIND_TONE[e.kind] || 'noise'), id: 'ev-' + i},
         h('span', {class: 'ev-time', text: fmt.time(e.t)}), h('i', {class: 'ev-dot'}),
-        h('div', {class: 'ev-body'}, h('span', {class: 'ev-label', text: e.label || e.kind}), e.text ? h('q', {class: 'ev-text', text: e.text}) : null, num(e.durationMs) ? h('span', {class: 'ev-dur', text: Math.max(1, Math.round(e.durationMs / 1000)) + ' s'}) : null),
+        h('div', {class: 'ev-body'}, h('span', {class: 'ev-label', text: e.label || e.kind}), e.text ? h('q', {class: 'ev-text', text: e.text}) : null,
+          num(e.durationMs) ? h('span', {class: 'ev-dur', text: Math.max(1, Math.round(e.durationMs / 1000)) + ' s' + (e.source === 'phone' || e.phoneClip ? ' · clip pe telefon' : '')}) : e.source === 'phone' || e.phoneClip ? h('span', {class: 'ev-dur', text: 'clip pe telefon'}) : null),
         play);
     })));
     return box;
   },
-  /** Descarcă bucata o singură dată (Blob), apoi sare la moment și cântă exact durata lui. */
+  /** Fără URL semnat: descarcă bucata o singură dată (Blob), apoi sare la moment și cântă exact durata lui. */
   async play(id, e, button) {
     if (Somn.playing?.button === button) { Somn.stop(); return; }
     Somn.stop();
@@ -97,7 +215,7 @@ const Somn = {
         url = URL.createObjectURL(blob); Somn.chunks.set(key, url);
       }
       if (Somn.playing?.button !== button) return;
-      const a = Somn.audio || (Somn.audio = h('audio', {preload: 'auto'}));
+      const a = Somn.audioEl();
       a.src = url;
       await new Promise((ok, bad) => { a.onloadedmetadata = ok; a.onerror = () => bad(Error('Sunetul nu poate fi redat.')); a.load(); });
       a.currentTime = Math.max(0, (e.offsetMs || 0) / 1000 - 0.4);
@@ -112,13 +230,17 @@ const Somn = {
       toast(err?.status === 404 ? 'Înregistrarea a expirat. Se păstrează 7 zile.' : err?.message || 'Sunetul nu poate fi redat.');
     }
   },
-  stop() {
+  stopClip() {
     const p = Somn.playing; Somn.playing = null;
-    if (Somn.audio) { try { Somn.audio.pause(); } catch { /* deja oprit */ } Somn.audio.ontimeupdate = null; }
     if (p?.button?.isConnected) { p.button.classList.remove('busy'); fill(p.button, icon('play', 16)); }
   },
+  stop() {
+    Somn.stopClip();
+    if (Somn.audio) { try { Somn.audio.pause(); } catch { /* deja oprit */ } Somn.audio.ontimeupdate = null; Somn.audio.onended = null; }
+    Somn.player = null;
+  },
   reset() {
-    Somn.stop(); Somn.data = null; Somn.detail = null;
+    Somn.stop(); Somn.data = null; Somn.detail = null; Somn.days = 14;
     if (Somn.audio) { Somn.audio.removeAttribute('src'); try { Somn.audio.load(); } catch { /* jsdom */ } }
     for (const u of Somn.chunks.values()) URL.revokeObjectURL(u);
     Somn.chunks.clear();
@@ -129,13 +251,78 @@ function phaseBar(n, cls = '') {
   const total = Math.max(1, (n.deepMin || 0) + (n.lightMin || 0) + (n.remMin || 0));
   return h('span', {class: 'phase-bar ' + cls, 'aria-hidden': 'true'}, h('i', {class: 'deep', style: {width: (n.deepMin || 0) / total * 100 + '%'}}), h('i', {class: 'rem', style: {width: (n.remMin || 0) / total * 100 + '%'}}), h('i', {class: 'light', style: {width: (n.lightMin || 0) / total * 100 + '%'}}));
 }
-function audioBadge(a) { return a === 'ready' ? badge('audio', 'night') : a === 'pending' ? badge('în lucru', 'dim') : h('span', {class: 'badge-space'}); }
+function audioBadge(a) {
+  return a === 'ready' ? badge('audio', 'night') : a === 'pending' ? badge('în lucru', 'dim') : a === 'waiting' ? badge('în așteptare', 'dim') : a === 'failed' ? badge('fără urcare', 'dim') : h('span', {class: 'badge-space'});
+}
+/** Veghea în curs: de când, alarma, sunetul. */
+function liveCard(l) {
+  const bits = [];
+  if (l.alarm?.target) bits.push('Alarma la ' + fmt.time(l.alarm.target) + (l.alarm.windowMin ? ', fereastră ' + l.alarm.windowMin + ' min' : ''));
+  if (l.sounds?.length) bits.push((SOUND_NAMES[l.sounds[0].sound] || 'Sunet') + ' la adormire');
+  return h('a', {href: '#somn/' + encodeURIComponent(l.id), class: 'card somn-live'},
+    h('span', {class: 'live-dot', 'aria-hidden': 'true'}), icon('moon', 22),
+    h('div', {class: 'somn-live-text'}, h('b', {text: 'Stingerea e activă de la ' + fmt.time(l.startAt)}), bits.length ? h('span', {text: bits.join(' · ')}) : null));
+}
+/** Starea sunetului, într-o propoziție, cu cât mai trăiește. */
+function audioLine(n, d) {
+  const up = n?.upload || d?.upload;
+  if (n?.state === 'live') return 'Sunetul urcă dimineața';
+  if (n?.audio === 'waiting' && up) {
+    const what = up.state === 'waiting_battery' ? 'Urcarea așteaptă bateria' : up.state === 'uploading' ? 'Urcă' : up.state === 'waiting_net' ? 'Urcarea așteaptă rețeaua' : 'Urcarea așteaptă Wi-Fi';
+    return up.chunks ? what + ' · ' + up.uploaded + ' din ' + up.chunks : what;
+  }
+  const exp = num(d?.audioExpiresAt ?? n?.audioExpiresAt);
+  if (exp !== null && d?.chunks?.length) { const days = Math.max(0, Math.ceil((exp - Date.now()) / DAY)); return days <= 1 ? 'Sunetul se șterge mâine' : 'Sunetul se șterge în ' + days + ' zile'; }
+  if (n?.audio === 'expired' && d?.events?.length) return 'Sunetul a expirat, rămâne cronologia';
+  return '';
+}
+function analysisFacts(a) {
+  if (!a) return null;
+  const bits = [];
+  if (a.coverage?.analyzedMin) bits.push('Ascultat ' + fmt.dur(a.coverage.analyzedMin) + (a.coverage.totalMin > a.coverage.analyzedMin ? ' din ' + fmt.dur(a.coverage.totalMin) : ''));
+  if (a.stats?.snoreEpisodes) bits.push(plural(a.stats.snoreEpisodes, 'episod', 'episoade') + ' de sforăit' + (a.stats.longestSnore?.minutes ? ', cel mai lung ' + a.stats.longestSnore.minutes + ' min la ' + fmt.time(a.stats.longestSnore.t) : ''));
+  if (a.stats?.coughs) bits.push('tuse ' + (a.stats.coughs === 1 ? 'o dată' : 'de ' + plural(a.stats.coughs, 'dată', 'ori')));
+  if (a.progress && a.progress.total && a.progress.done + a.progress.failed < a.progress.total) bits.push(a.progress.done + ' din ' + a.progress.total + ' bucăți ascultate');
+  return bits.length ? h('p', {class: 'tl-facts', text: bits.join(' · ')}) : null;
+}
+/** Hipnograma în trepte pe ora nopții (Treaz, REM, Ușor, Profund), ca în aplicație. */
+function hypnogram(phases, n) {
+  if (!Array.isArray(phases) || !phases.length) return null;
+  const W = 600, H = 120, top = 8, rowH = (H - top * 2) / 3;
+  const from = phases[0].from, to = phases.at(-1).to, span = Math.max(1, to - from);
+  const x = t => ((t - from) / span * W).toFixed(1), y = st => (top + STAGE_ROW[st] * rowH).toFixed(1);
+  let d = '';
+  phases.forEach((p, i) => { d += (i ? ' L' : 'M') + x(p.from) + ' ' + y(p.stage) + ' L' + x(p.to) + ' ' + y(p.stage); });
+  const bands = phases.map(p => s('rect', {x: x(p.from), y: y(p.stage), width: Math.max(0.5, x(p.to) - x(p.from)).toFixed(1), height: (H - top - y(p.stage)).toFixed(1), class: 'hyp-band ' + p.stage}));
+  const sl = n?.sleep;
+  const facts = [];
+  if (num(sl?.latencyMin) !== null) facts.push('Adormit în ' + sl.latencyMin + ' min');
+  if (num(sl?.awakenings) !== null) facts.push(sl.awakenings === 0 ? 'fără treziri' : sl.awakenings === 1 ? 'o trezire' : sl.awakenings + ' treziri');
+  const lines = sl?.scoreLines || [];
+  return h('article', {class: 'card hyp'},
+    h('div', {class: 'block-head'}, h('h2', {class: 'block-title', text: 'Fazele nopții'}), monoLabel('ESTIMATE')),
+    h('div', {class: 'hyp-wrap'},
+      h('div', {class: 'hyp-labels', 'aria-hidden': 'true'}, ['awake', 'rem', 'light', 'deep'].map(k => h('span', {text: STAGE_NAME[k]}))),
+      s('svg', {class: 'hyp-svg', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': 'Hipnograma: ' + phases.map(p => STAGE_NAME[p.stage] + ' ' + fmt.time(p.from)).slice(0, 12).join(', ')},
+        ...bands, s('path', {d, class: 'hyp-line', fill: 'none'}))),
+    h('div', {class: 'tl-axis'}, h('span', {text: fmt.time(from)}), h('span', {text: fmt.time(from + span / 2)}), h('span', {text: fmt.time(to)})),
+    facts.length || lines.length ? h('p', {class: 'hyp-facts'}, facts.join(' · '), lines.length ? h('span', {class: 'hyp-score', text: (facts.length ? ' · ' : '') + 'scor = ' + lines.map((l, i) => (i ? (l.delta < 0 ? ' − ' + Math.abs(l.delta) : ' + ' + l.delta) : String(l.delta)) + ' (' + l.reason + ')').join('')}) : null) : null);
+}
 function nightHero(n, detailed = false) {
   if (!n) return null;
   const p = fmt.durParts(n.minutes);
-  const score = num(n.score);
+  const score = n.state === 'interrupted' && !n.score ? null : num(n.score);
+  const sl = n.sleep, first = [];
+  if (!detailed && num(sl?.latencyMin) !== null) first.push('Adormit în ' + sl.latencyMin + ' min');
+  if (!detailed && num(sl?.awakenings) !== null) first.push(sl.awakenings === 0 ? 'fără treziri' : sl.awakenings === 1 ? 'o trezire' : sl.awakenings + ' treziri');
+  const extra = [];
+  const al = n.alarm;
+  if (al?.target) extra.push(al.firedAt ? 'Alarma a sunat la ' + fmt.time(al.firedAt) + (al.reason === 'cycle' ? ', la final de ciclu' : al.reason === 'movement' ? ', în somn ușor' : '') + (al.snoozes ? ', amânată ' + (al.snoozes === 1 ? 'o dată' : 'de ' + al.snoozes + ' ori') : '') : 'Alarma pusă la ' + fmt.time(al.target));
+  if (n.sounds?.length) extra.push(n.sounds.map(x => (SOUND_NAMES[x.sound] || 'Sunet') + ' ' + fmt.dur(x.minutes)).join(', '));
+  if (n.bedtime && num(n.bedtime.minute) !== null && n.bedtime.reminder) extra.push('Stingerea la ' + String(Math.floor(n.bedtime.minute / 60)).padStart(2, '0') + ':' + String(n.bedtime.minute % 60).padStart(2, '0'));
   return h('article', {class: 'card night-hero'},
-    h('div', {class: 'night-top'}, monoLabel((n.endAt ? fmt.dayLong(n.endAt) : 'noaptea').toUpperCase()), n.startAt ? monoLabel(fmt.time(n.startAt) + ' → ' + fmt.time(n.endAt)) : null),
+    h('div', {class: 'night-top'}, monoLabel((n.endAt ? fmt.dayLong(n.endAt) : 'noaptea').toUpperCase()), n.startAt ? monoLabel(fmt.time(n.startAt) + ' → ' + (n.endAt ? fmt.time(n.endAt) : 'acum')) : null,
+      n.state === 'interrupted' ? stamp('întreruptă', 'amber') : null),
     h('div', {class: 'night-main'},
       h('div', {class: 'night-dur-hero'}, hero(String(p.h), 'h'), hero(String(p.m).padStart(2, '0'), 'min')),
       score !== null ? ring(score / 100, 92, 8, 'url(#g-night)', h('div', null, h('b', {text: fmt.int(score)}), h('small', {text: 'scor'}))) : null),
@@ -144,10 +331,13 @@ function nightHero(n, detailed = false) {
       h('span', null, h('i', {class: 'sq deep'}), 'Profund ', h('b', {text: fmt.dur(n.deepMin || 0)})),
       h('span', null, h('i', {class: 'sq rem'}), 'REM ', h('b', {text: fmt.dur(n.remMin || 0)})),
       h('span', null, h('i', {class: 'sq light'}), 'Ușor ', h('b', {text: fmt.dur(n.lightMin || 0)}))),
+    first.length ? h('p', {class: 'night-line', text: first.join(' · ')}) : null,
     h('div', {class: 'night-sounds'},
       h('span', null, 'Sforăit ', h('b', {text: fmt.int(n.snoreMin || 0) + ' min'})),
       h('span', null, 'Vorbit ', h('b', {text: talked(n.talkCount)})),
-      num(n.coverageMin) ? h('span', null, 'Ascultat ', h('b', {text: fmt.dur(n.coverageMin)})) : null),
+      num(n.coverageMin) ? h('span', null, 'Ascultat ', h('b', {text: fmt.dur(n.coverageMin)})) : null,
+      num(n.movements) ? h('span', null, 'Mișcări ', h('b', {text: fmt.int(n.movements)})) : null),
+    extra.length ? h('p', {class: 'night-line', text: extra.join(' · ')}) : null,
     n.summary ? h('p', {class: 'night-summary', text: n.summary}) : null,
     !detailed && n.id ? h('a', {href: '#somn/' + encodeURIComponent(n.id), class: 'panel-link'}, n.audio === 'ready' ? 'Ascultă noaptea' : 'Cronologia nopții', icon('next', 16)) : null);
 }
