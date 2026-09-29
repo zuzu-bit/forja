@@ -1,9 +1,11 @@
 package com.forja.app.core.inventory
 
+import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.documentfile.provider.DocumentFile
@@ -57,10 +59,15 @@ internal object InventoryApply {
 
     fun pendingTrash(doc: PlanDoc, items: Map<String, ItemRec>): List<ItemRec> = doc.trash.itemIds.mapNotNull { items[it] }
 
+    /** Din bucata coșului, ce mai cere dialogul: fără pozele aflate deja în coș ([trashed] = id-uri MediaStore). */
+    fun stillToTrash(chunk: List<ItemRec>, trashed: Set<Long>): List<ItemRec> =
+        if (trashed.isEmpty()) chunk else chunk.filter { it.mediaId !in trashed }
+
     /**
      * Pozele. API 30+: se mută doar bucata acceptată în dialogul de scriere ([grantMoves]; fără dialog nu se mută
      * nimic — altfel ar eșua sute de elemente fără acord), iar din „De aruncat” se numără doar bucata trimisă la coș
-     * ([grantTrash]). Elementele deja aflate în dosarul lor se numără mutate oricum.
+     * ([grantTrash]: cele din dialog plus cele găsite deja în coș). Elementele deja aflate în dosarul lor se numără
+     * mutate oricum.
      * API 29: mutări directe (reușesc doar elementele FORJA; restul cer acord per element → eșuate). Sub 29 nu există
      * RELATIVE_PATH: mutările eșuează, gunoiul se șterge direct (legacy).
      */
@@ -321,4 +328,30 @@ internal object MediaMover {
         }
         out
     } catch (_: Exception) { null }
+
+    /**
+     * Care dintre [ids] stau deja în coșul MediaStore (API 30+). Doar rândurile cu IS_TRASHED = 1 citit din cursor: un
+     * furnizor care ar ignora argumentul de coș nu poate face o poză vizibilă să pară aruncată. Goală sub API 30 sau la
+     * eroare — atunci dialogul le cere pe toate, ca înainte. O interogare scurtă (≤ 500 de id-uri), făcută de
+     * Inventory.trashRequest pe firul principal, lângă createTrashRequest.
+     */
+    fun trashedIds(ctx: Context, ids: List<Long>): Set<Long> {
+        if (Build.VERSION.SDK_INT < 30 || ids.isEmpty()) return emptySet()
+        return try {
+            val out = HashSet<Long>()
+            for (chunk in ids.chunked(400)) {
+                val args = Bundle().apply {
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, "${MediaStore.MediaColumns._ID} IN (${chunk.joinToString(",") { "?" }})")
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, chunk.map { it.toString() }.toTypedArray())
+                    putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
+                }
+                ctx.contentResolver.query(
+                    MediaQuery.collection(), arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.IS_TRASHED), args, null
+                )?.use { c -> while (c.moveToNext()) if (!c.isNull(1) && c.getInt(1) == 1) out += c.getLong(0) }
+            }
+            out
+        } catch (_: Exception) {
+            emptySet()
+        }
+    }
 }

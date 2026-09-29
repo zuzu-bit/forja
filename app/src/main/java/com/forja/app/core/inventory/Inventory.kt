@@ -444,19 +444,41 @@ object Inventory {
         }
     }
 
-    /** Coșul sistemului pentru „De aruncat” (API 30+, poze; recuperabil 30 de zile): prima bucată de ≤ 500. */
+    /**
+     * Ultimul [trashRequest] a găsit toată bucata deja în coș: n-a cerut dialogul (null), dar a păstrat bucata pentru
+     * [apply], care o numără și o scoate din plan.
+     */
+    @Volatile var trashWithoutDialog: Boolean = false
+        private set
+
+    /**
+     * Coșul sistemului pentru „De aruncat” (API 30+, poze; recuperabil 30 de zile): prima bucată de ≤ 500. Pozele deja
+     * aflate în coș (de exemplu acordul dat într-o aplicare întreruptă) nu mai apar în dialog, dar rămân în bucată:
+     * [apply] le verifică și le numără aruncate. Toată bucata deja în coș → null, fără dialog ([trashWithoutDialog]).
+     */
     fun trashRequest(context: android.content.Context): android.content.IntentSender? {
+        trashWithoutDialog = false
         if (Build.VERSION.SDK_INT < 30) return null
         val ctx = bind(context)
         val s = snapshot ?: return null
         if (s.meta.kind != InvKind.Photos) return null
         val chunk = InventoryApply.pendingTrash(s.doc, s.items).take(CleanupEngine.REQUEST_CHUNK)
         if (chunk.isEmpty()) { trashGrant = null; return null }
+        val grant = Grant(s.meta.runId, chunk.map { it.id })
+        val ask = InventoryApply.stillToTrash(chunk, MediaMover.trashedIds(ctx, chunk.map { it.mediaId }))
+        if (ask.size < chunk.size) {
+            ConsentLog.add(ctx, "T_SKIP", com.forja.app.core.music.DiagResult.OK, 0, "n=${chunk.size - ask.size}/${chunk.size}")
+        }
+        if (ask.isEmpty()) {
+            trashGrant = grant
+            trashWithoutDialog = true
+            return null
+        }
         return try {
-            CleanupEngine(ctx, ForjaApp.from(ctx).prefs).trashRequest(chunk.map { Uri.parse(it.uri) }, true)
-                ?.also { trashGrant = Grant(s.meta.runId, chunk.map { it.id }) }
+            CleanupEngine(ctx, ForjaApp.from(ctx).prefs).trashRequest(ask.map { Uri.parse(it.uri) }, true)
+                ?.also { trashGrant = grant }
         } catch (e: Exception) {
-            ConsentLog.add(ctx, "T_ASK", com.forja.app.core.music.DiagResult.ERROR, 0, "n=${chunk.size} ${e.javaClass.simpleName}")
+            ConsentLog.add(ctx, "T_ASK", com.forja.app.core.music.DiagResult.ERROR, 0, "n=${ask.size} ${e.javaClass.simpleName}")
             null
         }
     }

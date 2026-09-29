@@ -133,7 +133,10 @@ class ConsentGate<T : Any> {
         return true
     }
 
-    /** „Înapoi la dosare” ([Answer.NO]) sau o cerere imposibil de refăcut / ViewModel-ul închis ([Answer.DROPPED]). */
+    /**
+     * Închide cererea fără dialog: „Înapoi la dosare” ([Answer.NO]), o cerere imposibil de refăcut / ViewModel-ul închis
+     * ([Answer.DROPPED]) sau un acord care se vede deja în MediaStore ([Answer.YES]: pozele sunt la coș).
+     */
     fun cancel(answer: Answer) {
         val d = waiter
         waiter = null

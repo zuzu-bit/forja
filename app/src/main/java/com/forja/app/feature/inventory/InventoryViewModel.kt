@@ -432,6 +432,13 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) {
             null
         }
+        // Coșul s-a făcut deja (acordul a fost dat, dar rezultatul lui s-a pierdut): nimic de cerut, bucla merge mai
+        // departe și apply() numără pozele aruncate.
+        if (fresh == null && r.kind == ConsentGate.Kind.TRASH && Inventory.trashWithoutDialog) {
+            ConsentLog.add(ctx, "T_RETRY", DiagResult.OK, now() - askAt, "${r.tag} $why trashed")
+            gate.cancel(ConsentGate.Answer.YES)
+            return
+        }
         ConsentLog.add(ctx, "${r.kind.code}_RETRY", if (fresh != null) DiagResult.OK else DiagResult.ERROR, now() - askAt, "${r.tag} $why", fresh?.creatorPackage)
         // Imposibil de refăcut: FORJA renunță (nu omul) — aplicarea se oprește cu „Nu s-a aplicat tot.”, planul rămâne.
         if (fresh != null) gate.renew(r.id, fresh) else gate.cancel(ConsentGate.Answer.DROPPED)
@@ -509,20 +516,23 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
                         if (a != ConsentGate.Answer.YES) { ended = a.name.lowercase(); _outcome.value = outcomeOf(a); return@launch }
                     }
                     val t = Inventory.trashRequest(ctx)
+                    // Bucata coșului era deja toată la gunoi (acordul dat într-o aplicare întreruptă): fără dialog, dar
+                    // runda tot are de lucru — apply() o numără și o scoate din plan.
+                    val trashDone = t == null && Inventory.trashWithoutDialog
                     if (t != null) {
                         _applyWaiting.value = true
                         val a = ask(t, ConsentGate.Kind.TRASH)
                         _applyWaiting.value = false
                         if (a != ConsentGate.Answer.YES) { ended = a.name.lowercase(); _outcome.value = outcomeOf(a); return@launch }
                     }
-                    if (rounds > 0 && w == null && t == null) break
+                    if (rounds > 0 && w == null && t == null && !trashDone) break
                     val r = runApply()
                     total = ApplyResult(total.moved + r.moved, total.trashed + r.trashed, total.failed + r.failed, total.freedBytes + r.freedBytes)
                     lost += r.lost
                     pending = r.pending
                     landing = landing?.merge(r.landing) ?: r.landing
                     rounds++
-                    if (w == null && t == null) break
+                    if (w == null && t == null && !trashDone) break
                     if (r.moved + r.trashed == 0) break
                 }
                 val complete = plan.value == null
