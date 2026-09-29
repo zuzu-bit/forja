@@ -274,6 +274,78 @@ class ConsentGateTest {
         onMain { assertNull(gate.current.value) }
     }
 
+    // ───────────── refacerea (renewed): poate veni după o interogare pe alt fir ─────────────
+
+    @Test fun rebuiltTrashRequestAlreadyInTheTrashEndsWithYes() {
+        // „Permite” în dialogul coșului, dar rezultatul s-a pierdut: la refacere MediaStore arată bucata toată la coș.
+        val out = mutableListOf<String>()
+        onMain { applyLoop(write = true, trash = true, out = out) }
+        onMain { launchCurrent("W") }
+        onMain { gate.answer(true) }
+        onMain { launchCurrent("T") }
+        onMain {
+            val r = gate.current.value!!
+            assertEquals(Missing.RENEW, gate.missing(r.id, 0))
+            assertTrue(gate.renewed(r.id, 0, ConsentGate.Renewal.Done))
+        }
+        onMain { assertEquals("nu „Nu s-a aplicat tot.”: bucla numără pozele", listOf("runApply"), out); assertNull(gate.current.value) }
+    }
+
+    @Test fun rebuildThatCannotBeMadeDropsTheRequest() {
+        val out = mutableListOf<String>()
+        onMain { applyLoop(write = true, trash = false, out = out) }
+        onMain { launchCurrent("W") }
+        onMain {
+            val r = gate.current.value!!
+            assertEquals(Missing.RENEW, gate.missing(r.id, 0))
+            assertTrue(gate.renewed(r.id, 0, ConsentGate.Renewal.Drop))
+        }
+        onMain { assertEquals(listOf("stop:DROPPED"), out) }
+    }
+
+    @Test fun rebuildFinishingAfterALateResultIsIgnored() {
+        // Dialogul a apărut târziu (după plasă), omul a răspuns cât coșul se întreba pe IO: refacerea nu mai are ce atinge.
+        val out = mutableListOf<String>()
+        onMain { applyLoop(write = false, trash = true, out = out) }
+        onMain { launchCurrent("T") }
+        var id = 0L
+        onMain { id = gate.current.value!!.id; assertEquals(Missing.RENEW, gate.missing(id, 0)) }
+        onMain { assertEquals(Outcome.APPLIED, gate.answer(true)) }
+        onMain {
+            assertFalse(gate.renewed(id, 0, ConsentGate.Renewal.Again("T2")))
+            assertFalse(gate.renewed(id, 0, ConsentGate.Renewal.Done))
+            assertEquals(listOf("runApply"), out)
+            assertNull(gate.current.value)
+        }
+    }
+
+    @Test fun secondRebuildOfTheSameAttemptIsIgnoredAndRetryNeedsStuck() {
+        onMain { applyLoop(write = true, trash = false, out = mutableListOf()) }
+        onMain { launchCurrent("W") }
+        onMain {
+            val r = gate.current.value!!
+            assertEquals(Missing.RENEW, gate.missing(r.id, 0))
+            assertTrue(gate.renewed(r.id, 0, ConsentGate.Renewal.Again("W1")))
+            // O revenire sau o atingere dublă a refăcut aceeași încercare încă o dată: nu mai sare peste încercarea tăcută.
+            assertFalse(gate.renewed(r.id, 0, ConsentGate.Renewal.Again("W2")))
+            val now = gate.current.value!!
+            assertEquals(1, now.attempt)
+            assertEquals("W1", now.payload)
+            assertFalse(now.launched)
+            // „Încearcă din nou” lucrează doar cu cererea blocată (InventoryViewModel.retryConsent): aici n-ar face nimic.
+            assertFalse(now.stuck)
+        }
+        onMain { launchCurrent("W1") }
+        onMain {
+            val r = gate.current.value!!
+            assertEquals(Missing.STUCK, gate.missing(r.id, 1))
+            assertTrue(gate.current.value!!.stuck)
+            assertTrue(gate.renewed(r.id, 1, ConsentGate.Renewal.Again("W3")))   // „Încearcă din nou”
+            assertEquals(2, gate.current.value!!.attempt)
+            assertFalse(gate.current.value!!.stuck)
+        }
+    }
+
     // ───────────── martorul: ordinea din 4.4 chiar agață pe acest fir ─────────────
 
     /**

@@ -29,7 +29,6 @@ import com.forja.app.core.inventory.InvPlan
 import com.forja.app.core.inventory.InvProgress
 import com.forja.app.core.inventory.InvScope
 import com.forja.app.core.inventory.Inventory
-import com.forja.app.core.inventory.Landing
 import com.forja.app.core.inventory.MediaRoots
 import com.forja.app.core.inventory.TreePaths
 import com.forja.app.core.inventory.mediaRootFromTree
@@ -421,27 +420,45 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         if (gate.current.value?.stuck == true) renewConsent("user")
     }
 
+    /** Încercările în curs de refacere (`r<id>a<încercare>`): o revenire sau o atingere dublă nu cere încă o cerere. */
+    private val renewing = HashSet<String>()
+
+    /**
+     * Aceeași bucată, cu o cerere nouă. Coșul întreabă întâi MediaStore ce e deja la coș, pe IO: cererea rămâne așa cum
+     * e până atunci, iar poarta aplică refacerea doar dacă e tot aceeași cerere, la aceeași încercare
+     * ([ConsentGate.renewed]). Scrierea și laptopul se refac pe loc, ca înainte.
+     */
     private fun renewConsent(why: String) {
         val r = gate.current.value ?: return
-        val fresh = try {
-            when (r.kind) {
-                ConsentGate.Kind.WRITE -> Inventory.writeRequest(ctx)
-                ConsentGate.Kind.TRASH -> Inventory.trashRequest(ctx)
-                ConsentGate.Kind.LAPTOP -> CleanupEngine(ctx, forja.prefs).writeRequest(laptopAsk)
+        if (!renewing.add(r.tag)) return
+        viewModelScope.launch {
+            try {
+                val rebuilt: ConsentGate.Renewal<IntentSender> = try {
+                    when (r.kind) {
+                        ConsentGate.Kind.WRITE -> Inventory.writeRequest(ctx)?.let { ConsentGate.Renewal.Again(it) } ?: ConsentGate.Renewal.Drop
+                        // Toată bucata deja la coș = acordul a fost dat, dar rezultatul lui s-a pierdut: DA, iar bucla o numără.
+                        ConsentGate.Kind.TRASH -> Inventory.trashRequest(ctx).renewal()
+                        ConsentGate.Kind.LAPTOP -> CleanupEngine(ctx, forja.prefs).writeRequest(laptopAsk)?.let { ConsentGate.Renewal.Again(it) }
+                            ?: ConsentGate.Renewal.Drop
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    ConsentGate.Renewal.Drop
+                }
+                // Cât s-a refăcut, cererea ar fi putut-o închide un rezultat întârziat sau „Înapoi la dosare”: atunci nu se aplică.
+                val cur = gate.current.value
+                val same = cur != null && cur.id == r.id && cur.attempt == r.attempt
+                val note = "${r.tag} $why" + (if (rebuilt == ConsentGate.Renewal.Done) " trashed" else "") + (if (same) "" else " stale")
+                val res = if (!same) DiagResult.SKIPPED else if (rebuilt == ConsentGate.Renewal.Drop) DiagResult.ERROR else DiagResult.OK
+                // Rândul ÎNAINTE de refacere: DA / RENUNȚAT reiau bucla pe loc, care notează deja pasul următor.
+                ConsentLog.add(ctx, "${r.kind.code}_RETRY", res, now() - askAt, note, (rebuilt as? ConsentGate.Renewal.Again)?.payload?.creatorPackage)
+                // Imposibil de refăcut: FORJA renunță (nu omul) — aplicarea se oprește cu „Nu s-a aplicat tot.”, planul rămâne.
+                gate.renewed(r.id, r.attempt, rebuilt)
+            } finally {
+                renewing.remove(r.tag)
             }
-        } catch (_: Exception) {
-            null
         }
-        // Coșul s-a făcut deja (acordul a fost dat, dar rezultatul lui s-a pierdut): nimic de cerut, bucla merge mai
-        // departe și apply() numără pozele aruncate.
-        if (fresh == null && r.kind == ConsentGate.Kind.TRASH && Inventory.trashWithoutDialog) {
-            ConsentLog.add(ctx, "T_RETRY", DiagResult.OK, now() - askAt, "${r.tag} $why trashed")
-            gate.cancel(ConsentGate.Answer.YES)
-            return
-        }
-        ConsentLog.add(ctx, "${r.kind.code}_RETRY", if (fresh != null) DiagResult.OK else DiagResult.ERROR, now() - askAt, "${r.tag} $why", fresh?.creatorPackage)
-        // Imposibil de refăcut: FORJA renunță (nu omul) — aplicarea se oprește cu „Nu s-a aplicat tot.”, planul rămâne.
-        if (fresh != null) gate.renew(r.id, fresh) else gate.cancel(ConsentGate.Answer.DROPPED)
     }
 
     /**
@@ -485,8 +502,9 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
     val applying: Boolean get() = applyJob?.isActive == true
 
     /**
-     * Bucla din motor: dialogul de scriere (dacă e), dialogul coșului (dacă e), apoi apply(); din nou, până când
-     * ambele cereri întorc null. Un dialog refuzat oprește tot (nimic pierdut) și ecranul revine la dosare.
+     * Bucla din motor ([ApplyRounds]): dialogul de scriere (dacă e), coșul (dialog, sau nimic când bucata e deja toată
+     * la coș), apoi apply(); din nou, cât runda a avut ce aplica. Un dialog refuzat oprește tot (nimic pierdut) și
+     * ecranul revine la dosare.
      */
     fun apply() {
         if (applying) return
@@ -497,44 +515,19 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         _applying.value = true
         val startedAt = now()
         ConsentLog.add(ctx, "APPLY_START", DiagResult.OK, 0, "moves=${confirm.moves} trash=${confirm.trashCount}")
+        val loop = ApplyRounds(
+            writeRequest = { Inventory.writeRequest(ctx) },
+            trashRequest = { Inventory.trashRequest(ctx) },
+            ask = ::ask,
+            waiting = { _applyWaiting.value = it },
+            runApply = ::runApply
+        )
         applyJob = viewModelScope.launch {
-            var total = ApplyResult(0, 0, 0, 0L)
-            var landing: Landing? = null
-            // Nemutatele: cele pierdute în fiecare rundă + cele încă în plan după ultima (un eșec reîncercat în runda
-            // următoare nu se numără de două ori; aceeași regulă ca rezumatul de pe site, AppliedRec.failed).
-            var lost = 0
-            var pending = 0
-            var rounds = 0
             var ended = "cancelled"
             try {
-                while (rounds < 64) {
-                    val w = Inventory.writeRequest(ctx)
-                    if (w != null) {
-                        _applyWaiting.value = true
-                        val a = ask(w, ConsentGate.Kind.WRITE)
-                        _applyWaiting.value = false
-                        if (a != ConsentGate.Answer.YES) { ended = a.name.lowercase(); _outcome.value = outcomeOf(a); return@launch }
-                    }
-                    val t = Inventory.trashRequest(ctx)
-                    // Bucata coșului era deja toată la gunoi (acordul dat într-o aplicare întreruptă): fără dialog, dar
-                    // runda tot are de lucru — apply() o numără și o scoate din plan.
-                    val trashDone = t == null && Inventory.trashWithoutDialog
-                    if (t != null) {
-                        _applyWaiting.value = true
-                        val a = ask(t, ConsentGate.Kind.TRASH)
-                        _applyWaiting.value = false
-                        if (a != ConsentGate.Answer.YES) { ended = a.name.lowercase(); _outcome.value = outcomeOf(a); return@launch }
-                    }
-                    if (rounds > 0 && w == null && t == null && !trashDone) break
-                    val r = runApply()
-                    total = ApplyResult(total.moved + r.moved, total.trashed + r.trashed, total.failed + r.failed, total.freedBytes + r.freedBytes)
-                    lost += r.lost
-                    pending = r.pending
-                    landing = landing?.merge(r.landing) ?: r.landing
-                    rounds++
-                    if (w == null && t == null && !trashDone) break
-                    if (r.moved + r.trashed == 0) break
-                }
+                val stop = loop.run()
+                if (stop != null) { ended = stop.name.lowercase(); _outcome.value = outcomeOf(stop); return@launch }
+                val total = loop.total
                 val complete = plan.value == null
                 val stopped = try { Music.stopWhenDoneFlow(ctx).first() } catch (e: CancellationException) { throw e } catch (_: Exception) { true }
                 _done.value = DoneUiState(
@@ -542,9 +535,9 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
                     folders = confirm.folders,
                     items = total.moved + total.trashed,
                     freedBytes = if (total.freedBytes > 0) total.freedBytes else if (total.trashed > 0) confirm.trashBytes else 0L,
-                    failed = lost + pending,
+                    failed = loop.lost + loop.pending,
                     musicStopped = stopped,
-                    place = landing,
+                    place = loop.landing,
                     runId = p.runId,
                     showSite = contractSigned.value
                 )
@@ -557,12 +550,12 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
                 // O eroare neprevăzută (disc, MediaStore) nu lasă ecranul agățat și nu închide aplicația: ce s-a aplicat
                 // a ieșit deja din plan, restul rămâne în dosare.
                 ended = e.javaClass.simpleName
-                _outcome.value = if (total.moved + total.trashed > 0) ApplyOutcome.Partial else ApplyOutcome.Cancelled
+                _outcome.value = if (loop.total.moved + loop.total.trashed > 0) ApplyOutcome.Partial else ApplyOutcome.Cancelled
             } finally {
                 _applyWaiting.value = false
                 _applying.value = false
                 val res = when (ended) { "complete" -> DiagResult.OK; "no", "cancelled" -> DiagResult.REFUSED; else -> DiagResult.ERROR }
-                ConsentLog.add(ctx, "APPLY_END", res, now() - startedAt, "$ended rounds=$rounds")
+                ConsentLog.add(ctx, "APPLY_END", res, now() - startedAt, "$ended rounds=${loop.rounds}")
                 ConsentLog.flush(ctx)
                 // Cifrele din S1 după mutări: pozele aruncate au plecat din galerie, documentele stau acum în dosare.
                 refreshPhotoStats()

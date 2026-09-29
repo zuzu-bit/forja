@@ -6,6 +6,7 @@ import android.content.IntentSender
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
+import android.provider.MediaStore
 import com.forja.app.ForjaApp
 import com.forja.app.core.cleanup.CleanupEngine
 import com.forja.app.core.cleanup.DocumentOrganizer
@@ -141,6 +142,16 @@ data class ApplyResult(
     val pending: Int = 0
 )
 
+/** Ce cere coșul pentru bucata curentă din „De aruncat” ([Inventory.trashRequest]). */
+sealed interface TrashAsk {
+    /** Dialogul sistemului, pentru pozele din bucată care nu sunt încă la coș. */
+    class Dialog(val sender: IntentSender) : TrashAsk
+    /** Toată bucata e deja la coș (acordul dat într-o aplicare întreruptă): fără dialog, dar [Inventory.apply] o numără. */
+    data object AlreadyTrashed : TrashAsk
+    /** Nimic de cerut (nimic în „De aruncat”, sub API 30, documente) sau cererea n-a putut fi făcută. */
+    data object None : TrashAsk
+}
+
 /** Eșec explicat utilizatorului (fără permisiune, galerie goală, folder inaccesibil). */
 internal class InvFailure(message: String) : Exception(message)
 
@@ -154,10 +165,11 @@ internal class InvFailure(message: String) : Exception(message)
  * 4. aplicarea pozelor (API 30+): lansează [writeRequest] și [trashRequest] (dialogurile sistemului), apoi [apply].
  *    Cererile sunt în bucăți de ≤ 500 de elemente (limita Binder/MediaStore, ca CleanupEngine.REQUEST_CHUNK): după
  *    [apply], dacă planul mai are elemente, [writeRequest]/[trashRequest] întorc următoarea bucată — se repetă până
- *    întorc null (planul se golește și dispare singur când totul e aplicat). Oprește bucla când utilizatorul anulează
- *    un dialog (bucata refuzată rămâne în plan și ar reveni). Fără dialog acceptat, [apply] nu mută nimic pe API 30+.
- *    Sub API 30 ambele întorc null și [apply] lucrează direct (API 29: se mută doar ce aparține FORJA; sub 29 mutarea
- *    nu e posibilă; „De aruncat” se șterge direct, fără coș).
+ *    nu mai cer nimic (null / [TrashAsk.None]; planul se golește și dispare singur când totul e aplicat). O bucată a
+ *    coșului aflată deja toată la coș ([TrashAsk.AlreadyTrashed]) nu cere dialog, dar runda tot rulează [apply].
+ *    Oprește bucla când utilizatorul anulează un dialog (bucata refuzată rămâne în plan și ar reveni). Fără dialog
+ *    acceptat, [apply] nu mută nimic pe API 30+. Sub API 30 nu se cere nimic și [apply] lucrează direct (API 29: se
+ *    mută doar ce aparține FORJA; sub 29 mutarea nu e posibilă; „De aruncat” se șterge direct, fără coș).
  *    Documentele nu au dialoguri: [apply] mută prin SAF în „<destinație>/<dosar>” (implicit „Organizate/<dosar>”)
  *    și „De aruncat (FORJA)”. Destinația se schimbă înainte de aplicare cu [setDestination]; fiecare [apply]
  *    întoarce în [ApplyResult.landing] locul unde au ajuns lucrurile, iar rezumatul rulării urcă pe site
@@ -445,42 +457,39 @@ object Inventory {
     }
 
     /**
-     * Ultimul [trashRequest] a găsit toată bucata deja în coș: n-a cerut dialogul (null), dar a păstrat bucata pentru
-     * [apply], care o numără și o scoate din plan.
-     */
-    @Volatile var trashWithoutDialog: Boolean = false
-        private set
-
-    /**
      * Coșul sistemului pentru „De aruncat” (API 30+, poze; recuperabil 30 de zile): prima bucată de ≤ 500. Pozele deja
      * aflate în coș (de exemplu acordul dat într-o aplicare întreruptă) nu mai apar în dialog, dar rămân în bucată:
-     * [apply] le verifică și le numără aruncate. Toată bucata deja în coș → null, fără dialog ([trashWithoutDialog]).
+     * [apply] le verifică și le numără aruncate. Toată bucata deja în coș → [TrashAsk.AlreadyTrashed], fără dialog.
+     *
+     * Suspendă: întrebarea „ce e deja la coș” merge pe IO, nu pe firul principal, de unde o cheamă bucla aplicării
+     * (înaintea dialogului de scriere) și refacerea cererii (la revenirea ecranului, după un rezultat pierdut).
      */
-    fun trashRequest(context: android.content.Context): android.content.IntentSender? {
-        trashWithoutDialog = false
-        if (Build.VERSION.SDK_INT < 30) return null
+    suspend fun trashRequest(context: android.content.Context): TrashAsk {
+        if (Build.VERSION.SDK_INT < 30) return TrashAsk.None
         val ctx = bind(context)
-        val s = snapshot ?: return null
-        if (s.meta.kind != InvKind.Photos) return null
+        val s = snapshot ?: return TrashAsk.None
+        if (s.meta.kind != InvKind.Photos) return TrashAsk.None
         val chunk = InventoryApply.pendingTrash(s.doc, s.items).take(CleanupEngine.REQUEST_CHUNK)
-        if (chunk.isEmpty()) { trashGrant = null; return null }
+        if (chunk.isEmpty()) { trashGrant = null; return TrashAsk.None }
+        val trashed = withContext(Dispatchers.IO) { MediaMover.trashedIds(ctx, chunk.map { it.mediaId }) }
         val grant = Grant(s.meta.runId, chunk.map { it.id })
-        val ask = InventoryApply.stillToTrash(chunk, MediaMover.trashedIds(ctx, chunk.map { it.mediaId }))
+        val ask = InventoryApply.stillToTrash(chunk, trashed)
         if (ask.size < chunk.size) {
             ConsentLog.add(ctx, "T_SKIP", com.forja.app.core.music.DiagResult.OK, 0, "n=${chunk.size - ask.size}/${chunk.size}")
         }
         if (ask.isEmpty()) {
             trashGrant = grant
-            trashWithoutDialog = true
-            return null
+            return TrashAsk.AlreadyTrashed
         }
-        return try {
-            CleanupEngine(ctx, ForjaApp.from(ctx).prefs).trashRequest(ask.map { Uri.parse(it.uri) }, true)
-                ?.also { trashGrant = grant }
+        // Același apel ca CleanupEngine.trashRequest (API 30+ și o listă nevidă sunt verificate mai sus).
+        val sender = try {
+            MediaStore.createTrashRequest(ctx.contentResolver, ask.map { Uri.parse(it.uri) }, true).intentSender
         } catch (e: Exception) {
             ConsentLog.add(ctx, "T_ASK", com.forja.app.core.music.DiagResult.ERROR, 0, "n=${ask.size} ${e.javaClass.simpleName}")
             null
         }
+        trashGrant = if (sender != null) grant else null
+        return if (sender != null) TrashAsk.Dialog(sender) else TrashAsk.None
     }
 
     /**

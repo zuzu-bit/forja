@@ -332,8 +332,8 @@ internal object MediaMover {
     /**
      * Care dintre [ids] stau deja în coșul MediaStore (API 30+). Doar rândurile cu IS_TRASHED = 1 citit din cursor: un
      * furnizor care ar ignora argumentul de coș nu poate face o poză vizibilă să pară aruncată. Goală sub API 30 sau la
-     * eroare — atunci dialogul le cere pe toate, ca înainte. O interogare scurtă (≤ 500 de id-uri), făcută de
-     * Inventory.trashRequest pe firul principal, lângă createTrashRequest.
+     * eroare — atunci dialogul le cere pe toate, ca înainte. Blocant (≤ 500 de id-uri, două interogări): Inventory.
+     * trashRequest o cheamă pe IO.
      */
     fun trashedIds(ctx: Context, ids: List<Long>): Set<Long> {
         if (Build.VERSION.SDK_INT < 30 || ids.isEmpty()) return emptySet()

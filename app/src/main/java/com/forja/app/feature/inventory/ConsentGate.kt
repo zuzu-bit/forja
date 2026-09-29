@@ -133,6 +133,33 @@ class ConsentGate<T : Any> {
         return true
     }
 
+    /** Ce a dat refacerea unei cereri (după [Missing.RENEW] sau „Încearcă din nou”). */
+    sealed interface Renewal<out T : Any> {
+        /** Un PendingIntent nou pentru aceeași bucată: ecranul îl lansează ([renew]). */
+        data class Again<T : Any>(val payload: T) : Renewal<T>
+        /** Nimic de cerut, acordul se vede deja (bucata coșului e toată la coș): cererea se închide cu [Answer.YES]. */
+        data object Done : Renewal<Nothing>
+        /** Imposibil de refăcut (cerere nulă, excepție): FORJA renunță, [Answer.DROPPED]. */
+        data object Drop : Renewal<Nothing>
+    }
+
+    /**
+     * Refacerea încercării [attempt] a cererii [id] s-a terminat (poate după o interogare pe alt fir). Contează doar dacă
+     * cererea e tot aceea, la aceeași încercare: între timp ar fi putut-o închide un rezultat întârziat sau „Înapoi la
+     * dosare”, iar o a doua refacere a aceleiași încercări (revenire dublă, atingere dublă) nu mai sare peste încercarea
+     * tăcută. False = nimic de făcut; PendingIntent-ul nou se aruncă.
+     */
+    fun renewed(id: Long, attempt: Int, outcome: Renewal<T>): Boolean {
+        val r = _current.value ?: return false
+        if (r.id != id || r.attempt != attempt) return false
+        when (outcome) {
+            is Renewal.Again -> _current.value = r.copy(payload = outcome.payload, attempt = r.attempt + 1, launched = false, stuck = false)
+            Renewal.Done -> cancel(Answer.YES)
+            Renewal.Drop -> cancel(Answer.DROPPED)
+        }
+        return true
+    }
+
     /**
      * Închide cererea fără dialog: „Înapoi la dosare” ([Answer.NO]), o cerere imposibil de refăcut / ViewModel-ul închis
      * ([Answer.DROPPED]) sau un acord care se vede deja în MediaStore ([Answer.YES]: pozele sunt la coș).
