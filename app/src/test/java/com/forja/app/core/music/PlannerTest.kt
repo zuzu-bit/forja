@@ -103,6 +103,18 @@ class PlannerTest {
         assertEquals(Step(Rung.O_LIKED_PAGE, SPOTIFY), run.last())
         assertTrue("niciodată O_LAUNCH", steps.none { it.rung == Rung.O_LAUNCH })
         assertTrue("YouTube nu primește nimic", run.none { it.pkg == YOUTUBE || it.sessionId == "yt" })
+
+        // Piesa ei de top are ID Spotify, dar lista e încă rece (hubul spune APRECIATE): saltul duce tot la Melodii
+        // apreciate, nu la o singură piesă urmată de radioul lui Spotify.
+        val withTop = Planner.plan(Want.Workout(null), lanaSnap(top = TOP)).filter { it.skip == null }
+        assertEquals(Step(Rung.V_LIKED_PLAY, SPOTIFY), withTop.first())
+        assertTrue(withTop.none { it.rung == Rung.V_TRACK || it.rung == Rung.V_PFS_TOP })
+        // Chiar dacă tabelul învățat pune V_TRACK primul (a mers la TOP 1 sau „Pornește muzica”).
+        val trackFirst = LearnedTable.EMPTY.record(SPOTIFY, "9.0.62", Rung.V_TRACK, LearnedTable.Outcome.OK, 1L)
+        assertEquals(Step(Rung.V_LIKED_PLAY, SPOTIFY), Planner.plan(Want.Workout(null), lanaSnap(top = TOP, learned = trackFirst)).first { it.skip == null })
+        // TOP 1 și „Pornește muzica” sar în continuare direct la piesa de top.
+        assertEquals(Rung.V_TRACK, Planner.plan(Want.Top, lanaSnap(top = TOP)).first { it.skip == null }.rung)
+        assertEquals(Rung.V_TRACK, Planner.plan(Want.MyMusic, lanaSnap(top = TOP)).first { it.skip == null }.rung)
     }
 
     @Test fun spotifyIsNeverHiddenByDetection() {

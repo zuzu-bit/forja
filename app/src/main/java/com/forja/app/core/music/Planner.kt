@@ -207,6 +207,8 @@ object Planner {
      * Pornirea odată cu sesiunea: piesa 1 din lista FORJA pe sesiunea playerului (S_TOP), altfel Melodii apreciate
      * (S_LIKED), altfel reia muzica pusă pe pauză; fără sesiune, tasta media (doar spre un player de muzică). Apoi
      * treptele vizibile: din 4.4.1 „Începe sesiunea” e chiar atingerea, deci cel mult un salt, în 1,5 s de la ea.
+     * Fără listă (rece, sau ea a ales Apreciate: hubul spune „APRECIATE”), saltul duce la Melodii apreciate, nu la
+     * piesa ei de top (o singură piesă, apoi radioul lui Spotify); TOP 1 și „Pornește muzica” o păstrează.
      */
     private fun workout(want: Want.Workout, s: Snapshot): List<Step> {
         val out = ArrayList<Step>()
@@ -227,7 +229,7 @@ object Planner {
         } else {
             out += keyNoAccess(s)
         }
-        out += visibleMusic(s, first ?: s.top)
+        out += visibleMusic(s, first)
         out += terminal(s)
         return filterLearned(out.distinctBy { it.key }, s)
     }
