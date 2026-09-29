@@ -428,6 +428,43 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     clean(p);
   });
 
+  await check('Somn mirror: night in progress, waiting upload, days, hypnogram, alarm, limits and the signed night player', async () => {
+    const p = page();
+    const d = p.fixture.data;
+    d.somn.live = {id: 's32', startAt: Date.now() - 2 * 3600000, alarm: {target: Date.now() + 5 * 3600000, windowMin: 30, firedAt: null, reason: null, snoozes: 0}, sounds: [{sound: 'rain', minutes: 20}]};
+    await tick(20); await login(p); await open(p, 'somn');
+    await until(() => p.$('body-somn').querySelectorAll('.night-row').length, 'nights');
+    const text = p.$('body-somn').textContent;
+    assert.match(text, /Stingerea e activă de la \d\d:\d\d/); assert.match(text, /Ploaie la adormire/);
+    assert.match(text, /Adormit în 14 min · o trezire/);
+    assert.match(text, /Alarma a sunat la \d\d:\d\d, la final de ciclu, amânată o dată/);
+    assert.match(text, /ÎN AȘTEPTARE/, 'waiting for Wi-Fi is not "no recording"');
+    const seg = [...p.$('body-somn').querySelectorAll('.seg-btn')];
+    assert.deepEqual(seg.map(b => b.textContent), ['14 z', '30 z', '60 z']);
+    seg[1].click(); await tick(40);
+    assert(p.fixture.calls.some(c => c.route === '/insights/api/somn' && c.search === '?days=30'), 'days=30');
+    // The waiting night explains itself.
+    const waiting = d.somn.nights.find(n => n.audio === 'waiting');
+    await open(p, 'somn/' + waiting.id); await until(() => p.$('body-somn').querySelector('.timeline'), 'waiting night');
+    assert.match(p.$('body-somn').textContent, /Urcarea așteaptă Wi-Fi · 3 din 13/);
+    assert.match(p.$('body-somn').textContent, /Sunetul încă n-a urcat de pe telefon/);
+    // s30: hypnogram, real limits instead of the fixed badge; signed URLs make one player for the whole night.
+    d.somnDetail.s30.chunks.forEach(c => { c.url = '/insights/audio/somn/demo/s30/' + c.i + '?exp=1&sig=x'; });
+    d.somnDetail.s30.urlExpiresAt = Date.now() + 600000;
+    await open(p, 'somn/s30'); await until(() => p.$('body-somn').querySelector('.listen'), 'player');
+    const b = p.$('body-somn');
+    assert(b.querySelector('.hyp-svg path.hyp-line'), 'hypnogram'); assert.match(b.textContent, /scor = 84 \(7 h 10 dormite\) − 6 \(puțin somn profund\)/);
+    assert.match(b.textContent, /ANALIZĂ CU LIMITE/); assert.match(b.textContent, /Gemini n-a răspuns la 1 chunk-uri/);
+    assert.match(b.textContent, /SUNETUL SE ȘTERGE (MÂINE|ÎN \d+ ZILE)/);
+    assert.match(b.textContent, /Ascultat \d+ h/);
+    b.querySelector('.listen .play-btn').click(); await tick(20);
+    assert.equal(new p.w.URL(p.ux.Somn.audio.src).pathname, '/insights/audio/somn/demo/s30/0', 'plays from the signed URL, no Blob download');
+    b.querySelectorAll('.event .play-btn')[1].click(); await tick(20);
+    assert.equal(new p.w.URL(p.ux.Somn.audio.src).pathname, '/insights/audio/somn/demo/s30/2', 'an event jumps inside the same player');
+    assert(!p.call('/insights/api/somn/s30/chunk/0') && !p.call('/insights/api/somn/s30/chunk/2'));
+    clean(p);
+  });
+
   await check('Rație, Marș, Muzică, Pază render their contract data with honest labels', async () => {
     const p = page();
     await tick(20); await login(p);

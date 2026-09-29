@@ -90,7 +90,16 @@ function nightDetail(nt) {
   const chunkMs = 30 * MIN, chunks = [];
   for (let i = 0, t = nt.startAt; t < nt.endAt; i++, t += chunkMs) chunks.push({i, startAt: t, durationMs: Math.min(chunkMs, nt.endAt - t)});
   const ev = (mins, kind, label, text, dur) => { const t = nt.startAt + mins * MIN, chunk = Math.floor(mins / 30); return {t, kind, label, text, chunk, offsetMs: (mins - chunk * 30) * MIN + 12000, durationMs: dur}; };
-  return {id: nt.id, summary: nt.summary, chunks, events: [
+  // Hipnograma în trepte (minute de la începutul veghei), ca SleepStaging: adormire, cicluri de ~90 min, o trezire.
+  const total = Math.round((nt.endAt - nt.startAt) / MIN), segs = [[0, 14, 'awake']];
+  for (let t = 14, k = 0; t < total; k++) { const plan = [['light', 25], ['deep', k < 2 ? 35 : 15], ['light', 15], ['rem', 10 + k * 5]]; for (const [st, d] of plan) { if (t >= total) break; const e = Math.min(total, t + d); segs.push([t, e, st]); t = e; } if (k === 2 && t < total - 6) { segs.push([t, t + 4, 'awake']); t += 4; } }
+  const phases = segs.map(([a, b, stage]) => ({from: nt.startAt + a * MIN, to: nt.startAt + b * MIN, stage}));
+  return {id: nt.id, summary: nt.summary, chunks, state: 'done', audioStartAt: nt.startAt, audioExpiresAt: nt.endAt + 7 * DAY, urlExpiresAt: null, timeline: true, phases,
+    sleep: {latencyMin: 14, awakenings: 1, awakeMin: 4, scoreLines: [{delta: 84, reason: '7 h 10 dormite'}, {delta: -6, reason: 'puțin somn profund'}]},
+    talkSummary: nt.id === 's31' ? 'Două fraze scurte, liniștite, spre dimineață.' : null,
+    analysis: {status: 'complete', fallback: false, progress: {done: chunks.length, failed: 0, total: chunks.length}, coverage: {analyzedMin: total - 12, totalMin: total},
+      stats: {snoreMin: 2, snoreEpisodes: 3, coughs: 1, noises: 1, longestSnore: {t: nt.startAt + 118 * MIN, minutes: 1}}, limits: nt.id === 's30' ? ['Gemini n-a răspuns la 1 chunk-uri: acolo e doar transcriere Whisper cu timpi (fără sforăit).'] : [], sources: ['gemini/2.5-flash']},
+    events: [
     ev(24, 'snore', 'Sforăit', null, 38000), ev(71, 'talk', 'Vorbit', 'Nu, lasă, mâine dimineață.', 4200), ev(118, 'snore', 'Sforăit', null, 52000),
     ev(196, 'cough', 'Tuse', null, 3000), ev(262, 'talk', 'Vorbit', 'Unde e harta?', 2600), ev(305, 'noise', 'Zgomot', null, 5000), ev(388, 'snore', 'Sforăit', null, 41000)]};
 }
@@ -125,6 +134,10 @@ function rich(now = NOW) {
     night(24, day0 - 7 * DAY - 45 * MIN, 398, 76, 'none'), night(23, day0 - 8 * DAY - 15 * MIN, 476, 91, 'none'), night(22, day0 - 9 * DAY - 60 * MIN, 410, 79, 'none'),
     night(21, day0 - 10 * DAY - 25 * MIN, 440, 85, 'none'), night(20, day0 - 11 * DAY - 35 * MIN, 365, 68, 'none'), night(19, day0 - 12 * DAY - 5 * MIN, 455, 87, 'none'), night(18, day0 - 13 * DAY - 40 * MIN, 430, 82, 'none')];
   nights[1].startAt = day0 - DAY - 25 * MIN; nights[1].endAt = nights[1].startAt + 402 * MIN;
+  Object.assign(nights[0], {state: 'done', movements: 38, sleep: {latencyMin: 14, awakenings: 1, awakeMin: 4, scoreLines: [{delta: 84, reason: '7 h 10 dormite'}, {delta: -6, reason: 'puțin somn profund'}]},
+    alarm: {target: day0 + 7 * HOUR, windowMin: 30, firedAt: day0 + 6.7 * HOUR, reason: 'cycle', snoozes: 1}, sounds: [{sound: 'rain', minutes: 30}], bedtime: {minute: 23 * 60, reminder: true}});
+  Object.assign(nights[4], {audio: 'waiting', upload: {state: 'waiting_wifi', chunks: 13, uploaded: 3, lastError: null, audioStartAt: nights[4].startAt, recordedUntil: null}});
+  const somnLive = now - day0 > 21 * HOUR ? {id: 's32', startAt: day0 + 21.5 * HOUR, alarm: {target: day0 + DAY + 7 * HOUR, windowMin: 30, firedAt: null, reason: null, snoozes: 0}, sounds: [{sound: 'rain', minutes: 20}]} : null;
   const somnDetail = Object.fromEntries(nights.filter(n => n.audio === 'ready').map(n => [n.id, nightDetail(n)]));
   nights.filter(n => n.audio === 'ready').forEach(n => somnDetail[n.id].chunks.forEach(c => { blobs['chunk:' + n.id + ':' + c.i] = {audio: true}; }));
   const today = [meal(day0 + 8.2 * HOUR, 0, 'Ovăz cu fructe de pădure', 410, 16, 62, 11, 320, 'ESTIMAT', 0.78), meal(day0 + 13.1 * HOUR, 1, 'Ciorbă de legume și pâine', 560, 21, 74, 18, 520, 'ESTIMAT', 0.7),
@@ -161,7 +174,7 @@ function rich(now = NOW) {
       routes, inviteCode: 'K7Q2XM', updated_at: now - 15000},
     explore: {owner: 'demo-owner', grid_m: 150, features: cells, places, updated_at: now - 25 * MIN},
     discovery: {discoverable: true, discovery_until: now + 24 * DAY},
-    somn: {nights}, somnDetail,
+    somn: {nights, live: somnLive}, somnDetail,
     ratie: {targets: {kcal: 2100, protein: 120, carbs: 230, fat: 70}, days: ratieDays},
     mars: {activities: routes.map(r => ({id: r.id, type: r.type, startAt: r.startAt, endAt: r.startAt + r.durationS * 1000, distanceM: r.distanceM, durationS: r.durationS, kcal: Math.round(r.distanceM / 14), polyline: r.polyline}))
       .concat([{id: 'a35', type: 'walk', startAt: now - 8 * DAY, endAt: now - 8 * DAY + 1800000, distanceM: 2100, durationS: 1800, kcal: 120, polyline: ''}]),

@@ -34,7 +34,7 @@ export const CLIENT_FILES = ['site-core.js.txt', 'site-mascot.js.txt', 'files-pr
 const appJs = [core, mascot, filePreview, azi, teren, camarazi, gasire, inventar, somn, ratie, mars, muzica, paza, concentrare, cont, boot].join('\n');
 
 /** Doar gazdele de care are nevoie pagina: Firebase (logare), OpenFreeMap (harta). Fonturile sunt servite de aici. */
-export const PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://tiles.openfreemap.org; img-src 'self' blob: data: https://tiles.openfreemap.org; media-src blob:; worker-src 'self' blob:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
+export const PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://tiles.openfreemap.org; img-src 'self' blob: data: https://tiles.openfreemap.org; media-src 'self' blob:; worker-src 'self' blob:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
 const FONTS = { 'barlowc-500': barlow500, 'barlowc-600': barlow600, 'barlowc-700': barlow700, 'hanken-var': hanken, 'jbmono-var': jbmono };
 const text = (body, type, cache) => new Response(body, { headers: { 'content-type': type + '; charset=utf-8', 'cache-control': cache, 'x-content-type-options': 'nosniff' } });

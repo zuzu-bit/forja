@@ -501,6 +501,39 @@ body.night .nav-item.active .ic{color:var(--blue)}
 .play-btn:hover{background:rgba(157,191,232,.2)}
 .play-btn .ic path{fill:currentColor}
 .play-btn.busy{opacity:.6}
+/* Somn · oglinda nopții: veghea în curs, hipnograma, „Ascultă noaptea”, limitele analizei */
+.somn-head-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.somn-live{display:flex;align-items:center;gap:12px;padding:16px 18px;margin-bottom:16px;color:var(--blue)}
+.somn-live:hover{border-color:rgba(157,191,232,.4)}
+.live-dot{width:9px;height:9px;border-radius:50%;background:var(--blue);box-shadow:0 0 0 0 rgba(157,191,232,.5);animation:somn-pulse 2.4s ease-out infinite;flex:none}
+@keyframes somn-pulse{0%{box-shadow:0 0 0 0 rgba(157,191,232,.5)}70%{box-shadow:0 0 0 10px rgba(157,191,232,0)}100%{box-shadow:0 0 0 0 rgba(157,191,232,0)}}
+.somn-live-text{display:flex;flex-direction:column;gap:4px;min-width:0}
+.somn-live-text b{font:700 17px/1.15 var(--display);color:var(--text)}
+.somn-live-text span{font-size:13px;color:var(--text2)}
+.night-line{margin:0;font-size:13px;color:var(--text2)}
+.night-talk{display:flex;flex-direction:column;gap:8px;padding:18px 20px;margin-top:16px}
+.night-talk p{margin:0;color:#C9D6E8;font-size:14px}
+.hyp{padding:18px 20px;margin-top:16px}
+.hyp .block-head{margin:0 0 10px}
+.hyp-wrap{display:grid;grid-template-columns:52px minmax(0,1fr);gap:8px;align-items:stretch}
+.hyp-labels{display:flex;flex-direction:column;justify-content:space-between;font:500 10px/1 var(--mono);color:var(--sleep-dim);padding:4px 0}
+.hyp-svg{width:100%;height:120px;display:block}
+.hyp-band{opacity:.28}.hyp-band.deep{fill:var(--sleep-deep);opacity:.55}.hyp-band.light{fill:var(--sleep-light);opacity:.5}.hyp-band.rem{fill:var(--sleep-rem);opacity:.35}.hyp-band.awake{fill:var(--amber);opacity:.2}
+.hyp-line{stroke:var(--blue);stroke-width:2;vector-effect:non-scaling-stroke;stroke-linejoin:round}
+.hyp-facts{margin:10px 0 0;font-size:13px;color:var(--text2)}
+.hyp-score{color:var(--sleep-dim)}
+.listen{padding:18px 20px;margin-top:16px}
+.listen .block-head{margin:0 0 12px}
+.listen-row{display:flex;align-items:center;gap:14px}
+.listen-bar{flex:1;min-width:0}
+.listen-range{width:100%;accent-color:var(--blue);height:24px;margin:0}
+.listen-clock{color:var(--blue);font-weight:700}
+.play-btn.big{width:52px;height:52px;flex:none}
+.somn-audio-note{margin:16px 0 0;font:500 11px/1.4 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--sleep-dim)}
+.tl-facts{margin:12px 0 0;font-size:13px;color:var(--text2)}
+.tl-limit{margin:8px 0 0;padding:8px 12px;border-radius:var(--r-btn);border:1px dashed var(--sleep-stroke);font-size:12px;color:var(--sleep-dim)}
+@media (max-width:380px){.hyp-wrap{grid-template-columns:40px minmax(0,1fr)}.listen-row{gap:10px}.play-btn.big{width:44px;height:44px}.somn-head-right .seg-btn{padding:0 9px}}
+@media (prefers-reduced-motion:reduce){.live-dot{animation:none}}
 
 /* ── Rație ── */
 .ratie-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:16px}
