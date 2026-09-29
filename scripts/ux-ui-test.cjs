@@ -335,11 +335,11 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     await open(p, 'camarazi'); await until(() => p.$('camarazi-list').querySelector('.friend'), 'back to camarazi');
     const ana = cards.find(c => /Ana Ionescu/.test(c.textContent));
     assert.equal(ana.getAttribute('href'), '#teren/44.44620,26.09850'); assert.match(ana.textContent, /Fetele care ard/);
-    assert.equal(p.w.document.querySelector('.invite-code').textContent, 'K7Q2XM');
+    assert.equal(p.w.document.querySelector('.invite-code').textContent, 'FORJA-K7Q2XM');
     [...p.$('camarazi-side').querySelectorAll('button')].find(b => /Copiază/.test(b.textContent)).click(); await tick(20);
-    assert.equal(p.w.__copied, 'K7Q2XM');
+    assert.equal(p.w.__copied, 'FORJA-K7Q2XM');
     await until(() => /Te găsesc după număr · până la/.test(p.$('camarazi-disc-sub').textContent), 'discovery');
-    assert.match(p.$('camarazi-disc-note').textContent, /^Se schimbă din FORJA, la Profil\.$/);
+    assert.match(p.$('camarazi-disc-note').textContent, /Se schimbă din FORJA, la Profil\.$/);
     assert(!p.$('camarazi-side').querySelector('.switch'), 'no switch: the phone owns the choice and the contract that covers it');
     assert(!p.call('/v2/social/contacts/discovery', 'POST') && !p.call('/v2/social/contacts/discovery', 'DELETE'), 'the site never changes the listing');
     clean(p);

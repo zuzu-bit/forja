@@ -1,6 +1,9 @@
 // TEREN · Harta — harta telefonului pe ecran mare: zonele pe mod + strălucirea, locurile (nume/★/notă editabile),
 // recomandările, „Străzile tale”, Tu, camarazii, familia și telefonul (⌖). Tot aici: MapHost (o singură hartă MapLibre,
 // mutată între Teren și Găsire), Circle (/insights/api/cerc, comun cu Camarazi) și Explore (/v2/social/explore/state).
+// Mirror (pachetul A): fila „Azi” — ziua ta pe hartă (ultimele 24 h, linia pe bucăți, opririle cu numele locurilor, pauzele
+// spuse „fără date”, nu trase drept), tura GO în desfășurare, „% din zona ta”, „noi azi”, zonele neîncărcate, km-ii
+// camarazilor, locurile recomandate și câți le văd.
 
 // ───────────────────────── Harta comună ─────────────────────────
 const MapHost = {
@@ -87,11 +90,13 @@ const Explore = {
     })().finally(() => { Explore.inflight = null; });
     return Explore.inflight;
   },
-  /** Până la 25 de pagini (5 000 de celule). */
+  /** Până la 25 de pagini (5 000 de celule); ce rămâne se spune („+N neîncărcate”), nu se ascunde. */
+  truncated: false,
   async pages(first) {
     const pages = [first];
     let cursor = first?.next_cursor;
     for (let i = 1; cursor && i < 25; i++) { const next = await api('/v2/social/explore/state?cursor=' + encodeURIComponent(cursor)); pages.push(next); cursor = next?.next_cursor; }
+    Explore.truncated = !!cursor;
     return pages;
   },
   accept(pages) {
@@ -101,13 +106,25 @@ const Explore = {
     Explore.updatedAt = pages[0]?.updated_at || 0;
     return Explore.data;
   },
-  reset() { Explore.data = null; Explore.updatedAt = 0; Explore.inflight = null; }
+  reset() { Explore.data = null; Explore.updatedAt = 0; Explore.inflight = null; Explore.truncated = false; }
 };
+/** „41 % din zona ta” (ExploreStats.kt): cercul de 5 km în jurul centrului celulelor, 3 490 de celule de 150 m. */
+const ZONE_CELLS = 3490;
+function zoneOf(features) {
+  const centers = [];
+  for (const f of features || []) { const r = f?.geometry?.coordinates?.[0]; if (r && r.length >= 3) centers.push({lat: (r[0][1] + r[2][1]) / 2, lng: (r[0][0] + r[2][0]) / 2}); }
+  if (!centers.length) return null;
+  const c = {lat: centers.reduce((a, x) => a + x.lat, 0) / centers.length, lng: centers.reduce((a, x) => a + x.lng, 0) / centers.length};
+  const inZone = centers.filter(x => distanceM(c, x) <= 5000).length, pct = Math.min(100, Math.round(inZone * 100 / ZONE_CELLS));
+  return {inZone, pct, label: pct === 0 && inZone > 0 ? 'sub 1 %' : pct + ' %'};
+}
+const SPORT_NOW = {run: 'Alergare în curs', walk: 'Mers în curs', ride: 'Bicicletă în curs'};
+const SPORT_WORD = {run: 'alergare', walk: 'mers', ride: 'bicicletă'};
 
 // ───────────────────────── Secțiunea ─────────────────────────
 const MODE_LABELS = {walk: 'Pe jos', run: 'Alergare', ride: 'Bicicletă'};
 const Teren = {
-  body: null, slot: null, panel: null, tab: 'teritoriu', fitted: false, selected: null, pendingFocus: null, focusRoute: null, off: null, exploreError: null, circleError: null,
+  body: null, slot: null, panel: null, tab: null, fitted: false, selected: null, pendingFocus: null, focusRoute: null, off: null, exploreError: null, circleError: null,
   mount(body) {
     Teren.slot = h('div', {class: 'map-slot', id: 'teren-map'});
     Teren.panel = h('aside', {class: 'map-panel', id: 'teren-panel', 'aria-label': 'Terenul tău'});
@@ -123,7 +140,7 @@ const Teren = {
       h('button', {type: 'button', class: 'map-btn', id: 'teren-fit', title: 'Centrează pe terenul tău', onclick: () => { Teren.pendingFocus = null; MapHost.renderer?.fitOwn(Teren.padding()); }}, icon('locate', 18), h('span', {text: 'Centrează'})));
     const layers = h('div', {class: 'layers-pop', id: 'teren-layers', hidden: true, role: 'group', 'aria-label': 'Straturi'},
       monoLabel('STRATURI'),
-      ...[['heat', 'Strălucire'], ['territories', 'Teritorii'], ['streets', 'Străzile tale'], ['places', 'Locuri'], ['friends', 'Camarazi']].map(([key, label]) =>
+      ...[['heat', 'Strălucire'], ['territories', 'Teritorii'], ['streets', 'Străzile tale'], ['places', 'Locuri'], ['friends', 'Camarazi'], ['day', 'Ziua ta']].map(([key, label]) =>
         h('label', {class: 'layer-row'}, h('span', {text: label}), sw(true, label, on => { MapHost.renderer?.setLayers({[key]: on}); }))),
       h('div', {class: 'layer-theme'}, monoLabel('HARTA'), h('div', {class: 'seg'},
         h('button', {type: 'button', class: 'seg-btn active', dataset: {theme: 'night'}, onclick: e => Teren.theme('night', e)}, 'Noapte'),
@@ -173,7 +190,7 @@ const Teren = {
       r.setMode('teren');
       r.setData({
         cells: e?.cells || null, places: e?.places || [], routes: c?.routes || [], recommended: c?.recommended || [],
-        me: c?.me || null, friends: c?.friends || [], family: c?.family || [],
+        me: c?.me || null, friends: c?.friends || [], family: c?.family || [], day: c?.day || null, go: c?.me?.go || null,
         devices: Gasire.devices || [], focusRoute: Teren.focusRoute, pin: Teren.pendingFocus, selected: Teren.selected || {}
       });
       // Legătura adâncă mută camera o singură dată; sondările următoare nu mai trag harta de sub mâna ta.
@@ -195,7 +212,7 @@ const Teren = {
   renderEmpty() {
     const box = $('teren-empty'); if (!box) return;
     const c = Circle.data, e = Explore.data;
-    const nothing = e && c && !(e.cells?.features?.length) && !(e.places?.length) && !(c.routes?.length) && !(c.me && typeof c.me.lat === 'number') && !(c.friends || []).some(f => typeof f.lat === 'number');
+    const nothing = e && c && !(e.cells?.features?.length) && !(e.places?.length) && !(c.routes?.length) && !(c.me && typeof c.me.lat === 'number') && !(c.friends || []).some(f => typeof f.lat === 'number') && !(c.day?.track?.length || c.day?.stops?.length);
     box.hidden = !nothing;
     if (nothing && !box.firstChild) {
       const off = Site.links.teren?.state === 'off';
@@ -216,9 +233,11 @@ const Teren = {
       return;
     }
     p.dataset.state = 'ready';
-    const tabs = h('div', {class: 'tabs', role: 'tablist', 'aria-label': 'Teren'}, ...[['teritoriu', 'Teritoriu'], ['locuri', 'Locuri'], ['camarazi', 'Camarazi']].map(([id, label]) =>
+    // Prima filă: Azi când telefonul a lăsat o zi sau o tură în curs, altfel Teritoriul.
+    if (!Teren.tab) Teren.tab = c.day || c.me?.go ? 'azi' : 'teritoriu';
+    const tabs = h('div', {class: 'tabs', role: 'tablist', 'aria-label': 'Teren'}, ...[['azi', 'Azi'], ['teritoriu', 'Teritoriu'], ['locuri', 'Locuri'], ['camarazi', 'Camarazi']].map(([id, label]) =>
       h('button', {type: 'button', role: 'tab', class: 'tab' + (Teren.tab === id ? ' active' : ''), id: 'teren-tab-' + id, 'aria-selected': String(Teren.tab === id), tabindex: Teren.tab === id ? '0' : '-1', onclick: () => { Teren.tab = id; Teren.renderPanel(); }, onkeydown: tabKeys}, label)));
-    const view = Teren.tab === 'locuri' ? Teren.places() : Teren.tab === 'camarazi' ? Teren.friends() : Teren.territory();
+    const view = Teren.tab === 'locuri' ? Teren.places() : Teren.tab === 'camarazi' ? Teren.friends() : Teren.tab === 'azi' ? Teren.today() : Teren.territory();
     const warn = Teren.exploreError && e.failed ? h('p', {class: 'panel-warn', text: 'Zonele nu au venit. Reîncerc singur.'}) : null;
     const pad = h('div', {class: 'panel-pad', role: 'tabpanel', 'aria-labelledby': 'teren-tab-' + Teren.tab}, warn, view);
     // Sondările (cerc 30 s, zone 60 s) redesenează panoul; fișa unui loc în lucru rămâne neatinsă: textul scris, stelele
@@ -243,12 +262,48 @@ const Teren = {
     const mine = num(c.me?.exploreCells) ?? cells.length;
     const board = [{name: 'Tu', cells: mine, me: true}, ...(c.friends || []).filter(f => num(f.exploreCells) !== null).map(f => ({name: f.name, cells: f.exploreCells}))].sort((a, b) => b.cells - a.cells);
     const rank = board.findIndex(x => x.me) + 1;
+    // Noi azi / în 7 zile: după first_at al fiecărei celule (momentul cuceririi), din telefon.
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const today = cells.filter(f => num(f.properties?.first_at) >= dayStart.getTime()).length, week = cells.filter(f => num(f.properties?.first_at) >= Date.now() - 7 * DAY).length;
+    const zone = zoneOf(cells), missing = Explore.truncated ? Math.max(0, mine - cells.length) : 0;
+    const kmBoard = [{name: 'Tu', km: num(c.me?.weekKm), me: true}, ...(c.friends || []).map(f => ({name: f.name, km: num(f.weekKm)}))].filter(x => x.km !== null).sort((a, b) => b.km - a.km);
     return h('div', {class: 'terr'},
       h('div', {class: 'terr-hero'}, hero(fmt.int(cells.length), cells.length === 1 ? 'zonă' : 'zone'), monoLabel('DE 150 M · ' + (fmt.dec(cells.length * 0.0225, 1)) + ' KM²')),
+      h('div', {class: 'terr-facts'},
+        zone ? h('span', {class: 'terr-fact'}, h('b', {text: zone.label}), ' din zona ta') : null,
+        h('span', {class: 'terr-fact'}, h('b', {text: fmt.int(today)}), ' noi azi'),
+        h('span', {class: 'terr-fact'}, h('b', {text: fmt.int(week)}), ' în 7 zile'),
+        num(c.me?.placesCount) ? h('span', {class: 'terr-fact'}, h('b', {text: fmt.int(c.me.placesCount)}), ' ' + (c.me.placesCount === 1 ? 'loc' : 'locuri')) : null),
+      missing ? h('p', {class: 'panel-warn', text: '+' + fmt.int(missing) + ' neîncărcate. Harta arată primele 5 000 de zone.'}) : null,
       h('div', {class: 'mode-bars'}, ...Object.entries(MODE_LABELS).map(([k, label]) => h('div', {class: 'mode-row'}, h('i', {class: 'sq ' + k}), h('span', {class: 'mode-name', text: label}), bar(modes[k] / max, k), h('b', {text: fmt.int(modes[k])})))),
       board.length > 1 ? h('div', {class: 'board'}, h('div', {class: 'block-head'}, monoLabel('ÎNTRE CAMARAZI'), monoLabel('LOCUL ' + rank + ' DIN ' + board.length, 'accent')),
         ...board.slice(0, 5).map((x, i) => h('div', {class: 'board-row' + (x.me ? ' me' : '')}, h('span', {class: 'board-rank', text: String(i + 1)}), h('span', {class: 'board-name', text: x.me ? 'Tu' : firstName(x.name)}), h('b', {text: fmt.int(x.cells)})))) : null,
+      kmBoard.length > 1 ? h('div', {class: 'board'}, h('div', {class: 'block-head'}, monoLabel('SĂPTĂMÂNA CAMARAZILOR'), monoLabel('KM')),
+        ...kmBoard.slice(0, 5).map((x, i) => h('div', {class: 'board-row' + (x.me ? ' me' : '')}, h('span', {class: 'board-rank', text: String(i + 1)}), h('span', {class: 'board-name', text: x.me ? 'Tu' : firstName(x.name)}), h('b', {text: fmt.dec(x.km, 1)})))) : null,
       h('div', {class: 'terr-streets'}, icon('mars', 18), h('span', null, h('b', {text: fmt.int((c.routes || []).length)}), ' ', (c.routes || []).length === 1 ? 'traseu' : 'trasee', ' pe Străzile tale')));
+  },
+  /** Fila „Azi”: tura în desfășurare, apoi ziua (ultimele 24 h) — km, opriri, pauzele fără date, ultima poziție. */
+  today() {
+    const c = Circle.data, day = c.day, go = c.me?.go, me = c.me;
+    const goCard = go ? h('div', {class: 'day-go'}, stamp('ACUM', 'amber'),
+      h('div', {class: 'day-go-text'}, h('b', {text: SPORT_NOW[go.sport] || 'Tură în curs'}),
+        h('span', {class: 'mono', text: [num(go.distanceM) !== null ? fmt.km(go.distanceM) : null, go.startedAt ? fmt.dur((Date.now() - go.startedAt) / MIN) : null, 'actualizat ' + fmt.agoShort(go.at)].filter(Boolean).join(' · ').toUpperCase()}))) : null;
+    const ghost = me?.ghost ? h('p', {class: 'panel-note'}, icon('ghost', 15), h('span', {text: me.private ? 'Fantomă: camarazii nu te văd. Tu îți vezi punctul trimis familiei, ' + fmt.ago(me.private.at) + '.' : 'Fantomă: camarazii nu te văd.'})) : null;
+    if (!day) {
+      const off = c.me && Site.links.cont?.state === 'off';
+      return h('div', {class: 'day'}, goCard, ghost, h('p', {class: 'panel-empty', text: off ? 'Semnează contractul în FORJA. Ziua apare aici singură.' : 'Nicio poziție în ultimele 24 h. Cu locația pornită, ziua se umple singură.'}));
+    }
+    const rows = [...(day.stops || []).map(s => ({kind: 'stop', ...s})), ...(day.gaps || []).map(g => ({kind: 'gap', ...g}))].sort((a, b) => a.from - b.from);
+    const span = (a, b) => fmt.time(a) + '–' + fmt.time(b);
+    return h('div', {class: 'day'}, goCard, ghost,
+      h('div', {class: 'terr-hero'}, hero(fmt.dec(day.km || 0, 1), 'km'), monoLabel('ULTIMELE 24 H · ' + plural((day.stops || []).length, 'OPRIRE', 'OPRIRI'))),
+      day.last ? h('p', {class: 'day-last'}, icon('locate', 15), h('span', {text: 'Ultima poziție ' + fmt.ago(day.last.at)})) : null,
+      rows.length ? h('ol', {class: 'day-list'}, ...rows.map(x => x.kind === 'gap'
+        ? h('li', {class: 'day-row gap'}, h('span', {class: 'day-time mono', text: span(x.from, x.to)}), h('span', {class: 'day-name', text: 'Fără date'}), h('span', {class: 'day-dur mono', text: fmt.dur((x.to - x.from) / MIN)}))
+        : h('li', null, h('button', {type: 'button', class: 'day-row', onclick: () => { MapHost.renderer?.focus({lat: x.lat, lng: x.lng}, 16, Teren.padding()); }},
+            h('span', {class: 'day-time mono', text: span(x.from, x.to)}), h('span', {class: 'day-name', text: x.name || 'Oprire'}), h('span', {class: 'day-dur mono', text: fmt.dur(x.minutes)}))))) : h('p', {class: 'panel-empty', text: 'Nicio oprire de peste 3 minute.'}),
+      h('p', {class: 'panel-foot mono', text: 'SE ȘTERG DUPĂ 24 H · DOAR TU LE VEZI'}),
+      (day.track || []).length || (day.stops || []).length ? btn('Arată ziua', () => { MapHost.renderer?.setLayers({day: true}); MapHost.renderer?.fitDay(Teren.padding()); }, 'btn btn-secondary btn-block', 'locate') : null);
   },
   places() {
     const mine = [...(Explore.data.places || [])].sort((a, b) => (b.stars || 0) - (a.stars || 0) || (b.last_at || 0) - (a.last_at || 0));
@@ -258,7 +313,8 @@ const Teren = {
       mine.length ? monoLabel('LOCURILE TALE · ' + mine.length) : null,
       ...mine.map(p => h('button', {type: 'button', class: 'place-row' + (Teren.selected?.id === String(p.id) ? ' active' : ''), onclick: () => Teren.select('place', String(p.id), p)},
         h('span', {class: 'place-pin'}, icon('star', 14), h('b', {text: String(p.stars || 0)})),
-        h('span', {class: 'place-text'}, h('span', {class: 'place-name', text: p.name || 'Loc fără nume'}), h('span', {class: 'place-meta', text: [num(p.visits) ? plural(p.visits, 'vizită', 'vizite') : null, p.last_at ? fmt.ago(p.last_at) : null].filter(Boolean).join(' · ')})),
+        h('span', {class: 'place-text'}, h('span', {class: 'place-name', text: p.name || 'Loc fără nume'}), h('span', {class: 'place-meta', text: [num(p.visits) ? plural(p.visits, 'vizită', 'vizite') : null, p.last_at ? fmt.ago(p.last_at) : null].filter(Boolean).join(' · ')}),
+          Teren.shared(p) ? h('span', {class: 'place-rec', text: Teren.shared(p)}) : null),
         icon('next', 16, 'dimmed'))),
       recs.length ? monoLabel('RECOMANDATE · ' + recs.length) : null,
       ...recs.map(p => h('button', {type: 'button', class: 'place-row rec' + (Teren.selected?.id === String(p.id) ? ' active' : ''), onclick: () => Teren.select('rec', String(p.id), p)},
@@ -281,6 +337,12 @@ const Teren = {
         has ? icon('next', 16, 'dimmed') : null);
     }), h('a', {href: '#camarazi', class: 'panel-link'}, 'Toți camarazii', icon('next', 16)));
   },
+  /** „Recomandat · văzut de 3”: din places/{id} (Firestore, sursa aplicației) potrivit la 100 m, altfel din harta ta. */
+  shared(p) {
+    const rec = (Circle.data?.mine || []).find(r => distanceM({lat: r.lat, lng: r.lng}, {lat: p.lat, lng: p.lng ?? p.lon}) <= 100);
+    if (rec) return 'Recomandat · ' + (rec.seenBy ? 'îl văd ' + plural(rec.seenBy, 'camarad', 'camarazi') : 'nimeni încă');
+    return p.recommended ? 'Recomandat' + (num(p.seen_by) ? ' · îl văd ' + plural(p.seen_by, 'camarad', 'camarazi') : '') : '';
+  },
   select(kind, id, point) {
     Teren.selected = Teren.selected?.id === id && Teren.selected.kind === kind ? null : {kind, id};
     if (Teren.selected) MapHost.renderer?.focus({lat: point.lat, lng: point.lng ?? point.lon}, 16, Teren.padding());
@@ -291,6 +353,7 @@ const Teren = {
     if (p.kind === 'device') { go('gasire'); return; }
     if (p.kind === 'place' || p.kind === 'rec') { const list = p.kind === 'place' ? Explore.data?.places : Circle.data?.recommended; const item = (list || []).find(x => String(x.id) === p.id); if (item) { Teren.tab = 'locuri'; Teren.select(p.kind, p.id, item); } }
     if (p.kind === 'friend') { Teren.tab = 'camarazi'; Teren.selected = {kind: 'friend', id: p.id}; Teren.push(); }
+    if (p.kind === 'stop') { Teren.tab = 'azi'; Teren.renderPanel(); }
   },
   placeCard(id) {
     const p = (Explore.data?.places || []).find(x => String(x.id) === id); if (!p) return null;
@@ -308,7 +371,8 @@ const Teren = {
       h('label', {class: 'field-label', for: 'place-name', text: 'Nume'}), name,
       starRow,
       h('label', {class: 'field-label', for: 'place-note', text: 'Notă'}), note,
-      h('div', {class: 'place-card-meta'}, monoLabel([num(p.visits) ? plural(p.visits, 'vizită', 'vizite') : null, p.stay_ms ? fmt.dur(p.stay_ms / MIN) + ' stat' : null].filter(Boolean).join(' · ').toUpperCase() || 'LOC')),
+      h('div', {class: 'place-card-meta'}, monoLabel([num(p.visits) ? plural(p.visits, 'vizită', 'vizite') : null, p.stay_ms ? fmt.dur(p.stay_ms / MIN) + ' stat' : null, p.first_at ? 'din ' + fmt.day(p.first_at) : null].filter(Boolean).join(' · ').toUpperCase() || 'LOC'),
+        Teren.shared(p) ? h('span', {class: 'place-rec', text: Teren.shared(p)}) : null),
       btn('Salvează', async () => {
         const body = {name: name.value.trim(), stars, note: note.value.trim()};
         const updated = await api('/v2/social/explore/places/' + encodeURIComponent(p.id), {method: 'PATCH', body});
@@ -328,7 +392,7 @@ const Teren = {
       p.note ? h('p', {class: 'place-card-note', text: '„' + p.note + '”'}) : null,
       monoLabel('DE LA ' + String(p.ownerName || 'un camarad').toUpperCase()));
   },
-  reset() { Teren.exploreError = null; Teren.circleError = null; Teren.fitted = false; Teren.selected = null; Teren.pendingFocus = null; Teren.focusRoute = null; Teren.tab = 'teritoriu'; if (Teren.panel) delete Teren.panel.dataset.state; Explore.reset(); Circle.reset(); MapHost.reset(); Teren.off = null; }
+  reset() { Teren.exploreError = null; Teren.circleError = null; Teren.fitted = false; Teren.selected = null; Teren.pendingFocus = null; Teren.focusRoute = null; Teren.tab = null; if (Teren.panel) delete Teren.panel.dataset.state; Explore.reset(); Circle.reset(); MapHost.reset(); Teren.off = null; }
 };
 function tabKeys(e) {
   const tabs = [...e.currentTarget.parentNode.querySelectorAll('[role=tab]')], i = tabs.indexOf(e.currentTarget);
@@ -337,7 +401,7 @@ function tabKeys(e) {
 }
 /** Etichetele stării din FriendsSheet.kt. */
 function friendState(f) {
-  if (f.family && f.ghost) return 'fantomă · te vede familia';
+  if (f.family && f.ghost) return 'fantomă · te vede familia lui';
   if (f.ghost) return 'mod fantomă';
   if (f.state === 'run') return 'aleargă acum';
   if (f.state === 'ride') return 'pe roți acum';
@@ -348,7 +412,7 @@ function friendState(f) {
 }
 function friendLine(f, me) {
   const d = me && typeof me.lat === 'number' && typeof f.lat === 'number' && (f.family || !f.ghost) ? distanceM(me, f) : null;
-  return [friendState(f), d !== null ? fmt.km(d) : null].filter(Boolean).join(' · ');
+  return [friendState(f), d !== null ? fmt.km(d) : null, num(f.weekKm) ? fmt.dec(f.weekKm, 1) + ' km săpt.' : null].filter(Boolean).join(' · ');
 }
 function friendRing(f) { return f.ghost ? 'ring-ghost' : f.state === 'sleep' ? 'ring-sleep' : ['run', 'walk', 'ride'].includes(f.state) ? 'ring-live' : typeof f.lat === 'number' ? 'ring-on' : 'ring-off'; }
 Site.register('teren', Teren);

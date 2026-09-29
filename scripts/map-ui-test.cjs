@@ -131,7 +131,7 @@ async function check(name, fn) { await fn(); checks.push(name); }
     await tick(20); await login(p); await open(p, 'teren');
     await until(() => p.$('map-host').dataset.failed === '1', 'failed');
     assert(!p.$('map-status').hidden); assert.match(p.$('map-status').textContent, /Harta nu se poate desena aici/);
-    await until(() => p.$('teren-panel').querySelector('.terr'), 'panel still renders');
+    await until(() => p.$('teren-panel').querySelector('.terr, .day'), 'panel still renders');
   });
 
   await check('the map is shared with Găsire: phone mode, fitted on the device, fast polling only during a command', async () => {

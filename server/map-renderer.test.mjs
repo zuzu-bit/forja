@@ -206,3 +206,33 @@ test('Găsire mode shows the phone and its accuracy only; layer toggles hide wit
   assert.equal(r.fitDevices(), true);
   r.destroy(); assert.equal(map.removed, true);
 });
+
+test('mirror: the day is drawn in pieces (no line across a gap), stops grow with minutes, GO live, own ghost point, search trail only in Găsire', () => {
+  const f = fixture(), r = f.api.create(f.container, {}), map = f.maps[0];
+  map.emit('load');
+  const day = {track: [{from: 1, to: 2, polyline: '44.40,26.10;44.41,26.11'}, {from: 5, to: 6, polyline: '44.50,26.20;44.51,26.21;44.52,26.22'}, {polyline: '44.6,26.3'}],
+    stops: [{from: 1, to: 2, minutes: 5, lat: 44.4, lng: 26.1, name: 'Acasă'}, {from: 3, to: 4, minutes: 180, lat: 44.5, lng: 26.2, name: null}, {minutes: 9, lat: 'x', lng: 1}]};
+  r.setData({day, go: {sport: 'run', polyline: '44.7,26.4;44.71,26.41'}});
+  const lines = map.sources['forja-day'].data.features;
+  assert.equal(lines.length, 2, 'two pieces, the one-point piece is skipped');
+  same(lines[1].geometry.coordinates[0], [26.2, 44.5]);
+  const stops = map.sources['forja-stops'].data.features;
+  assert.equal(stops.length, 2);
+  assert(stops[1].properties.radius > stops[0].properties.radius, 'a 3 h stop is bigger than a 5 min one');
+  assert.match(stops[0].properties.label, /Acasă/); assert.match(stops[1].properties.label, /3 h/);
+  assert.equal(map.sources['forja-go'].data.features.length, 1);
+  assert.equal(r.fitDay(), true);
+  // Own ghost point: the public pin is null, the private one is drawn for her only.
+  r.setData({me: {lat: null, lng: null, ghost: true, private: {lat: 44.45, lng: 26.15, at: 1}}});
+  same(map.sources['forja-me'].data.features[0].geometry.coordinates, [26.15, 44.45]);
+  assert.match(map.sources['forja-me'].data.features[0].properties.label, /doar tu/);
+  // Search trail: a line from the trail points, hidden on Teren, shown in Găsire; day layers the other way round.
+  r.setData({devices: [{id: 'd', last: {lat: 44.4, lon: 26.1, accuracy: 10, at: 1}, trail: {command: 'c', points: [{lat: 44.4, lon: 26.1, at: 1}, {lat: 44.41, lon: 26.12, at: 2}]}}]});
+  assert.equal(map.sources['forja-trail'].data.features[0].geometry.coordinates.length, 2);
+  assert.equal(map.layout['forja-trail-line'].visibility, 'none');
+  r.setMode('gasire');
+  assert.equal(map.layout['forja-trail-line'].visibility, 'visible');
+  assert.equal(map.layout['forja-day-line'].visibility, 'none');
+  r.setMode('teren'); r.setLayers({day: false});
+  assert.equal(map.layout['forja-stops'].visibility, 'none'); assert.equal(map.layout['forja-go-line'].visibility, 'visible', 'the run in progress stays');
+});

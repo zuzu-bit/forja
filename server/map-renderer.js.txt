@@ -2,6 +2,8 @@
 // (core/map/ForjaStyle.kt, Noapte implicit) și stiva de straturi a aplicației (core/map/MapLayers.kt): strălucirea sub zoom 13,
 // teritoriile colorate după mod (pe jos / alergare / bicicletă) cu conturul exterior (MapGeo.cellEdges), „Străzile tale”,
 // halourile de 100 m, locurile ★N, recomandările, camarazii, familia, „Tu”, telefonul (Găsire) cu cercul de precizie.
+// Mirror (pachetul A): ziua ta (ultimele 24 h: linia punctată pe bucăți, fără linie dreaptă peste pauze, și opririle
+// mărite după minute), tura GO în desfășurare, punctul tău privat în fantomă și, în Găsire, traseul căutării.
 // 2D/3D = aceeași hartă, doar înclinarea. Erorile de dale, glife sau sprite nu opresc harta; doar stilul sau WebGL.
 // Datele se schimbă numai prin setData pe surse — straturile se creează o singură dată.
 (function (root) {
@@ -146,6 +148,35 @@
       for (const [lng, lat] of coords) { if (!isNum(lng) || !isNum(lat)) continue; a = Math.min(a, lng); b = Math.min(b, lat); c = Math.max(c, lng); d = Math.max(d, lat); n++; }
       return n ? [[a, b], [c, d]] : null;
     },
+    /** Ziua (cerc.day): fiecare bucată de traseu e o linie separată — o pauză nu se desenează ca drum. */
+    dayLines(day) {
+      const out = [];
+      for (const t of day?.track || []) {
+        const pts = geo.parsePolyline(t?.polyline);
+        if (pts.length < 2) continue;
+        out.push({type: 'Feature', geometry: {type: 'LineString', coordinates: pts.map(([lat, lng]) => [lng, lat])}, properties: {from: t.from || 0, to: t.to || 0}});
+      }
+      return fc(out);
+    },
+    /** Opririle zilei: raza crește cu minutele (5 min → mic, 3 h → mare), numele locului tău sau durata în etichetă. */
+    stops(day) {
+      const out = [];
+      (day?.stops || []).forEach((s, i) => {
+        const pt = isNum(s?.lat) && isNum(s?.lng) ? [s.lng, s.lat] : null; if (!pt) return;
+        const minutes = isNum(s.minutes) ? s.minutes : 0;
+        out.push({type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'stop', id: String(i), minutes, radius: Math.round(6 + Math.min(14, Math.sqrt(Math.max(0, minutes)) * 1.3)), name: s.name ? String(s.name).slice(0, 26) : ''}});
+      });
+      return fc(out);
+    },
+    /** Traseul unei căutări (Găsire, contract v4): punctele în ordine, ca linie. */
+    trail(devices) {
+      const out = [];
+      for (const d of devices || []) {
+        const pts = (d?.trail?.points || []).filter(p => isNum(p?.lat) && isNum(p?.lon)).map(p => [p.lon, p.lat]);
+        if (pts.length >= 2) out.push({type: 'Feature', geometry: {type: 'LineString', coordinates: pts}, properties: {id: String(d.id || '')}});
+      }
+      return fc(out);
+    },
     coordsOf(collection) {
       const out = [];
       const walk = g => { if (!g) return; if (g.type === 'Point') out.push(g.coordinates); else if (g.type === 'LineString' || g.type === 'MultiPoint') out.push(...g.coordinates); else if (g.type === 'Polygon' || g.type === 'MultiLineString') for (const r of g.coordinates) out.push(...r); };
@@ -251,10 +282,13 @@
   }
 
   // ───────────────────────── Harta ─────────────────────────
-  const SRC = ['forja-heat', 'forja-cells', 'forja-cells-edge', 'forja-streets', 'forja-focus', 'forja-accuracy', 'forja-places', 'forja-rec', 'forja-devices', 'forja-friends', 'forja-me', 'forja-pin'];
-  const TOGGLES = {heat: ['forja-heat'], territories: ['forja-cells-fill', 'forja-cells-line'], streets: ['forja-streets-casing', 'forja-streets'], places: ['forja-halos', 'forja-places', 'forja-places-label', 'forja-rec', 'forja-rec-label'], friends: ['forja-friends', 'forja-friends-label']};
-  const GASIRE_HIDDEN = ['forja-heat', 'forja-cells-fill', 'forja-cells-line', 'forja-streets-casing', 'forja-streets', 'forja-halos', 'forja-places', 'forja-places-label', 'forja-rec', 'forja-rec-label', 'forja-friends', 'forja-friends-label', 'forja-focus-glow', 'forja-focus'];
-  const PICKABLE = ['forja-places', 'forja-rec', 'forja-friends', 'forja-devices', 'forja-me'];
+  const SRC = ['forja-heat', 'forja-cells', 'forja-cells-edge', 'forja-streets', 'forja-day', 'forja-go', 'forja-trail', 'forja-focus', 'forja-accuracy', 'forja-places', 'forja-rec', 'forja-stops', 'forja-devices', 'forja-friends', 'forja-me', 'forja-pin'];
+  const TOGGLES = {heat: ['forja-heat'], territories: ['forja-cells-fill', 'forja-cells-line'], streets: ['forja-streets-casing', 'forja-streets'], places: ['forja-halos', 'forja-places', 'forja-places-label', 'forja-rec', 'forja-rec-label'], friends: ['forja-friends', 'forja-friends-label'],
+    day: ['forja-day-line', 'forja-stops', 'forja-stops-label']};
+  const DAY_LAYERS = ['forja-day-line', 'forja-stops', 'forja-stops-label', 'forja-go-line'];
+  const GASIRE_HIDDEN = ['forja-heat', 'forja-cells-fill', 'forja-cells-line', 'forja-streets-casing', 'forja-streets', 'forja-halos', 'forja-places', 'forja-places-label', 'forja-rec', 'forja-rec-label', 'forja-friends', 'forja-friends-label', 'forja-focus-glow', 'forja-focus', ...DAY_LAYERS];
+  const TRAIL_LAYERS = ['forja-trail-line'];
+  const PICKABLE = ['forja-places', 'forja-rec', 'forja-friends', 'forja-devices', 'forja-me', 'forja-stops'];
   const HALO_PX_Z13 = 100 / (78271.517 * Math.cos(45 * Math.PI / 180) / 2 ** 13);
 
   function supported(gl) { return !!gl && typeof gl.Map === 'function'; }
@@ -264,7 +298,7 @@
     if (!supported(gl)) throw Error('Harta nu este disponibilă în acest browser.');
     const reduced = opts.reduced !== undefined ? !!opts.reduced : (() => { try { return root.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } })();
     const map = new gl.Map({container, style: opts.style || STYLE_URL, center: [25.0, 45.9], zoom: 5.6, maxPitch: 70, attributionControl: {compact: true}, fadeDuration: reduced ? 0 : 300, dragRotate: true, touchPitch: true});
-    const state = {ready: false, failed: false, theme: opts.theme || 'night', mode: 'teren', threeD: false, layers: {heat: true, territories: true, streets: true, places: true, friends: true},
+    const state = {ready: false, failed: false, theme: opts.theme || 'night', mode: 'teren', threeD: false, layers: {heat: true, territories: true, streets: true, places: true, friends: true, day: true},
       raw: {}, fc: {}, images: new Map(), me: null, pulse: null, destroyed: false};
     const api = {map, get ready() { return state.ready; }, get threeD() { return state.threeD; }, get mode() { return state.mode; }};
     const duration = ms => reduced ? 0 : ms;
@@ -312,6 +346,10 @@
         const width = base => ['interpolate', ['linear'], ['zoom'], 12, base * 0.45, 16, base, 20, base * 1.8];
         ground({id: 'forja-streets-casing', type: 'line', source: 'forja-streets', layout: {'line-cap': 'round', 'line-join': 'round'}, paint: {'line-color': '#1A1A1E', 'line-opacity': 0.5, 'line-width': width(7)}});
         ground({id: 'forja-streets', type: 'line', source: 'forja-streets', layout: {'line-cap': 'round', 'line-join': 'round'}, paint: {'line-color': C.amber, 'line-width': width(5), 'line-opacity': 0.92}});
+        // Ziua: linie punctată albastru-deschis (ca „Somn”, nu ca aurul Străzilor tale), tura GO: aur punctat, mai groasă.
+        ground({id: 'forja-day-line', type: 'line', source: 'forja-day', layout: {'line-cap': 'round', 'line-join': 'round'}, paint: {'line-color': C.blue, 'line-width': width(3.5), 'line-opacity': 0.85, 'line-dasharray': [1.4, 1.6]}});
+        ground({id: 'forja-go-line', type: 'line', source: 'forja-go', layout: {'line-cap': 'round', 'line-join': 'round'}, paint: {'line-color': C.amber, 'line-width': width(5), 'line-opacity': 0.95, 'line-dasharray': [1.2, 1.1]}});
+        ground({id: 'forja-trail-line', type: 'line', source: 'forja-trail', layout: {'line-cap': 'round', 'line-join': 'round'}, paint: {'line-color': C.amber, 'line-width': width(4), 'line-opacity': 0.9, 'line-dasharray': [1.2, 1.2]}});
         ground({id: 'forja-focus-glow', type: 'line', source: 'forja-focus', layout: {'line-cap': 'round', 'line-join': 'round'}, paint: {'line-color': C.amber, 'line-opacity': 0.25, 'line-width': width(18)}});
         ground({id: 'forja-focus', type: 'line', source: 'forja-focus', layout: {'line-cap': 'round', 'line-join': 'round'}, paint: {'line-color': '#FFE39A', 'line-width': width(6)}});
         ground({id: 'forja-halos', type: 'circle', source: 'forja-places', minzoom: 13, paint: {
@@ -321,6 +359,8 @@
         ground({id: 'forja-accuracy-line', type: 'line', source: 'forja-accuracy', paint: {'line-color': C.amber, 'line-opacity': 0.55, 'line-width': 1.5}});
         const symbol = (id, source, extra = {}) => top({id, type: 'symbol', source, layout: {'icon-image': ['get', 'icon'], 'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'symbol-sort-key': ['to-number', ['get', 'sort']], ...extra.layout}, paint: {'icon-opacity': ['to-number', ['coalesce', ['get', 'alpha'], 1]], ...extra.paint}, ...(extra.minzoom ? {minzoom: extra.minzoom} : {})});
         const label = (id, source, minzoom) => top({id, type: 'symbol', source, minzoom, layout: {'icon-image': ['get', 'label'], 'icon-anchor': 'top', 'icon-offset': [0, 3], 'icon-allow-overlap': false, 'icon-ignore-placement': false, 'icon-optional': false}, paint: {'icon-opacity': ['to-number', ['coalesce', ['get', 'alpha'], 1]]}});
+        top({id: 'forja-stops', type: 'circle', source: 'forja-stops', paint: {'circle-radius': ['to-number', ['get', 'radius']], 'circle-color': 'rgba(157,191,232,0.22)', 'circle-stroke-color': C.blue, 'circle-stroke-width': 2, 'circle-pitch-alignment': 'map'}});
+        label('forja-stops-label', 'forja-stops', 13.5);
         symbol('forja-places', 'forja-places'); label('forja-places-label', 'forja-places', 14.5);
         symbol('forja-rec', 'forja-rec'); label('forja-rec-label', 'forja-rec', 14.5);
         top({id: 'forja-me-pulse', type: 'circle', source: 'forja-me', paint: {'circle-color': C.olive2, 'circle-radius': 18, 'circle-opacity': 0.18, 'circle-pitch-alignment': 'map'}});
@@ -359,6 +399,13 @@
       if (kind === 'cells') { const cells = geo.cells(r.cells); state.fc.cells = cells; return {'forja-cells': cells, 'forja-cells-edge': geo.edges(cells), 'forja-heat': geo.heat(cells)}; }
       if (kind === 'routes') { const streets = geo.streets(r.routes); state.fc.streets = streets; return {'forja-streets': streets}; }
       if (kind === 'focusRoute') return {'forja-focus': r.focusRoute ? geo.streets([r.focusRoute]) : EMPTY};
+      if (kind === 'day') {
+        const lines = geo.dayLines(r.day), stops = geo.stops(r.day);
+        // Eticheta: numele locului tău, altfel durata („52 min”), desenată ca pastilele celorlalte straturi (fără glife).
+        for (const f of stops.features) { const m = f.properties.minutes; f.properties.label = pill(f.properties.name || (m >= 60 ? Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '') : m + ' min'), 'dark'); }
+        state.fc.day = lines; state.fc.stops = stops; return {'forja-day': lines, 'forja-stops': stops};
+      }
+      if (kind === 'go') { const go = r.go && r.go.polyline ? geo.streets([{id: 'go', type: r.go.sport, polyline: r.go.polyline}]) : EMPTY; state.fc.go = go; return {'forja-go': go}; }
       if (kind === 'places') {
         const sel = r.selected || {}, out = [];
         for (const p of r.places || []) {
@@ -378,10 +425,11 @@
         return {'forja-rec': fc(out)};
       }
       if (kind === 'me') {
-        const m = r.me, pt = m && pointOf(m.lat, m.lng); state.me = pt;
+        // În fantomă prietenii nu te văd; tu te vezi din punctul trimis familiei (`private`), mai palid, cu „doar tu”.
+        const m = r.me, own = m && pointOf(m.lat, m.lng), priv = m && !own && m.private ? pointOf(m.private.lat, m.private.lng) : null, pt = own || priv; state.me = pt;
         if (!pt) return {'forja-me': EMPTY};
-        const ghost = !!m.ghost, age = ago(m.at);
-        return {'forja-me': fc([{type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'me', id: 'me', sort: 5, alpha: ghost ? 0.55 : 1, icon: img('av|me|' + (ghost ? 1 : 0), () => drawAvatar({me: true, ghost})), label: pill(ghost ? 'Tu · fantomă' : age && age !== 'acum' ? 'Tu · ' + age : 'Tu', 'dark')}}])};
+        const ghost = !!m.ghost, age = ago(priv ? m.private.at : m.at);
+        return {'forja-me': fc([{type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'me', id: 'me', sort: 5, alpha: ghost ? 0.55 : 1, icon: img('av|me|' + (ghost ? 1 : 0), () => drawAvatar({me: true, ghost})), label: pill(ghost ? (priv ? 'Tu · fantomă · doar tu' : 'Tu · fantomă') : age && age !== 'acum' ? 'Tu · ' + age : 'Tu', 'dark')}}])};
       }
       if (kind === 'friends' || kind === 'family') {
         const sel = r.selected || {}, out = [], me = state.me;
@@ -409,14 +457,15 @@
           out.push({type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'device', id: String(d.id), sort: 6, icon: img('dev|' + (fresh ? 1 : 0), () => drawDevice(fresh))}});
           if (isNum(p.accuracy) && p.accuracy > 0) acc.push(geo.circle(pt[1], pt[0], Math.min(p.accuracy, 5000)));
         }
-        const devices = fc(out); state.fc.devices = devices; return {'forja-devices': devices, 'forja-accuracy': fc(acc)};
+        const devices = fc(out); state.fc.devices = devices; const trail = geo.trail(r.devices); state.fc.trail = trail;
+        return {'forja-devices': devices, 'forja-accuracy': fc(acc), 'forja-trail': trail};
       }
       if (kind === 'pin') { const pt = r.pin && pointOf(r.pin.lat, r.pin.lng); return {'forja-pin': pt ? fc([{type: 'Feature', geometry: {type: 'Point', coordinates: pt}, properties: {kind: 'pin', id: 'pin', sort: 7, icon: img('pin', drawPin)}}]) : EMPTY}; }
       return {};
     }
     function render(kinds) {
       if (!state.ready) return;
-      const order = ['me', 'cells', 'routes', 'focusRoute', 'places', 'recommended', 'friends', 'devices', 'pin'];
+      const order = ['me', 'cells', 'routes', 'day', 'go', 'focusRoute', 'places', 'recommended', 'friends', 'devices', 'pin'];
       const wanted = new Set(kinds.map(k => k === 'family' ? 'friends' : k === 'selected' ? ['places', 'recommended', 'friends'] : k).flat());
       if (wanted.has('me')) wanted.add('friends');
       for (const kind of order) {
@@ -426,7 +475,7 @@
     }
     function visible(id) {
       if (state.mode === 'gasire') return !GASIRE_HIDDEN.includes(id);
-      if (id === 'forja-accuracy-fill' || id === 'forja-accuracy-line') return false;
+      if (id === 'forja-accuracy-fill' || id === 'forja-accuracy-line' || TRAIL_LAYERS.includes(id)) return false;
       for (const [key, ids] of Object.entries(TOGGLES)) if (ids.includes(id)) return !!state.layers[key];
       return true;
     }
@@ -464,7 +513,7 @@
     }
 
     Object.assign(api, {
-      /** Orice subset: {cells, routes, places, recommended, friends, family, me, devices, focusRoute, pin, selected}. */
+      /** Orice subset: {cells, routes, places, recommended, friends, family, me, devices, day, go, focusRoute, pin, selected}. */
       setData(partial) {
         if (!partial) return;
         const kinds = [];
@@ -493,7 +542,9 @@
         if (friends.length) return fitTo(friends, 14.5, padding);
         return false;
       },
-      fitDevices(padding = 80) { if (!state.ready) return false; const pts = geo.coordsOf(state.fc.devices); if (!pts.length) return false; return fitTo(pts, 16.5, padding); },
+      fitDevices(padding = 80) { if (!state.ready) return false; const pts = [...geo.coordsOf(state.fc.devices), ...geo.coordsOf(state.fc.trail)]; if (!pts.length) return false; return fitTo(pts, 16.5, padding); },
+      /** Ziua ta: traseul, opririle și tura în desfășurare; altfel nimic (false). */
+      fitDay(padding = 64) { if (!state.ready) return false; const pts = [...geo.coordsOf(state.fc.day), ...geo.coordsOf(state.fc.stops), ...geo.coordsOf(state.fc.go)]; return pts.length ? fitTo(pts, 16, padding) : false; },
       hasOwnData() { return !!(state.fc.cells?.features.length || state.fc.places?.features.length || state.fc.streets?.features.length || state.me); },
       focus(point, zoom = 16, padding) { if (!state.ready || !point) return false; const c = pointOf(point.lat, isNum(point.lng) ? point.lng : point.lon); if (!c) return false; map.easeTo({center: c, zoom: Math.max(map.getZoom(), zoom), duration: duration(700), ...(padding ? {padding} : {})}); return true; },
       fitLine(polyline, padding = 72) { if (!state.ready) return false; const pts = geo.parsePolyline(polyline).map(([lat, lng]) => [lng, lat]); return pts.length ? fitTo(pts, 16, padding) : false; },

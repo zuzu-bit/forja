@@ -146,7 +146,7 @@ function rich(now = NOW) {
       night: {id: nights[0].id, startAt: nights[0].startAt, endAt: nights[0].endAt, minutes: nights[0].minutes, score: nights[0].score, summary: nights[0].summary},
       links: links(now, {teren: ['on', 25 * MIN, 214], camarazi: ['on', 2 * MIN, 5], gasire: ['on', MIN, 1], inventar: ['on', 5 * HOUR, 4], somn: ['on', 12 * HOUR, 14], ratie: ['on', 40 * MIN, 4], mars: ['on', 2 * HOUR, 8], muzica: ['on', 3 * MIN, 10], paza: ['stale', 30 * HOUR, 7], cont: ['on', 3 * DAY, null]}),
       updated_at: now - 20000},
-    cerc: {me: {lat: P.home[0], lng: P.home[1], at: now - 3 * MIN, ghost: false, ghostUntil: null, state: 'walk', nowPlaying: {title: 'Vama Veche', artist: 'Vama', app: 'Spotify', at: now - 2 * MIN}, exploreCells: cells.length},
+    cerc: mirrorA(now, {me: {lat: P.home[0], lng: P.home[1], at: now - 3 * MIN, ghost: false, ghostUntil: null, state: 'walk', nowPlaying: {title: 'Vama Veche', artist: 'Vama', app: 'Spotify', at: now - 2 * MIN}, exploreCells: cells.length},
       friends: [
         {uid: 'f-ana', name: 'Ana Ionescu', initials: 'AI', lat: 44.4462, lng: 26.0985, at: now - 2 * MIN, state: 'run', ghost: false, viaFamily: false, nowPlaying: {title: 'Fetele care ard', artist: 'Carla’s Dreams', app: 'Spotify', at: now - 4 * MIN}, exploreCells: 268},
         {uid: 'f-mihai', name: 'Mihai Dobre', initials: 'MD', lat: 44.4291, lng: 26.1102, at: now - 6 * MIN, state: 'ride', ghost: false, viaFamily: false, nowPlaying: null, exploreCells: 190},
@@ -158,7 +158,7 @@ function rich(now = NOW) {
       family: [{uid: 'fam-mama', name: 'Mama', initials: 'M', lat: 44.4222, lng: 26.1330, at: now - 9 * MIN}, {uid: 'f-radu', name: 'Radu Stan', initials: 'RS', lat: 44.4195, lng: 26.0820, at: now - 40 * MIN}],
       recommended: [{id: 'r1', ownerUid: 'f-ana', ownerName: 'Ana Ionescu', name: 'Cafeneaua din Cotroceni', stars: 5, note: 'Cea mai bună cafea de după alergare.', lat: 44.4318, lng: 26.0765, visits: 6},
         {id: 'r2', ownerUid: 'f-mihai', ownerName: 'Mihai Dobre', name: 'Pista din Tineretului', stars: 4, note: '', lat: 44.4102, lng: 26.1098, visits: null}],
-      routes, inviteCode: 'K7Q2XM', updated_at: now - 15000},
+      routes, inviteCode: 'K7Q2XM', updated_at: now - 15000}),
     explore: {owner: 'demo-owner', grid_m: 150, features: cells, places, updated_at: now - 25 * MIN},
     discovery: {discoverable: true, discovery_until: now + 24 * DAY},
     somn: {nights}, somnDetail,
@@ -196,8 +196,43 @@ function rich(now = NOW) {
       pipes: pipes(now, {sesiune: 2 * MIN, galerie: 25 * MIN, explorare: 25 * MIN, agenda: 20 * HOUR, somn: 12 * HOUR, gasire: MIN, mese: 40 * MIN, miscare: 2 * HOUR, muzica: 3 * HOUR, inventar: 5 * HOUR}), intake: {paused: false}},
     intake: {accepting: true, revision: 4},
     devices: [{id: DEVICE, name: 'Galaxy S23', basis: 'contract', seen_at: now - 50000, online: true, status: 'ready', battery: 64, charging: false,
-      last: {lat: 44.43868, lon: 26.09372, accuracy: 12, at: now - 3 * MIN}, position: null, command: null}]
+      last: {lat: 44.43868, lon: 26.09372, accuracy: 12, at: now - 3 * MIN}, position: {lat: 44.43868, lon: 26.09372, accuracy: 12, at: now - 3 * MIN, battery: 64, command: id(21), fresh: false}, command: null,
+      trail: {command: id(21), points: Array.from({length: 40}, (_, i) => ({lat: 44.4312 + i * 0.00019, lon: 26.0981 - i * 0.00011 + Math.sin(i / 4) * 0.0002, accuracy: 10 + (i % 5), at: now - 23 * MIN + i * 30000}))}}]
   };
+}
+/**
+ * Mirror, pachetul A (rich): ce aduce acum /insights/api/cerc în plus — km-ii și ultima tură a camarazilor, familia în ambele
+ * sensuri, energia, agenda, locurile recomandate de tine, tura GO în desfășurare și ziua (ultimele 24 h).
+ */
+function mirrorA(now, cerc) {
+  const extra = {
+    'f-ana': {weekKm: 23.4, last: {type: 'run', km: 8.1, durS: 2700, at: now - 5 * HOUR}, placesCount: 12, since: now - 210 * DAY, inMyFamily: false, hasMeInFamily: false, fromAgenda: true},
+    'f-mihai': {weekKm: 41.2, last: {type: 'ride', km: 22.5, durS: 3900, at: now - DAY - 2 * HOUR}, placesCount: 6, since: now - 95 * DAY, inMyFamily: true, hasMeInFamily: false, fromAgenda: false},
+    'f-radu': {weekKm: 5.2, last: {type: 'walk', km: 3.1, durS: 2400, at: now - 3 * DAY}, placesCount: 3, since: now - 400 * DAY, inMyFamily: true, hasMeInFamily: true, fromAgenda: false},
+    'f-ioana': {weekKm: null, last: null, placesCount: null, since: now - 20 * DAY, inMyFamily: false, hasMeInFamily: false, fromAgenda: true},
+    'f-vlad': {weekKm: 0, last: {type: 'walk', km: 1.4, durS: 1100, at: now - 9 * DAY}, placesCount: 1, since: now - 3 * DAY, inMyFamily: false, hasMeInFamily: true, fromAgenda: false},
+  };
+  const friends = cerc.friends.map(f => ({...f, ...(extra[f.uid] || {})}));
+  const day0 = now - 11 * HOUR, stops = [
+    {from: now - 24 * HOUR + 20 * MIN, to: now - 13 * HOUR, name: 'Acasă', at: P.home}, {from: now - 12 * HOUR, to: now - 11 * HOUR - 8 * MIN, name: 'Sala', at: P.romana},
+    {from: now - 9 * HOUR, to: now - 5 * HOUR, name: null, at: P.universitate}, {from: now - 3 * HOUR, to: now - 2 * HOUR - 38 * MIN, name: 'Cafeneaua din Cotroceni', at: [44.4318, 26.0765]},
+    {from: now - 90 * MIN, to: now - 12 * MIN, name: 'Acasă', at: P.home}];
+  return {...cerc, friends,
+    me: {...cerc.me, placesCount: 9, weekKm: 18.6, last: {type: 'walk', km: 4.2, durS: 3100, at: now - 2 * DAY}, speedMps: 1.3,
+      family: [{uid: 'f-mihai', name: 'Mihai Dobre'}, {uid: 'f-radu', name: 'Radu Stan'}], familyAt: now - 2 * MIN, private: null, bgShare: true, bgShareAt: now - 2 * DAY,
+      go: {sport: 'walk', startedAt: now - 11 * MIN, distanceM: 820, at: now - 20000, polyline: polyline([P.home, [44.4368, 26.0905], [44.4352, 26.0921]])}},
+    energy: {received: [{uid: 'f-ana', name: 'Ana Ionescu', at: now - 40 * MIN, day: dateKey(now)}, {uid: 'f-mihai', name: 'Mihai Dobre', at: now - DAY - HOUR, day: dateKey(now - DAY - HOUR)},
+      {uid: 'f-ana', name: 'Ana Ionescu', at: now - 3 * DAY, day: dateKey(now - 3 * DAY)}], sent: [{uid: 'f-ana', name: 'Ana Ionescu', at: now - 30 * MIN, day: dateKey(now)}], today: 1, week: 3, sentToday: ['f-ana']},
+    agenda: {syncedAt: now - 4 * HOUR, status: 'ok', compared: 312, found: 4, mutual: 2, list: [
+      {uid: 'f-ana', name: 'Ana Ionescu', mutual: true, verified: true, friend: true}, {uid: 'f-ioana', name: 'Ioana Matei', mutual: true, verified: false, friend: true},
+      {uid: 'x-eva', name: 'Eva Marin', mutual: false, verified: true, friend: false}, {uid: 'x-dan', name: 'Dan Pop', mutual: false, verified: false, friend: false}]},
+    mine: [{id: 'm1', name: 'Parcul Herăstrău', stars: 5, lat: P.herastrau[0], lng: P.herastrau[1], seenBy: 3, at: now - 9 * DAY}],
+    day: {from: now - 24 * HOUR + 20 * MIN, to: now - 12 * MIN, km: 7.4, points: 1840, keep_hours: 24, updated_at: now - 60000,
+      track: [{from: now - 13 * HOUR, to: now - 12 * HOUR, polyline: polyline([P.home, P.cismigiu, P.romana])}, {from: day0, to: now - 9 * HOUR, polyline: polyline([P.romana, P.universitate])},
+        {from: now - 5 * HOUR, to: now - 3 * HOUR, polyline: polyline([P.universitate, P.carol, [44.4318, 26.0765]])}, {from: now - 2 * HOUR - 38 * MIN, to: now - 90 * MIN, polyline: polyline([[44.4318, 26.0765], P.cismigiu, P.home])}],
+      gaps: [{from: now - 11 * HOUR + 40 * MIN, to: now - 9 * HOUR - 20 * MIN}],
+      stops: stops.map(x => ({from: x.from, to: x.to, minutes: Math.round((x.to - x.from) / MIN), lat: x.at[0], lng: x.at[1], name: x.name})),
+      last: {lat: P.home[0], lng: P.home[1], at: now - 12 * MIN, accuracy: 9}}};
 }
 
 function lana(now = NOW) {

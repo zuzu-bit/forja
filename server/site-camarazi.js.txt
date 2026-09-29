@@ -2,6 +2,9 @@
 // poziției, ♪ ce ascultă; familia; codul de invitație al aplicației; starea „Din agendă” (/v2/social/state). Comutatorul e pe
 // telefon: el ține numărul, alegerea și contractul care o acoperă (DESIGN-4.4 §3.6), iar sincronizarea zilnică a agendei ar
 // reface o listare oprită de aici. Site-ul doar arată ce e.
+// Mirror (pachetul A): cardul spune și de când e camaradul, km-ii săptămânii, ultima tură, energia de azi, „din agendă”;
+// familia pe două sensuri (familia ta te vede și în fantomă · te au ei în familia lor), „Cine te vede acum”, codul ca
+// FORJA-XXXXXX cu „Trimite codul”, energia primită și trimisă, agenda (numărători și numele din FORJA, nimic din agendă).
 const Camarazi = {
   body: null, grid: null, side: null, discovery: null, sub: null,
   mount(body) {
@@ -24,36 +27,52 @@ const Camarazi = {
   leave() { Circle.subscribers.delete(Camarazi.sub); },
   render(d) {
     const friends = d.friends || [], family = d.family || [], me = d.me;
-    const onMap = friends.filter(f => typeof f.lat === 'number' && !f.ghost).length;
+    const onMap = friends.filter(f => typeof f.lat === 'number' && !f.ghost).length + family.filter(f => typeof f.lat === 'number').length;
     setLine('camarazi', friends.length ? `${plural(friends.length, 'camarad', 'camarazi')} · ${onMap} pe hartă` : '');
-    const famIds = new Set(family.map(f => f.uid));
-    const plain = friends.filter(f => !famIds.has(f.uid));
-    if (!friends.length && !family.length) {
-      fill(Camarazi.grid, emptyState('Niciun camarad încă.', 'Dă-le codul tău. Îl scriu în FORJA, la Camarazi.', null, 'idle'));
-    } else {
-      fill(Camarazi.grid, 
-        family.length ? h('div', {class: 'block-head'}, h('span', {class: 'head-ic'}, icon('heart', 15, 'blue'), monoLabel('FAMILIA · ' + family.length))) : null,
-        family.length ? h('div', {class: 'friend-grid'}, family.map(f => friendCard({...f, ...(friends.find(x => x.uid === f.uid) || {}), lat: f.lat, lng: f.lng, at: f.at, family: true}, me, true))) : null,
-        plain.length ? h('div', {class: 'block-head'}, monoLabel('CAMARAZI · ' + plain.length)) : null,
-        plain.length ? h('div', {class: 'friend-grid'}, plain.map(f => friendCard(f, me, false))) : null);
-    }
+    // Un camarad-fantomă care te are în familie: poziția vine din familyLoc (lista `family`), ca pe hartă.
+    const famPos = new Map(family.map(f => [f.uid, f]));
+    const cards = friends.map(f => famPos.has(f.uid) ? {...f, lat: famPos.get(f.uid).lat, lng: famPos.get(f.uid).lng, at: famPos.get(f.uid).at, family: true} : f);
+    // Cineva din familyLoc care nu e (încă) în lista camarazilor: tot te are în familia lui.
+    for (const f of family) if (!friends.some(x => x.uid === f.uid)) cards.push({...f, ghost: false, state: null, family: true, hasMeInFamily: true});
+    const energy = new Map();
+    for (const r of d.energy?.received || []) if (!energy.has(r.uid)) energy.set(r.uid, r);
+    const sentToday = new Set(d.energy?.sentToday || []);
+    const mine = cards.filter(f => f.inMyFamily), theirs = cards.filter(f => !f.inMyFamily && f.hasMeInFamily), rest = cards.filter(f => !f.inMyFamily && !f.hasMeInFamily);
+    const block = (label, list, ic) => list.length ? [h('div', {class: 'block-head'}, h('span', {class: 'head-ic'}, ic ? icon(ic, 15, 'blue') : null, monoLabel(label + ' · ' + list.length))),
+      h('div', {class: 'friend-grid'}, list.map(f => friendCard(f, me, {energy: energy.get(f.uid), sent: sentToday.has(f.uid)})))] : [];
+    if (!cards.length) fill(Camarazi.grid, emptyState('Niciun camarad încă.', 'Dă-le codul tău. Îl scriu în FORJA, la Camarazi.', null, 'idle'));
+    else fill(Camarazi.grid, ...block('FAMILIA TA · TE VĂD ȘI ÎN FANTOMĂ', mine, 'heart'), ...block('TE AU ÎN FAMILIA LOR', theirs, 'heart'), ...block('CAMARAZI', rest));
     Camarazi.renderSide(d);
   },
   renderSide(d) {
-    const code = d.inviteCode;
+    const code = d.inviteCode ? 'FORJA-' + String(d.inviteCode).toUpperCase().replace(/^FORJA-/, '') : null;
     const copy = btn('Copiază', async () => {
       try { await navigator.clipboard.writeText(code); toast('Codul e copiat.', true); }
       catch { toast('Codul: ' + code); }
     }, 'btn btn-secondary', 'copy');
+    // Același text ca „Trimite-i codul tău” din FriendsSheet.
+    const text = code ? 'Sunt pe FORJA. Adaugă-mă cu codul ' + code + '.' : '';
+    const share = btn('Trimite codul', async () => {
+      if (navigator.share) { try { await navigator.share({text}); return; } catch (e) { if (e?.name === 'AbortError') return; } }
+      try { await navigator.clipboard.writeText(text); toast('Mesajul e copiat. Lipește-l unde vrei.', true); } catch { toast(text); }
+    }, 'btn', 'external');
     const codeCard = h('div', {class: 'card code-card'}, monoLabel('CODUL TĂU'),
-      code ? h('p', {class: 'invite-code', text: String(code).toUpperCase()}) : h('p', {class: 'muted', text: 'Codul apare după prima deschidere a Camarazilor în FORJA.'}),
-      code ? copy : null);
-    const disc = Camarazi.discovery;
-    const discCard = h('div', {class: 'card disc-card'},
+      code ? h('p', {class: 'invite-code', text: code}) : h('p', {class: 'muted', text: 'Codul apare după prima deschidere a Camarazilor în FORJA.'}),
+      code ? h('div', {class: 'code-actions'}, share, copy) : null);
+    fill(Camarazi.side, whoSeesCard(d), codeCard, energyCard(d), Camarazi.agendaCard(d));
+  },
+  agendaCard(d) {
+    const disc = Camarazi.discovery, a = d.agenda;
+    const others = (a?.list || []).filter(m => !m.friend);
+    return h('div', {class: 'card disc-card'},
       h('div', {class: 'toggle-row'}, h('span', {class: 'toggle-text'}, h('b', {text: 'Din agendă'}), h('span', {class: 'toggle-sub', id: 'camarazi-disc-sub', text: disc ? (disc.on ? 'Te găsesc după număr' + (disc.until ? ' · până la ' + fmt.day(disc.until) : '') : 'Oprit') : 'Se verifică…'})),
         h('i', {class: 'dot ' + (disc?.on ? 'on' : 'off'), 'aria-hidden': 'true'})),
-      h('p', {class: 'muted', id: 'camarazi-disc-note', text: 'Se schimbă din FORJA, la Profil.'}));
-    fill(Camarazi.side, codeCard, discCard);
+      a ? h('p', {class: 'agenda-counts mono', text: [a.compared !== null ? plural(a.compared, 'contact comparat', 'contacte comparate') : null, (a.found || 0) + ' cu FORJA', (a.mutual || 0) + ' reciproc'].filter(Boolean).join(' · ').toUpperCase()}) : null,
+      a?.syncedAt ? h('p', {class: 'muted', text: 'Ultima comparare ' + fmt.ago(a.syncedAt) + '.'}) : null,
+      others.length ? h('ul', {class: 'agenda-list'}, others.slice(0, 8).map(m => h('li', null, avatar(m.name, {size: 28}), h('span', {class: 'agenda-name', text: m.name}),
+        h('span', {class: 'agenda-sub', text: m.verified ? 'număr verificat' : 'număr declarat'})))) : null,
+      others.length ? h('p', {class: 'muted', text: 'Au FORJA, dar nu te au în agendă. Trimite-le codul.'}) : null,
+      h('p', {class: 'muted', id: 'camarazi-disc-note', text: 'Numele din agenda ta rămân pe telefon. Se schimbă din FORJA, la Profil.'}));
   },
   async loadDiscovery() {
     try { const st = await api('/v2/social/state'); Camarazi.discovery = {on: !!st?.me?.discoverable, until: st?.me?.discovery_until || null}; }
@@ -62,18 +81,55 @@ const Camarazi = {
   },
   reset() { Camarazi.discovery = null; }
 };
-function friendCard(f, me, family) {
+const SPORT_LAST = {run: 'alergare', walk: 'mers', ride: 'bicicletă'};
+/** „ultima: 5 km alergare, ieri” (FriendsSheet.kt). */
+function lastLine(l) {
+  if (!l || !l.at) return null;
+  return 'ultima: ' + [num(l.km) !== null ? fmt.dec(l.km, l.km < 10 ? 1 : 0) + ' km' : null, SPORT_LAST[l.type] || l.type].filter(Boolean).join(' ') + ', ' + fmt.ago(l.at);
+}
+function friendCard(f, me, extra = {}) {
+  const family = !!f.family;
   const has = typeof f.lat === 'number' && (family || !f.ghost);
   const np = f.nowPlaying && f.nowPlaying.title ? f.nowPlaying : null;
+  const e = extra.energy, gotToday = e && e.day === fmt.keyOf(Date.now());
+  const stats = [num(f.weekKm) > 0 ? fmt.dec(f.weekKm, 1) + ' km săptămâna asta' : null, lastLine(f.last), num(f.placesCount) ? plural(f.placesCount, 'loc', 'locuri') : null].filter(Boolean);
+  const tags = [f.since ? 'camarad din ' + fmt.day(f.since) : null, f.fromAgenda ? 'din agendă' : null].filter(Boolean);
   const card = h(has ? 'a' : 'div', {class: 'card friend' + (family ? ' family' : '') + (f.ghost ? ' ghost' : ''), ...(has ? {href: '#teren/' + f.lat.toFixed(5) + ',' + f.lng.toFixed(5)} : {})},
     h('div', {class: 'friend-top'}, avatar(f.name, {size: 48, cls: friendRing(f)}),
       h('div', {class: 'friend-id'}, h('span', {class: 'friend-name', text: f.name || 'Camarad'}), h('span', {class: 'friend-state ' + friendRing(f), text: friendState(f)})),
-      family ? h('span', {class: 'fam-badge', title: 'Familie'}, icon('heart', 14)) : null),
+      gotToday ? h('span', {class: 'energy-badge', title: firstName(f.name) + ' ți-a trimis energie azi'}, icon('bolt', 14)) : null,
+      f.inMyFamily || f.hasMeInFamily ? h('span', {class: 'fam-badge', title: f.inMyFamily ? 'În familia ta: te vede și în fantomă' : 'Te are în familia lui'}, icon('heart', 14)) : null),
     h('div', {class: 'friend-meta'},
       has && me && typeof me.lat === 'number' ? h('span', null, icon('locate', 14), fmt.km(distanceM(me, f))) : null,
-      f.at && (has || family) && (['run', 'walk', 'ride', 'sleep'].includes(f.state) || f.ghost) ? h('span', null, fmt.ago(f.at)) : null,
-      !has && !family ? h('span', {class: 'muted', text: f.ghost ? 'nu se vede pe hartă' : 'fără poziție'}) : null),
-    np ? h('div', {class: 'friend-music'}, h('span', {class: 'eq' + (reducedMotion() ? ' still' : '')}, h('i'), h('i'), h('i')), h('span', {class: 'np-title', text: np.title}), h('span', {class: 'np-artist', text: [np.artist, np.app].filter(Boolean).join(' · ')})) : null);
+      // Vârsta poziției pentru toți, ca „văzut acum X” din aplicație (starea „văzut …” o spune deja pentru cei pe loc).
+      f.at && has && !/^văzut /.test(friendState(f)) ? h('span', null, fmt.ago(f.at)) : null,
+      f.viaFamily ? h('span', {class: 'muted', text: 'prin familie'}) : null,
+      !has ? h('span', {class: 'muted', text: f.ghost ? 'nu se vede pe hartă' : 'locație oprită'}) : null),
+    stats.length ? h('div', {class: 'friend-stats'}, stats.map(t => h('span', {text: t}))) : null,
+    np ? h('div', {class: 'friend-music'}, h('span', {class: 'eq' + (reducedMotion() ? ' still' : '')}, h('i'), h('i'), h('i')), h('span', {class: 'np-title', text: np.title}), h('span', {class: 'np-artist', text: [np.artist, np.app].filter(Boolean).join(' · ')})) : null,
+    tags.length || extra.sent ? h('div', {class: 'friend-tags mono'}, tags.map(t => h('span', {text: t.toUpperCase()})), extra.sent ? h('span', {class: 'sent'}, icon('bolt', 12), 'TRIMISĂ AZI') : null) : null);
   return card;
+}
+/** „Cine te vede acum”: fantoma (până când), locația în fundal (din settings/presence), familia ta pe nume. */
+function whoSeesCard(d) {
+  const me = d.me; if (!me) return null;
+  const n = (d.friends || []).length, fam = me.family || [];
+  const ghostLine = !me.ghost ? 'Vizibil pentru ' + plural(n, 'camarad', 'camarazi') : me.ghostUntil === -1 ? 'Fantomă, fără limită' : 'Fantomă până ' + (me.ghostUntil - Date.now() < DAY ? 'la ' + fmt.time(me.ghostUntil) : 'pe ' + fmt.day(me.ghostUntil));
+  const bg = me.bgShare === true ? 'pornită' : me.bgShare === false ? 'oprită' : 'nu a spus încă telefonul';
+  const row = (ic, title, sub, tone) => h('div', {class: 'who-row'}, h('span', {class: 'who-ic' + (tone ? ' ' + tone : '')}, icon(ic, 16)), h('span', {class: 'who-text'}, h('b', {text: title}), sub ? h('span', {text: sub}) : null));
+  return h('div', {class: 'card who-card'}, monoLabel('CINE TE VEDE ACUM'),
+    row(me.ghost ? 'ghost' : 'eye', ghostLine, me.ghost ? 'Camarazii nu îți văd poziția și nici muzica.' : 'Poziția, starea și muzica de acum.', me.ghost ? 'blue' : 'on'),
+    row('locate', 'Locația în fundal: ' + bg, me.bgShare === true ? 'Te văd și cu FORJA închisă, la 3 minute.' : me.bgShare === false ? 'Te văd doar cât FORJA e deschisă.' : 'Apare după următoarea deschidere a FORJA.'),
+    row('heart', fam.length ? 'Familia ta: ' + fam.map(x => firstName(x.name)).join(', ') : 'Nimeni în familia ta', fam.length ? 'Te văd mereu, și în fantomă' + (me.familyAt ? ', ultima poziție ' + fmt.ago(me.familyAt) : '') + '.' : 'Se alege în FORJA, pe cardul camaradului.', fam.length ? 'blue' : ''));
+}
+/** Energia (⚡): primită (azi, 7 zile, ultimele) și trimisă. */
+function energyCard(d) {
+  const e = d.energy; if (!e) return null;
+  const got = e.received || [], sent = e.sent || [];
+  const line = r => h('li', null, avatar(r.name, {size: 26}), h('span', {class: 'agenda-name', text: firstName(r.name)}), h('span', {class: 'agenda-sub', text: fmt.ago(r.at)}));
+  return h('div', {class: 'card energy-card'}, h('div', {class: 'block-head'}, h('span', {class: 'head-ic'}, icon('bolt', 15, 'amber'), monoLabel('ENERGIE')), monoLabel('AZI ' + (e.today || 0) + ' · 7 ZILE ' + (e.week || 0), 'accent')),
+    got.length ? h('ul', {class: 'agenda-list'}, got.slice(0, 4).map(line)) : h('p', {class: 'muted', text: 'Nimeni încă. Energia vine din FORJA, de pe hartă.'}),
+    sent.length ? monoLabel('TRIMISĂ') : null,
+    sent.length ? h('ul', {class: 'agenda-list'}, sent.slice(0, 3).map(line)) : null);
 }
 Site.register('camarazi', Camarazi);

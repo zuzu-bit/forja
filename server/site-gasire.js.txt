@@ -1,5 +1,6 @@
 // GĂSIRE · Telefonul tău — telefonul e ținta, site-ul caută (DESIGN-4.4 §1.7, §3.4): harta cu ultima poziție (7 zile),
 // „Sună” (60 s), „Urmărește 10 min” (+10, maximum 60), „Oprește” (păstrează ultima poziție), redenumire, scoatere.
+// Mirror (pachetul A): traseul unei căutări (până la 360 de puncte, 24 h), desenat pe hartă, cu contractul v4.
 const Gasire = {
   devices: null, body: null, slot: null, panel: null, fitted: false, off: null, lastSig: '',
   mount(body) {
@@ -51,7 +52,7 @@ const Gasire = {
     r.setMode('gasire');
     r.setData({devices: Gasire.devices || [], me: Circle.data?.me || null});
     const d = (Gasire.devices || [])[0], p = d && newest(d);
-    const sig = p ? [p.lat, p.lon, p.at].join('|') : '';
+    const sig = p ? [p.lat, p.lon, p.at, d.trail?.points?.length || 0].join('|') : '';
     if (p && (!Gasire.fitted || (d.command && sig !== Gasire.lastSig))) { r.fitDevices(Gasire.padding()); Gasire.fitted = true; }
     Gasire.lastSig = sig;
   },
@@ -122,8 +123,16 @@ function deviceCard(d) {
     h('p', {class: 'device-state'}, h('i', {class: 'dot ' + (v.tone === 'off' ? 'off' : v.tone === 'warn' ? 'stale' : v.tone === 'ember' ? 'ember' : 'on') + (v.tone === 'live' || v.tone === 'ember' && c ? ' pulse' : '')}), h('span', {text: v.line})),
     v.sub ? h('p', {class: 'device-sub', text: v.sub}) : null,
     meta.length ? h('div', {class: 'device-meta'}, meta) : null,
+    trailLine(d),
     p ? h('a', {class: 'device-nav', href: `https://www.google.com/maps/search/?api=1&query=${p.lat.toFixed(6)},${(p.lon ?? p.lng).toFixed(6)}`, target: '_blank', rel: 'noopener noreferrer'}, monoLabel(p.lat.toFixed(5) + ', ' + (p.lon ?? p.lng).toFixed(5)), h('span', {text: 'Navighează'}), icon('external', 14)) : h('p', {class: 'device-sub', text: 'Nicio poziție încă. Apare la prima trezire a telefonului.'}),
     h('div', {class: 'device-actions'}, actions));
+}
+/** „Traseul căutării · 42 de puncte · 14:02–14:20”; cu v3 doar ultimul punct, spus deschis. */
+function trailLine(d) {
+  const pts = d.trail?.points || [];
+  if (pts.length >= 2) return h('p', {class: 'device-sub trail'}, icon('radar', 14), h('span', {text: 'Traseul căutării · ' + plural(pts.length, 'punct', 'puncte') + ' · ' + fmt.time(pts[0].at) + '–' + fmt.time(pts[pts.length - 1].at)}));
+  if (d.position && !d.trail) return h('p', {class: 'device-sub', text: 'Din căutare rămâne ultimul punct. Traseul întreg vine cu contractul v4.'});
+  return null;
 }
 function deviceMenu(d) {
   const ref = sheet(d.name || 'Telefonul meu', h('div', {class: 'menu-list'},
