@@ -58,9 +58,13 @@ import kotlinx.coroutines.delay
 /** Spațiul neîntrerupt: „62,5 KG”, „4 SERII” nu se despart la capăt de rând. */
 private const val NBSP = '\u00A0'
 
-/** Ghidajul primei vizite: rândul „Muzică”, spus o singură dată. */
-private val ANTRENAMENT_STEPS = listOf(
-    CoachStep("antrenament.muzica", "Muzica ta pornește odată cu sesiunea.", MascotState.Happy)
+/**
+ * Ghidajul primei vizite: rândul „Muzică”, spus o singură dată. Cheia e nouă în 4.4.1 („antrenament_441”): cine a
+ * văzut ghidajul din 4.4 îl vede o dată cu rândul nou (saltul de o clipă în Spotify).
+ */
+internal const val ANTRENAMENT_GUIDE = "antrenament_441"
+internal val ANTRENAMENT_STEPS = listOf(
+    CoachStep("antrenament.muzica", "Muzica ta pornește odată cu sesiunea. Dacă Spotify e închis, apare o clipă.", MascotState.Happy)
 )
 
 /** Hub Antrenament: 3 planuri selectabile + lista de azi + „Începe sesiunea". */
@@ -107,7 +111,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
     // din 696, iar bara de file acoperă doar de la 576 în jos): hubul derulează o dată până la el numai dacă un font
     // mărit îi împinge marginea de jos sub bara de file (cei 120 dp de jos), ca ținta să apară întreagă în primele 3 s.
     val scroll = rememberScrollState()
-    val guideSeen by remember { Tutorial.seen(context, "antrenament") }.collectAsState(initial = true)
+    val guideSeen by remember { Tutorial.seen(context, ANTRENAMENT_GUIDE) }.collectAsState(initial = true)
     var musicRowTop by remember { mutableFloatStateOf(-1f) }
     var musicRowBottom by remember { mutableFloatStateOf(-1f) }
     var viewport by remember { mutableIntStateOf(0) }
@@ -125,7 +129,7 @@ fun WorkoutScreen(onStartLive: () -> Unit) {
         if (target > scroll.value) scroll.animateScrollTo(target)
     }
 
-    CoachMarks(screen = "antrenament", steps = ANTRENAMENT_STEPS) {
+    CoachMarks(screen = ANTRENAMENT_GUIDE, steps = ANTRENAMENT_STEPS) {
         WorkoutHubContent(
             plans = plans,
             planIdx = planIdx,

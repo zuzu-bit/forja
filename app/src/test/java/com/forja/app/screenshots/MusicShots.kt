@@ -32,6 +32,10 @@ abstract class MusicShotsBase(private val suffix: String) {
     @Test fun pausedNeedsTap() = s3c("paused_needs_tap", MusicWaitSamples.pausedNeedsTap)
     @Test fun failedUnknown() = s3c("failed_unknown", MusicWaitSamples.failedUnknown)
 
+    /** 4.4.1: nu a pornit și nu e nimic de deschis — fără buton de deschis, doar „Încearcă din nou”. */
+    @Test fun failedNothing() = s3c("failed_nothing", MusicWaitSamples.failedNothing)
+    @Test fun resumeFailedNothing() = s3c("resume_failed_nothing", MusicWaitSamples.resumeFailedNothing)
+
     /** Cazurile cele mai pline (rânduri în plus sub comenzi): pe S23 coloana trebuie să încapă fără derulare. */
     @Test fun resumeFailedTop() = s3c("resume_failed_top", MusicWaitSamples.resumeFailedTop)
     @Test fun pausedNeedsTapBook() = s3c("paused_needs_tap_book", MusicWaitSamples.pausedNeedsTapBook)

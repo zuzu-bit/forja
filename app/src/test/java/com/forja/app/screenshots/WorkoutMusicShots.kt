@@ -7,12 +7,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -20,12 +22,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.rememberScrollState
 import com.forja.app.core.data.db.ExerciseEntity
 import com.forja.app.core.data.db.PlanEntity
-import com.forja.app.core.designsystem.components.MascotState
 import com.forja.app.core.designsystem.components.CoachMarksHost
-import com.forja.app.core.designsystem.components.CoachStep
 import com.forja.app.core.designsystem.Surface1
 import com.forja.app.core.designsystem.Surface2
 import com.forja.app.core.designsystem.components.SectionLabel
+import com.forja.app.core.designsystem.components.ToastHost
+import com.forja.app.core.designsystem.components.ToastState
+import com.forja.app.core.music.MusicKind
+import com.forja.app.core.music.MusicQueue
+import com.forja.app.feature.workout.ANTRENAMENT_STEPS
 import com.forja.app.feature.workout.DiscUi
 import com.forja.app.feature.workout.HubActions
 import com.forja.app.feature.workout.LiveActions
@@ -95,14 +100,13 @@ abstract class WorkoutMusicShotsBase(private val suffix: String) {
         WorkoutHubContent(plans, 0, today, WorkoutMusicSamples.music, WorkoutMusicSamples.discIdle, HubActions())
     }
 
-    /** Prima vizită: ghidajul pe rând, fără derulare (rândul e deja în primul ecran; se derulează doar la font mărit). */
+    /**
+     * Prima vizită după 4.4.1 (cheia „antrenament_441”): ghidajul pe rând, cu rândul nou despre saltul de o clipă în
+     * Spotify; fără derulare (rândul e deja în primul ecran; se derulează doar la font mărit). Hubul arată ↗ lângă listă.
+     */
     @Test fun hubGuide() = shot("workout_hub_guide$suffix") {
-        CoachMarksHost(
-            steps = listOf(CoachStep("antrenament.muzica", "Muzica ta pornește odată cu sesiunea.", MascotState.Happy)),
-            active = true,
-            onFinish = {}
-        ) {
-            WorkoutHubContent(plans, 0, today, WorkoutMusicSamples.music, WorkoutMusicSamples.discIdle, HubActions())
+        CoachMarksHost(steps = ANTRENAMENT_STEPS, active = true, onFinish = {}) {
+            WorkoutHubContent(plans, 0, today, WorkoutMusicSamples.coldHop, WorkoutMusicSamples.discIdle, HubActions())
         }
     }
 
@@ -120,6 +124,10 @@ abstract class WorkoutMusicShotsBase(private val suffix: String) {
     @Test fun hubOff() = shot("workout_hub_music_off$suffix", fullScreen = false) { Hub(WorkoutMusicSamples.musicOff) }
     @Test fun hubCold() = shot("workout_hub_music_cold$suffix", fullScreen = false) { Hub(WorkoutMusicSamples.cold) }
     @Test fun hubNoAccess() = shot("workout_hub_music_noaccess$suffix", fullScreen = false) { Hub(WorkoutMusicSamples.noAccess) }
+
+    /** 4.4.1: pornirea va sări o clipă în Spotify (29.09: tasta la YouTube) — ↗ amber de 10 dp după etichetă. */
+    @Test fun hubHop() = shot("workout_hub_music_hop$suffix", fullScreen = false) { Hub(WorkoutMusicSamples.coldHop) }
+    @Test fun hubMixHop() = shot("workout_hub_music_mix_hop$suffix", fullScreen = false) { Hub(WorkoutMusicSamples.musicHop) }
 
     // ───────────── Foaia ─────────────
     @Test fun sheetMix() = shot("workout_sheet_mix$suffix") { Sheet(WorkoutMusicSamples.music) }
@@ -139,13 +147,28 @@ abstract class WorkoutMusicShotsBase(private val suffix: String) {
     @Test fun liveRestNeedsTap() = liveShot("rest_needs_tap", rest, WorkoutMusicSamples.discNeedsTap)
     @Test fun liveRestFailed() = liveShot("rest_failed", rest, WorkoutMusicSamples.discFailed)
 
+    // 4.4.1: „Nu a pornit.” + ↗ (Spotify se poate deschide) / + ▶ (nimic de deschis: încearcă din nou).
+    @Test fun liveRestFailedSpotify() = liveShot("rest_failed_spotify", rest, WorkoutMusicSamples.discFailedSpotify)
+    @Test fun liveRestFailedRetry() = liveShot("rest_failed_retry", rest, WorkoutMusicSamples.discFailedRetry)
+    @Test fun liveSetFailedRetry() = liveShot("set_failed_retry", live, WorkoutMusicSamples.discFailedRetry)
+
+    /** Spotify n-a primit piesa cerută: coperta fără punctul olive și rândul spus o singură dată pe antrenament. */
+    @Test fun liveSetRefused() = shot("workout_live_set_refused$suffix") {
+        val toast = remember { ToastState().apply { show(MusicQueue.refusedNotice(MusicKind.SPOTIFY)) } }
+        Box(Modifier.fillMaxSize()) {
+            WorkoutLiveContent(live, elapsedSec = 1_312, disc = WorkoutMusicSamples.discRefused, showMusic = true, actions = LiveActions())
+            ToastHost(toast, Modifier.align(Alignment.BottomCenter).padding(bottom = 110.dp))
+        }
+    }
+
     // ───────────── Discul și banda, în toate fazele ─────────────
     @Test fun discs() = shot("workout_music_discs$suffix", fullScreen = false) {
         val all = listOf(
             WorkoutMusicSamples.discIdle, WorkoutMusicSamples.discStarting, WorkoutMusicSamples.discPlaying,
-            WorkoutMusicSamples.discPaused, WorkoutMusicSamples.discLiked, WorkoutMusicSamples.discNeedsTap, WorkoutMusicSamples.discFailed
+            WorkoutMusicSamples.discPaused, WorkoutMusicSamples.discLiked, WorkoutMusicSamples.discRefused, WorkoutMusicSamples.discNeedsTap,
+            WorkoutMusicSamples.discFailed, WorkoutMusicSamples.discFailedSpotify, WorkoutMusicSamples.discFailedRetry
         )
-        // 7 discuri de 48 dp nu încap pe un rând (408 dp > 353 / 320): două rânduri, fiecare fază întreagă.
+        // 10 discuri de 48 dp nu încap pe un rând (câte 4 pe rând: 228 dp < 320): trei rânduri, fiecare fază întreagă.
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             all.chunked(4).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { row.forEach { MusicDisc(it, 48.dp, overVideo = true) } }

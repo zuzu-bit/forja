@@ -2,8 +2,10 @@ package com.forja.app.feature.workout
 
 import com.forja.app.core.music.Badge
 import com.forja.app.core.music.FPlaylist
+import com.forja.app.core.music.FailReason
 import com.forja.app.core.music.Mix
 import com.forja.app.core.music.MusicKind
+import com.forja.app.core.music.MusicQueue
 import com.forja.app.core.music.Rung
 import com.forja.app.core.music.StartState
 import com.forja.app.core.music.Step
@@ -12,6 +14,7 @@ import com.forja.app.core.music.Track
 import com.forja.app.core.music.Want
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -70,5 +73,46 @@ class WorkoutMusicStateTest {
     @Test fun likedBadgeOnlyWithoutTheForjaQueue() {
         val d = discUi(StartState.Playing(Rung.S_LIKED, Badge.LIKED), true, track(true), null, 0, queueActive = false)
         assertEquals(Badge.LIKED, d.badge)
+    }
+
+    // ───────────── 4.4.1 ─────────────
+
+    @Test fun failedWithNothingToOpenHasNoActionAndATapRetries() {
+        // 29.09: „Nu a pornit.” cu „Deschide playerul”, iar atingerea nu deschidea nimic. Acum: fără nimic de deschis, fără acțiune.
+        val none = discUi(StartState.Failed(FailReason.NO_PLAYER, null), true, null, null, 0, false)
+        assertEquals(DiscPhase.FAILED, none.phase)
+        assertNull(none.action)
+        assertEquals("Muzica nu a pornit. Atinge ca să încerci din nou", discDescription(none))
+        val sp = discUi(StartState.Failed(FailReason.TIMEOUT, Step(Rung.O_LIKED_PAGE, MusicKind.SPOTIFY)), true, null, null, 0, false)
+        assertEquals("Deschide Spotify", sp.action)
+        assertEquals("Muzica nu a pornit. Atinge ca să deschizi Spotify", discDescription(sp))
+        val other = discUi(StartState.Failed(FailReason.TIMEOUT, Step(Rung.O_LAUNCH, MusicKind.YT_MUSIC)), true, null, null, 0, false)
+        assertEquals("Deschide playerul", other.action)
+        assertEquals("Muzica nu a pornit. Atinge ca să deschizi playerul", discDescription(other))
+        // Starea „pornește” rămâne aceeași cât Spotify e în față (saltul).
+        assertEquals("Muzică: pornește", discDescription(discUi(StartState.Starting(Rung.V_LIKED_PLAY, Want.Workout(null)), true, null, null, 0, false)))
+    }
+
+    @Test fun refusedListLosesTheForjaDot() {
+        // Spotify n-a primit piesa cerută: coada s-a retras, discul arată coperta fără punctul olive.
+        val refused = discUi(StartState.Playing(Rung.S_TOP, Badge.FORJA), true, track(true), null, 0, queueActive = false)
+        assertEquals(DiscPhase.PLAYING, refused.phase)
+        assertEquals(Badge.NONE, refused.badge)
+        assertEquals(Badge.FORJA, discUi(StartState.Playing(Rung.V_TRACK, Badge.FORJA), true, track(true), null, 0, queueActive = true).badge)
+    }
+
+    @Test fun hopGlyphIsSpokenAndTheCopyFitsTheRules() {
+        assertEquals("Spotify se deschide o clipă", WorkoutMusicSamples.coldHop.hopLabel)
+        assertEquals("APRECIATE", WorkoutMusicSamples.coldHop.label)
+        assertTrue(SHEET_INFO.contains("Pe Spotify gratuit, FORJA cere piesele pe rând, cât timp Spotify le primește."))
+        assertEquals("antrenament_441", ANTRENAMENT_GUIDE)
+        assertEquals("Muzica ta pornește odată cu sesiunea. Dacă Spotify e închis, apare o clipă.", ANTRENAMENT_STEPS.single().text)
+        // Fără „!”, ș și ț cu virgulă dedesubt (nu cu sedilă).
+        val copy = listOf(SHEET_INFO, ANTRENAMENT_STEPS.single().text, WorkoutMusicSamples.coldHop.hopLabel, MusicQueue.refusedNotice(MusicKind.SPOTIFY)) +
+            listOf(WorkoutMusicSamples.discFailedRetry, WorkoutMusicSamples.discFailedSpotify, WorkoutMusicSamples.discFailed).map { discDescription(it) }
+        for (c in copy) {
+            assertFalse(c, c.contains('!'))
+            assertFalse(c, c.contains('ş') || c.contains('ţ') || c.contains('Ş') || c.contains('Ţ'))
+        }
     }
 }

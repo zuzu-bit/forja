@@ -72,10 +72,73 @@ class PlannerTest {
         assertTrue(runnable(steps).first().visible)
     }
 
-    @Test fun b4_noPlayerAtAllEndsInTheLauncher() {
-        val s = snap(sessions = emptyList(), keyTarget = null, preferred = null, installed = emptySet(), searchable = emptySet(), top = null)
+    /**
+     * Înlocuiește `b4_noPlayerAtAllEndsInTheLauncher` (4.4), care aștepta ca rezultat corect exact eșecul ei de pe 29.09:
+     * O_LAUNCH fără pachet (selectorul de muzică, „no-activity” pe S23). Acum un pas final există doar spre un player
+     * anume; fără niciunul (Spotify dovedit lipsă), încercarea se termină fără nimic de deschis.
+     */
+    @Test fun nothingToOpenLeavesNoTerminal() {
+        val s = snap(
+            sessions = emptyList(), keyTarget = null, preferred = null, installed = emptySet(), searchable = emptySet(), top = null,
+            absent = setOf(SPOTIFY), history = emptySet()
+        )
+        for (want in listOf(Want.MyMusic, Want.Top, Want.Workout(null))) {
+            val plan = Planner.plan(want, s)
+            assertTrue(want.wire, plan.none { it.rung.terminal })
+            assertTrue(want.wire, plan.all { it.skip != null })
+        }
+        // Detecția goală, dar Spotify nedovedit lipsă: pasul final e pagina lui, niciodată O_LAUNCH fără pachet.
+        val undetected = Planner.plan(Want.MyMusic, s.copy(absent = emptySet()))
+        assertEquals(Step(Rung.O_LIKED_PAGE, SPOTIFY), undetected.last())
+        assertTrue(undetected.none { it.rung == Rung.O_LAUNCH })
+    }
+
+    /** Jurnalul ei de pe 29.09 (10:16:03), cu 4.4.1: aceeași lume, acum un salt în Spotify în loc de nota tăiată. */
+    @Test fun workout_lanaLog_2909() {
+        val steps = Planner.plan(Want.Workout(null), lanaSnap())
+        val key = steps.first { it.rung == Rung.K_PLAY }
+        assertEquals("keyTarget:$YOUTUBE", key.skip)
+        val run = steps.filter { it.skip == null }
+        assertEquals(Step(Rung.V_LIKED_PLAY, SPOTIFY), run.first())
+        assertEquals(Step(Rung.O_LIKED_PAGE, SPOTIFY), run.last())
+        assertTrue("niciodată O_LAUNCH", steps.none { it.rung == Rung.O_LAUNCH })
+        assertTrue("YouTube nu primește nimic", run.none { it.pkg == YOUTUBE || it.sessionId == "yt" })
+    }
+
+    @Test fun spotifyIsNeverHiddenByDetection() {
+        // PackageManager n-a găsit nimic (29.09), dar istoricul știe Spotify: treptele lui vizibile rămân toate.
+        val s = snap(sessions = emptyList(), keyTarget = STORYTEL, preferred = null, installed = emptySet(), searchable = emptySet(), history = setOf(SPOTIFY))
+        val run = Planner.plan(Want.MyMusic, s).filter { it.skip == null }
+        assertEquals(listOf(Rung.V_TRACK, Rung.V_LIKED_PLAY, Rung.V_PFS_DATA, Rung.V_PFS_TOP, Rung.O_LIKED_PAGE), run.map { it.rung })
+        assertTrue(run.all { it.pkg == SPOTIFY })
+        // TOP 1 sare direct la piesă, și fără detecție.
+        assertEquals(Rung.V_TRACK, Planner.plan(Want.Top, s).first { it.skip == null }.rung)
+    }
+
+    @Test fun spotifyProvenAbsentUsesTheOtherPlayer() {
+        val s = snap(
+            sessions = emptyList(), keyTarget = null, preferred = null, installed = setOf(YTM), searchable = setOf(YTM), top = null,
+            absent = setOf(SPOTIFY), history = emptySet()
+        )
         val plan = Planner.plan(Want.MyMusic, s)
-        assertEquals(Rung.O_LAUNCH, plan.last().rung)
+        assertEquals(listOf(Step(Rung.V_PFS_ANY, YTM), Step(Rung.O_LAUNCH, YTM)), plan.filter { it.skip == null })
+        assertTrue(plan.none { it.pkg == SPOTIFY })
+    }
+
+    @Test fun openStepNeverOpensAVideoForMusic() {
+        val yt = session("yt", YOUTUBE, kind = MediaKind.VIDEO, state = PState.PLAYING, title = "Un video")
+        val book = session("book", STORYTEL, kind = MediaKind.SPOKEN, title = "Fetele care ard")
+        // 29.09: o atingere după eșec deschidea YouTube (Music.other). Pentru muzică: Spotify la Melodii apreciate.
+        assertEquals(Step(Rung.O_LIKED_PAGE, SPOTIFY), Planner.openStep(yt, null, emptySet()))
+        assertEquals(Step(Rung.O_LIKED_PAGE, SPOTIFY), Planner.openStep(book, SPOTIFY, emptySet()))
+        // Muzica pe care o vede: exact sesiunea ei.
+        assertEquals(Step(Rung.O_SESSION, SPOTIFY, "sp"), Planner.openStep(session("sp", SPOTIFY), SPOTIFY, emptySet()))
+        // Playerul ei, când nu e Spotify; Spotify dovedit lipsă → playerul ei; nimic → nimic de deschis.
+        assertEquals(Step(Rung.O_LAUNCH, YTM), Planner.openStep(null, YTM, emptySet()))
+        assertEquals(Step(Rung.O_LAUNCH, YTM), Planner.openStep(yt, YTM, setOf(SPOTIFY)))
+        assertEquals(null, Planner.openStep(yt, null, setOf(SPOTIFY)))
+        // Un video nu devine „playerul ei” nici din preferințe.
+        assertEquals(Step(Rung.O_LIKED_PAGE, SPOTIFY), Planner.openStep(null, YOUTUBE, emptySet()))
     }
 
     @Test fun c1_noAccessUsesTheKeyThenVisibleRungs() {

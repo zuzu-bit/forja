@@ -14,6 +14,7 @@ import com.forja.app.core.music.MusicKind
 import com.forja.app.core.music.MusicStarter
 import com.forja.app.core.music.MusicStats
 import com.forja.app.core.music.Playlist
+import com.forja.app.core.music.Want
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -88,10 +89,15 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Recalculează listele (Mix/Noi/Vechi/Apreciate) pentru planul de azi; la deschiderea hubului și la revenire. */
+    /**
+     * Recalculează listele (Mix/Noi/Vechi/Apreciate) pentru planul de azi; la deschiderea hubului și la revenire.
+     * Întâi încălzește motorul (sesiunile, playerele), ca „Începe sesiunea” să găsească planul gata, iar la final
+     * află dacă pornirea ar sări în Spotify (↗ lângă eticheta listei).
+     */
     fun refreshMusic() {
         musicJob?.cancel()
         musicJob = viewModelScope.launch {
+            try { MusicStarter.prewarm(forja) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
             val access = Music.hasAccess(forja)
             val target = Playlist.targetMinutes(_planExercises.value.map { it.sets to it.reps })
             val result = try {
@@ -109,7 +115,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                 null
             }
             val stored = try { MusicStats.workoutMusic(forja) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
-            _music.value = _music.value.copy(
+            val next = _music.value.copy(
                 on = stored ?: access,
                 access = access,
                 lists = result?.first ?: _music.value.lists,
@@ -117,6 +123,13 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                 player = result?.second?.second ?: _music.value.player,
                 playerPkg = result?.second?.first ?: _music.value.playerPkg
             )
+            // Situația de pe 29.09 (nicio sesiune Spotify, tasta media la YouTube): pornirea sare o clipă în Spotify.
+            val hop = next.on && try {
+                MusicStarter.willHop(Want.Workout(next.list?.takeIf { next.effective != Mix.LIKED }?.items?.firstOrNull()?.ref()))
+            } catch (_: Exception) {
+                false
+            }
+            _music.value = next.copy(hop = hop)
         }
     }
 
@@ -187,8 +200,9 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         sessionLive = true
         MusicStarter.workoutBegan()
         // Muzica pornește odată cu sesiunea, fără să țină nimic în loc; dacă muzica ta cântă deja, rămâne a ta.
+        // „Începe sesiunea” e o atingere (4.4.1): fără nicio cale invizibilă, cel mult un salt în Spotify, în 1,5 s de la ea.
         val m = _music.value
-        if (m.on) MusicStarter.startWorkout(forja, m.effective, targetMinutes(), tap = false)
+        if (m.on) MusicStarter.startWorkout(forja, m.effective, targetMinutes(), tap = true)
     }
 
     private fun toast(msg: String) {

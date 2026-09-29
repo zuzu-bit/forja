@@ -123,7 +123,12 @@ data class WorkoutMusicState(
     /** Numele playerului (pentru „Melodii apreciate · Spotify”). */
     val player: String? = null,
     /** Pachetul lui: „Melodii apreciate” există doar în Spotify. */
-    val playerPkg: String? = null
+    val playerPkg: String? = null,
+    /**
+     * Pornirea ar sări o clipă în player (nicio sesiune Spotify, tasta media la alt player): ↗ lângă etichetă,
+     * spus „Spotify se deschide o clipă”. Fără propoziție pe ecran.
+     */
+    val hop: Boolean = false
 ) {
     val list: FPlaylist? get() = lists[mix]
 
@@ -143,6 +148,9 @@ data class WorkoutMusicState(
         effective == Mix.OLD -> "VECHI · ${list?.items?.size ?: 0}"
         else -> "MIX · ${list?.items?.size ?: 0} PIESE"
     }
+
+    /** Ce spune cititorul de ecran despre salt: „Spotify se deschide o clipă” (alt player: numele lui). */
+    val hopLabel: String get() = "${player?.takeIf { playerPkg != null && playerPkg != MusicKind.SPOTIFY } ?: "Spotify"} se deschide o clipă"
 
     /** O alegere se poate face doar când are piese (Apreciate: mereu). */
     fun enabled(m: Mix): Boolean = when (m) {
@@ -168,9 +176,16 @@ data class DiscUi(
     val badge: Badge = Badge.NONE,
     val title: String? = null,
     val artist: String? = null,
-    /** „Deschide Spotify” / „Deschide playerul”, pentru NEEDS_TAP și FAILED. */
+    /**
+     * „Deschide Spotify” / „Deschide playerul”, pentru NEEDS_TAP și FAILED. FAILED fără acțiune = nimic de deschis:
+     * o atingere pe disc sau pe ▶ din bandă încearcă din nou.
+     */
     val action: String? = null
 )
+
+/** Etichetele acțiunii discului (NEEDS_TAP, FAILED). */
+internal const val OPEN_SPOTIFY = "Deschide Spotify"
+internal const val OPEN_PLAYER = "Deschide playerul"
 
 /**
  * Faza discului: starea motorului (doar pornirile Antrenamentului) + piesa care cântă. [audible] = fără acces, se aude
@@ -198,10 +213,11 @@ fun discUi(
         track != null && track.playing -> DiscUi(DiscPhase.PLAYING, art, progress, badge, track.title, track.artist)
         track == null && audible -> DiscUi(DiscPhase.PLAYING)
         s is StartState.NeedsTap -> DiscUi(
-            DiscPhase.NEEDS_TAP, action = if (s.step.pkg == MusicKind.SPOTIFY) "Deschide Spotify" else "Deschide playerul"
+            DiscPhase.NEEDS_TAP, action = if (s.step.pkg == MusicKind.SPOTIFY) OPEN_SPOTIFY else OPEN_PLAYER
         )
+        // Nimic de deschis (open == null): fără acțiune; discul și banda încearcă din nou (vm.startMusicNow()).
         s is StartState.Failed -> DiscUi(
-            DiscPhase.FAILED, action = if (s.open?.pkg == MusicKind.SPOTIFY) "Deschide Spotify" else "Deschide playerul"
+            DiscPhase.FAILED, action = s.open?.let { if (it.pkg == MusicKind.SPOTIFY) OPEN_SPOTIFY else OPEN_PLAYER }
         )
         track != null -> DiscUi(DiscPhase.PAUSED, art, progress, badge, track.title, track.artist)
         else -> DiscUi(DiscPhase.IDLE)
@@ -238,7 +254,8 @@ fun WorkoutMusicRow(
                     .pressable(onOpenSheet, scaleDown = 0.99f)
                     .semantics(mergeDescendants = true) {
                         role = Role.Button
-                        contentDescription = "Muzica sesiunii: ${state.label.lowercase()}"
+                        contentDescription = "Muzica sesiunii: ${state.label.lowercase()}" +
+                            if (state.on && state.hop) ". ${state.hopLabel}" else ""
                     }
                     .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -250,6 +267,11 @@ fun WorkoutMusicRow(
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(state.label, style = monoLabel(9, 0.12f).copy(color = if (state.on) Accent2 else TextDim), maxLines = 1)
+                        // Pornirea va sări o clipă în Spotify: un ↗ amber, fără propoziție (o spune cititorul de ecran).
+                        if (state.on && state.hop) {
+                            Spacer(Modifier.width(5.dp))
+                            Icon(MusicIcons.Open, null, tint = Amber, modifier = Modifier.size(10.dp))
+                        }
                         Spacer(Modifier.width(4.dp))
                         Icon(MusicIcons.ChevronRight, null, tint = if (state.on) Accent2 else TextDim, modifier = Modifier.size(11.dp))
                     }
@@ -281,10 +303,11 @@ data class MusicSheetActions(
     val onDone: () -> Unit = {}
 )
 
-private const val SHEET_INFO =
+internal const val SHEET_INFO =
     "Mix: ce asculți acum, plus ce iubeai acum o lună. Noi: preferatele din ultimele zile. Vechi: piese ascultate des, " +
         "uitate de o lună. Apreciate: Melodii apreciate din Spotify.\n\nLista se face pe telefon, din ce ai ascultat cât " +
-        "FORJA a avut acces la muzică. Muzica pornită de FORJA se oprește la final; a ta, niciodată."
+        "FORJA a avut acces la muzică. Pe Spotify gratuit, FORJA cere piesele pe rând, cât timp Spotify le primește. " +
+        "Muzica pornită de FORJA se oprește la final; a ta, niciodată."
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -561,21 +584,31 @@ private fun Bars(phase: Float?, modifier: Modifier, dim: Boolean = false) {
 }
 
 /**
+ * Ce spune cititorul de ecran despre disc. „Nu a pornit.” spune și ce face atingerea: deschide Spotify / playerul,
+ * sau (nimic de deschis) încearcă din nou.
+ */
+internal fun discDescription(ui: DiscUi): String = when (ui.phase) {
+    DiscPhase.PLAYING -> "Muzică: cântă" + (ui.title?.let { ", $it" } ?: "") + (ui.artist?.takeIf { it.isNotBlank() }?.let { ", $it" } ?: "")
+    DiscPhase.PAUSED -> "Muzică: pe pauză"
+    DiscPhase.STARTING -> "Muzică: pornește"
+    DiscPhase.NEEDS_TAP -> "Atinge ca să pornești muzica"
+    DiscPhase.FAILED -> when (ui.action) {
+        null -> "Muzica nu a pornit. Atinge ca să încerci din nou"
+        OPEN_SPOTIFY -> "Muzica nu a pornit. Atinge ca să deschizi Spotify"
+        else -> "Muzica nu a pornit. Atinge ca să deschizi playerul"
+    }
+    DiscPhase.IDLE -> "Pornește muzica"
+}
+
+/**
  * Discul de pe video, colțul dreapta-jos (cât faci seria). Atingere = play/pauză (sau pașii „atinge ca să pornești” /
- * „deschide playerul”); apăsare lungă = playerul; glisare spre stânga = melodia următoare.
+ * „deschide playerul” / „încearcă din nou”); apăsare lungă = playerul; glisare spre stânga = melodia următoare.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun VideoMusicDisc(ui: DiscUi, onTap: () -> Unit, onLongPress: () -> Unit, onNext: () -> Unit, modifier: Modifier = Modifier) {
     val swipe = with(LocalDensity.current) { 36.dp.toPx() }
-    val description = when (ui.phase) {
-        DiscPhase.PLAYING -> "Muzică: cântă" + (ui.title?.let { ", $it" } ?: "") + (ui.artist?.takeIf { it.isNotBlank() }?.let { ", $it" } ?: "")
-        DiscPhase.PAUSED -> "Muzică: pe pauză"
-        DiscPhase.STARTING -> "Muzică: pornește"
-        DiscPhase.NEEDS_TAP -> "Atinge ca să pornești muzica"
-        DiscPhase.FAILED -> "Muzica nu a pornit. Atinge ca să deschizi playerul"
-        DiscPhase.IDLE -> "Pornește muzica"
-    }
+    val description = discDescription(ui)
     Box(
         modifier
             .size(56.dp)
@@ -611,7 +644,8 @@ fun VideoMusicDisc(ui: DiscUi, onTap: () -> Unit, onLongPress: () -> Unit, onNex
 /**
  * Banda de sub inelul pauzei (mâinile sunt libere): coperta 40 dp, titlul (un rând) cu artistul sub el (mono mic, ca
  * în foaie), ⏮ ⏯ ⏭ de 48 dp. Pe un singur rând „Titlu · Artist”, pe 360 dp artistul dispărea cu totul.
- * Cât pornește: „Pornește…”; la o atingere de pornit: „Deschide Spotify”; eșec: „Nu a pornit.” + deschide playerul.
+ * Cât pornește: „Pornește…”; la o atingere de pornit: „Deschide Spotify”; eșec: „Nu a pornit.” + ↗ (deschide
+ * Spotify / playerul) sau, fără nimic de deschis, + ▶ (încearcă din nou). [onOpen] face ce spune butonul.
  */
 @Composable
 fun RestMusicStrip(
@@ -639,7 +673,7 @@ fun RestMusicStrip(
         val line = when (ui.phase) {
             DiscPhase.PLAYING, DiscPhase.PAUSED -> ui.title?.takeIf { it.isNotBlank() } ?: "Muzica ta"
             DiscPhase.STARTING -> "Pornește…"
-            DiscPhase.NEEDS_TAP -> ui.action ?: "Deschide playerul"
+            DiscPhase.NEEDS_TAP -> ui.action ?: OPEN_PLAYER
             DiscPhase.FAILED -> "Nu a pornit."
             DiscPhase.IDLE -> "Muzica ta"
         }
@@ -656,7 +690,11 @@ fun RestMusicStrip(
             }
         }
         when (ui.phase) {
-            DiscPhase.NEEDS_TAP, DiscPhase.FAILED -> StripButton(MusicIcons.Open, ui.action ?: "Deschide playerul", onOpen)
+            DiscPhase.NEEDS_TAP -> StripButton(MusicIcons.Open, ui.action ?: OPEN_PLAYER, onOpen)
+            DiscPhase.FAILED -> {
+                val action = ui.action
+                if (action != null) StripButton(MusicIcons.Open, action, onOpen) else StripButton(MusicIcons.Play, "Încearcă din nou", onOpen)
+            }
             DiscPhase.STARTING -> Unit
             else -> {
                 StripButton(MusicIcons.Previous, "Piesa anterioară", onPrevious)
@@ -723,12 +761,22 @@ object WorkoutMusicSamples {
     )
     /** Fără acces la muzică: doar Apreciate. */
     val noAccess = WorkoutMusicState(on = true, access = false, player = null)
+    /** 29.09 după 4.4.1: puține ascultări (APRECIATE), Spotify închis, tasta media la YouTube: pornirea sare o clipă (↗). */
+    val coldHop = cold.copy(hop = true)
+    /** Lista FORJA gata, dar Spotify închis: tot un salt, apoi piesele 2…N prin coadă. */
+    val musicHop = music.copy(hop = true)
 
     val discIdle = DiscUi(DiscPhase.IDLE)
     val discStarting = DiscUi(DiscPhase.STARTING)
     val discPlaying = DiscUi(DiscPhase.PLAYING, progress = 0.36f, badge = Badge.FORJA, title = "Marș de dimineață", artist = "Fanfara FORJA")
     val discPaused = discPlaying.copy(phase = DiscPhase.PAUSED)
     val discLiked = discPlaying.copy(badge = Badge.LIKED, title = "Nopți albe", artist = "Vama")
-    val discNeedsTap = DiscUi(DiscPhase.NEEDS_TAP, action = "Deschide Spotify")
-    val discFailed = DiscUi(DiscPhase.FAILED, action = "Deschide playerul")
+    /** Spotify a refuzat lista azi: coperta fără punct (ordinea o alege Spotify). */
+    val discRefused = discPlaying.copy(badge = Badge.NONE, title = "Pas de defilare", artist = "Garda de Onoare")
+    val discNeedsTap = DiscUi(DiscPhase.NEEDS_TAP, action = OPEN_SPOTIFY)
+    val discFailed = DiscUi(DiscPhase.FAILED, action = OPEN_PLAYER)
+    /** Nu a pornit, iar Spotify se poate deschide: ↗. */
+    val discFailedSpotify = DiscUi(DiscPhase.FAILED, action = OPEN_SPOTIFY)
+    /** Nu a pornit și nu e nimic de deschis: o atingere încearcă din nou (▶). */
+    val discFailedRetry = DiscUi(DiscPhase.FAILED)
 }

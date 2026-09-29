@@ -9,6 +9,8 @@ package com.forja.app.core.music
  *   → următoarea piesă din listă. O reclamă (sub 45 s, fără artist) → așteaptă, fără comenzi.
  * - Piesă străină după o schimbare devreme → a preluat ea (altă listă în Spotify): coada se retrage, fără luptă.
  * - În fundal, niciodată o comandă către un player care s-a oprit: coada se retrage și lasă playerul în pace.
+ * - Aterizarea (4.4.1): o piesă cerută ([issued]) trebuie să cânte în 6 s ([check]); o reclamă pornește așteptarea de la
+ *   capăt. Nu a apărut → Spotify nu primește piesele cerute azi: coada se retrage ca „refuzată”, autoplay-ul lui continuă.
  */
 class MusicQueue(items: List<PlayItem>, reserve: List<PlayItem>, val targetPkg: String) {
 
@@ -18,6 +20,8 @@ class MusicQueue(items: List<PlayItem>, reserve: List<PlayItem>, val targetPkg: 
         data object SeekZero : Action
         data object Hold : Action
         data class Release(val reason: String) : Action
+        /** Piesa cerută a apărut în player (se învață: Spotify primește piesele cerute). */
+        data class Landed(val index: Int) : Action
     }
 
     private val list = ArrayList(items)
@@ -33,6 +37,17 @@ class MusicQueue(items: List<PlayItem>, reserve: List<PlayItem>, val targetPkg: 
     val size: Int get() = list.size
     val current: PlayItem? get() = list.getOrNull(index)
     fun items(): List<PlayItem> = list.toList()
+
+    /** Piesele listei care au cântat cum le-a cerut FORJA: piesa 1 (verificată de pornire), apoi fiecare aterizare. */
+    var landed: Int = 1
+        private set
+
+    /** Piesa cerută care încă n-a apărut (indexul ei) și momentul cererii (ceasul monoton). */
+    private var pending: Int? = null
+    private var issuedAt = 0L
+
+    /** Până când trebuie să apară piesa cerută (null = nimic de verificat). */
+    val landingDeadline: Long? get() = if (pending != null && !released) issuedAt + LAND_MS else null
 
     private fun keyOf(title: String?, artist: String?) = TrackKey.of(title ?: "", artist ?: "")
 
@@ -92,7 +107,36 @@ class MusicQueue(items: List<PlayItem>, reserve: List<PlayItem>, val targetPkg: 
     fun release(reason: String): Action {
         released = true
         releaseReason = reason
+        pending = null
         return Action.Release(reason)
+    }
+
+    /** Piesa [index] tocmai a fost cerută playerului (comanda a plecat): de acum are [LAND_MS] ca să apară. */
+    fun issued(index: Int, now: Long) {
+        if (released) return
+        pending = index
+        issuedAt = now
+    }
+
+    /**
+     * Ce cântă playerul acum, cât o piesă cerută e în așteptare (la fiecare schimbare de piesă și la termen):
+     * piesa cerută → [Action.Landed]; o reclamă → așteptarea o ia de la capăt ([Action.Hold]); altceva după 6 s →
+     * „refused” (coada se retrage); înainte de termen → [Action.None].
+     */
+    fun check(title: String?, artist: String?, mediaId: String?, durationMs: Long, now: Long): Action {
+        val p = pending ?: return Action.None
+        if (released) return Action.None
+        if (!title.isNullOrBlank() && indexOf(title, artist, mediaId) == p) {
+            pending = null
+            landed += 1
+            return Action.Landed(p)
+        }
+        if (isAd(title, artist, durationMs)) {
+            issuedAt = now
+            return Action.Hold
+        }
+        if (now - issuedAt >= LAND_MS) return release(REFUSED)
+        return Action.None
     }
 
     private fun advance(): Action {
@@ -107,6 +151,16 @@ class MusicQueue(items: List<PlayItem>, reserve: List<PlayItem>, val targetPkg: 
     companion object {
         /** Crossfade-ul Spotify merge până la 12 s: o schimbare la ≤ 13 s de final e un final natural. */
         const val NATURAL_END_MS = 13_000L
+
+        /** O piesă cerută trebuie să apară în atât (o reclamă pornește așteptarea de la capăt). */
+        const val LAND_MS = 6_000L
+
+        /** Motivul retragerii când piesa cerută n-a apărut: azi, ordinea o alege Spotify. */
+        const val REFUSED = "refused"
+
+        /** Rândul spus o dată pe antrenament când playerul n-a primit piesa cerută (toast pe ecranul live). */
+        fun refusedNotice(pkg: String): String =
+            if (pkg == MusicKind.SPOTIFY) "Azi, ordinea o alege Spotify." else "Azi, ordinea o alege ${MusicKind.MUSIC_APPS[pkg] ?: "playerul"}."
 
         /** Reclamă (Spotify Free): scurtă și fără artist, sau titlul tipic. */
         fun isAd(title: String?, artist: String?, durationMs: Long): Boolean {
