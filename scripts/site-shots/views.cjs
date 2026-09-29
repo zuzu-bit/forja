@@ -55,7 +55,13 @@ module.exports = [
   {id: '60-somn', title: 'Somn', hash: 'somn'},
   {id: '61-somn-night', title: 'Somn · noaptea ascultată', hash: 'somn', requires: '#s-somn .night-row', steps: [{click: '#s-somn .night-row'}, {waitFor: '#s-somn .timeline'}, {wait: 500}]},
 
+  // Mirror (pachetul C, profilul „mirror”): oglinda, un album, vizualizatorul, un document, masa deschisă, antrenamentul deschis.
+  {id: '53-oglinda-album', title: 'Oglinda · un album', hash: 'inventar/album%3Agallery%3ACamera', requires: () => !!document.querySelector('#inventar-mirror .mgrid, #inventar-mirror .sk'), steps: [{waitFor: '#inventar-mirror .mtile'}, {wait: 900}]},
+  {id: '54-oglinda-viewer', title: 'Oglinda · pe tot ecranul', hash: 'inventar/album%3Agallery%3ACamera', requires: () => !!document.querySelector('#inventar-mirror .mgrid, #inventar-mirror .sk'), steps: [{waitFor: '#inventar-mirror .mtile'}, {click: '#inventar-mirror .mtile'}, {waitFor: '#mirror-viewer[open] img:not([style])'}, {wait: 500}], shot: 'viewport'},
+  {id: '55-oglinda-docs', title: 'Oglinda · documente', hash: 'inventar', requires: '#inventar-mirror .seg', steps: [{clickText: ['#inventar-mirror .seg-btn', /Documente/]}, {waitFor: '#inventar-mirror .mtile.doc'}, {wait: 500}]},
   {id: '70-ratie', title: 'Rație', hash: 'ratie'},
+  {id: '71-ratie-masa', title: 'Rație · masa deschisă', hash: 'ratie', requires: '#body-ratie .meal.open-able', steps: [{click: '#body-ratie .meal.open-able'}, {waitFor: '#body-ratie .meal-photo img'}, {wait: 400}]},
+  {id: '81-mars-antrenament', title: 'Marș · antrenamentul deschis', hash: 'mars', requires: '#body-mars .work.open-able', steps: [{click: '#body-mars .work.open-able'}, {wait: 400}]},
   {id: '80-mars', title: 'Marș', hash: 'mars'},
   {id: '90-muzica', title: 'Muzică', hash: 'muzica'},
   {id: '91-paza', title: 'Pază', hash: 'paza'},

@@ -209,7 +209,7 @@ fun ZidGameScreen(onOpenInventory: (InvPage) -> Unit, onClose: () -> Unit) {
         val level = e.level.id
         val prevBest = progress.bestOf(level)
         val stars = if (outcome == GameOutcome.Won) e.stars else 0
-        GameStore.recordResult(context, GameId.Zid, level, outcome, stars, e.score)
+        GameStore.recordResult(context, GameId.Zid, level, outcome, stars, e.score, (e.elapsedMs / 1000).toInt())
         GameSessions.finish(context, GameId.Zid)
         val next = if (outcome == GameOutcome.Won) {
             if (level < GameId.Zid.levels) level + 1 else ZID_ENDLESS

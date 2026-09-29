@@ -50,7 +50,7 @@ class ContractCopyTest {
         val fresh = CONTRACT_CLAUSES.flatMap { it.lines }.filter { it.mark == ClauseMark.New }.map { it.text }
         listOf(
             "Cât îl cauți", "Poza mesei", "Câte poze", "Coperțile", "Concentrarea", "Cuvintele", "Casca",
-            "Jurnalul de ascultare", "Jocurile", "Cronologia nopții",
+            "Jurnalul de ascultare", "Jocurile", "Cronologia nopții", "Galeria: fiecare poză", "Documentele din folderele alese",
         ).forEach { head ->
             assertTrue("lipsește rândul nou „$head”", fresh.any { it.startsWith(head) })
         }
@@ -58,8 +58,8 @@ class ContractCopyTest {
         listOf("Găsirea telefonului", "Inventarul", "Muzica", "Ținta de calorii").forEach { head ->
             assertFalse("„$head” e din v3, nu e nou", fresh.any { it.startsWith(head) })
         }
-        // Cele 10 rânduri noi din „Ce se încarcă” încap în cele 5 puncte ale foii de re-semnare.
-        assertEquals(10, CONTRACT_CLAUSES.first().lines.count { it.mark == ClauseMark.New })
+        // Cele 12 rânduri noi din „Ce se încarcă” (cu oglinda galeriei și a documentelor) încap în cele 5 puncte ale foii de re-semnare.
+        assertEquals(12, CONTRACT_CLAUSES.first().lines.count { it.mark == ClauseMark.New })
         assertTrue("cuvintele detoxului: implicit oprit", fresh.any { it.startsWith("Cuvintele") && "Implicit e oprit" in it })
     }
 
@@ -68,7 +68,9 @@ class ContractCopyTest {
         assertFalse("contractul nu mai promite pași", Regex("\\bpași\\b").containsMatchIn(text))
         assertTrue("codul de bare merge la OpenFoodFacts", "OpenFoodFacts" in text)
         assertTrue("jurnalele stau în Firebase", "Google Firebase" in text)
-        assertTrue("galeria pe site: 24 de ore, cel mult 500", "cel mult 500" in text)
+        assertTrue("galeria și documentele pe site: cât ai contul", lines.any { it.startsWith("Galeria și documentele pe site: cât ai contul") })
+        assertTrue("pe site pleacă doar data făcută, nu aparatul", lines.any { it.startsWith("Galeria: fiecare poză") && "fără aparat" in it })
+        assertFalse("analiza și oglinda nu se contrazic", lines.any { it.endsWith("Nu rămân acolo.") })
         assertTrue("revocarea scoate telefonul din Găsire", lines.any { it.startsWith("Profil → Contract → Revocă") && "Găsire" in it })
         assertTrue("familia la „Cine vede”", CONTRACT_CLAUSES.first { it.label == "Cine vede" }.lines.any { "Familia" in it.text })
         assertFalse("galeria nu mai e „întreagă”", "Galeria întreagă" in text)

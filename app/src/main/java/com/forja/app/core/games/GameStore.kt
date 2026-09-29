@@ -77,8 +77,19 @@ object GameStore {
 
     suspend fun progressNow(context: Context, game: GameId): GameProgress = progress(context, game).first()
 
-    /** Un nivel câștigat (stele, scor) sau pierdut (doar recordul). */
-    fun recordResult(context: Context, game: GameId, level: Int, outcome: GameOutcome, stars: Int, score: Int) {
+    /**
+     * Un nivel câștigat (stele, scor) sau pierdut (doar recordul). Mirror (pachetul C): jocul intră și în jurnalul Room
+     * `game_plays` (ultimele 200), din care [com.forja.app.core.data.GamesMirror] scrie pagina de pe site (contract v4).
+     */
+    fun recordResult(context: Context, game: GameId, level: Int, outcome: GameOutcome, stars: Int, score: Int, durationS: Int = 0) {
+        scope.launch {
+            try {
+                val dao = com.forja.app.ForjaApp.from(context).db.gamePlayDao()
+                dao.insert(com.forja.app.core.data.db.GamePlayEntity(at = System.currentTimeMillis(), game = game.key, level = level,
+                    outcome = if (outcome == GameOutcome.Won) "won" else "lost", stars = stars.coerceIn(0, 3), score = score.coerceAtLeast(0), durationS = durationS.coerceIn(0, 86_400)))
+                dao.trim(200)
+            } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        }
         write(context) { prefs ->
             val cur = decodeProgress(prefs[progressKey(game)])
             val next = when (outcome) {

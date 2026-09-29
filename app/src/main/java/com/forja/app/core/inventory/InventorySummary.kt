@@ -29,17 +29,21 @@ internal object InventorySummary {
             val uid = app.auth.currentUid ?: return
             val col = FirebaseFirestore.getInstance().collection("users").document(uid).collection("inventory")
             col.document(doc.id).set(doc.toMap(), SetOptions.merge())
-            if (pruned.add(doc.id)) prune(col)
+            if (pruned.add(doc.id)) prune(ctx, col)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
         }
     }
 
-    private suspend fun prune(col: CollectionReference) {
+    private suspend fun prune(ctx: Context, col: CollectionReference) {
         val snap = withTimeoutOrNull(20_000L) {
             col.orderBy("finishedAt", Query.Direction.DESCENDING).limit((KEEP * 2).toLong()).get().await()
         } ?: return
-        for (d in snap.documents.drop(KEEP)) try { d.reference.delete() } catch (_: Exception) { }
+        for (d in snap.documents.drop(KEEP)) {
+            try { d.reference.delete() } catch (_: Exception) { }
+            // Mirror C: coperțile rulării ies de pe site odată cu ea („cât rămâne rularea pe site”).
+            InvMirror.dropCovers(d.id, ctx)
+        }
     }
 }

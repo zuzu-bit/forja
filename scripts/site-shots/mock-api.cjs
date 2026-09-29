@@ -129,6 +129,25 @@ function createApi(fixture, assets, {fail = []} = {}) {
       if (method === 'GET') return blob('file:' + item.id) || json({error: 'Fișier indisponibil.'}, 404);
     }
 
+    // ——— Oglinda (/v2/mirror, pachetul C; doar profilul „mirror” are copii) ———
+    if (path === '/v2/mirror' && method === 'GET') {
+      const all = (f.mirrorItems || []).filter(i => (!q.get('kind') || i.kind === q.get('kind')) && (!q.get('group') || i.group === q.get('group')) && (q.get('album') === null || i.album === q.get('album'))
+        && (!q.get('q') || (i.name + ' ' + i.album).toLowerCase().includes(q.get('q').toLowerCase())));
+      const start = Number(q.get('after') || 0), limit = Number(q.get('limit') || 60), page = all.slice(start, start + limit);
+      return json({items: page, next: start + limit < all.length ? String(start + limit) : null, total: all.length, server_at: pageNow()});
+    }
+    if (path === '/v2/mirror/summary' && method === 'GET') return json({...(f.inventar.mirror || {}), server_at: pageNow()});
+    m = /^\/v2\/mirror\/cover\/[A-Za-z0-9_-]+\/([A-Za-z0-9_-]+)$/.exec(path);
+    if (m && method === 'GET') return blob('cover:' + m[1]) || json({error: 'Coperta nu mai este aici.'}, 404);
+    m = /^\/v2\/mirror\/([0-9a-f-]+)(?:\/(thumb|poster))?$/.exec(path);
+    if (m) {
+      const item = (f.mirrorItems || []).find(i => i.id === m[1]); if (!item) return json({error: 'Copia nu mai este aici.'}, 404);
+      if (method === 'DELETE') { f.mirrorItems = f.mirrorItems.filter(i => i !== item); return json({deleted: true}); }
+      if (method === 'GET') return blob('mirror:' + item.id) || json({error: 'Copia nu mai este aici.'}, 404);
+    }
+    m = /^\/insights\/api\/ratie\/photo\/([A-Za-z0-9_-]+)$/.exec(path);
+    if (m && method === 'GET') return blob('meal:' + m[1]) || json({error: 'Poza nu mai este aici.'}, 404);
+
     unmocked.push(method + ' ' + path);
     return json({error: 'UNMOCKED ' + method + ' ' + path}, 404);
   }

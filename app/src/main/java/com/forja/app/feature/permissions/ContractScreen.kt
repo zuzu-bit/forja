@@ -63,7 +63,8 @@ private fun fixed(t: String) = ClauseLine(t, ClauseMark.Fixed)
 
 /**
  * Contractul v4 (mirror): ce era în v3 rămâne; nou: urma Găsirii, cronologia nopții, concentrarea / detoxul / respirația,
- * Casca, jurnalul de ascultare, jocurile, numărătorile galeriei, poza mesei, coperțile dosarelor și acordul separat pentru
+ * Casca, jurnalul de ascultare, jocurile, numărătorile galeriei, poza mesei, coperțile dosarelor, galeria și documentele pe
+ * site cât ai contul (decizia Lanei din 30.09, înainte de publicarea v4) și acordul separat pentru
  * cuvintele detoxului. Corectat: ce văd prietenii, mesele, timpul pe ecran, unde stau datele și ce șterge revocarea.
  * Marcajele (NOU / CORECTAT) sunt față de v3.
  */
@@ -77,9 +78,10 @@ val CONTRACT_CLAUSES: List<Clause> = listOf(
             fixed("Mesele: poza farfuriei și ce scrii merg la analiză pe serverul FORJA. Codul de bare merge la OpenFoodFacts. Jurnalul meselor, cu ce a găsit analiza, stă în contul tău."),
             new("Poza mesei: o miniatură de cel mult 512 px, ca s-o vezi pe site lângă masă."),
             keep("Ținta de calorii și de macro, ca pe site să vezi ziua față de ea."),
-            keep("Galeria: fiecare poză ca miniatură de cel mult 512 px, treptat, în loturi de 50, pe Wi-Fi implicit. Site-ul arată ultimele 24 de ore, cel mult 500. Originalul nu pleacă niciodată."),
+            new("Galeria: fiecare poză ca JPEG de cel mult 2048 px, cu data făcută (fără locație și fără aparat), și fiecare video, posterul și fișierul când are cel mult 25 MB. Urcă treptat, pe Wi-Fi implicit, în albumele din telefon. Originalul rămâne pe telefon."),
             new("Câte poze și documente ai pe telefon și cât ocupă. Fără nume de fișiere."),
-            keep("Documentele, la Inventar: PDF-urile de cel mult 4 MB și fragmente scurte din fișierele text merg la analiză pe serverul FORJA. Nu rămân acolo."),
+            fixed("Documentele, la Inventar: PDF-urile de cel mult 4 MB și fragmente scurte din fișierele text merg la analiză pe serverul FORJA. Copiile trimise la analiză nu rămân acolo; copiile din oglindă, da, vezi mai jos."),
+            new("Documentele din folderele alese la Inventar: fiecare fișier întreg, de cel mult 25 MB, ca să-l deschizi și să-l descarci de pe site."),
             keep("Inventarul: numele dosarelor, câte fișiere are fiecare și locul ales, la fiecare rulare, ca să le vezi pe site. Rămân ultimele 20 de rulări."),
             new("Coperțile dosarelor: 4 miniaturi pe dosar, la fiecare rulare."),
             fixed("Activitatea în aplicații: numele aplicațiilor, timpul și orele în care le folosești — numai dacă dai accesul la utilizare din Setări Android. Din ore se vede și când te culci și când te trezești."),
@@ -99,13 +101,13 @@ val CONTRACT_CLAUSES: List<Clause> = listOf(
     Clause(
         "Unde", listOf(
             fixed("Jurnalele (mese, somn, mișcare, concentrare, ascultare, jocuri), poziția pentru prieteni și prietenii tăi: în Google Firebase."),
-            fixed("Site-ul, nopțile, găsirea, pozele meselor, coperțile și analiza cu model: pe serverul FORJA, găzduit pe Cloudflare."),
+            fixed("Site-ul, nopțile, găsirea, galeria, documentele, pozele meselor, coperțile și analiza cu model: pe serverul FORJA, găzduit pe Cloudflare."),
             keep("Analiza cu model se face pe serverul FORJA cu modele Gemini (Google), Groq și Cloudflare. Modelele primesc doar materialul de analizat: miniatura, fragmentul, bucata de sunet.")
         )
     ),
     Clause(
         "Cât se păstrează", listOf(
-            keep("Miniaturile galeriei: 24 de ore pe site, apoi dispar."),
+            new("Galeria și documentele pe site: cât ai contul, până revoci. Spațiul are o limită; când e plin, restul rămâne pe telefon."),
             keep("Înregistrarea nopții: 7 zile pe server, apoi dispare. Pe telefon stă 24 de ore."),
             new("Cronologia nopții, fără sunet: cât ai contul."),
             keep("Ultima poziție a telefonului, pentru găsire: 7 zile, un singur punct."),
@@ -129,7 +131,7 @@ val CONTRACT_CLAUSES: List<Clause> = listOf(
     ),
     Clause(
         "Cum revoci", listOf(
-            fixed("Profil → Contract → Revocă. Oprește tot pe loc și șterge de pe site ce ține de contract: sesiunea de sincronizare, telefonul din Găsire, listarea după număr, timpul pe ecran, ziua pe hartă, copiile galeriei, coperțile, concentrarea, detoxul, Casca, jocurile și ce ai ascultat."),
+            fixed("Profil → Contract → Revocă. Oprește tot pe loc și șterge de pe site ce ține de contract: sesiunea de sincronizare, telefonul din Găsire, listarea după număr, timpul pe ecran, ziua pe hartă, galeria și documentele de pe site, coperțile, concentrarea, detoxul, Casca, jocurile și ce ai ascultat."),
             fixed("Nopțile expiră singure în 7 zile. Jurnalele (mese, somn, mișcare) și pozele meselor rămân în contul tău până îl închizi.")
         )
     )
@@ -152,7 +154,7 @@ internal val RESIGN_POINTS: List<Pair<String, String>> = listOf(
     "Noaptea" to "Cronologia rămâne și după ce sunetul expiră.",
     "Găsirea" to "Urma telefonului cât îl cauți, 24 de ore.",
     "Casca și muzica" to "Mesajele Căștii și ce ai ascultat în fiecare zi.",
-    "Jocuri, mese, dosare" to "Nivelurile din jocuri, poza mesei, coperțile dosarelor."
+    "Galerie, mese, jocuri" to "Pozele și documentele pe site, poza mesei, coperțile, jocurile."
 )
 
 /** Semnătura: versiunea + momentul, pe telefon (Prefs) și în users/{uid}.contract; apoi pornește tot. */
