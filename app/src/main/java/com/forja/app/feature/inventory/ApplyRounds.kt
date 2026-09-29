@@ -4,7 +4,6 @@ import android.content.IntentSender
 import com.forja.app.core.inventory.ApplyResult
 import com.forja.app.core.inventory.Landing
 import com.forja.app.core.inventory.MoveFail
-import com.forja.app.core.inventory.MoveReason
 import com.forja.app.core.inventory.TrashAsk
 
 /**
@@ -15,8 +14,9 @@ import com.forja.app.core.inventory.TrashAsk
  * oprește când o rundă n-a avut nimic acordat sau n-a aplicat nimic; un răspuns care nu e DA o oprește pe loc.
  *
  * 4.4.2: cu „Acces la toate fișierele” ([manager]) nu se cere nimic: o singură rundă aplică tot ce a rămas, apoi bucla
- * se oprește. Fără el, fluxul e cel din 4.4.1; doar elementele care au eșuat deja dintr-un motiv pe care un acord nou
- * nu-l schimbă ([permanent]) nu se mai cer încă o dată în runda următoare ([writeRequest] le primește ca `skip`).
+ * se oprește. Fără el, fluxul e cel din 4.4.1, cu o excepție: un element care a eșuat într-o rundă a eșuat SUB acordul
+ * abia dat, deci un acord nou pentru el nu schimbă nimic — nu se mai cere în runda următoare ([writeRequest] îl primește
+ * în `skip`). O nouă încercare rămâne „Încearcă din nou” de pe pagina de rezultat.
  */
 internal class ApplyRounds(
     private val writeRequest: (skip: Set<String>) -> IntentSender?,
@@ -44,7 +44,7 @@ internal class ApplyRounds(
     val failures: Map<String, MoveFail> get() = _failures
 
     private val _skip = HashSet<String>()
-    /** Elementele care nu se mai cer în runda următoare: au eșuat dintr-un motiv [permanent]. */
+    /** Elementele care nu se mai cer în runda următoare: au eșuat deja, sub acordul unei runde. */
     val skip: Set<String> get() = _skip
 
     /** Null = bucla a mers până la capăt; altfel răspunsul (NU / RENUNȚAT) care a oprit-o. */
@@ -86,7 +86,7 @@ internal class ApplyRounds(
         landing = landing?.merge(r.landing) ?: r.landing
         for ((id, f) in r.failures) {
             _failures[id] = f
-            if (permanent(f.reason)) _skip += id
+            _skip += id
         }
         rounds++
     }
@@ -103,13 +103,6 @@ internal class ApplyRounds(
     companion object {
         /** Plasa buclei: 64 de runde × 500 = 32 000 de elemente. */
         const val MAX_ROUNDS = 64
-
-        /**
-         * Un acord de scriere nou nu schimbă nimic: dosarul altei aplicații, dosar nepermis, alt volum, element dispărut.
-         * Celelalte (refuz, eroare, cale diferită) se mai încearcă o dată în runda următoare, ca în 4.4.1.
-         */
-        fun permanent(r: MoveReason): Boolean =
-            r == MoveReason.Owned || r == MoveReason.Dir || r == MoveReason.Volume || r == MoveReason.Gone
     }
 }
 

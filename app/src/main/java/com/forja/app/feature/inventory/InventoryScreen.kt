@@ -176,11 +176,13 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
         setStack(InvPage.Start, InvPage.Folders, InvPage.Apply)
     }
     val allFilesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        val granted = vm.onAccessReturned()
-        val after = accessAfter
-        accessAfter = false
-        // Fără acces: rămâne ce era (confirmarea cu rândul ei sau pagina de rezultat); „Aplică” merge cu ferestrele de acord.
-        if (granted && after) applyNow()
+        // Null: „anulat” pe loc (setările în altă fereastră): accessAfter rămâne, revenirea în ecran (ON_RESUME) decide.
+        when (vm.onAccessReturned()) {
+            true -> if (accessAfter) { accessAfter = false; applyNow() }
+            // Fără acces: rămâne ce era (confirmarea cu rândul ei sau pagina de rezultat); „Aplică” merge cu ferestrele de acord.
+            false -> accessAfter = false
+            null -> Unit
+        }
     }
     fun askAccess(from: String) {
         accessAfter = from != "confirm"
@@ -191,7 +193,8 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
         vm.onAccessAsked(from, opened)
         if (!opened) { accessAfter = false; toast.show("Nu pot deschide setările.") }
     }
-    // Plasa: dacă setările nu întorc rezultat (unele versiuni OEM), revenirea în ecran (ON_RESUME recitește accesul) pornește aplicarea.
+    // Plasa: dacă setările nu întorc rezultat sau au întors „anulat” pe loc, revenirea în ecran (ON_RESUME recitește
+    // accesul și încheie cererea) pornește aplicarea; fără acces, cererea se uită.
     LaunchedEffect(allFiles) {
         if (allFiles && accessAfter) { accessAfter = false; applyNow() }
     }
@@ -243,7 +246,12 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) vm.onResume() }
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) {
+                vm.onResume()
+                if (vm.onAccessResume() == false) accessAfter = false
+            }
+        }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
@@ -514,10 +522,10 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
                                     when (d.fix) {
                                         DoneFix.Access -> askAccess("result")
                                         DoneFix.Retry -> applyNow()
-                                        null -> Unit
+                                        DoneFix.None, null -> Unit
                                     }
                                 },
-                                onFolders = { setStack(InvPage.Start, InvPage.Folders) }
+                                onFolders = { accessAfter = false; setStack(InvPage.Start, InvPage.Folders) }
                             )
                         )
                     }
@@ -603,7 +611,7 @@ fun InventoryScreen(onBack: () -> Unit, onOpenWait: (InvWait) -> Unit) {
                 if (pl.kind == InvKind.Photos && root != null && !MediaRoots.standard(root) && AllFiles.available && !allFiles) askAccess("dest")
                 else applyNow()
             },
-            onDismiss = { confirmApply = false; showLocation = false },
+            onDismiss = { confirmApply = false; showLocation = false; accessAfter = false },
             access = access,
             onAllowAccess = { askAccess("confirm") }
         )

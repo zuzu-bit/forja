@@ -39,9 +39,36 @@ class ResultPageTest {
     }
 
     @Test fun belowAndroid11ThereIsNoAccessToAskFor() {
+        // Android 10: accesul complet nu există. Nici rândul „doar cu acces complet”, nici o încercare care ar eșua la fel.
         val left = setOf("m:1")
         val r = ApplyReports.of(true, left, 0, mapOf("m:1" to fail(MoveReason.Dir)), accessAvailable = false, granted = false)
-        assertEquals(DoneFix.Retry, r.fix)
+        assertEquals(DoneFix.None, r.fix)
+        assertEquals(MoveReason.Error, r.reason)
+        val o = ApplyReports.of(true, left, 0, mapOf("m:1" to fail(MoveReason.Owned)), accessAvailable = false, granted = false)
+        assertEquals(DoneFix.None, o.fix)
+        assertEquals(MoveReason.Error, o.reason)
+    }
+
+    @Test fun withAccessGivenOwnedIsNotBlamedOnTheAccess() {
+        // Cu accesul dat, „Sunt ale WhatsApp: Android le mută doar cu acces complet.” ar fi neadevărat: rândul general,
+        // fără „Încearcă din nou” (ar da același eșec).
+        val left = (1..6).map { "m:$it" }.toSet()
+        val r = ApplyReports.of(true, left, 0, left.associateWith { fail(MoveReason.Owned) }, accessAvailable = true, granted = true)
+        assertEquals(MoveReason.Error, r.reason)
+        assertEquals(DoneFix.None, r.fix)
+        val d = ApplyReports.of(true, left, 0, left.associateWith { fail(MoveReason.Dir) }, accessAvailable = true, granted = true)
+        assertEquals(DoneFix.None, d.fix)
+    }
+
+    @Test fun anotherVolumeHasNoRetry() {
+        val left = setOf("m:1")
+        val r = ApplyReports.of(true, left, 0, mapOf("m:1" to fail(MoveReason.Volume)), accessAvailable = true, granted = false)
+        assertEquals(MoveReason.Volume, r.reason)
+        assertEquals(DoneFix.None, r.fix)
+        // Refuz, eroare, cale diferită: o nouă încercare poate merge.
+        for (why in listOf(MoveReason.Error, MoveReason.Mismatch)) {
+            assertEquals(DoneFix.Retry, ApplyReports.of(true, left, 0, mapOf("m:1" to fail(why)), true, true).fix)
+        }
     }
 
     @Test fun nothingAppliedStillGetsAReasonAndAnAction() {

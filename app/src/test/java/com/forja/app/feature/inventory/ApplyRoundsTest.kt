@@ -188,17 +188,20 @@ class ApplyRoundsTest {
         assertEquals(owned.keys, s.loop.failures.keys)
     }
 
-    @Test fun transientFailuresAreStillRetriedOnce() {
+    @Test fun anyFailureUnderAFreshGrantIsNotAskedForAgain() {
+        // Eroare / refuz sub acordul abia dat: un acord nou pentru aceleași poze nu schimbă nimic (a doua fereastră din
+        // jurnalul de la 16:17:37). Runda 2 cere doar ce n-a încercat încă (bucata următoare, dacă e).
+        val failed = fails(MoveReason.Error, "m:1", "m:2") + fails(MoveReason.Denied, "m:3") + fails(MoveReason.Mismatch, "m:4")
         val s = Script(
             writes = listOf(sender(), sender()),
-            results = listOf(result(moved = 3, failed = 2, failures = fails(MoveReason.Error, "m:1", "m:2")), result(moved = 2))
+            results = listOf(result(moved = 3, failed = 4, failures = failed), result(moved = 2))
         )
         assertNull(s.run())
-        assertEquals(listOf(emptySet<String>(), emptySet(), emptySet()), s.skips)
+        assertEquals(emptySet<String>(), s.skips[0])
+        assertEquals(failed.keys, s.skips[1])
+        assertEquals(failed.keys, s.loop.skip)
         assertEquals(2, s.applies)
         assertEquals(5, s.loop.total.moved)
-        assertTrue(ApplyRounds.permanent(MoveReason.Owned) && ApplyRounds.permanent(MoveReason.Dir) && ApplyRounds.permanent(MoveReason.Volume))
-        assertTrue(!ApplyRounds.permanent(MoveReason.Denied) && !ApplyRounds.permanent(MoveReason.Error) && !ApplyRounds.permanent(MoveReason.Mismatch))
     }
 
     @Test fun rebuildingATrashRequestMapsToTheGate() {

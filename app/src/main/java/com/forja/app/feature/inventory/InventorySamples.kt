@@ -260,6 +260,8 @@ object InventorySamples {
         kind = InvKind.Photos, folders = 12, items = 2980, freedBytes = (1.1 * GB).toLong(), failed = 234, musicStopped = false,
         place = landing, runId = "sample", showSite = false, trashed = 200, reason = MoveReason.Error, fix = DoneFix.Retry
     )
+    /** Cu accesul dat, 6 tot n-au mers: rândul general și nicio acțiune (o nouă încercare ar da același eșec). */
+    val doneNoAction = doneAccess.copy(reason = MoveReason.Error, ownerApp = null, fix = DoneFix.None)
     /** Nimic aplicat: dosarul ales (Documents) cere acces complet. */
     val doneNothing = DoneUiState(
         kind = InvKind.Photos, folders = 0, items = 0, freedBytes = 0L, failed = 9, musicStopped = true, place = null,

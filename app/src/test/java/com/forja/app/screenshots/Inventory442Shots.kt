@@ -84,6 +84,12 @@ class Inventory442Shots {
         resultScene(InventorySamples.doneRetry)
     }
 
+    /** Accesul dat, dar 6 tot n-au mers: „3 MUTATE”, rândul general, doar „Înapoi la dosare”. */
+    @Test fun doneNoAction() = shot("inventory442_done_no_action") { resultScene(InventorySamples.doneNoAction) }
+    @Test @Config(qualifiers = PHONE_S23) fun doneNoActionS23() = shot("inventory442_done_no_action_s23") {
+        resultScene(InventorySamples.doneNoAction)
+    }
+
     /** Nimic aplicat: aceeași pagină cu 0, motivul și acțiunea — nu mai sare la dosare. */
     @Test fun doneNothing() = shot("inventory442_done_nothing") { resultScene(InventorySamples.doneNothing) }
     @Test @Config(qualifiers = PHONE_S23) fun doneNothingS23() = shot("inventory442_done_nothing_s23") {

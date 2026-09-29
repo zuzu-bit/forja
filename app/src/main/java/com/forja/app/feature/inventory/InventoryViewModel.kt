@@ -340,6 +340,8 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private var accessAt = 0L
+    /** Sub atât, un „anulat” fără acces vine de la o trambulină a setărilor, nu de la om (nimeni nu comută așa de repede). */
+    private val EARLY_MS = 1_500L
 
     /**
      * S-a cerut accesul ([from]: `confirm` = „Permite” din confirmare, `dest` = „Aplică” cu un dosar care îl cere,
@@ -350,10 +352,25 @@ class InventoryViewModel(app: Application) : AndroidViewModel(app) {
         ConsentLog.add(ctx, "A_ASK", if (opened) DiagResult.OK else DiagResult.ERROR, 0, from)
     }
 
-    /** Întoarcerea din setări: starea nouă a accesului (și rândul ei în jurnal). */
-    fun onAccessReturned(): Boolean {
+    /**
+     * Întoarcerea din setări: starea nouă a accesului (și rândul ei în jurnal). Null = încă nu se știe: fără acces, dar
+     * „anulat” a venit pe loc ([EARLY_MS]) — setările s-au deschis în altă fereastră (Settings pe două panouri, unele
+     * versiuni OEM) și omul abia acum ajunge la comutator. Atunci cererea rămâne deschisă, iar [onAccessResume] o
+     * încheie la revenirea în ecran.
+     */
+    fun onAccessReturned(): Boolean? = settleAccess()
+
+    /**
+     * ON_RESUME: încheie o cerere rămasă deschisă (vezi [onAccessReturned]). Null = nicio cerere deschisă sau prea
+     * devreme; altfel starea accesului (rândul A_RESULT se scrie acum).
+     */
+    fun onAccessResume(): Boolean? = if (accessAt == 0L) null else settleAccess()
+
+    private fun settleAccess(): Boolean? {
         val g = refreshAllFiles()
-        ConsentLog.add(ctx, "A_RESULT", if (g) DiagResult.OK else DiagResult.REFUSED, if (accessAt > 0L) now() - accessAt else 0L)
+        val waited = if (accessAt > 0L) now() - accessAt else 0L
+        if (!g && accessAt > 0L && waited < EARLY_MS) return null
+        ConsentLog.add(ctx, "A_RESULT", if (g) DiagResult.OK else DiagResult.REFUSED, waited)
         accessAt = 0L
         ConsentLog.flush(ctx)
         return g

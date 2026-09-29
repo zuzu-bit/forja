@@ -120,6 +120,14 @@ class DestinationsTest {
         assertNull(mediaRootFromTree(tree("primary:Android")))
         assertNull(mediaRootFromTree(tree("1A2B-3C4D:Pictures")))   // cardul SD: alt volum
         assertNull(mediaRootFromTree(DocumentsContract.buildTreeDocumentUri("com.google.android.apps.docs.storage", "acc=1;doc=x")))
+        // Un nume pe care curățarea l-ar schimba ar duce pozele în alt dosar, alături: refuzat („Alege alt dosar.”).
+        assertNull(mediaRootFromTree(tree("primary:Documents/Facturi: 2024")))
+        assertNull(mediaRootFromTree(tree("primary:.Private")))
+        assertNull(mediaRootFromTree(tree("primary:Pictures/Poze.")))
+        assertNull(mediaRootFromTree(tree("primary:Documents/" + "a".repeat(61))))
+        // Scrierea sistemului pentru primul segment nu schimbă dosarul.
+        assertEquals("Pictures/Vacanțe/", mediaRootFromTree(tree("primary:pictures/Vacanțe")))
+        assertEquals("Documents/" + "a".repeat(60) + "/", mediaRootFromTree(tree("primary:Documents/" + "a".repeat(60))))
     }
 
     @Test fun treeRelations() {

@@ -2,6 +2,7 @@ package com.forja.app.feature.inventory
 
 import com.forja.app.core.inventory.MoveReason
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -66,5 +67,6 @@ class AccessCopyTest {
     @Test fun oneActionPerResult() {
         assertEquals("Permite accesul", AccessCopy.fix(DoneFix.Access))
         assertEquals("Încearcă din nou", AccessCopy.fix(DoneFix.Retry))
+        assertNull(AccessCopy.fix(DoneFix.None))
     }
 }

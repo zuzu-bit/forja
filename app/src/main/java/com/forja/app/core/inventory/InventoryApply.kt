@@ -128,7 +128,9 @@ internal object InventoryApply {
         step(0, total, null)
         for (m in moves) {
             currentCoroutineContext().ensureActive()
-            val owned = MediaOwners.foreignOwner(m.item.relPath, self) != null
+            // Cu acces complet, dosarul altei aplicații nu mai e o piedică: un eșec atunci are alt motiv (din excepție sau din
+            // starea rândului), nu „owned” — altfel pagina ar cere un acces pe care omul îl are deja.
+            val owned = !mgr && MediaOwners.foreignOwner(m.item.relPath, self) != null
             when (val res = withContext(Dispatchers.IO) { MediaMover.move(ctx, m.item, m.path, owned) }) {
                 MediaMover.Result.Moved -> { moved++; removed += m.item.id; landed(m.item, m.segment) }
                 is MediaMover.Result.Failed -> {
@@ -155,7 +157,12 @@ internal object InventoryApply {
                 }
                 val visible = withContext(Dispatchers.IO) { MediaMover.visibleIds(ctx, trashTodo.map { it.mediaId }) }
                 for (r in trashTodo) {
-                    if (visible == null || r.mediaId in visible) {
+                    if (refused[r.id]?.reason == MoveReason.Gone) {
+                        // Ștearsă între timp (cu acces complet știm sigur): nu e coșul nostru, nu eliberează nimic.
+                        failed++
+                        removed += r.id
+                        fails[r.id] = MoveDiag.failTrash(MoveReason.Gone, r.mime, r.video, r.relPath)
+                    } else if (visible == null || r.mediaId in visible) {
                         failed++
                         // Încă vizibilă: refuzul de la IS_TRASHED, dacă a fost unul; altfel coșul pur și simplu nu s-a făcut.
                         val res = refused[r.id]?.takeIf { it.reason != MoveReason.Gone }

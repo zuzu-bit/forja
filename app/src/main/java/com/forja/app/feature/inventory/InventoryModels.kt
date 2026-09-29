@@ -280,6 +280,8 @@ data class DoneUiState(
 ) {
     /** Pagina de rezultat (nu s-a aplicat tot), nu finalul „Gata”. */
     val result: Boolean get() = fix != null
+    /** Mutate cu adevărat: [items] numără și pe cele trimise la coș. */
+    val moved: Int get() = (items - trashed).coerceAtLeast(0)
 }
 
 // ───────────────────────────── Mapări din plan ─────────────────────────────

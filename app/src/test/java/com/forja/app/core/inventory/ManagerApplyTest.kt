@@ -198,6 +198,28 @@ class ManagerApplyTest {
         assertFalse(fake.rows.getValue(9).trashed)
     }
 
+    @Test fun withFullAccessAFailedWhatsappPhotoIsNotBlamedOnTheAccess() = runBlocking {
+        // Cu accesul dat, dosarul WhatsApp nu mai e o piedică: eșecul are motivul lui (aici excepția), nu „owned”.
+        media(2L to wa).apply { manager = true; broken = setOf(2L) }
+        val moves = listOf(item(2, wa))
+        val out = InventoryApply.photos(ctx, doc(moves, emptyList(), MediaRoots.DEFAULT), moves.associateBy { it.id },
+            grantMoves = null, grantTrash = null, step = { _, _, _ -> }, manager = true)
+        assertEquals(0, out.result.moved)
+        assertEquals(MoveReason.Error, out.result.failures.getValue("m:2").reason)
+    }
+
+    @Test fun withFullAccessATrashItemDeletedMeanwhileIsNotCountedAsTrashed() = runBlocking {
+        media(1L to "DCIM/Camera/").apply { manager = true }   // 9 nu mai există
+        val trash = listOf(item(1, "DCIM/Camera/"), item(9, "DCIM/"))
+        val out = InventoryApply.photos(ctx, doc(emptyList(), trash, MediaRoots.DEFAULT), trash.associateBy { it.id },
+            grantMoves = null, grantTrash = null, step = { _, _, _ -> }, manager = true)
+        assertEquals(1, out.result.trashed)
+        assertEquals("doar poza aruncată de FORJA", 1L, out.result.freedBytes)
+        assertEquals(1, out.result.failed)
+        assertEquals(MoveFail(MoveReason.Gone, "image", "DCIM", "trash"), out.result.failures.getValue("m:9"))
+        assertTrue("iese din plan", "m:9" in out.removed)
+    }
+
     // ───────────── fără acces complet: fluxul din 4.4.1, cu motive ─────────────
 
     @Test fun withoutFullAccessNothingMovesWithoutAGrant() = runBlocking {

@@ -159,14 +159,26 @@ internal fun DestRec?.mediaRoot(): String = MediaRoots.normalize(this?.mediaRoot
 /**
  * Arborele ales în selectorul „Alt dosar…” → rădăcina RELATIVE_PATH („Pictures/Vacanțe/”, „Documents/Poze/”): orice
  * dosar din memoria internă, în afară de rădăcina ei și de Android/…. Null pentru card (alt volum MediaStore: nu mutăm
- * între volume), pentru alți furnizori (Drive…) și pentru căi mai adânci de 6 dosare. Pictures și DCIM merg oricum;
+ * între volume), pentru alți furnizori (Drive…), pentru căi mai adânci de 6 dosare și pentru un dosar al cărui nume
+ * nu trece curățarea neschimbat (ar fi alt dosar). Pictures și DCIM merg oricum;
  * restul cer acces complet ([MediaRoots.standard]).
  */
 internal fun mediaRootFromTree(tree: Uri): String? {
     if (tree.authority != TreePaths.EXTERNAL) return null
     val id = TreePaths.treeDocId(tree) ?: return null          // „primary:Pictures/Vacanțe”
     if (!id.startsWith("primary:")) return null                // card SD = alt volum MediaStore: nu mutăm între volume
-    return MediaRoots.normalize(TreePaths.relative(id), anyTop = true)
+    val raw = TreePaths.relative(id)
+    val root = MediaRoots.normalize(raw, anyTop = true) ?: return null
+    // Dosarul ales trebuie să rămână exact el: dacă curățarea a schimbat vreun segment (caractere scoase, puncte tăiate,
+    // scurtat la 60), RELATIVE_PATH ar duce pozele într-un dosar nou, alături. Atunci: „Alege alt dosar.”
+    val picked = raw.split('/').filter { it.isNotEmpty() }
+    val kept = root.trimEnd('/').split('/')
+    if (picked.size != kept.size) return null
+    for (i in picked.indices) {
+        // Primul segment poate primi scrierea sistemului („pictures” → „Pictures”): pe disc e același dosar.
+        if (!picked[i].equals(kept[i], ignoreCase = i == 0)) return null
+    }
+    return root
 }
 
 /** Numele destinațiilor, pentru confirmare, foaia „Locație”, ecranul final și rezumatul de pe site. */

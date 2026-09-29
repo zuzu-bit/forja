@@ -64,9 +64,10 @@ object AccessCopy {
         MoveReason.Mismatch, MoveReason.Error -> "Android nu le-a mutat."
     }
 
-    /** Butonul acțiunii de pe pagina de rezultat. */
-    fun fix(f: DoneFix): String = when (f) {
+    /** Butonul acțiunii de pe pagina de rezultat (null = fără buton, doar „Înapoi la dosare”). */
+    fun fix(f: DoneFix): String? = when (f) {
         DoneFix.Access -> ALLOW_RESULT
         DoneFix.Retry -> RETRY
+        DoneFix.None -> null
     }
 }

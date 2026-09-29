@@ -251,8 +251,11 @@ fun InventoryDoneContent(state: DoneUiState, actions: DoneActions, modifier: Mod
             val fix = state.fix
             if (fix != null) {
                 // Pagina de rezultat: o singură acțiune, apoi drumul înapoi la dosare (și gestul „înapoi”).
-                InvPrimaryButton(AccessCopy.fix(fix), actions.onFix)
-                Spacer(Modifier.height(10.dp))
+                val label = AccessCopy.fix(fix)
+                if (label != null) {
+                    InvPrimaryButton(label, actions.onFix)
+                    Spacer(Modifier.height(10.dp))
+                }
                 InvOutlineButton(AccessCopy.BACK, actions.onFolders)
             } else {
                 InvPrimaryButton(if (photos) "Galerie" else "Fișiere", actions.onGallery)
@@ -322,7 +325,10 @@ private fun SiteButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     }
 }
 
-/** „14 DOSARE | 1,2 GB ELIBERAȚI”; cifrele cresc odată cu apariția (P5). Progresul se citește doar aici. */
+/**
+ * „14 DOSARE | 1,2 GB ELIBERAȚI” („Gata”) sau „1 DOSAR | 3 MUTATE” (pagina de rezultat); cifrele cresc odată cu
+ * apariția (P5). Progresul se citește doar aici.
+ */
 @Composable
 private fun StatsRow(state: DoneUiState, progress: () -> Float, modifier: Modifier) {
     val k = progress()
@@ -332,8 +338,9 @@ private fun StatsRow(state: DoneUiState, progress: () -> Float, modifier: Modifi
         Spacer(Modifier.width(22.dp))
         Box(Modifier.width(1.dp).fillMaxHeight().background(W10))
         Spacer(Modifier.width(22.dp))
-        if (photos && state.freedBytes > 0) Stat(fmtSize((state.freedBytes * k).toLong()), "ELIBERAȚI", Amber)
-        else Stat(fmtCount((state.items * k).toInt()), "MUTATE", Amber)
+        // Pagina de rezultat arată mereu câte s-au mutat (fără cele trimise la coș): „Aproape” spune ce a mers.
+        if (photos && state.freedBytes > 0 && !state.result) Stat(fmtSize((state.freedBytes * k).toLong()), "ELIBERAȚI", Amber)
+        else Stat(fmtCount(((if (photos) state.moved else state.items) * k).toInt()), "MUTATE", Amber)
     }
 }
 
