@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
-// Verificarea publicării site-ului FORJA 4.4 (forja-insights, /health version 18, DESIGN-4.4 §3.5).
+// Verificarea publicării site-ului FORJA 4.4 (forja-insights, /health version 19, DESIGN-4.4 §3.5).
 const site = 'https://forja-insights.forja-22e7ea2d.workers.dev';
 const flags = { organizer_jobs: 4, journey: 1, explore_sync: 2, map3d: 1, content_ai: 2, sleep_audio: 1, visual_ui: 1, files_sync: 1, cleanup_schedule: 1, background_audio: 1, organizer: 1, organizer_modes: 1, social: 1, partners: 1, contacts: 2, lost_phone: 2, site_sections: 1, inventory_runs: 1, music_summary: 1 };
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -13,7 +13,7 @@ async function health() {
   if (!r.ok) throw Error('Site indisponibil: HTTP ' + r.status);
   const h = await r.json();
   if (h.service !== 'forja-insights' || !Number.isInteger(h.version)) throw Error('Adresa nu răspunde ca site FORJA.');
-  if (h.version > 18) throw Error('Site-ul este mai nou decât acest pachet. Publicarea a fost oprită.');
+  if (h.version > 19) throw Error('Site-ul este mai nou decât acest pachet. Publicarea a fost oprită.');
   return h;
 }
 if (process.argv.includes('--before')) {
@@ -30,7 +30,7 @@ if (process.argv.includes('--before')) {
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
       const h = await health();
-      if (h.version !== 18 || Object.entries(flags).some(([k, v]) => h[k] !== v)) throw Error('Versiunea sau funcțiile online nu corespund actualizării.');
+      if (h.version !== 19 || Object.entries(flags).some(([k, v]) => h[k] !== v)) throw Error('Versiunea sau funcțiile online nu corespund actualizării.');
       const page = await get('/insights');
       const client = await get('/insights/app.js');
       if (!page.ok || !client.ok || sha(await page.text()) !== sha(html) || sha(await client.text()) !== sha(js)) throw Error('Pagina sau interfața online diferă de fișierele verificate.');

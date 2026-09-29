@@ -17,7 +17,7 @@ export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
     const asset = siteStatic(request, path); if (asset) return asset;
-    if (request.method === 'GET' && path === '/health') return reply({ ok:true, service:'forja-insights', version:18, organizer_jobs:4, journey:1, explore_sync:2, map3d:1, content_ai:2, visual_ui:1, sleep_audio:1, lost_phone:2, partners:1, contacts:2, social:1, organizer_modes:1, files_sync:1, cleanup_schedule:1, background_audio:1, organizer:1, site_sections:1, inventory_runs:1, music_summary:1 });
+    if (request.method === 'GET' && path === '/health') return reply({ ok:true, service:'forja-insights', version:19, mirror:1, organizer_jobs:4, journey:1, explore_sync:2, map3d:1, content_ai:2, visual_ui:1, sleep_audio:1, lost_phone:2, partners:1, contacts:2, social:1, organizer_modes:1, files_sync:1, cleanup_schedule:1, background_audio:1, organizer:1, site_sections:1, inventory_runs:1, music_summary:1 });
     // Sunetul nopții pe URL semnat (fără token: <audio> nu trimite antete); semnătura HMAC e credențialul.
     if (isSignedAudio(path)) { try { return await somnSigned(request, env); } catch { return reply({error:'Sunetul nu poate fi redat acum.'},500); } }
     if (!path.startsWith('/v2/') && !path.startsWith('/insights/api/')) return reply({error:'Not found'},404);

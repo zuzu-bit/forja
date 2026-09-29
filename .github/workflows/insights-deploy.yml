@@ -43,6 +43,10 @@ jobs:
           npx wrangler r2 bucket info forja-insights-data -c wrangler.insights.toml > /dev/null
           npx wrangler deployments list -c wrangler.insights.toml
           npx wrangler deploy -c wrangler.insights.toml --experimental-provision=false
+          # Cheia linkurilor semnate pentru sunetul nopții (Somn): se generează o singură dată, dacă lipsește.
+          if ! npx wrangler secret list -c wrangler.insights.toml 2>/dev/null | grep -q SLEEP_URL_KEY; then
+            openssl rand -hex 32 | npx wrangler secret put SLEEP_URL_KEY -c wrangler.insights.toml >/dev/null 2>&1 || true
+          fi
           # Cheia Gemini (dacă există) — aceleași AI-uri performante și pe site.
           if [ -n "$GEMINI_API_KEY" ]; then
             printf '%s' "$GEMINI_API_KEY" | npx wrangler secret put GEMINI_API_KEY -c wrangler.insights.toml >/dev/null 2>&1 || true
