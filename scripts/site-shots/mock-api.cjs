@@ -65,7 +65,7 @@ function createApi(fixture, assets, {fail = []} = {}) {
       if (path === '/insights/api/ratie') return json(f.ratie);
       if (path === '/insights/api/mars') return json(f.mars);
       if (path === '/insights/api/muzica') return json(f.muzica);
-      if (path === '/insights/api/paza') return json(f.paza);
+      if (path === '/insights/api/paza') return json(f.pazaDays ? f.pazaDays(Number(q.get('days') || 7)) : f.paza);
       if (path === '/insights/api/concentrare') return json(f.concentrare || {});
       if (path === '/insights/api/inventar') return json(f.inventar);
       if (path === '/insights/api/cont') return json(f.cont);

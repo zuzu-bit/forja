@@ -59,5 +59,7 @@ module.exports = [
   {id: '80-mars', title: 'Marș', hash: 'mars'},
   {id: '90-muzica', title: 'Muzică', hash: 'muzica'},
   {id: '91-paza', title: 'Pază', hash: 'paza'},
+  {id: '91b-paza-14', title: 'Pază · 14 zile', hash: 'paza', requires: '#s-paza .seg-btn', steps: [{eval: () => [...document.querySelectorAll('#s-paza .seg-btn')].find(b => /14/.test(b.textContent)).click()}, {wait: 700}]},
+  {id: '92-concentrare', title: 'Concentrare', hash: 'concentrare'},
   {id: '95-cont', title: 'Cont', hash: 'cont', steps: [{eval: () => { const d = document.querySelector('#s-cont details.privacy'); if (d) d.open = true; }}]}
 ];

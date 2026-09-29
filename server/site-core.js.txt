@@ -306,9 +306,9 @@ const INFO = {
   somn: 'Nopțile vin din Stingerea. Fazele sunt estimate din mișcare și sunet. Înregistrările nopții se păstrează 7 zile; în acest timp poți asculta fiecare moment din cronologie.',
   ratie: 'Mesele și ținta de calorii vin din FORJA. Eticheta arată de unde vine fiecare valoare: EXACT (cod de bare), ESTIMAT (poză analizată) sau MANUAL.',
   mars: 'Turele cu GPS (mers, alergare, bicicletă) și antrenamentele terminate în FORJA. Traseele se văd și pe Teren, la Străzile tale.',
-  muzica: 'Topul săptămânii se calculează pe telefon din ce asculți și pleacă aici cel mult o dată la 6 ore: titlu, artist, de câte ori. „Acum” apare cât muzica e pornită.',
-  paza: 'Timpul pe ecran vine din Accesul la utilizare, cu contractul semnat. Ziua se închide la miezul nopții; păstrăm ultimele 7 zile.',
-  concentrare: 'Sesiunile de concentrare, pauzele de detox și respirația, cu contractul v4 semnat. Cuvintele de care te lași apar doar dacă le pornești separat, în FORJA.',
+  muzica: 'Topul săptămânii se calculează pe telefon din ce asculți și pleacă aici cel mult o dată la 6 ore: titlu, artist, de câte ori. Cu contractul v4 vine și jurnalul zilelor: fiecare piesă, sărită sau pornită de FORJA. „Acum” apare cât muzica e pornită.',
+  paza: 'Timpul pe ecran vine din Accesul la utilizare, cu contractul semnat, pe ore. FORJA nu intră în total. Ziua se închide la miezul nopții; păstrăm ultimele 14 zile, iar revocarea le șterge.',
+  concentrare: 'Sesiunile de concentrare, pauzele de detox, respirația și mesajele Căștii, cu contractul v4 semnat. Paznicul trimite doar câte opriri a făcut, pe pachete, niciodată textul. Cuvintele de care te lași și scrisoarea apar doar dacă le pornești separat, în FORJA.',
   cont: 'Contractul spune ce pleacă din telefon. Fiecare rând de mai jos arată când a ajuns ultima dată ceva pe site. Pauza oprește primirea pe site (sesiuni și copii), fără să atingă telefonul.'
 };
 const LINK_LABELS = {teren: 'Teren', camarazi: 'Camarazi', gasire: 'Găsire', inventar: 'Inventar', somn: 'Somn', ratie: 'Rație', mars: 'Marș', muzica: 'Muzică', paza: 'Pază', cont: 'Contract'};

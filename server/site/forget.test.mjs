@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { resetSiteCache } from '../site-api.mjs';
 import { localDate } from '../site-time.mjs';
 import { applyLocationRollup, LOC_DAY_PREFIX } from '../site-location.mjs';
-import { fixture, NOW, HOUR, DAY } from './fixture.mjs';
+import { fixture, NOW, HOUR, DAY, SIGNED } from './fixture.mjs';
 
 test.beforeEach(() => resetSiteCache());
 
@@ -14,6 +14,7 @@ test('site forget: usage-day, loc-day, gallery copies and inventory covers go; o
   t.mock.method(Date, 'now', () => NOW);
   const f = fixture();
   await f.doCall('alice', '/v2/files'); // binds the owner
+  f.fs.set('users/alice', { contract: SIGNED }); // Pază shows the screen time only with the contract signed
   const storage = f.account('alice').ctx.storage;
   const today = localDate(NOW), yesterday = localDate(NOW - DAY);
   for (const date of [today, yesterday]) await storage.put('usage-day:' + date, { date, updated_at: NOW - HOUR, apps: { 'com.x': { label: 'X', ms: 600000, opens: 2 } } });
@@ -38,7 +39,7 @@ test('site forget: usage-day, loc-day, gallery copies and inventory covers go; o
   assert.ok(await storage.get('file-gone:2'));
   assert.deepEqual([...f.records.files.keys()].sort(), ['_insights/alice/sess/item', '_insights/bob/files/9'], 'sessions go through their own DELETE; other accounts untouched');
   resetSiteCache();
-  assert.deepEqual((await f.call('/insights/api/paza')).body, { updated_at: null, days: [] });
+  assert.deepEqual((await f.call('/insights/api/paza')).body, { updated_at: null, days: [], window: 7, contract: true });
   assert.deepEqual((await f.call('/insights/api/inventar')).body.vault, { total: 0, latestAt: null });
   assert.deepEqual(await (await f.doCall('alice', '/v2/site/forget', 'POST')).json(), { forgotten: { usageDays: 0, locDays: 0, files: 0, objects: 0 } }, 'idempotent');
   assert.equal((await f.doCall('bob', '/v2/site/forget', 'POST')).status, 200, 'each account forgets only its own DO');

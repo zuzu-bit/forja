@@ -1,13 +1,111 @@
-// CONCENTRARE · Focus și detox — sesiunile de concentrare, detoxul și respirația, prin /insights/api/concentrare.
-// Deocamdată doar cusătura (mirror P0): secțiunea există în navigare, răspunsul e gol; pachetul D o umple.
+// CONCENTRARE · Focus și detox — pădurea pe zile, sesiunile zilei pe ceas, aplicațiile consemnate (încercări și timp pe
+// ecran), detoxul (seria, interceptările pe pachete; cuvintele doar cu acordul separat din FORJA) și ce i-a spus Casca,
+// prin /insights/api/concentrare. Totul la persoana a treia, fără subiect: „A încercat de 7 ori să deschidă Instagram.”
+const PACKS = {'01': 'Club și băutură', '02': 'Pariuri și jocuri', '03': 'Conținut +18', '04': 'Anime și manga', '18': 'Lista FORJA', own: 'Cuvintele proprii'};
+const CASCA_CTX = {SleepReport: 'Raportul nopții', FriendNear: 'Un camarad aproape', NewFriend: 'Camarad nou'};
+const CASCA_OUT = {tapped: 'atins', opened: 'deschis', dismissed: 'dat la o parte', posted: 'trimis'};
 const Concentrare = {
-  data: null, body: null,
+  data: null, body: null, day: null, days: 7, allCasca: false,
   mount(body) { Concentrare.body = body; },
-  enter() { loadInto('concentrare', Concentrare.body, () => api('/insights/api/concentrare'), d => { Concentrare.data = d; Concentrare.render(); }, {replaceOnError: !Concentrare.data}); },
+  enter() { loadInto('concentrare', Concentrare.body, () => api('/insights/api/concentrare?days=' + Concentrare.days), d => { Concentrare.data = d; Concentrare.render(); }, {replaceOnError: !Concentrare.data}); },
+  pick(n) { if (Concentrare.days === n) return; Concentrare.days = n; Concentrare.day = null; Concentrare.enter(); },
   render() {
-    setLine('concentrare', '');
-    fill(Concentrare.body, emptyState('Nicio sesiune de concentrare.', 'Vine cu contractul v4 semnat.', null, 'idle'));
+    const d = Concentrare.data || {}, C = Concentrare;
+    if (!d.contract || !d.contract.on) {
+      setLine('concentrare', '');
+      fill(C.body, emptyState('Concentrarea vine cu contractul v4.', d.contract?.version ? 'Semnează din nou contractul în FORJA. Sesiunile urcă de atunci.' : 'Semnează contractul în FORJA. Sesiunile urcă de atunci.', null, 'idle'));
+      return;
+    }
+    const days = [...(d.days || [])].filter(x => fmt.dateKey(x.date) !== null).sort((a, b) => b.date.localeCompare(a.date));
+    if (!days.length && !d.detox && !(d.casca || []).length) { setLine('concentrare', ''); fill(C.body, emptyState('Nicio sesiune de concentrare.', 'Pornește Focus, un detox sau Respiră în FORJA.', null, 'idle')); return; }
+    setLine('concentrare', d.updatedAt ? 'Actualizat ' + fmt.ago(d.updatedAt) : '');
+    const n = d.window || 7;
+    const sum = f => days.reduce((a, x) => a + (x[f] || 0), 0);
+    const focusMin = sum('focusMin'), p = fmt.durParts(focusMin);
+    const seg = h('div', {class: 'seg', role: 'group', 'aria-label': 'Zile'}, [7, 30].map(k => h('button', {type: 'button', class: 'seg-btn' + (k === n ? ' active' : ''), 'aria-pressed': String(k === n), onclick: () => C.pick(k)}, k + ' zile')));
+    const stats = [plural(sum('grown'), 'copac crescut', 'copaci crescuți'), plural(sum('withered'), 'uscat', 'uscați'), plural(sum('hits'), 'încercare blocată', 'încercări blocate')];
+    const heroCard = h('article', {class: 'card conc-hero'},
+      h('div', {class: 'night-top'}, monoLabel('PĂDUREA · ' + n + ' ZILE'), seg),
+      h('div', {class: 'paza-total'}, hero(String(p.h), 'h'), hero(String(p.m).padStart(2, '0'), 'min')),
+      h('p', {class: 'muted', text: stats.join(' · ')}),
+      sum('detoxMin') || sum('breathMin') ? h('p', {class: 'muted', text: [sum('detoxMin') ? fmt.dur(sum('detoxMin')) + ' de detox digital' : null, sum('breathMin') ? fmt.dur(sum('breathMin')) + ' de respirație' : null].filter(Boolean).join(' · ')}) : null,
+      days.length ? h('ol', {class: 'forest'}, days.slice(0, 10).map(x => h('li', {},
+        h('button', {type: 'button', class: 'forest-row' + (x.date === C.pickDay(days) ? ' sel' : ''), onclick: () => { C.day = x.date; C.render(); }},
+          h('span', {class: 'forest-day', text: fmt.weekday(fmt.dateKey(x.date)).replace('.', '') + ' ' + new Date(fmt.dateKey(x.date)).getDate()}),
+          h('span', {class: 'forest-trees', 'aria-label': plural(x.grown, 'copac', 'copaci') + ', ' + plural(x.withered, 'uscat', 'uscați')},
+            Array.from({length: Math.min(12, x.grown || 0)}, () => icon('concentrare', 16, 'tree')), Array.from({length: Math.min(6, x.withered || 0)}, () => icon('concentrare', 16, 'tree dry')),
+            !x.grown && !x.withered ? h('i', {class: 'muted', text: '—'}) : null, x.grown > 12 ? h('b', {text: '+' + (x.grown - 12)}) : null),
+          h('span', {class: 'forest-min', text: fmt.dur(x.focusMin || 0)}))))) : null);
+    fill(C.body, h('div', {class: 'conc-grid'},
+      h('div', {class: 'conc-side'}, heroCard, C.detoxCard(d.detox)),
+      h('div', {class: 'conc-side'}, C.dayCard(days), C.blockedCard(d.blocked || [], n), C.cascaCard(d.casca || []))));
   },
-  reset() { Concentrare.data = null; if (Concentrare.body) delete Concentrare.body.dataset.loaded; }
+  pickDay(days) { return Concentrare.day && days.some(x => x.date === Concentrare.day) ? Concentrare.day : days[0]?.date; },
+  /** Ziua aleasă: sesiunile pe o bandă de 24 de ore, apoi lista lor. */
+  dayCard(days) {
+    const key = Concentrare.pickDay(days), day = days.find(x => x.date === key);
+    if (!day) return null;
+    const start = fmt.dateKey(day.date), pct = t => Math.max(0, Math.min(100, (t - start) / DAY * 100));
+    const rows = [
+      ...(day.sessions || []).map(s => ({at: s.startAt, end: s.endAt, kind: s.kind, s})),
+      ...(day.breath || []).map(b => ({at: b.startAt, end: b.startAt + b.durationS * 1000, kind: 'breath', b})),
+    ].sort((a, b) => a.at - b.at);
+    const strip = h('div', {class: 'conc-strip', role: 'img', 'aria-label': 'Sesiunile zilei pe ore'},
+      rows.map(r => h('i', {class: 'conc-block ' + r.kind, style: {left: pct(r.at) + '%', width: Math.max(0.8, pct(r.end || r.at + 60000) - pct(r.at)) + '%'}})),
+      h('span', {class: 'conc-ticks', 'aria-hidden': 'true'}, ['00', '06', '12', '18', '24'].map(t => h('b', {text: t}))));
+    const line = r => {
+      if (r.kind === 'breath') return h('li', {class: 'conc-row'}, h('span', {class: 'conc-time', text: fmt.time(r.at)}), h('div', {class: 'conc-text'}, h('b', {text: 'Respirație · ' + fmt.dur(Math.max(1, Math.round(r.b.durationS / 60)))}), h('span', {class: 'muted', text: [r.b.pattern, r.b.cycles ? plural(r.b.cycles, 'ciclu', 'cicluri') : null, r.b.completed ? 'dusă la capăt' : null].filter(Boolean).join(' · ')})), h('i', {class: 'conc-dot breath'}));
+      const s = r.s, apps = (s.apps || []).map(a => a.label).join(', ');
+      const hits = (s.hits || []).map(x => 'a încercat de ' + x.n + ' ori ' + x.label).join(', ');
+      const end = s.endAt ? fmt.time(s.startAt) + '–' + fmt.time(s.endAt) : fmt.time(s.startAt) + ' · încă în post';
+      const verdict = s.kind === 'detox' ? (s.endedBy === 'timer' ? 'detox dus la capăt' : s.endedBy === 'user' ? 'detox oprit mai devreme' : 'detox') : s.grown ? 'copacul a crescut' : s.withered ? 'copacul s-a uscat' : null;
+      return h('li', {class: 'conc-row'}, h('span', {class: 'conc-time', text: end}),
+        h('div', {class: 'conc-text'}, h('b', {text: (s.kind === 'detox' ? 'Detox digital' : 'Focus') + (s.minutes !== null ? ' · ' + fmt.dur(s.minutes) : '')}),
+          h('span', {class: 'muted', text: [verdict, apps ? 'consemnate: ' + apps : null].filter(Boolean).join(' · ')}), hits ? h('span', {class: 'conc-hits', text: hits[0].toUpperCase() + hits.slice(1) + '.'}) : null),
+        h('i', {class: 'conc-dot ' + s.kind}));
+    };
+    return h('section', {class: 'card conc-card'},
+      h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: key === fmt.keyOf(Date.now()) ? 'Azi' : fmt.dayLong(start)}), monoLabel(day.screenMin !== null && day.screenMin !== undefined ? 'PE ECRAN ' + fmt.dur(day.screenMin).toUpperCase() : 'SESIUNILE')),
+      strip, rows.length ? h('ol', {class: 'conc-list'}, rows.map(line)) : h('p', {class: 'panel-empty', text: 'Nicio sesiune în ziua asta.'}));
+  },
+  blockedCard(list, n) {
+    if (!list.length) return null;
+    const max = Math.max(1, ...list.map(x => x.hits || 0));
+    return h('section', {class: 'card app-card'},
+      h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Aplicațiile consemnate'}), monoLabel('ÎNCERCĂRI · PE ECRAN')),
+      h('ol', {class: 'app-list'}, list.slice(0, 8).map(a => h('li', {class: 'app-row'},
+        h('span', {class: 'app-badge', 'aria-hidden': 'true', text: initials(a.label || a.pkg)}),
+        h('div', {class: 'app-text'}, h('span', {class: 'app-name', text: a.label || a.pkg}),
+          h('span', {class: 'muted conc-sub', text: a.hits ? 'A încercat de ' + a.hits + ' ori să o deschidă.' : 'Nicio încercare în ' + n + ' zile.'}), bar((a.hits || 0) / max, 'amber')),
+        h('div', {class: 'app-num'}, h('b', {text: '×' + fmt.int(a.hits || 0)}), h('span', {text: a.screenMin ? fmt.dur(a.screenMin) : '—'}))))));
+  },
+  detoxCard(x) {
+    if (!x) return null;
+    const streakDays = x.streakStart ? Math.max(0, Math.floor((Date.now() - x.streakStart) / DAY)) : null;
+    const packs = Object.entries(x.byPack || {}).sort((a, b) => b[1] - a[1]);
+    const w = x.words;
+    return h('section', {class: 'card conc-card detox-card'},
+      h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Detoxul'}), monoLabel(x.guardOn ? 'PAZNICUL E ÎN POST' : 'PAZNICUL E OPRIT', x.guardOn ? 'accent' : 'dim')),
+      h('div', {class: 'detox-top'},
+        streakDays !== null ? h('div', {class: 'stat'}, monoLabel('SERIA'), hero(String(streakDays), streakDays === 1 ? 'zi' : 'zile'), x.slips ? h('span', {class: 'stat-sub', text: plural(x.slips, 'revenire', 'reveniri')}) : null) : null,
+        h('div', {class: 'stat'}, monoLabel('OPRIRI'), hero(fmt.int(x.interceptions || 0), ''), h('span', {class: 'stat-sub', text: 'în fereastra aleasă'}))),
+      packs.length ? h('div', {class: 'mind-chips'}, packs.map(([k, v]) => h('span', {class: 'mind-chip', text: (PACKS[k] || k) + ' · ' + v}))) : h('p', {class: 'panel-empty', text: 'Nicio oprire. Paznicul n-a avut de lucru.'}),
+      w ? h('div', {class: 'detox-words'}, monoLabel('CUVINTELE DE CARE SE LASĂ'), w.words.length ? h('div', {class: 'mind-chips'}, w.words.map(t => h('span', {class: 'mind-chip word', text: t}))) : null,
+        w.letter ? h('blockquote', {class: 'detox-letter', text: w.letter}) : null)
+        : h('p', {class: 'mono dim', text: 'Cuvintele și scrisoarea rămân pe telefon'}));
+  },
+  cascaCard(list) {
+    if (!list.length) return null;
+    const shown = Concentrare.allCasca ? list : list.slice(0, 8);
+    return h('section', {class: 'card conc-card'},
+      h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Ce i-a spus Casca'}), monoLabel(plural(list.length, 'MESAJ', 'MESAJE'))),
+      h('ol', {class: 'casca-list'}, shown.map(m => h('li', {class: 'casca-row'},
+        h('span', {class: 'conc-time', text: (fmt.keyOf(m.at) === fmt.keyOf(Date.now()) ? '' : fmt.weekday(m.at).replace('.', '') + ' ') + fmt.time(m.at)}),
+        h('div', {class: 'conc-text'}, h('b', {text: m.private ? (CASCA_CTX[m.ctx] || 'Mesaj privat') : (m.title || CASCA_CTX[m.ctx] || 'Casca')}),
+          m.private ? h('span', {class: 'muted', text: 'Textul rămâne pe telefon.'}) : m.body ? h('span', {class: 'muted', text: m.body}) : null),
+        h('span', {class: 'mono', text: CASCA_OUT[m.outcome] || ''})))),
+      list.length > 8 ? h('button', {type: 'button', class: 'chip-btn', onclick: () => { Concentrare.allCasca = !Concentrare.allCasca; Concentrare.render(); }}, Concentrare.allCasca ? 'Mai puține' : 'Toate ' + list.length) : null);
+  },
+  reset() { Concentrare.data = null; Concentrare.day = null; Concentrare.days = 7; Concentrare.allCasca = false; if (Concentrare.body) delete Concentrare.body.dataset.loaded; }
 };
 Site.register('concentrare', Concentrare);

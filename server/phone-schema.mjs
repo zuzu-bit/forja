@@ -14,7 +14,8 @@ function rows(v, max) { if (!Array.isArray(v) || v.length > max) bad('Too many r
 export function validatePhoneData(data, consent) {
   const expected = [...(consent.location ? ['locations', 'visits'] : []), ...(consent.app_usage ? ['app_usage', 'usage_window'] : [])];
   if (!expected.length) bad('No consent for phone metrics');
-  keys(data, expected);
+  // usage_backfill (opțional, mirror D): zilele încheiate, calculate pe telefon din istoricul Android, o dată pe zi.
+  keys(data, [...expected, ...(consent.app_usage ? ['usage_backfill'] : [])], expected);
   if (consent.location) {
     rows(data.locations, 300); rows(data.visits, 300);
     for (const p of data.locations) {
@@ -37,6 +38,26 @@ export function validatePhoneData(data, consent) {
           typeof p.label !== 'string' || p.label.length > 200) bad('Invalid app name');
       n(p.foreground_ms, 0, data.usage_window.to - data.usage_window.from); n(p.opens, 0, 100000);
       n(p.last_used, data.usage_window.from, data.usage_window.to);
+    }
+    if (data.usage_backfill !== undefined) validateUsageBackfill(data.usage_backfill);
+  }
+}
+/** Cel mult 8 zile încheiate × 40 de aplicații, cu orele (24, ms, fără FORJA) și prima / ultima folosire a zilei. */
+export const BACKFILL_RULES = Object.freeze({ days: 8, apps: 40, day_ms: 25 * 3600000 });
+function validateUsageBackfill(days) {
+  rows(days, BACKFILL_RULES.days);
+  for (const d of days) {
+    keys(d, ['date', 'first_at', 'last_at', 'hours', 'apps']);
+    if (typeof d.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d.date)) bad('Invalid day');
+    n(d.first_at); n(d.last_at);
+    if (!Array.isArray(d.hours) || d.hours.length !== 24) bad('Invalid hours');
+    for (const x of d.hours) n(x, 0, 2 * 3600000);
+    rows(d.apps, BACKFILL_RULES.apps);
+    for (const p of d.apps) {
+      keys(p, ['package', 'label', 'foreground_ms', 'opens']);
+      if (typeof p.package !== 'string' || !/^[A-Za-z0-9_.]{1,200}$/.test(p.package) ||
+          typeof p.label !== 'string' || p.label.length > 200) bad('Invalid app name');
+      n(p.foreground_ms, 0, BACKFILL_RULES.day_ms); n(p.opens, 0, 100000);
     }
   }
 }

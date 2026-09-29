@@ -1,37 +1,71 @@
-// POST DE PAZĂ · Timp pe ecran — aplicațiile de azi și ultimele 7 zile, prin /insights/api/paza.
+// POST DE PAZĂ · Timp pe ecran — ziua aleasă pe ore, aplicațiile ei cu tendința pe zile, 7 sau 14 zile, prin /insights/api/paza.
+// FORJA nu intră în total (ca pe ecranul Focus din aplicație); apare separat.
 const Paza = {
-  data: null, body: null, day: null,
+  data: null, body: null, day: null, days: 7,
   mount(body) { Paza.body = body; },
-  enter() { loadInto('paza', Paza.body, () => api('/insights/api/paza'), d => { Paza.data = d; Paza.render(); }, {replaceOnError: !Paza.data}); },
+  enter() { loadInto('paza', Paza.body, () => api('/insights/api/paza?days=' + Paza.days), d => { Paza.data = d; Paza.render(); }, {replaceOnError: !Paza.data}); },
+  pick(n) { if (Paza.days === n) return; Paza.days = n; Paza.enter(); },
   render() {
     const d = Paza.data || {}, days = [...(d.days || [])].filter(x => fmt.dateKey(x.date) !== null).sort((a, b) => b.date.localeCompare(a.date));
+    if (d.contract === false) { setLine('paza', ''); fill(Paza.body, emptyState('Pază oprită.', 'Timpul pe ecran se vede doar cu contractul semnat în FORJA.', null, 'idle')); return; }
     if (!days.length) { setLine('paza', ''); fill(Paza.body, emptyState('Niciun raport de pază.', 'Vine cu contractul semnat și Accesul la utilizare pornit.', null, 'idle')); return; }
+    const n = d.window === 14 ? 14 : 7;
     // Fără alegere: ultima zi raportată (azi, sau ieri dimineața, înainte ca telefonul să trimită ziua de azi).
     const latest = days[0].date, key = Paza.day && days.some(x => x.date === Paza.day) ? Paza.day : latest, day = days.find(x => x.date === key);
-    const apps = [...(day.apps || [])].sort((a, b) => (b.minutes || 0) - (a.minutes || 0)), max = Math.max(1, ...apps.map(a => a.minutes || 0));
+    const all = [...(day.apps || [])].sort((a, b) => (b.minutes || 0) - (a.minutes || 0)), apps = all.filter(a => !a.self), self = all.find(a => a.self);
+    const max = Math.max(1, ...apps.map(a => a.minutes || 0));
     const p = fmt.durParts(day.totalMin), isToday = key === fmt.keyOf(Date.now()), latestIsToday = latest === fmt.keyOf(Date.now());
     const opens = apps.reduce((a, x) => a + (x.opens || 0), 0);
     setLine('paza', d.updated_at ? 'Actualizat ' + fmt.ago(d.updated_at) : '');
-    // Mereu 7 zile din calendar (ziua fără raport rămâne o coloană goală), ca bara să nu se lățească la un cont nou.
+    // Mereu `n` zile din calendar (ziua fără raport rămâne o coloană goală), ca bara să nu se lățească la un cont nou.
     const byKey = new Map(days.map(x => [x.date, x])), noon = fmt.dateKey(fmt.keyOf(Date.now())) + 12 * HOUR;
-    const end = noon - fmt.dateKey(days[0].date) > 6.5 * DAY ? fmt.dateKey(days[0].date) + 12 * HOUR : noon;
-    const week = [6, 5, 4, 3, 2, 1, 0].map(i => { const k = fmt.keyOf(end - i * DAY); return byKey.get(k) || {date: k, totalMin: 0, missing: true}; });
+    const end = noon - fmt.dateKey(days[0].date) > (n - 0.5) * DAY ? fmt.dateKey(days[0].date) + 12 * HOUR : noon;
+    const cal = Array.from({length: n}, (_, i) => fmt.keyOf(end - (n - 1 - i) * DAY));
+    const week = cal.map(k => byKey.get(k) || {date: k, totalMin: 0, missing: true});
     const wmax = Math.max(60, ...week.map(x => x.totalMin || 0));
+    const when = [day.firstAt ? 'prima dată la ' + fmt.time(day.firstAt) : null, day.lastAt ? 'ultima la ' + fmt.time(day.lastAt) : null].filter(Boolean).join(', ');
+    const seg = h('div', {class: 'seg', role: 'group', 'aria-label': 'Zile'}, [7, 14].map(k => h('button', {type: 'button', class: 'seg-btn' + (k === n ? ' active' : ''), 'aria-pressed': String(k === n), onclick: () => Paza.pick(k)}, k + ' zile')));
     fill(Paza.body, h('div', {class: 'paza-grid'},
       h('article', {class: 'card paza-hero'},
         // Cipul duce înapoi la ziua implicită și spune care e: „Azi” doar când azi are deja raport.
         h('div', {class: 'night-top'}, monoLabel(isToday ? 'AZI' : fmt.dayLong(fmt.dateKey(key)).toUpperCase()), key === latest ? null : h('button', {type: 'button', class: 'chip-btn', onclick: () => { Paza.day = null; Paza.render(); }}, latestIsToday ? 'Azi' : 'Ultima zi')),
         h('div', {class: 'paza-total'}, hero(String(p.h), 'h'), hero(String(p.m).padStart(2, '0'), 'min')),
         h('p', {class: 'muted', text: plural(opens, 'deschidere', 'deschideri') + ' · ' + plural(apps.length, 'aplicație', 'aplicații')}),
-        h('div', {class: 'bars week'}, week.map(x => h('button', {type: 'button', class: 'bar-col' + (x.date === key ? ' sel' : ''), disabled: !!x.missing, title: fmt.day(fmt.dateKey(x.date)) + (x.missing ? ' · fără raport' : ' · ' + fmt.dur(x.totalMin)), onclick: () => { Paza.day = x.date; Paza.render(); }},
-          h('span', {class: 'bar-fill', style: {height: ((x.totalMin || 0) / wmax * 100) + '%'}}), h('span', {class: 'bar-label', text: fmt.weekday(fmt.dateKey(x.date)).replace('.', '')}))))),
-      h('section', {class: 'card app-card'}, h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Aplicațiile'}), monoLabel('TIMP · DESCHIDERI')),
-        apps.length ? h('ol', {class: 'app-list'}, apps.slice(0, 12).map(a => h('li', {class: 'app-row'},
-          h('span', {class: 'app-badge', 'aria-hidden': 'true', text: initials(a.label || a.pkg)}),
-          h('div', {class: 'app-text'}, h('span', {class: 'app-name', text: a.label || a.pkg}), bar((a.minutes || 0) / max, 'olive')),
-          h('div', {class: 'app-num'}, h('b', {text: fmt.dur(a.minutes || 0)}), h('span', {text: '×' + fmt.int(a.opens || 0)})))))
-          : h('p', {class: 'panel-empty', text: 'Nicio aplicație în ziua asta.'}))));
+        when ? h('p', {class: 'paza-when', text: 'A luat telefonul ' + when + '.'}) : null,
+        self && self.minutes ? h('p', {class: 'mono', text: 'FORJA · ' + fmt.dur(self.minutes) + ' · separat'}) : null,
+        day.source === 'day' ? h('p', {class: 'mono dim', text: 'Ziua numărată pe telefon'}) : null,
+        h('div', {class: 'paza-days'}, seg),
+        h('div', {class: 'bars week' + (n > 7 ? ' dense' : '')}, week.map(x => h('button', {type: 'button', class: 'bar-col' + (x.date === key ? ' sel' : ''), disabled: !!x.missing, title: fmt.day(fmt.dateKey(x.date)) + (x.missing ? ' · fără raport' : ' · ' + fmt.dur(x.totalMin)), onclick: () => { Paza.day = x.date; Paza.render(); }},
+          h('span', {class: 'bar-fill', style: {height: ((x.totalMin || 0) / wmax * 100) + '%'}}), h('span', {class: 'bar-label', text: n > 7 ? String(new Date(fmt.dateKey(x.date)).getDate()) : fmt.weekday(fmt.dateKey(x.date)).replace('.', '')}))))),
+      h('div', {class: 'paza-side'},
+        Paza.heat(week, key),
+        h('section', {class: 'card app-card'}, h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Aplicațiile'}), monoLabel('TIMP · DESCHIDERI · ULTIMA')),
+          apps.length ? h('ol', {class: 'app-list'}, apps.slice(0, 12).map(a => h('li', {class: 'app-row'},
+            h('span', {class: 'app-badge', 'aria-hidden': 'true', text: initials(a.label || a.pkg)}),
+            h('div', {class: 'app-text'}, h('span', {class: 'app-name', text: a.label || a.pkg}), bar((a.minutes || 0) / max, 'olive'), Paza.trend(a.pkg, week, key)),
+            h('div', {class: 'app-num'}, h('b', {text: fmt.dur(a.minutes || 0)}), h('span', {text: '×' + fmt.int(a.opens || 0) + (a.lastAt ? ' · ' + fmt.time(a.lastAt) : '')})))))
+            : h('p', {class: 'panel-empty', text: 'Nicio aplicație în ziua asta.'})))));
   },
-  reset() { Paza.data = null; Paza.day = null; if (Paza.body) delete Paza.body.dataset.loaded; }
+  /** Zilele × orele: cât a stat pe telefon în fiecare oră (FORJA nu intră). Ziua aleasă e conturată. */
+  heat(week, key) {
+    const rows = [...week].reverse(), max = Math.max(10, ...rows.flatMap(x => x.hours || []));
+    const any = rows.some(x => Array.isArray(x.hours));
+    if (!any) return null;
+    const cell = (m, hr) => h('i', {class: 'heat-cell', title: String(hr).padStart(2, '0') + ':00 · ' + fmt.dur(m), style: {opacity: m ? String(0.18 + 0.82 * Math.min(1, m / max)) : ''}, 'data-on': m ? '1' : null});
+    return h('section', {class: 'card heat-card'},
+      h('div', {class: 'block-head tight'}, h('h2', {class: 'block-title', text: 'Pe ore'}), monoLabel('00 → 23')),
+      h('div', {class: 'heat', role: 'img', 'aria-label': 'Timpul pe ecran pe ore, pe zile'},
+        rows.map(x => h('div', {class: 'heat-row' + (x.date === key ? ' sel' : '')},
+          h('span', {class: 'heat-day', text: fmt.weekday(fmt.dateKey(x.date)).replace('.', '') + ' ' + new Date(fmt.dateKey(x.date)).getDate()}),
+          Array.isArray(x.hours) ? h('span', {class: 'heat-cells'}, x.hours.map(cell)) : h('span', {class: 'heat-none', text: x.missing ? 'fără raport' : 'fără ore'}))),
+        h('div', {class: 'heat-axis', 'aria-hidden': 'true'}, h('span'), h('span', {class: 'heat-ticks'}, ['00', '06', '12', '18', '23'].map(t => h('b', {text: t}))))));
+  },
+  /** Tendința unei aplicații în fereastra aleasă: câte o bară pe zi. */
+  trend(pkg, week, key) {
+    const vals = week.map(x => (x.apps || []).find(a => a.pkg === pkg)?.minutes || 0), max = Math.max(1, ...vals);
+    if (vals.filter(Boolean).length < 2) return null;
+    return h('span', {class: 'spark', 'aria-hidden': 'true'}, vals.map((v, i) => h('i', {class: week[i].date === key ? 'sel' : '', style: {height: Math.max(8, v / max * 100) + '%', opacity: v ? '' : '.25'}})));
+  },
+  reset() { Paza.data = null; Paza.day = null; Paza.days = 7; if (Paza.body) delete Paza.body.dataset.loaded; }
 };
 Site.register('paza', Paza);

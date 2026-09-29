@@ -459,3 +459,13 @@ test('Gemini adapter: a retired model (404) or a refused config (400) moves to t
   await assert.rejects(() => geminiGenerate({ GEMINI_API_KEY: 'k' }, { parts: [{ text: 'x' }] }, async () => { calls++; return new Response('{}', { status: 404 }); }), /gemini_http_404/);
   assert.equal(calls, 1 + GEMINI_FALLBACK_MODELS.length);
 });
+test('phone schema: usage_backfill rides only with app usage consent and is bounded (mirror D)',async()=>{
+  const f=fixture(),now=Date.now(),day={date:'2026-09-27',first_at:now-2*86400000,last_at:now-86400000,hours:Array(24).fill(0),apps:[{package:'com.a',label:'A',foreground_ms:60000,opens:1}]};
+  const usage={usage_window:{from:now-3600000,to:now,method:'activity_events'},app_usage:[]};
+  const loc=await session(f,'location');
+  assert.equal((await f.call('/v2/sessions/'+loc+'/data','POST',{...phone(),usage_backfill:[day]})).status,400,'no app usage consent: no backfill');
+  const id=randomUUID();assert.equal((await f.call('/v2/sessions','POST',{session_id:id,consent:consent('app_usage'),mode:'automatic'})).status,201);
+  assert.equal((await f.call('/v2/sessions/'+id+'/data','POST',{...usage,usage_backfill:[day]})).status,201);
+  assert.equal((await f.call('/v2/sessions/'+id+'/data','POST',{...usage,usage_backfill:[{...day,apps:[{...day.apps[0],foreground_ms:26*3600000}]}]})).status,400,'a day has at most 25 h');
+  assert.equal((await f.call('/v2/sessions/'+id+'/data','POST',{...usage,usage_backfill:[{...day,words:['x']}]})).status,400,'unknown fields refused');
+});
