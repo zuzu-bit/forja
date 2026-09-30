@@ -145,6 +145,14 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermis
         Spacer(Modifier.height(10.dp))
 
         SettingRow(
+            "Control vocal",
+            "Deblochezi telefonul, spui comanda, FORJA caută și deschide videoclipul în YouTube.",
+            onClick = {
+                context.startActivity(android.content.Intent(context, com.forja.app.feature.voice.VoiceAgentActivity::class.java))
+            }
+        ) { Text("deschide →", style = BodySmall.copy(color = Accent2)) }
+
+        SettingRow(
             "Permisiuni & pornire",
             "Toate într-un singur loc — activează ce ai nevoie, ca aplicația să nu te mai întrebe prin ecrane.",
             onClick = onOpenPermissions

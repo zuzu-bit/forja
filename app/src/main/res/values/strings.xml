@@ -6,5 +6,8 @@
     <string name="notif_channel_focus">Focus</string>
     <string name="notif_channel_social">Prieteni</string>
     <string name="notif_channel_alarm">Alarmă deșteaptă</string>
+    <string name="voice_accessibility_label">FORJA · Control vocal</string>
+    <string name="voice_shortcut_label">Control vocal</string>
+    <string name="voice_accessibility_desc">Execută în YouTube căutările și deschiderea videoclipurilor cerute explicit prin voce. Citește elementele ecranului doar în timpul unei comenzi. Poți anula prin voce, din notificare sau din butonul afișat. Nu deblochează telefonul și nu confirmă permisiuni, autentificări sau plăți. Jurnalul etapelor rămâne pe telefon; nu păstrează audio sau capturi de ecran.</string>
     <string name="detox_guard_desc">Paznicul Detox veghează, DOAR pe telefonul tău, ca să te ajute să reziști tentației pe care ai ales-o. Recunoaște site-urile, aplicațiile și cuvintele pe care le-ai setat tu și te întâmpină cu un moment de respirație. Nimic nu pleacă de pe telefon — nici cuvintele, nici ce vezi pe ecran.</string>
 </resources>
