@@ -34,9 +34,19 @@ jobs:
       - name: Upload APK and publish prerelease
         run: |
           mv apk/app-debug.apk apk/FORJA.apk
-          gh api --method POST \
-            -H 'Content-Type: application/vnd.android.package-archive' \
-            'https://uploads.github.com/repos/zuzu-bit/forja/releases/400025979/assets?name=FORJA.apk' \
-            --input apk/FORJA.apk
+          existing_asset=$(gh api repos/zuzu-bit/forja/releases/400025979 \
+            --jq '[.assets[] | select(.name == "FORJA.apk")] | first // empty')
+          if [ -n "$existing_asset" ]; then
+            expected_digest="sha256:$(sha256sum apk/FORJA.apk | cut -d ' ' -f 1)"
+            actual_digest=$(jq -r '.digest // empty' <<< "$existing_asset")
+            test "$actual_digest" = "$expected_digest"
+            echo 'The published APK matches the verified source artifact.'
+          else
+            gh api --method POST \
+              -H 'Content-Type: application/vnd.android.package-archive' \
+              'https://uploads.github.com/repos/zuzu-bit/forja/releases/400025979/assets?name=FORJA.apk' \
+              --input apk/FORJA.apk
+          fi
           gh api --method PATCH repos/zuzu-bit/forja/releases/400025979 \
             -F draft=false -f make_latest=false
+
