@@ -72,11 +72,11 @@ class VoiceAgentService : Service() {
     private val lockReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                Intent.ACTION_SCREEN_OFF -> abort("device_locked", "Telefon blocat. Deblochează-l pentru a continua.")
-                Intent.ACTION_USER_PRESENT -> if (foreground && !locked()) {
-                    if (VoiceAgentSettings.isAutoListenEnabled(this@VoiceAgentService)) prepareListening()
-                    else update(message = "Telefon deblocat. Apasă Ascultă din notificare.")
-                }
+                Intent.ACTION_SCREEN_OFF -> handleLifecycleEvent(VoiceAgentLifecycle.Event.ScreenOff)
+                Intent.ACTION_USER_PRESENT -> handleLifecycleEvent(VoiceAgentLifecycle.Event.UserPresent(
+                    autoListen = VoiceAgentSettings.isAutoListenEnabled(this@VoiceAgentService),
+                    locked = locked()
+                ))
             }
         }
     }
@@ -149,12 +149,7 @@ class VoiceAgentService : Service() {
                 stopSelf()
             }
             ACTION_CANCEL -> if (foreground) abort("user_cancelled", "Acțiune anulată.", announce = true) else stopSelf()
-            ACTION_STOP -> {
-                abort("agent_stopped", "Agentul vocal este oprit.")
-                foreground = false
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
+            ACTION_STOP -> handleLifecycleEvent(VoiceAgentLifecycle.Event.Stop)
             else -> stopSelf() // No sticky restart, boot listener, or pending voice command.
         }
         return START_NOT_STICKY
@@ -395,21 +390,46 @@ class VoiceAgentService : Service() {
             .setOnAudioFocusChangeListener { change ->
                 if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
                     scope.launch {
-                        if (!foreground || token != focusGeneration || audioFocus == null) return@launch
-                        if (VoiceAgentRuntime.state.value.busy) {
-                            // The requested YouTube video needs audio focus to start. UI verification continues.
-                            stopRecognition()
-                            retry?.cancel()
-                            tts?.stop()
-                            utterance?.second?.complete(Unit)
-                            update(message = "Acțiunea continuă. Folosește notificarea FORJA pentru anulare.")
-                        } else abort("audio_focus_lost", "Microfon întrerupt de altă aplicație. Apasă Ascultă pentru a continua.")
+                        handleLifecycleEvent(VoiceAgentLifecycle.Event.AudioFocusLost(
+                            currentRequest = token == focusGeneration && audioFocus != null
+                        ))
                     }
                 }
             }.build()
         if (audio.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return false
         audioFocus = request
         return true
+    }
+
+    private fun handleLifecycleEvent(event: VoiceAgentLifecycle.Event) {
+        val transition = VoiceAgentLifecycle.reduce(
+            VoiceAgentRuntime.state.value.copy(running = foreground), event
+        )
+        when (transition.effect) {
+            VoiceAgentLifecycle.Effect.PREPARE_LISTENING -> {
+                prepareListening()
+                return // prepareListening owns any resulting state changes.
+            }
+            VoiceAgentLifecycle.Effect.ABORT_ACTION,
+            VoiceAgentLifecycle.Effect.CLOSE_SESSION -> abort(transition.reason!!, transition.state.message)
+            VoiceAgentLifecycle.Effect.PAUSE_VOICE -> {
+                stopRecognition()
+                retry?.cancel()
+                retry = null
+                tts?.stop()
+                utterance?.second?.complete(Unit)
+                utterance = null
+            }
+            VoiceAgentLifecycle.Effect.NONE -> Unit
+        }
+        VoiceAgentRuntime.update { transition.state }
+        if (transition.effect == VoiceAgentLifecycle.Effect.CLOSE_SESSION) {
+            foreground = false
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        } else if (foreground) {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
+        }
     }
 
     private fun releaseAudioFocus() {
@@ -538,3 +558,4 @@ class VoiceAgentService : Service() {
         }
     }
 }
+
