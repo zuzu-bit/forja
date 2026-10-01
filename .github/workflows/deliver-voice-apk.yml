@@ -1,0 +1,52 @@
+name: Deliver FORJA voice APK
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/deliver-voice-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  deliver:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.number == 21)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify source build
+        run: |
+          source_build=$(gh api repos/zuzu-bit/forja/actions/runs/36709503257 --jq '[.status, .conclusion, .head_sha] | join(" ")')
+          test "$source_build" = 'completed success dada2048d102d22fe1af3325192317cc9e4732a7'
+      - uses: actions/download-artifact@v4
+        with:
+          name: FORJA-voice-agent
+          run-id: 36709503257
+          github-token: ${{ github.token }}
+          path: apk
+      - name: Upload APK and publish prerelease
+        run: |
+          mv apk/app-debug.apk apk/FORJA.apk
+          existing_asset=$(gh api repos/zuzu-bit/forja/releases/400025979 \
+            --jq '[.assets[] | select(.name == "FORJA.apk")] | first // empty')
+          if [ -n "$existing_asset" ]; then
+            expected_digest="sha256:$(sha256sum apk/FORJA.apk | cut -d ' ' -f 1)"
+            actual_digest=$(jq -r '.digest // empty' <<< "$existing_asset")
+            test "$actual_digest" = "$expected_digest"
+            echo 'The published APK matches the verified source artifact.'
+          else
+            gh api --method POST \
+              -H 'Content-Type: application/vnd.android.package-archive' \
+              'https://uploads.github.com/repos/zuzu-bit/forja/releases/400025979/assets?name=FORJA.apk' \
+              --input apk/FORJA.apk
+          fi
+          gh api --method PATCH repos/zuzu-bit/forja/releases/400025979 \
+            -F draft=false -f make_latest=false
+

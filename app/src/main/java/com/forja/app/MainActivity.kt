@@ -50,6 +50,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (intent.action == "com.forja.app.OPEN_VOICE_AGENT") {
+            startActivity(android.content.Intent(this, com.forja.app.feature.voice.VoiceAgentActivity::class.java))
+        }
         setContent {
             ForjaTheme { ForjaRoot() }
         }

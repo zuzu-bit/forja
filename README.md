@@ -5,6 +5,11 @@ Claude Design din `design_handoff_forja`. Fitness & lifestyle: antrenamente cu v
 nutriție cu cod de bare + baza de date OpenFoodFacts, somn, hartă socială live cu prieteni
 reali (Firebase) și Focus (blocare de aplicații, onestă, fără AccessibilityService).
 
+**Control vocal:** deblochezi telefonul prin Android, spui „FORJA, deschide YouTube
+și caută documentarul Planeta Pământ”, iar agentul caută și deschide conținutul prin
+elementele de accesibilitate ale YouTube. Configurarea se găsește în **Control vocal**
+pe ecranul principal și în Profil. [Activare, arhitectură și verificare](docs/VOICE_AGENT.md).
+
 ## Cum obții aplicația (APK)
 
 La fiecare push pe `main`, GitHub Actions construiește APK-ul și îl publică la

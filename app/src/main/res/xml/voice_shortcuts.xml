@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="voice_agent"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/voice_shortcut_label"
+        android:shortcutLongLabel="@string/voice_accessibility_label">
+        <intent android:action="com.forja.app.OPEN_VOICE_AGENT"
+            android:targetPackage="com.forja.app"
+            android:targetClass="com.forja.app.MainActivity" />
+    </shortcut>
+</shortcuts>
