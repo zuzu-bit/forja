@@ -129,6 +129,43 @@ Proiectul Firebase există deja: **forja-65093** (fișierul `app/google-services
 
 Notă despre release: pagina de release afișează starea acestor servicii la momentul build-ului.
 
+## „Hei FORJA” — comenzi vocale (pentru cine nu poate sau nu vrea să se uite la ecran)
+
+FORJA are un asistent vocal gândit și pentru colegii cu probleme de vedere: totul se poate face
+vorbind, iar FORJA răspunde cu voce. Se deschide din butonul rotund cu microfon (jos-dreapta, pe
+orice ecran principal), din **Profil → Asistent vocal**, din butonul **FORJA Voce** din setările
+rapide ale telefonului, sau cu apăsare lungă pe iconița FORJA → **Hei FORJA**.
+
+Apeși microfonul, auzi un bip și spui comanda. Exemple (merg și în engleză):
+
+| Spui | Se întâmplă |
+|---|---|
+| „Trimite mesaj lui Ion: ajung în zece minute” | caută numărul în agendă, citește mesajul, întreabă „Confirmi?” și trimite SMS-ul |
+| „Scrie-i pe WhatsApp lui Maria, sunt pe drum” | deschide WhatsApp cu textul gata scris |
+| „Send this text to this contact” | întreabă cui și ce să trimită, pe rând |
+| „Sună-l pe Andrei” / „Call John” | formează și pornește apelul |
+| „Pune Phoenix pe YouTube” / „Play this music on YouTube” | pornește primul rezultat de pe YouTube (sau întreabă ce melodie) |
+| „Pune muzică pe Spotify” | pornește playerul |
+| „Deschide WhatsApp” / „Open Waze” | deschide orice aplicație instalată |
+| „Deschide antrenamentul”, „Harta”, „Respiră”, „Profil” | navighează în FORJA |
+| „Pornește somnul” / „Noapte bună” · „M-am trezit” | pornește / oprește monitorizarea somnului |
+| „Cum stau azi?” · „Cine e online?” | citește progresul zilei / starea prietenilor |
+| „Cât e ceasul?” · „Ce zi e azi?” · „Pune alarma la 7” | ora, data, alarma în aplicația de Ceas |
+| „Ajutor” · „Repetă” · „Anulează” · „Oprește ascultarea” | ajutor, repetă răspunsul, anulează dialogul, oprește modul mereu-la-ascultare |
+
+**Mereu la ascultare.** Din ecranul asistentului poți porni „Hei FORJA mereu la ascultare”: un
+serviciu în fundal (cu notificare permanentă, cum cere Android) ascultă cuvântul „Hei FORJA” și
+cu ecranul stins. Pe telefoanele cu recunoaștere pe dispozitiv (Android 12+) ascultarea e locală;
+altfel trece prin serviciul de recunoaștere al telefonului (Google), ca orice dictare.
+
+**Permisiuni.** Microfonul e necesar. Contactele, SMS-ul și apelurile se cer doar când o comandă
+are nevoie de ele; fără ele FORJA deschide aplicația de mesaje / telefon cu totul completat, și
+tu doar apeși „Trimite”. Nimic din agendă sau din mesaje nu pleacă de pe telefon.
+
+**Accesibilitate.** Ecranul vocal are butoane mari, contrast puternic, descrieri pentru TalkBack
+și o zonă „live” care anunță răspunsurile. Dacă folosești TalkBack, poți opri „Răspunsuri cu
+voce” ca să nu auzi totul de două ori. Comenzile se pot și scrie, pentru cine preferă tastatura.
+
 ## Arhitectură
 
 - **UI**: Jetpack Compose, design tokens exacți din handoff (culori, Archivo Expanded /

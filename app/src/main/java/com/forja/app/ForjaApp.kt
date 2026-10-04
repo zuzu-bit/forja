@@ -43,6 +43,8 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
     lateinit var forjaApi: ForjaApi
     /** Explorarea (v4.0): zonele deblocate + locurile unde ai stat; primește fixuri din toate sursele. */
     lateinit var explore: com.forja.app.core.explore.ExploreTracker
+    /** „Hei FORJA" — asistentul vocal; un singur proprietar al microfonului și al vocii. */
+    lateinit var voice: com.forja.app.core.voice.VoiceAssistant
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
@@ -61,6 +63,7 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         geminiFood = GeminiFood()
         forjaApi = ForjaApi()
         explore = com.forja.app.core.explore.ExploreTracker(this)
+        voice = com.forja.app.core.voice.VoiceAssistant(this)
 
         // Locația în fundal (dacă utilizatorul a activat-o și permisiunea există).
         com.forja.app.core.location.BgLocation.registerIfReady(this)
@@ -113,6 +116,7 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         nm.createNotificationChannel(NotificationChannel("sleep", getString(R.string.notif_channel_sleep), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("focus", getString(R.string.notif_channel_focus), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("social", getString(R.string.notif_channel_social), NotificationManager.IMPORTANCE_DEFAULT))
+        nm.createNotificationChannel(NotificationChannel("voice", getString(R.string.notif_channel_voice), NotificationManager.IMPORTANCE_LOW))
         // „Mesaje motivaționale” (Casca): separat de „social”, ca motivaționalele să se poată opri fără „Camarad nou”.
         // Mesajele stăteau pe „social”: dacă Lana i-a coborât importanța, noul canal o moștenește (importanța unui
         // canal nu mai poate crește după creare, deci nu o ocolim).

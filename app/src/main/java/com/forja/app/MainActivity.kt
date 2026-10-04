@@ -1,9 +1,13 @@
 package com.forja.app
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -18,6 +22,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,6 +48,8 @@ import com.forja.app.core.designsystem.components.ToastHost
 import com.forja.app.core.designsystem.components.ToastState
 import com.forja.app.core.music.MusicRungs
 import com.forja.app.core.music.MusicStarter
+import com.forja.app.core.voice.VoiceAssistant
+import com.forja.app.core.voice.VoiceWakeService
 import com.forja.app.feature.auth.AuthScreens
 import com.forja.app.feature.dashboard.DashboardScreen
 import com.forja.app.feature.focus.FocusScreen
@@ -53,6 +60,8 @@ import com.forja.app.feature.onboarding.OnboardingScreen
 import com.forja.app.feature.profile.ProfileScreen
 import com.forja.app.feature.sleep.SleepScreen
 import com.forja.app.feature.splash.SplashScreen
+import com.forja.app.feature.voice.VoiceFab
+import com.forja.app.feature.voice.VoiceScreen
 import com.forja.app.feature.workout.WorkoutLiveScreen
 import com.forja.app.feature.workout.WorkoutScreen
 import com.forja.app.navigation.Route
@@ -67,9 +76,29 @@ class MainActivity : ComponentActivity() {
     /** Crește la fiecare intent nou (notificare atinsă cât activitatea trăiește) — MainNav recitește extra-urile. */
     var intentTick by mutableIntStateOf(0)
         private set
+    /** „Hei FORJA": cereri „deschide asistentul" / „ascultă acum" venite din tile, notificare sau scurtătură. */
+    var voiceOpen by mutableIntStateOf(0)
+        private set
+    var voiceListen by mutableIntStateOf(0)
+        private set
+
+    private fun handleVoiceIntent(intent: android.content.Intent?) {
+        when (intent?.action) {
+            ACTION_VOICE -> voiceOpen++
+            ACTION_VOICE_LISTEN -> { voiceOpen++; voiceListen++ }
+        }
+    }
+
+    companion object {
+        /** Deschide ecranul „Hei FORJA". */
+        const val ACTION_VOICE = "com.forja.app.action.VOICE"
+        /** Deschide ecranul și ascultă imediat. */
+        const val ACTION_VOICE_LISTEN = "com.forja.app.action.VOICE_LISTEN"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleVoiceIntent(intent)
         // Saltul muzicii în Spotify pleacă din activitatea asta, pentru rezultat și fără task nou: așa FORJA poate
         // închide singură ecranul Spotify după ce muzica e confirmată (RET_SUB, 4.4.1).
         MusicStarter.host = WeakReference(this)
@@ -83,6 +112,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         intentTick++
+        handleVoiceIntent(intent)
     }
 
     /** Rezultatul saltului în player (întotdeauna anulat): îl vrea doar jurnalul RET; restul trece mai departe. */
@@ -227,6 +257,36 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
         app.prefs.ghostUntilLocal.collect { app.presence.ghostUntilCache = it }
     }
 
+    // ── „Hei FORJA" (4.6): deschiderea din tile / notificare / scurtătură, butonul plutitor, navigarea cerută cu vocea ──
+    val mainActivity = hostActivity as? MainActivity
+    val voiceOpen = mainActivity?.voiceOpen ?: 0
+    val voiceListen = mainActivity?.voiceListen ?: 0
+    var fabListen by remember { mutableIntStateOf(0) }
+    LaunchedEffect(voiceOpen) {
+        if (voiceOpen > 0 && nav.currentDestination?.route != Route.VOICE) {
+            var tries = 0
+            while (nav.currentBackStackEntry == null && tries++ < 40) kotlinx.coroutines.delay(50)
+            try { nav.navigate(Route.VOICE) { launchSingleTop = true } } catch (_: Exception) { }
+        }
+    }
+    // Navigarea cerută cu vocea („deschide antrenamentul") și permisiunile cerute de o comandă.
+    val voicePerms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        app.voice.onPermissionsResult(result)
+    }
+    LaunchedEffect(Unit) {
+        app.voice.events.collect { e ->
+            when (e) {
+                is VoiceAssistant.Event.Navigate -> try {
+                    if (e.route == Route.CLEANUP) openInventory(null)
+                    else if (e.route in tabRoutes) nav.navigate(e.route) { popUpTo(Route.DASHBOARD) { inclusive = false }; launchSingleTop = true }
+                    else nav.navigate(e.route) { launchSingleTop = true }
+                } catch (_: Exception) { }
+                is VoiceAssistant.Event.NeedPermissions -> try { voicePerms.launch(e.permissions.toTypedArray()) } catch (_: Exception) { }
+            }
+        }
+    }
+    val voiceWakeOn by app.prefs.voiceWakeOn.collectAsState(initial = false)
+
     // Publicarea prezenței cât timp aplicația e în prim-plan (fundalul e treaba BgLocation).
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -248,6 +308,16 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     }
                     Lifecycle.Event.ON_STOP -> app.presence.stop()
                     else -> {}
+                }
+            }
+            if (event == Lifecycle.Event.ON_START) {
+                // „Hei FORJA" mereu la ascultare — repornit din prim-plan (singurul loc sigur pe Android 14+).
+                navScope.launch {
+                    try {
+                        if (app.prefs.voiceWakeOn.first() &&
+                            androidx.core.content.ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                        ) VoiceWakeService.start(appContext)
+                    } catch (_: Exception) { }
                 }
             }
         }
@@ -485,6 +555,17 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             composable(Route.MUSIC_PROBE) {
                 com.forja.app.feature.probe.ProbeScreen(onBack = { nav.popBackStack() })
             }
+            // „Hei FORJA" — asistentul vocal (4.6): se deschide ca o foaie, de oriunde.
+            composable(
+                Route.VOICE,
+                enterTransition = modalEnter, exitTransition = fadeExit,
+                popEnterTransition = riseEnter, popExitTransition = modalExit
+            ) {
+                VoiceScreen(
+                    listenKey = voiceListen + fabListen,
+                    onBack = { if (!nav.popBackStack()) nav.navigate(Route.DASHBOARD) { launchSingleTop = true } }
+                )
+            }
             composable(Route.PROFILE) {
                 ProfileScreen(
                     onOpenProbe = { nav.navigate(Route.MUSIC_PROBE) { launchSingleTop = true } },
@@ -516,7 +597,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     },
                     onOpenMapGhost = { nav.navigate(Route.MAP) },
                     onOpenPermissions = { nav.navigate(Route.PERMISSIONS) },
-                    onOpenContract = { nav.navigate(Route.CONTRACT) { launchSingleTop = true } }
+                    onOpenContract = { nav.navigate(Route.CONTRACT) { launchSingleTop = true } },
+                    onOpenVoice = { nav.navigate(Route.VOICE) { launchSingleTop = true } }
                 )
             }
         }
@@ -527,6 +609,21 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             enter = fadeIn(), exit = fadeOut()
         ) {
             ForjaTabBar(current = currentTab, onSelect = ::goTab)
+        }
+        // „Hei FORJA": microfonul plutitor — o atingere, un bip, și spui comanda — de pe orice ecran principal.
+        AnimatedVisibility(
+            visible = tabsVisible,
+            modifier = Modifier.align(Alignment.BottomEnd),
+            enter = fadeIn(), exit = fadeOut()
+        ) {
+            VoiceFab(
+                wakeOn = voiceWakeOn,
+                onClick = {
+                    fabListen++
+                    nav.navigate(Route.VOICE) { launchSingleTop = true }
+                },
+                modifier = Modifier.navigationBarsPadding().padding(end = 16.dp, bottom = 96.dp)
+            )
         }
         // Contractul v3: cine a semnat v2 vede o singură dată, pe „Azi”, rândurile noi și „Semnează”.
         com.forja.app.feature.permissions.ContractResignHost(active = route == Route.DASHBOARD) { nav.navigate(Route.CONTRACT) { launchSingleTop = true } }
