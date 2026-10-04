@@ -6,15 +6,25 @@
  const feature=(kind,id,p,name)=>({type:'Feature',id:kind+':'+id,geometry:{type:'Point',coordinates:[p.lon,p.lat]},properties:{id:String(id),kind,name:name||'',label:(name||'').trim().split(/\s+/).slice(0,2).map(v=>v[0]||'').join('').toUpperCase()}});
  function create(container,options={}){
   if(!global.maplibregl?.Map||(typeof global.maplibregl.supported==='function'&&!global.maplibregl.supported()))throw Error('Randarea vectorială nu este disponibilă pe acest dispozitiv.');
-  let loaded=false,disposed=false,mode3d=false,data={},failed=false;
+  let loaded=false,disposed=false,mode3d=false,data={},failed=false,retried=false,retryScheduled=false;
+  const styleUrl='https://tiles.openfreemap.org/styles/liberty';
   const motion=()=>!global.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  const map=new global.maplibregl.Map({container,style:'https://tiles.openfreemap.org/styles/liberty',center:options.center||[24.9,45.8],zoom:options.zoom||6,attributionControl:true,pitch:0,maxPitch:65,canvasContextAttributes:{antialias:true}});
+  const map=new global.maplibregl.Map({container,style:styleUrl,center:options.center||[24.9,45.8],zoom:options.zoom||6,attributionControl:true,pitch:0,maxPitch:65,canvasContextAttributes:{antialias:true}});
   map.addControl(new global.maplibregl.NavigationControl({showCompass:true}),'bottom-right');
-  const fail=()=>{if(!loaded&&!disposed&&!failed){failed=true;options.onError?.('Harta vectorială nu s-a încărcat. Harta 2D rămâne disponibilă.');}};
+  const cancelTimers=()=>{clearTimeout(timeout);clearTimeout(retryTimer);};
+  const fail=()=>{if(!loaded&&!disposed&&!failed){failed=true;cancelTimers();options.onError?.('Harta vectorială nu s-a încărcat. Harta 2D rămâne disponibilă.');}};
+  // One budget for both attempts; retry never extends the original deadline.
   const timeout=setTimeout(fail,20000);
+  let retryTimer=setTimeout(retryStyle,10000);
+  function retryStyle(){
+   if(loaded||disposed||failed||retried)return;
+   retried=true;
+   try{map.setStyle(styleUrl,{diff:false});}catch(e){fail();}
+  }
   function paint(){if(!loaded)return;for(const key of ['routes','zones','visits','people','places','devices'])map.getSource('forja-'+key)?.setData(collection(data[key]));}
   map.on('load',()=>{
-   if(disposed||failed)return;clearTimeout(timeout);
+   if(loaded||disposed||failed)return;
+   try{
    // Heights are geographic attributes from OpenMapTiles/OSM, not random blocks.
    const before=map.getStyle().layers.find(l=>l.type==='symbol')?.id;
    map.addSource('forja-buildings',{type:'vector',url:'https://tiles.openfreemap.org/planet',attribution:'<a href="https://openfreemap.org">OpenFreeMap</a> · <a href="https://www.openmaptiles.org">© OpenMapTiles</a> · <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>'});
@@ -27,9 +37,16 @@
    map.addLayer({id:'forja-names',type:'symbol',source:'forja-people',layout:{'text-field':['get','label'],'text-size':12,'text-font':['Noto Sans Regular'],'text-allow-overlap':true},paint:{'text-color':'#20352a'}});
    map.on('click',event=>{const f=map.queryRenderedFeatures(event.point,{layers:['forja-people','forja-visits','forja-places','forja-devices']})[0];if(f){const p=f.properties;options.onPick?.({kind:p.kind,id:p.id,name:p.name||'',lon:f.geometry.coordinates[0],lat:f.geometry.coordinates[1]});}});
    map.on('mousemove',event=>{map.getCanvas().style.cursor=map.queryRenderedFeatures(event.point,{layers:['forja-people','forja-visits','forja-places','forja-devices']}).length?'pointer':'';});
-   loaded=true;paint();options.onReady?.();
+   }catch(e){fail();return;}
+   loaded=true;cancelTimers();paint();options.onReady?.();
   });
-  map.on('error',()=>{if(!map.isStyleLoaded())fail();});
+  map.on('error',event=>{
+   if(loaded||disposed||failed||retried||retryScheduled)return;
+   // Tile/source/sprite/glyph errors (including opaque network errors) are not
+   // proof of fatal style failure. Allow a later load to finish initialization.
+   // Only an identified root stylesheet request failure brings the retry forward.
+   if(event?.error?.url===styleUrl){retryScheduled=true;clearTimeout(retryTimer);retryTimer=setTimeout(retryStyle,1000);}
+  });
   map.on('moveend',()=>{const p=map.getCenter();options.onMove?.({lat:p.lat,lon:p.lng,zoom:map.getZoom()});});
   return {
    setData(value){data=value||{};paint();},
@@ -38,7 +55,7 @@
    fit(points){if(!points.length)return;const bounds=new global.maplibregl.LngLatBounds();points.forEach(p=>bounds.extend([p.lon,p.lat]));map.fitBounds(bounds,{padding:70,maxZoom:15,duration:motion()?600:0});},
    getCenter(){const p=map.getCenter();return {lat:p.lat,lon:p.lng,lng:p.lng};},
    resize(){map.resize();},
-   destroy(){disposed=true;clearTimeout(timeout);map.remove();},
+   destroy(){if(disposed)return;disposed=true;cancelTimers();map.remove();},
    get ready(){return loaded&&!failed;},get mode3d(){return mode3d;}
   };
  }
