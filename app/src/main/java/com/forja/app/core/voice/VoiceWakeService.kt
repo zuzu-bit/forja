@@ -11,6 +11,7 @@ import android.os.IBinder
 import com.forja.app.ForjaApp
 import com.forja.app.MainActivity
 import com.forja.app.R
+import kotlinx.coroutines.launch
 
 /**
  * „Hei FORJA" mereu la ascultare — un serviciu în prim-plan (tip microfon) care ține
@@ -25,7 +26,10 @@ class VoiceWakeService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            ForjaApp.from(this).voice.stopWakeLoop()
+            val app = ForjaApp.from(this)
+            // Oprirea din notificare e alegerea utilizatorului: o ținem minte, altfel ON_START ar reporni ascultarea.
+            app.appScope.launch { try { app.prefs.setVoiceWakeOn(false) } catch (_: Exception) { } }
+            app.voice.stopWakeLoop()
             stopSelf()
             return START_NOT_STICKY
         }

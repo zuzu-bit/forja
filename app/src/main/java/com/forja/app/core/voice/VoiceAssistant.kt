@@ -22,6 +22,8 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.forja.app.ForjaApp
 import com.forja.app.MainActivity
 import com.forja.app.R
@@ -86,11 +88,14 @@ class VoiceAssistant(private val app: ForjaApp) {
     private var wakeErrors = 0
     private var pending: Pending? = null
     private var retryAfterPermission: VoiceCommand? = null
+    private var retryPermissions: List<String>? = null
     private var lastSpoken = ""
     private var busyRetries = 0
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    /** Motorul de voce lipsește sau nu a pornit: dialogul merge mai departe ca și cum vocea ar fi oprită. */
+    private var ttsFailed = false
     private var ttsQueued: Pair<String, (() -> Unit)?>? = null
     private var afterSpeech: (() -> Unit)? = null
     private var utteranceSeq = 0
@@ -140,8 +145,20 @@ class VoiceAssistant(private val app: ForjaApp) {
         if (pending != null) answerPending(text) else runCommand(CommandParser.parse(text))
     }
 
-    /** Spune ceva cu vocea FORJA (ex. prezentarea de la prima deschidere). */
-    fun speak(text: String) = onMain { stopSpeaking(); say(text, null) }
+    /** Spune ceva cu vocea FORJA (ex. prezentarea de la prima deschidere); [then] rulează după ce a terminat. */
+    fun speak(text: String, then: (() -> Unit)? = null) = onMain { stopSpeaking(); say(text, then) }
+
+    /** Spune după ce termină ce are de spus (ex. „Mesajul a plecat.” după „Trimit mesajul…”). */
+    fun speakAfter(text: String) = onMain { say(text, null, queue = TextToSpeech.QUEUE_ADD) }
+
+    /** Aplicația e din nou în prim-plan: dacă o comandă aștepta permisiuni, le cerem acum. */
+    fun onForeground() = onMain {
+        val perms = retryPermissions ?: return@onMain
+        if (retryAfterPermission == null) { retryPermissions = null; return@onMain }
+        val missing = perms.filter { app.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isEmpty()) { retryPermissions = null; onPermissionsResult(emptyMap()) }
+        else emit(Event.NeedPermissions(missing))
+    }
 
     fun startWakeLoop() = onMain {
         wakeLoopWanted = true
@@ -158,17 +175,21 @@ class VoiceAssistant(private val app: ForjaApp) {
 
     /** Ecranul a cerut permisiunile; reluăm comanda care le aștepta. */
     fun onPermissionsResult(result: Map<String, Boolean>) = onMain {
-        val retry = retryAfterPermission ?: return@onMain
+        val retry = retryAfterPermission ?: run {
+            // Nicio comandă în așteptare: a fost doar microfonul cerut de listen() — ascultăm acum.
+            if (result[Manifest.permission.RECORD_AUDIO] == true) listen()
+            return@onMain
+        }
         retryAfterPermission = null
-        executor.permissionJustDenied = result.values.any { !it }
-        runCommand(retry)
+        retryPermissions = null
+        runCommand(retry, denied = result.filterValues { !it }.keys)
     }
 
     fun shutdown() = onMain {
         wakeLoopWanted = false
         cancelSession()
         recognizer?.destroy(); recognizer = null
-        tts?.shutdown(); tts = null; ttsReady = false
+        tts?.shutdown(); tts = null; ttsReady = false; ttsFailed = false
     }
 
     // ── Sesiuni de ascultare ────────────────────────────────────────────────────────
@@ -238,18 +259,22 @@ class VoiceAssistant(private val app: ForjaApp) {
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
+            if (session == Session.NONE) return
             if (session != Session.WAKE) _state.update { it.copy(phase = Phase.LISTENING) }
         }
         override fun onBeginningOfSpeech() {}
         override fun onRmsChanged(rmsdB: Float) {
+            if (session == Session.NONE) return
             val lvl = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
             _state.update { it.copy(level = lvl) }
         }
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {
+            if (session == Session.NONE) return
             if (session != Session.WAKE) _state.update { it.copy(phase = Phase.THINKING, level = 0f) }
         }
         override fun onPartialResults(partialResults: Bundle?) {
+            if (session == Session.NONE) return
             val t = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
             if (session == Session.WAKE) {
                 // Reacție imediată la „Hei FORJA", fără să așteptăm sfârșitul frazei.
@@ -290,6 +315,8 @@ class VoiceAssistant(private val app: ForjaApp) {
             val kind = session
             session = Session.NONE
             _state.update { it.copy(level = 0f) }
+            // cancel() nu oprește mesajele deja puse în coadă de serviciu: ce vine după anulare se ignoră.
+            if (kind == Session.NONE) return
             when (error) {
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
                     wakeLoopWanted = false
@@ -324,7 +351,6 @@ class VoiceAssistant(private val app: ForjaApp) {
                 scheduleWake(delay)
                 return
             }
-            if (kind == Session.NONE) return
             busyRetries = 0
             val msg = when (error) {
                 SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
@@ -356,12 +382,12 @@ class VoiceAssistant(private val app: ForjaApp) {
 
     // ── Execuție ────────────────────────────────────────────────────────────────────
 
-    private fun runCommand(cmd: VoiceCommand) {
+    private fun runCommand(cmd: VoiceCommand, denied: Set<String> = emptySet()) {
         cancelSession()
         _state.update { it.copy(phase = Phase.THINKING) }
         if (cmd is VoiceCommand.Stop) pending = null
         scope.launch {
-            val outcome = withContext(Dispatchers.IO) { executor.execute(cmd, confirmSend, lastSpoken) }
+            val outcome = withContext(Dispatchers.IO) { executor.execute(cmd, confirmSend, lastSpoken, denied) }
             handle(outcome)
             if (cmd is VoiceCommand.StopListening) {
                 wakeLoopWanted = false
@@ -393,15 +419,19 @@ class VoiceAssistant(private val app: ForjaApp) {
             is Outcome.Ask -> {
                 pending = outcome.pending
                 _state.update { it.copy(question = outcome.question) }
-                say(outcome.question) { startSession(Session.SLOT) }
+                // Bipul spune „acum poți răspunde” — fără el, cine nu vede inelul nu știe că microfonul e deschis.
+                say(outcome.question, then = { chime(); startSession(Session.SLOT) })
             }
             is Outcome.NeedPermission -> {
                 pending = null
                 retryAfterPermission = outcome.retry
+                retryPermissions = outcome.permissions
                 _state.update { it.copy(question = null) }
-                say(outcome.spoken, null)
-                if (_events.subscriptionCount.value > 0) emit(Event.NeedPermissions(outcome.permissions))
-                else notifyNeedsApp("FORJA are nevoie de o permisiune", "Deschide FORJA ca să permiți accesul și comanda ta continuă.")
+                // Explicația se aude întreagă, abia apoi apare dialogul Android (altfel vorbesc două voci deodată).
+                say(outcome.spoken, then = {
+                    if (isForeground()) emit(Event.NeedPermissions(outcome.permissions))
+                    else notifyNeedsApp("FORJA are nevoie de o permisiune", "Deschide FORJA ca să permiți accesul și comanda ta continuă.")
+                })
             }
         }
     }
@@ -409,10 +439,20 @@ class VoiceAssistant(private val app: ForjaApp) {
     // ── Voce ────────────────────────────────────────────────────────────────────────
 
     private fun ensureTts() {
-        if (tts != null) return
+        if (tts != null || ttsFailed) return
         tts = TextToSpeech(app) { status ->
             main.post {
                 ttsReady = status == TextToSpeech.SUCCESS
+                if (!ttsReady) {
+                    // Fără motor de voce: nu rămânem muți și blocați — dialogul continuă fără voce.
+                    ttsFailed = true
+                    try { tts?.shutdown() } catch (_: Exception) { }
+                    tts = null
+                    val q = ttsQueued
+                    ttsQueued = null
+                    if (q != null) say(q.first, q.second) else _state.update { it.copy(phase = Phase.IDLE) }
+                    return@post
+                }
                 if (ttsReady) {
                     applyTtsLanguage()
                     tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -440,23 +480,30 @@ class VoiceAssistant(private val app: ForjaApp) {
     }
 
     /** Spune textul (dacă vocea e pornită) și apoi, opțional, continuă cu [then]. */
-    private fun say(text: String, then: (() -> Unit)?) {
+    private fun say(text: String, then: (() -> Unit)?, queue: Int = TextToSpeech.QUEUE_FLUSH) {
         lastSpoken = text
-        _state.update { it.copy(response = text, phase = if (speakOn) Phase.SPEAKING else it.phase) }
-        if (!speakOn) {
+        val silent = !speakOn || ttsFailed
+        _state.update { it.copy(response = text, phase = if (silent) it.phase else Phase.SPEAKING) }
+        if (silent) {
             _state.update { it.copy(phase = Phase.IDLE) }
-            if (then != null) main.postDelayed(then, 150) else resumeWakeIfWanted()
+            // Fără voce, TalkBack citește textul de pe ecran: îi lăsăm timp înainte să deschidem microfonul.
+            if (then != null) main.postDelayed(then, (300L + text.length * 30L).coerceAtMost(4000L)) else resumeWakeIfWanted()
             return
         }
         ensureTts()
         if (!ttsReady) { ttsQueued = text to then; return }
-        afterSpeech = then
+        if (queue == TextToSpeech.QUEUE_FLUSH || then != null) afterSpeech = then
         requestFocus()
         val id = "forja-${++utteranceSeq}"
         val params = Bundle().apply { putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id) }
-        val ok = try { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, id) } catch (_: Exception) { TextToSpeech.ERROR }
+        val ok = try { tts?.speak(text, queue, params, id) } catch (_: Exception) { TextToSpeech.ERROR }
         if (ok != TextToSpeech.SUCCESS) speechFinished()
     }
+
+    /** Activitatea FORJA e vizibilă? (dialogurile de permisiuni și startActivity merg doar din prim-plan) */
+    private fun isForeground(): Boolean = try {
+        ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+    } catch (_: Exception) { true }
 
     private fun speechFinished() {
         abandonFocus()

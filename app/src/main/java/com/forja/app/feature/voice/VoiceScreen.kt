@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -36,10 +37,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,7 +75,7 @@ private val EXAMPLES = listOf(
  * ca să poată fi folosit fără să te uiți la ecran (merge și cu TalkBack).
  */
 @Composable
-fun VoiceScreen(listenKey: Int = 0, onBack: () -> Unit) {
+fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: () -> Unit) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
     val voice = app.voice
@@ -88,24 +91,25 @@ fun VoiceScreen(listenKey: Int = 0, onBack: () -> Unit) {
     fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
     var refresh by remember { mutableIntStateOf(0) }
     var micGranted by remember { mutableStateOf(granted(Manifest.permission.RECORD_AUDIO)) }
+    // Tot ce se întâmplă aici se și spune: toast-urile nu sunt citite de TalkBack, iar cine nu vede nu le vede.
+    fun tell(msg: String) { toast.show(msg); voice.speak(msg) }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         micGranted = ok; refresh++
-        if (!ok) toast.show("Fără microfon nu te pot auzi. Permite din Setări → Aplicații → FORJA.")
+        if (!ok) tell("Fără microfon nu te pot auzi. Permite din Setări → Aplicații → FORJA.")
     }
     val permsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh++ }
 
-    // La prima deschidere: cerem microfonul și ne prezentăm, cu voce.
+    // La prima deschidere ne prezentăm, cu voce, și abia apoi cerem microfonul (altfel dialogul vorbește peste prezentare).
     LaunchedEffect(Unit) {
-        if (!micGranted) micLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        if (!app.prefs.voiceIntroSeen.first()) {
-            app.prefs.setVoiceIntroSeen()
-            if (listenKey == 0) voice.speak(INTRO)
-        }
+        val firstTime = !app.prefs.voiceIntroSeen.first()
+        if (firstTime) app.prefs.setVoiceIntroSeen()
+        if (firstTime && listenKey == 0) {
+            voice.speak(INTRO) { if (!micGranted) micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+        } else if (!micGranted) micLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
-    // Deschis din tile / scurtătură / butonul plutitor: ascultă imediat ce avem microfon.
-    var consumedKey by remember { mutableIntStateOf(0) }
+    // Deschis din tile / scurtătură / butonul plutitor (listenKey > 0): ascultă imediat ce avem microfon, o singură dată.
     LaunchedEffect(listenKey, micGranted) {
-        if (listenKey > 0 && listenKey != consumedKey && micGranted) { consumedKey = listenKey; voice.listen() }
+        if (listenKey > 0 && micGranted) { onListenConsumed(); voice.listen() }
     }
 
     val listening = st.phase == VoiceAssistant.Phase.LISTENING
@@ -144,14 +148,17 @@ fun VoiceScreen(listenKey: Int = 0, onBack: () -> Unit) {
                     Spacer(Modifier.height(4.dp))
                     Text("Vorbește cu FORJA", style = TitleModule.copy(fontSize = 26.sp))
                 }
-                SecondaryButton("Închide", onClick = onBack, padV = 8.dp)
+                SecondaryButton("Închide", onClick = onBack, modifier = Modifier.semantics { role = Role.Button }, padV = 8.dp)
             }
 
             Spacer(Modifier.height(18.dp))
+            // Starea e anunțată de TalkBack doar când FORJA nu vorbește ea însăși (altfel se aud două voci deodată).
+            val announceStatus = !speakOn || st.phase == VoiceAssistant.Phase.IDLE ||
+                st.phase == VoiceAssistant.Phase.LISTENING || st.phase == VoiceAssistant.Phase.WAITING_WAKE
             Text(
                 status,
                 style = BodyStrong.copy(fontSize = 18.sp, lineHeight = 24.sp, color = if (active) Accent2 else TextPrimary),
-                modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }
+                modifier = Modifier.fillMaxWidth().semantics { if (announceStatus) liveRegion = LiveRegionMode.Polite }
             )
 
             Spacer(Modifier.height(10.dp))
@@ -225,40 +232,39 @@ fun VoiceScreen(listenKey: Int = 0, onBack: () -> Unit) {
                     )
                 )
                 Spacer(Modifier.width(8.dp))
-                MonoButton("Trimite", onClick = { send() }, color = Accent2)
+                MonoButton("Trimite", onClick = { send() }, modifier = Modifier.semantics { role = Role.Button }, color = Accent2)
             }
 
             Spacer(Modifier.height(22.dp))
             SectionLabel("Setări")
             Spacer(Modifier.height(10.dp))
-            VoiceSetting(
+            VoiceToggle(
                 "„Hei FORJA” mereu la ascultare",
                 if (wakeOn) "Microfonul e pornit în fundal (vezi notificarea). Spune „Hei FORJA” oricând, și cu ecranul stins."
-                else "Pornește ca să chemi FORJA cu vocea, fără să atingi telefonul. Consumă ceva baterie."
-            ) {
-                ForjaSwitch(wakeOn) { on ->
-                    scope.launch {
-                        if (on) {
-                            if (!micGranted) { micLauncher.launch(Manifest.permission.RECORD_AUDIO); return@launch }
-                            if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) {
-                                permsLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
-                            }
-                            app.prefs.setVoiceWakeOn(true)
-                            if (VoiceWakeService.start(context)) toast.show("„Hei FORJA” ascultă — și cu ecranul stins.")
-                            else { app.prefs.setVoiceWakeOn(false); toast.show("Nu am putut porni ascultarea. Verifică microfonul.") }
-                        } else {
-                            app.prefs.setVoiceWakeOn(false)
-                            VoiceWakeService.stop(context)
-                            toast.show("Ascultarea continuă e oprită.")
+                else "Pornește ca să chemi FORJA cu vocea, fără să atingi telefonul. Consumă ceva baterie.",
+                checked = wakeOn
+            ) { on ->
+                scope.launch {
+                    if (on) {
+                        if (!micGranted) { micLauncher.launch(Manifest.permission.RECORD_AUDIO); return@launch }
+                        if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) {
+                            permsLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
                         }
+                        app.prefs.setVoiceWakeOn(true)
+                        if (VoiceWakeService.start(context)) tell("„Hei FORJA” ascultă — și cu ecranul stins.")
+                        else { app.prefs.setVoiceWakeOn(false); tell("Nu am putut porni ascultarea. Verifică microfonul.") }
+                    } else {
+                        app.prefs.setVoiceWakeOn(false)
+                        VoiceWakeService.stop(context)
+                        tell("Ascultarea continuă e oprită.")
                     }
                 }
             }
-            VoiceSetting("Răspunsuri cu voce", "FORJA citește tot ce face. Oprește dacă folosești TalkBack și nu vrei dublură.") {
-                ForjaSwitch(speakOn) { v -> scope.launch { app.prefs.setVoiceSpeakOn(v) } }
+            VoiceToggle("Răspunsuri cu voce", "FORJA citește tot ce face. Oprește dacă folosești TalkBack și nu vrei dublură.", checked = speakOn) { v ->
+                scope.launch { app.prefs.setVoiceSpeakOn(v) }
             }
-            VoiceSetting("Confirmă înainte de a trimite", "Mesajul se citește cu voce și pleacă doar după „da”.") {
-                ForjaSwitch(confirmSend) { v -> scope.launch { app.prefs.setVoiceConfirmSend(v) } }
+            VoiceToggle("Confirmă înainte de a trimite", "Mesajul se citește cu voce și pleacă doar după „da”. Când numele din agendă nu e exact, se citește oricum.", checked = confirmSend) { v ->
+                scope.launch { app.prefs.setVoiceConfirmSend(v) }
             }
             VoiceSetting("Limba în care asculți", "Comenzile se înțeleg în română și engleză; alege limba în care vorbești de obicei.") {
                 Row {
@@ -307,6 +313,30 @@ fun VoiceScreen(listenKey: Int = 0, onBack: () -> Unit) {
                 "Mai poți spune: „deschide harta”, „respiră”, „ce zi e azi”, „cine e online”, „m-am trezit”, „repetă”, „oprește ascultarea”.",
                 style = BodySmall.copy(color = TextSecondary)
             )
+        }
+    }
+}
+
+/** Comutator accesibil: tot rândul e controlul, TalkBack anunță „titlu, descriere, comutator, pornit/oprit”. */
+@Composable
+private fun VoiceToggle(title: String, subtitle: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
+    ForjaCard(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onToggle)
+            .semantics { stateDescription = if (checked) "pornit" else "oprit" },
+        padding = 14.dp
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = BodyStrong.copy(fontSize = 14.sp))
+                Spacer(Modifier.height(2.dp))
+                Text(subtitle, style = BodyTiny.copy(color = TextSecondary))
+            }
+            Spacer(Modifier.width(12.dp))
+            // Comutatorul desenat rămâne doar vizual: rândul întreg e cel anunțat și apăsat.
+            Box(Modifier.clearAndSetSemantics { }) { ForjaSwitch(checked, onToggle) }
         }
     }
 }
@@ -373,7 +403,11 @@ fun VoiceFab(wakeOn: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier
             .clip(CircleShape)
             .background(AccentGradient)
             .border(1.dp, Color(0x996F855A), CircleShape)
-            .semantics { role = Role.Button; contentDescription = "Hei FORJA, asistent vocal. Apasă și spune o comandă." }
+            .semantics {
+                role = Role.Button
+                contentDescription = if (wakeOn) "Hei FORJA, asistent vocal. Ascultarea continuă e pornită. Apasă și spune o comandă."
+                else "Hei FORJA, asistent vocal. Apasă și spune o comandă."
+            }
             .pressable(onClick, scaleDown = 0.92f),
         contentAlignment = Alignment.Center
     ) {

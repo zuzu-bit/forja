@@ -262,6 +262,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
     val voiceOpen = mainActivity?.voiceOpen ?: 0
     val voiceListen = mainActivity?.voiceListen ?: 0
     var fabListen by remember { mutableIntStateOf(0) }
+    // „Ascultă acum” e consumat aici, nu în ecran: ecranul e recreat la fiecare deschidere și ar reporni ascultarea.
+    var listenConsumed by remember { mutableIntStateOf(0) }
     LaunchedEffect(voiceOpen) {
         if (voiceOpen > 0 && nav.currentDestination?.route != Route.VOICE) {
             var tries = 0
@@ -311,6 +313,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 }
             }
             if (event == Lifecycle.Event.ON_START) {
+                // O comandă aștepta permisiuni cât timp FORJA nu era pe ecran: le cerem acum.
+                try { app.voice.onForeground() } catch (_: Exception) { }
                 // „Hei FORJA" mereu la ascultare — repornit din prim-plan (singurul loc sigur pe Android 14+).
                 navScope.launch {
                     try {
@@ -561,8 +565,10 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 enterTransition = modalEnter, exitTransition = fadeExit,
                 popEnterTransition = riseEnter, popExitTransition = modalExit
             ) {
+                val key = voiceListen + fabListen
                 VoiceScreen(
-                    listenKey = voiceListen + fabListen,
+                    listenKey = if (key != listenConsumed) key else 0,
+                    onListenConsumed = { listenConsumed = key },
                     onBack = { if (!nav.popBackStack()) nav.navigate(Route.DASHBOARD) { launchSingleTop = true } }
                 )
             }

@@ -63,7 +63,9 @@ object Contacts {
 
     fun find(contacts: List<Contact>, spoken: String): Contact? = best(contacts, spoken)?.first
 
-    /** Cel mai bun contact și scorul lui (0–100). */
+    /** Cel mai bun contact și scorul lui (0–100); sub 90 nu e o potrivire exactă (prefix, „conține” sau greșeală de o literă). */
+    fun findScored(contacts: List<Contact>, spoken: String): Pair<Contact, Int>? = best(contacts, spoken)
+
     private fun best(contacts: List<Contact>, spoken: String): Pair<Contact, Int>? {
         val q = VoiceText.normalize(spoken)
         if (q.isBlank()) return null
@@ -81,7 +83,11 @@ object Contacts {
      * „ion ajung in zece minute" → (Ion, „ajung in zece minute"): încearcă primele 3, 2, apoi 1 cuvinte
      * ca nume de contact. Null dacă niciun prefix nu seamănă cu cineva din agendă.
      */
-    fun resolvePrefix(contacts: List<Contact>, phrase: String): Pair<Contact, String>? {
+    fun resolvePrefix(contacts: List<Contact>, phrase: String): Pair<Contact, String>? =
+        resolvePrefixScored(contacts, phrase)?.let { it.first to it.second }
+
+    /** Ca [resolvePrefix], dar întoarce și scorul potrivirii (pentru confirmare când nu e exactă). */
+    fun resolvePrefixScored(contacts: List<Contact>, phrase: String): Triple<Contact, String, Int>? {
         val words = VoiceText.normalize(phrase).split(" ").filter { it.isNotBlank() }
         if (words.isEmpty()) return null
         for (n in minOf(3, words.size) downTo 1) {
@@ -90,7 +96,7 @@ object Contacts {
             // Cerem potrivire clară: un cuvânt = exact un prenume/nume; mai multe = numele întreg.
             if (sc < (if (n == 1) 70 else 80)) continue
             val rest = phrase.trim().split(Regex("\\s+")).drop(n).joinToString(" ")
-            return c to rest
+            return Triple(c, rest, sc)
         }
         return null
     }

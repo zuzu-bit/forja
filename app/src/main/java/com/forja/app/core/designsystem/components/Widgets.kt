@@ -28,6 +28,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -205,7 +208,8 @@ fun ToastHost(state: ToastState, modifier: Modifier = Modifier) {
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text(state.message, style = BodyStrong.copy(fontSize = 13.sp), textAlign = TextAlign.Center)
+            // Zonă „live”: TalkBack citește toast-ul când apare (altfel e invizibil pentru cine nu vede ecranul).
+            Text(state.message, style = BodyStrong.copy(fontSize = 13.sp), textAlign = TextAlign.Center, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
         }
     }
 }
