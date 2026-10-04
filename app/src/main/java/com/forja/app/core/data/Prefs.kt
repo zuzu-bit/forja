@@ -87,6 +87,12 @@ class Prefs(private val context: Context) {
         // mirror D — istoriile zilnice: pădurea („zi:crescuți:uscați;…”) și opririle paznicului pe pachete („zi:pachet:n;…”)
         val focusForestHistory = stringPreferencesKey("focus_forest_history")
         val detoxHits = stringPreferencesKey("detox_hits")
+        // „Hei FORJA" — asistentul vocal
+        val voiceWakeOn = booleanPreferencesKey("voice_wake_on")
+        val voiceSpeakOn = booleanPreferencesKey("voice_speak_on")
+        val voiceConfirmSend = booleanPreferencesKey("voice_confirm_send")
+        val voiceLang = stringPreferencesKey("voice_lang")
+        val voiceIntroSeen = booleanPreferencesKey("voice_intro_seen")
     }
 
     companion object {
@@ -389,6 +395,27 @@ class Prefs(private val context: Context) {
         // Acordul separat pentru cuvintele detoxului ține de semnătură: revocat sau alt cont, pornește iar oprit.
         it.remove(K.detoxWordsOnSite)
     }
+
+    // ── „Hei FORJA" — asistentul vocal, pentru cei care nu pot (sau nu vor) să se uite la ecran ──
+    /** Ascultare continuă a cuvântului „Hei FORJA" (serviciu în fundal, microfon pornit). */
+    val voiceWakeOn: Flow<Boolean> = context.dataStore.data.map { it[K.voiceWakeOn] ?: false }
+    suspend fun setVoiceWakeOn(v: Boolean) = context.dataStore.edit { it[K.voiceWakeOn] = v }
+
+    /** Răspunsurile asistentului sunt citite cu voce tare. */
+    val voiceSpeakOn: Flow<Boolean> = context.dataStore.data.map { it[K.voiceSpeakOn] ?: true }
+    suspend fun setVoiceSpeakOn(v: Boolean) = context.dataStore.edit { it[K.voiceSpeakOn] = v }
+
+    /** Înainte de a trimite un mesaj, asistentul îl citește și cere „da". */
+    val voiceConfirmSend: Flow<Boolean> = context.dataStore.data.map { it[K.voiceConfirmSend] ?: true }
+    suspend fun setVoiceConfirmSend(v: Boolean) = context.dataStore.edit { it[K.voiceConfirmSend] = v }
+
+    /** Limba în care ascultă („ro-RO" sau „en-US"). Comenzile se înțeleg în ambele. */
+    val voiceLang: Flow<String> = context.dataStore.data.map { it[K.voiceLang] ?: "ro-RO" }
+    suspend fun setVoiceLang(v: String) = context.dataStore.edit { it[K.voiceLang] = v }
+
+    /** Prezentarea asistentului a fost citită o dată la prima deschidere. */
+    val voiceIntroSeen: Flow<Boolean> = context.dataStore.data.map { it[K.voiceIntroSeen] ?: false }
+    suspend fun setVoiceIntroSeen() = context.dataStore.edit { it[K.voiceIntroSeen] = true }
 
     /** Ecranul de pornire cu permisiuni a fost arătat o dată. */
     val permsIntroSeen: Flow<Boolean> = context.dataStore.data.map { it[K.permsIntroSeen] ?: false }
