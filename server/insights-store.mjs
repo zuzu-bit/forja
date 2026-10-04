@@ -1,6 +1,7 @@
 import {handleSleepStore,sweepSleep} from './sleep-store.mjs';
 import {handleRecovery,sweepRecovery} from './lost-phone.mjs';
 import {handleOrganizer,sweepOrganizer} from './organizer.mjs';
+import {handleOrganizerJobs,sweepOrganizerJobs} from './organizer-jobs.mjs';
 import {handleCleanup,sweepCleanup} from './cleanup-schedule.mjs';
 import { handleFiles, sweepFiles, FILE_MAX_BYTES, THUMB_MAX_BYTES } from './files-vault.mjs';
 import { checkRecording, RECORDING_MAX_BYTES } from './recording-schema.mjs';
@@ -73,7 +74,7 @@ export class InsightsAccount {
       if (until <= Date.now()) await this.ctx.storage.delete(key);
     }
     const records = await this.ctx.storage.list({ prefix: 'session:' });
-    let next = Math.min(await sweepSleep(this.ctx.storage),await sweepRecovery(this.ctx.storage),await sweepFiles(this.ctx.storage,this.env.RECORDS),await sweepCleanup(this.ctx.storage),await sweepOrganizer(this.ctx.storage,Date.now()));
+    let next = Math.min(await sweepSleep(this.ctx.storage),await sweepRecovery(this.ctx.storage),await sweepFiles(this.ctx.storage,this.env.RECORDS),await sweepCleanup(this.ctx.storage),await sweepOrganizer(this.ctx.storage,Date.now()),await sweepOrganizerJobs(this.ctx.storage));
     for (const r of records.values()) {
       if (r.expires_at <= Date.now()) await this.remove(r); else next = Math.min(next, r.expires_at);
     }
@@ -99,6 +100,8 @@ export class InsightsAccount {
     await this.sweep();
     const sleepResponse=await handleSleepStore(request,this,readJSON);
     if(sleepResponse)return sleepResponse;
+    const jobsResponse=await handleOrganizerJobs(request,this,readJSON);
+    if(jobsResponse)return jobsResponse;
     const organizerResponse=await handleOrganizer(request,this,readJSON);
     if(organizerResponse)return organizerResponse;
     const cleanupResponse = await handleCleanup(request,this,readJSON);
@@ -111,12 +114,13 @@ export class InsightsAccount {
       const intake = await this.ctx.storage.get('intake') || defaultIntake();
       if (!intake.accepting) return reply({ error: 'Primirea datelor este oprită din panoul web.', code: 'intake_paused' }, 423);
     }
-    if (path === '/internal/ai-budget' && request.method === 'POST') {
-      const {value:aiRequest}=await readJSON(request,1024);const units=aiRequest.units??1;if(!Number.isInteger(units)||units<1||units>6)bad('Invalid AI budget');
-      const day = Math.floor(Date.now() / TTL); const old = await this.ctx.storage.get('ai-budget');
+    if (['/internal/ai-budget','/internal/organizer-ai-budget'].includes(path) && request.method === 'POST') {
+      const organizer=path==='/internal/organizer-ai-budget',budgetKey=organizer?'organizer-ai-budget':'ai-budget';
+      const {value:aiRequest}=await readJSON(request,1024);const units=aiRequest.units??1;if(!Number.isInteger(units)||units<1||units>(organizer?10:6))bad('Invalid AI budget');
+      const day = Math.floor(Date.now() / TTL); const old = await this.ctx.storage.get(budgetKey);
       const budget = old?.day === day ? old : { day, used: 0, last: 0 };
-      if (budget.used + units > 30 || Date.now() - budget.last < 10000) bad('Așteaptă puțin înainte de o nouă analiză (maximum 30 pe zi).', 429);
-      await this.ctx.storage.put('ai-budget', { day, used: budget.used + units, last: Date.now() });
+      if (budget.used + units > (organizer?300:30) || !organizer&&Date.now() - budget.last < 10000) bad(organizer?'Limita zilnică de analiză a fost atinsă. Progresul este păstrat; continuarea este disponibilă mâine.':'Așteaptă puțin înainte de o nouă analiză (maximum 30 pe zi).', 429);
+      await this.ctx.storage.put(budgetKey, { day, used: budget.used + units, last: Date.now() });
       return reply({ ok: true });
     }
     if (path === '/v2/sessions') {

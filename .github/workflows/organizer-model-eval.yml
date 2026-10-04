@@ -1,0 +1,46 @@
+name: Evaluate organizer models with synthetic files
+on:
+  push:
+    branches: ['ux/organizer-model-eval-v26']
+    paths: ['server/organizer-analysis.mjs', 'server/organizer-model-eval.mjs', 'server/organizer-eval-worker.mjs', 'server/wrangler.organizer-eval.toml', 'server/fixtures/organizer/**', '.github/workflows/organizer-model-eval.yml']
+permissions:
+  contents: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - name: Evaluate the Workers AI binding on synthetic files only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ORGANIZER_EVAL_OUTPUT: organizer-model-evaluation.json
+          ORGANIZER_EVAL_BINDING_URL: http://127.0.0.1:8789/infer
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then unset CLOUDFLARE_ACCOUNT_ID; fi
+          server/node_modules/.bin/wrangler dev --config server/wrangler.organizer-eval.toml --port 8789 --ip 127.0.0.1 > organizer-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8789/health > /dev/null; then break; fi
+            if ! kill -0 "$PREVIEW_PID" 2>/dev/null; then cat organizer-preview.log; exit 1; fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:8789/health > /dev/null
+          node server/organizer-model-eval.mjs
+      - name: Keep model evaluation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Organizer-Model-Evaluation
+          path: |
+            organizer-model-evaluation.json
+            organizer-preview.log
+          if-no-files-found: error

@@ -1,0 +1,246 @@
+{
+  "synthetic": true,
+  "version": 1,
+  "at": "2026-09-27T09:29:12.209Z",
+  "max_calls": 12,
+  "calls": 7,
+  "summary": [
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "passed": 2,
+      "total": 3,
+      "calls": 4,
+      "elapsed_ms": 24432
+    },
+    {
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "passed": 3,
+      "total": 3,
+      "calls": 3,
+      "elapsed_ms": 7050
+    }
+  ],
+  "results": [
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "fixture": "text_not_filename",
+      "pass": true,
+      "destination": "Documente/Facturi",
+      "reason": "Conține informații despre o factură, inclusiv serviciul și totalul de plată.",
+      "evidence": [
+        {
+          "id": "e1",
+          "kind": "text",
+          "quote": "FACTURĂ. Serviciu: reparație frâne bicicletă. Cantitate 1. Total de plată: 120 lei.",
+          "source_id": "text",
+          "source_sha256": "a6639118589d04a7d36bf54bbeea6091189d0836cd9de8d1affc2054ddfadf8e",
+          "method": "server_utf8_from_received_bytes"
+        }
+      ],
+      "coverage": {
+        "status": "complete",
+        "source_bytes": 88,
+        "analyzed_text_chars": 83,
+        "pages_total": null,
+        "pages_processed": null,
+        "methods": [
+          "server_utf8_from_received_bytes"
+        ],
+        "limitations": []
+      },
+      "confidence": "high",
+      "synthetic_outputs": [
+        {
+          "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+          "content": "{\"confidence\":\"high\",\"deletion_review\":{\"basis\":\"none\",\"evidence_ids\":[],\"reason\":\"\",\"suggested\":false},\"destination\":\"Documente/Facturi\",\"evidence\":[{\"observation\":\"\",\"quote\":\"FACTURĂ. Serviciu: reparație frâne bicicletă. Cantitate 1. Total de plată: 120 lei.\",\"source_id\":\"text\"}],\"reason\":\"Conține informații despre o factură, inclusiv serviciul și totalul de plată.\"}",
+          "truncated": false
+        }
+      ],
+      "calls": 1,
+      "elapsed_ms": 4978
+    },
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "fixture": "photographed_invoice",
+      "pass": true,
+      "destination": "Documente/Facturi",
+      "reason": "Conține informații despre o factură, inclusiv titlul, serviciile oferite, cantitatea și prețul produselor sau serviciilor, precum și totalul de plată.",
+      "evidence": [
+        {
+          "id": "e1",
+          "kind": "visual",
+          "observation": "Se vede o factură tipărită cu un total în lei",
+          "source_id": "image",
+          "source_sha256": "735768be60b53fe8f10bff74f2c4fe83661234a73bc7f383453ff7a4e798449c",
+          "representation": "original",
+          "interpretation": "unconfirmed_ai_observation"
+        }
+      ],
+      "coverage": {
+        "status": "partial",
+        "source_bytes": 23891,
+        "analyzed_text_chars": 0,
+        "pages_total": null,
+        "pages_processed": null,
+        "methods": [
+          "vision_from_received_original"
+        ],
+        "limitations": [
+          "intermediate_visual_description"
+        ]
+      },
+      "confidence": "medium",
+      "synthetic_outputs": [
+        {
+          "model": "@cf/meta/llama-3.2-11b-vision-instruct",
+          "content": "Imaginea prezentată în fotografia de mai sus este o imagine alb-negru, care prezintă o listă de texte în limba română. Textele sunt scrise într-un font simplu, fără niciun fel de ilustrații sau imagini. \n\nÎn partea de sus a imaginii, se află titlul \"FACTURĂ • EXEMPLU SINTETIC\", care este scris într-un font mai mare decât restul textului. \n\nÎn partea de jos a imaginii, se află o linie de text care spune \"Fără date personale reale\". \n\nÎn restul imaginii, se află o listă de texte care descriu diverse aspecte ale unei facturi, cum ar fi \"Atelier de biciclete Demo\", \"Serviciu: reparatie frâne bicicletă\", \"Cantitate: 1\", \"Preț: 120 lei\", \"Total de plată: 120 lei\". \n\nÎn general, imaginea prezintă o listă de texte care descriu diverse aspecte ale unei facturi, inclusiv titlul, serviciile oferite, cantitatea și prețul produselor sau serviciilor, precum și totalul de plată. \n\nÎn concluzie, imaginea prezintă o listă de texte care descriu diverse aspecte ale unei facturi, inclusiv titlul, serviciile oferite, cantitatea și prețul produselor sau serviciilor, precum și totalul",
+          "truncated": false
+        },
+        {
+          "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+          "content": "{\"confidence\":\"high\",\"deletion_review\":{\"basis\":\"none\",\"evidence_ids\":[],\"reason\":\"\",\"suggested\":false},\"destination\":\"Documente/Facturi\",\"evidence\":[{\"observation\":\"Se vede o factură tipărită cu un total în lei\",\"quote\":\"\",\"source_id\":\"image\"}],\"reason\":\"Conține informații despre o factură, inclusiv titlul, serviciile oferite, cantitatea și prețul produselor sau serviciilor, precum și totalul de plată.\"}",
+          "truncated": false
+        }
+      ],
+      "calls": 2,
+      "elapsed_ms": 15437
+    },
+    {
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "fixture": "mixed_untrusted",
+      "pass": false,
+      "error": "validation_failed",
+      "validation_error": "Citatul AI nu există în conținutul citit.",
+      "provider_errors": [],
+      "synthetic_outputs": [
+        {
+          "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+          "content": "{\"confidence\":\"low\",\"deletion_review\":{\"basis\":\"none\",\"evidence_ids\":[],\"reason\":\"\",\"suggested\":false},\"destination\":\"De verificat\",\"evidence\":[{\"observation\":\"\",\"quote\":\"Lecție de biologie: fotosinteza transformă lumina în energie. Factură pentru servicii de internet, total 50 lei.\",\"source_id\":\"text\"}],\"reason\":\"Conținutul prezintă fragmente diverse și contradictorii, fără o temă dominantă.\"}",
+          "truncated": false
+        }
+      ],
+      "calls": 1,
+      "elapsed_ms": 4017
+    },
+    {
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "fixture": "text_not_filename",
+      "pass": true,
+      "destination": "Documente/Facturi",
+      "reason": "Factura pentru servicii de reparatie bicicletă cu detalii clare de plată.",
+      "evidence": [
+        {
+          "id": "e1",
+          "kind": "text",
+          "quote": "FACTURĂ. Serviciu: reparație frâne bicicletă. Cantitate 1. Total de plată: 120 lei.",
+          "source_id": "text",
+          "source_sha256": "a6639118589d04a7d36bf54bbeea6091189d0836cd9de8d1affc2054ddfadf8e",
+          "method": "server_utf8_from_received_bytes"
+        }
+      ],
+      "coverage": {
+        "status": "complete",
+        "source_bytes": 88,
+        "analyzed_text_chars": 83,
+        "pages_total": null,
+        "pages_processed": null,
+        "methods": [
+          "server_utf8_from_received_bytes"
+        ],
+        "limitations": []
+      },
+      "confidence": "high",
+      "synthetic_outputs": [
+        {
+          "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+          "content": "{\"confidence\":\"high\",\"deletion_review\":{\"basis\":\"none\",\"evidence_ids\":[],\"reason\":\"\",\"suggested\":false},\"destination\":\"Documente/Facturi\",\"evidence\":[{\"observation\":\"\",\"quote\":\"FACTURĂ. Serviciu: reparație frâne bicicletă. Cantitate 1. Total de plată: 120 lei.\",\"source_id\":\"text\"}],\"reason\":\"Factura pentru servicii de reparatie bicicletă cu detalii clare de plată.\"}",
+          "truncated": false
+        }
+      ],
+      "calls": 1,
+      "elapsed_ms": 3265
+    },
+    {
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "fixture": "photographed_invoice",
+      "pass": true,
+      "destination": "Documente/Facturi",
+      "reason": "factur",
+      "evidence": [
+        {
+          "id": "e1",
+          "kind": "visual",
+          "observation": "Se vede o factur",
+          "source_id": "image",
+          "source_sha256": "735768be60b53fe8f10bff74f2c4fe83661234a73bc7f383453ff7a4e798449c",
+          "representation": "original",
+          "interpretation": "unconfirmed_ai_observation"
+        }
+      ],
+      "coverage": {
+        "status": "complete",
+        "source_bytes": 23891,
+        "analyzed_text_chars": 0,
+        "pages_total": null,
+        "pages_processed": null,
+        "methods": [
+          "vision_from_received_original"
+        ],
+        "limitations": []
+      },
+      "confidence": "high",
+      "synthetic_outputs": [
+        {
+          "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+          "content": "{\"confidence\":\"high\",\"deletion_review\":{\"basis\":\"none\",\"evidence_ids\":[],\"reason\":\"\",\"suggested\":false},\"destination\":\"Documente/Facturi\",\"evidence\":[{\"observation\":\"Se vede o factur\",\"quote\":\"\",\"source_id\":\"image\"}],\"reason\":\"factur\"}",
+          "truncated": false
+        }
+      ],
+      "calls": 1,
+      "elapsed_ms": 2137
+    },
+    {
+      "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "fixture": "mixed_untrusted",
+      "pass": true,
+      "destination": "De verificat",
+      "reason": "Conținut contradictoriu și insuficient pentru a fi clasat într-o categorie definită.",
+      "evidence": [
+        {
+          "id": "e1",
+          "kind": "text",
+          "quote": "Lecție de biologie: fotosinteza transformă lumina în energie.",
+          "source_id": "text",
+          "source_sha256": "b75da1adad37610528d3623e82cc62c0fafb30145eeb60be134b97131a91f222",
+          "method": "server_utf8_from_received_bytes"
+        }
+      ],
+      "coverage": {
+        "status": "complete",
+        "source_bytes": 317,
+        "analyzed_text_chars": 307,
+        "pages_total": null,
+        "pages_processed": null,
+        "methods": [
+          "server_utf8_from_received_bytes"
+        ],
+        "limitations": []
+      },
+      "confidence": "low",
+      "synthetic_outputs": [
+        {
+          "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+          "content": "{\"confidence\":\"low\",\"deletion_review\":{\"basis\":\"none\",\"evidence_ids\":[],\"reason\":\"\",\"suggested\":false},\"destination\":\"De verificat\",\"evidence\":[{\"observation\":\"\",\"quote\":\"Lecție de biologie: fotosinteza transformă lumina în energie.\",\"source_id\":\"text\"}],\"reason\":\"Conținut contradictoriu și insuficient pentru a fi clasat într-o categorie definită.\"}",
+          "truncated": false
+        }
+      ],
+      "calls": 1,
+      "elapsed_ms": 1648
+    }
+  ],
+  "limits": [
+    "Small fixture set; not a general ranking or accuracy benchmark.",
+    "Visual observations remain unconfirmed AI interpretations.",
+    "No billing change, user files, mutation, or deletion."
+  ]
+}

@@ -7,7 +7,7 @@ const script = value => '<script>' + value.replace(/<\/script/gi, '<\\/script') 
 function buildPreview({fixture = createFixture(), defaultPage = 'overview'} = {}) {
 let html = fs.readFileSync(path.join(server, 'insights.html'), 'utf8')
   .replace(/<script\b[^>]*src=["'][^"']+["'][^>]*><\/script>/g, '')
-  .replace(/<link\b[^>]*href=["']\/insights\/leaflet.css["'][^>]*>/g, '')
+  .replace(/<link\b[^>]*href=["']\/insights\/(?:leaflet|maplibre).css["'][^>]*>/g, '')
   .replace('<title>', '<title>DEMO local · ');
 const leafletCSS = fs.readFileSync(path.join(server, 'vendor/leaflet-1.9.4.css.txt'), 'utf8');
 const leafletJS = fs.readFileSync(path.join(server, 'vendor/leaflet-1.9.4.js.txt'), 'utf8');
@@ -17,6 +17,8 @@ html = html.replace('</head>', `<style>${leafletCSS}\n#social-map{background:#e3
 const setup = `
 window.__fixture=${JSON.stringify(fixture)};
 (${installMockFetch.toString()})(window, window.__fixture);
+// Local review never asks for live device location.
+Object.defineProperty(navigator,'geolocation',{configurable:true,value:{watchPosition(callback){setTimeout(()=>callback({timestamp:Date.now(),coords:{latitude:44.4132,longitude:26.0938,accuracy:12,speed:0}}),0);return 1;},clearWatch(){}}});
 // Use Leaflet's real interaction engine, with an offline, illustrative backdrop.
 L.tileLayer=()=>({addTo(){return this;}});
 `;

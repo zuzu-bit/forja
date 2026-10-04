@@ -29,14 +29,14 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 private fun Context.activity():Activity?=when(this){is Activity->this;is ContextWrapper->baseContext.activity();else->null}
-@Composable internal fun PartnerContactsPanel(data:JSONObject?,owner:String?,refresh:suspend()->Unit){
+@Composable internal fun PartnerContactsPanel(data:JSONObject?,owner:String?,onVisibility:()->Unit,refresh:suspend()->Unit){
  val c=LocalContext.current;val scope=rememberCoroutineScope();var busy by remember(owner){mutableStateOf(false)};var info by remember(owner){mutableStateOf("")};var consent by remember(owner){mutableStateOf(false)}
  var privacy by remember{mutableStateOf(false)};var settings by remember{mutableStateOf(false)}
- val me=data?.optJSONObject("me");val partner=me?.optJSONObject("partner");val session=me?.optJSONObject("session")
+ val me=data?.optJSONObject("me");val partner=me?.optJSONObject("partner");val session=me?.optJSONObject("session");val visibility=me?.optJSONObject("visibility");val partnerAllowed=visibility?.optBoolean("configured")!=true||visibility.rows("grants").any{it.optString("id")==partner?.optString("id")&&it.optBoolean("current")}
  fun act(block:suspend()->Unit){if(busy)return;busy=true;scope.launch{try{check(FileSync.owner()==owner){"Contul s-a schimbat."};block();refresh()}catch(e:CancellationException){throw e}catch(e:Exception){info=e.message.orEmpty()}finally{busy=false}}}
  val permissions=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){result->
   val location=result[Manifest.permission.ACCESS_COARSE_LOCATION]==true||result[Manifest.permission.ACCESS_FINE_LOCATION]==true;val notices=Build.VERSION.SDK_INT<33||result[Manifest.permission.POST_NOTIFICATIONS]==true
-  if(location&&notices&&consent&&partner?.optString("state")=="accepted"&&FileSync.owner()==owner){try{ContextCompat.startForegroundService(c,Intent(c,SocialLocationService::class.java).putExtra("continuous",true).putExtra("audience",partner.getString("id")));consent=false;info="Pornesc partajarea continuă cu partenerul ales."}catch(e:Exception){info=e.message.orEmpty()}}else info="Sunt necesare locația, notificările și acordul pentru partenerul ales."
+  if(!partnerAllowed){consent=false;onVisibility()}else if(location&&notices&&consent&&partner?.optString("state")=="accepted"&&FileSync.owner()==owner){try{ContextCompat.startForegroundService(c,Intent(c,SocialLocationService::class.java).putExtra("continuous",true).putExtra("audience",partner.getString("id")));consent=false;info="Pornesc partajarea continuă cu partenerul ales."}catch(e:Exception){info=e.message.orEmpty()}}else info="Sunt necesare locația, notificările și acordul pentru partenerul ales."
  }
  LaunchedEffect(partner?.optString("token"),owner){consent=false}
  Text("Mereu aproape",fontSize=22.sp,fontWeight=FontWeight.Bold)
@@ -57,6 +57,8 @@ private fun Context.activity():Activity?=when(this){is Activity->this;is Context
     } else if(session!=null){
      Text("Partajezi acum cu prietenii.",fontSize=13.sp)
      OutlinedButton(enabled=!busy,onClick={SocialRecovery.stop(c);act{SocialApi.call(c,"session",method="DELETE")}}){Text("Oprește sesiunea curentă")}
+    } else if(!partnerAllowed){
+     Button(modifier=Modifier.fillMaxWidth(),enabled=!busy,onClick=onVisibility){Text("Alege cine te vede")}
     } else {
      Row(verticalAlignment=Alignment.CenterVertically){Checkbox(consent,{consent=it});Text("Îmi partajez continuu locația doar cu ${partner.optString("name")}, cu notificare și reluare automată, până o opresc.",fontSize=12.sp,modifier=Modifier.weight(1f))}
      Button(modifier=Modifier.fillMaxWidth(),enabled=consent&&!busy,onClick={permissions.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION)+if(Build.VERSION.SDK_INT>=33)arrayOf(Manifest.permission.POST_NOTIFICATIONS)else emptyArray())}){Text("Activează partajarea")}

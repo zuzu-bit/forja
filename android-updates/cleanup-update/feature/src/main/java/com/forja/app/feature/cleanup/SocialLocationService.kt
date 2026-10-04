@@ -34,12 +34,12 @@ internal object SocialRecovery {
   try{ContextCompat.startForegroundService(c,Intent(c,SocialLocationService::class.java).setAction("RESUME"))}catch(_:Exception){SocialApi.status.value="Deschide FORJA pentru a relua partajarea cu partenerul."}
  }
  fun install(app:Application){app.registerActivityLifecycleCallbacks(object:Application.ActivityLifecycleCallbacks{
-  override fun onActivityResumed(a:Activity){resume(app);ContactSync.schedule(app)}
+  override fun onActivityResumed(a:Activity){resume(app);JourneyRecorder.resume(app);ContactSync.schedule(app)}
   override fun onActivityCreated(a:Activity,b:Bundle?){};override fun onActivityStarted(a:Activity){};override fun onActivityStopped(a:Activity){};override fun onActivityPaused(a:Activity){};override fun onActivitySaveInstanceState(a:Activity,b:Bundle){};override fun onActivityDestroyed(a:Activity){}
  })}
 }
 class PartnerStopWorker(c:Context,p:WorkerParameters):CoroutineWorker(c,p){override suspend fun doWork():Result {val uid=inputData.getString("owner")?:return Result.failure();val id=inputData.getString("session")?:return Result.failure();if(uid!=FileSync.owner())return Result.success();return try{SocialApi.call(applicationContext,"session?session="+android.net.Uri.encode(id),method="DELETE",owner=uid);Result.success()}catch(e:FileSync.Failure){if(e.code in listOf(401,403,404,409))Result.success()else Result.retry()}catch(e:CancellationException){throw e}catch(_:Exception){Result.retry()}}}
-class SocialBootReceiver:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){if(i.action in listOf(Intent.ACTION_BOOT_COMPLETED,Intent.ACTION_MY_PACKAGE_REPLACED)){SocialRecovery.resume(c,true);LostPhoneRecovery.resume(c,true)}}}
+class SocialBootReceiver:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){if(i.action in listOf(Intent.ACTION_BOOT_COMPLETED,Intent.ACTION_MY_PACKAGE_REPLACED)){SocialRecovery.resume(c,true);JourneyRecorder.resume(c,true);LostPhoneRecovery.resume(c,true)}}}
 /** Explicit owner opt-in, one accepted partner, visible notification; never starts a new grant remotely. */
 class SocialLocationService:Service(),LocationListener {
  companion object{@Volatile var running=false;private set}
