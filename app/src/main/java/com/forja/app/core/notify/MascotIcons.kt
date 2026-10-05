@@ -22,16 +22,27 @@ import java.util.concurrent.ConcurrentHashMap
  * deschidere (corectura 11) — nu în lucrător. Fără PNG (încă nedeschisă după update) notificarea pleacă fără pictogramă.
  */
 object MascotIcons {
-    private const val VERSION = 1
+    private const val VERSION = 2
     private const val PX = 192
-    private val cache = ConcurrentHashMap<NudgePose, Bitmap>()
+    private val cache = ConcurrentHashMap<String, Bitmap>()
 
-    private fun file(c: Context, pose: NudgePose) = File(c.filesDir, "notify/casca_${pose.name.lowercase()}_v$VERSION.png")
+    /**
+     * Semnătura ținutei purtate (5.0): pozele se randează pe ținută, ca notificarea să arate Casca așa cum e acum
+     * îmbrăcată; la o ținută nouă, fișierele vechi se șterg la următoarea deschidere.
+     */
+    private fun signature(): String {
+        val o = com.forja.app.core.soldier.SoldierStore.outfit.value
+        val key = listOf(o.head, o.eyes, o.torso, o.belt, o.feet, o.back, o.chest, o.rank.toString()).joinToString("|")
+        return key.hashCode().toUInt().toString(36)
+    }
+    private fun dir(c: Context) = File(c.filesDir, "notify")
+    private fun file(c: Context, pose: NudgePose, sig: String = signature()) = File(dir(c), "casca_${pose.name.lowercase()}_v${VERSION}_$sig.png")
 
-    /** Randează pozele care lipsesc (apelat din fundal, la deschiderea aplicației). */
+    /** Randează pozele care lipsesc pentru ținuta de acum (apelat din fundal, la deschiderea aplicației) și curăță restul. */
     fun ensure(c: Context) {
+        val sig = signature()
         for (pose in NudgePose.entries) {
-            val f = file(c, pose)
+            val f = file(c, pose, sig)
             if (f.exists() && f.length() > 0) continue
             try {
                 f.parentFile?.mkdirs()
@@ -41,6 +52,13 @@ object MascotIcons {
                 tmp.renameTo(f)
             } catch (_: Throwable) { }
         }
+        // Pozele altor ținute (sau ale versiunilor vechi) nu mai folosesc nimănui.
+        try {
+            dir(c).listFiles()?.forEach { f ->
+                if (f.name.startsWith("casca_") && !f.name.contains("_v${VERSION}_$sig.")) f.delete()
+            }
+        } catch (_: Throwable) { }
+        cache.keys.removeAll { !it.endsWith(":$sig") }
     }
 
     /** Un cadru static al mascotei, desenat direct într-un bitmap (fără compoziție). */
@@ -54,11 +72,13 @@ object MascotIcons {
         return image.asAndroidBitmap()
     }
 
-    /** PNG-ul pozei, sau null dacă nu a fost încă randat. */
+    /** PNG-ul pozei pentru ținuta de acum, sau, până la următoarea deschidere, ultima poză randată; null dacă nu există. */
     fun bitmap(c: Context, pose: NudgePose): Bitmap? {
-        cache[pose]?.let { return it }
-        val f = file(c, pose)
-        if (!f.exists()) return null
-        return try { BitmapFactory.decodeFile(f.absolutePath)?.also { cache[pose] = it } } catch (_: Throwable) { null }
+        val sig = signature()
+        cache["${pose.name}:$sig"]?.let { return it }
+        val f = file(c, pose, sig).takeIf { it.exists() }
+            ?: dir(c).listFiles()?.filter { it.name.startsWith("casca_${pose.name.lowercase()}_v") }?.maxByOrNull { it.lastModified() }
+            ?: return null
+        return try { BitmapFactory.decodeFile(f.absolutePath)?.also { if (f.name.endsWith("_$sig.png")) cache["${pose.name}:$sig"] = it } } catch (_: Throwable) { null }
     }
 }

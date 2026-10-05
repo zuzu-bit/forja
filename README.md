@@ -140,7 +140,7 @@ Fiecare misiune dă puncte o singură dată pe zi, și când FORJA e închisă (
 
 **Gradele** (Recrut → Soldat → Fruntaș → Caporal → Sergent → Sergent-major → Plutonier → Plutonier-adjutant →
 Sublocotenent → Locotenent → Căpitan → Maior → Colonel → General) vin din punctele câștigate vreodată, care nu
-scad. Soldul se cheltuie în **garderobă**: 32 de piese pe șapte locuri (cap, ochi, corp, centură, bocanci,
+scad. Soldul se cheltuie în **garderobă**: 31 de piese pe șapte locuri (cap, ochi, corp, centură, bocanci,
 spate, piept), fiecare cu un grad de la care se poate purta și un preț; fiecare grad nou aduce o piesă în dar,
 pusă direct pe Casca (bocancii și centura la Soldat, capela la Fruntaș, geaca de teren la Caporal, bereta la
 Sergent, camuflajul, vesta, casca, uniforma de paradă, chipiul de ofițer…). Insigna gradului e pe pieptul
