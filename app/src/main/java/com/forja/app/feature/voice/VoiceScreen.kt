@@ -102,8 +102,18 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
     var micGranted by remember { mutableStateOf(granted(Manifest.permission.RECORD_AUDIO)) }
     // La revenirea din Setări (accesibilitate, permisiuni) recitim starea.
     val lifecycleOwner = LocalLifecycleOwner.current
+    var screenWasOn by remember { mutableStateOf(ScreenAgent.isEnabled(context)) }
     DisposableEffect(lifecycleOwner) {
-        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) { refresh++; micGranted = granted(Manifest.permission.RECORD_AUDIO) } }
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) {
+                refresh++
+                micGranted = granted(Manifest.permission.RECORD_AUDIO)
+                val nowOn = ScreenAgent.isEnabled(context)
+                // Întors din Setări cu serviciul pornit: spunem cu voce, nu doar cu o bifă.
+                if (nowOn && !screenWasOn) tell("Comenzile pe ecran sunt pornite. Încearcă: „deschide YouTube și pune Phoenix” sau „citește ecranul”.")
+                screenWasOn = nowOn
+            }
+        }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
@@ -292,12 +302,16 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
 
             // Lucrul în alte aplicații: serviciul de accesibilitate „Comenzi pe ecran” (doar utilizatorul îl poate porni)
             val screenOn = remember(refresh, st.phase) { ScreenAgent.isEnabled(context) }
+            val screenConnected = remember(refresh, st.phase) { ScreenAgent.isConnected() }
             VoiceSetting(
                 "Comenzi pe ecran, în alte aplicații",
-                if (screenOn) "Pornit: FORJA poate citi ecranul, apăsa, scrie și căuta în aplicația din față („citește ecranul”, „apasă pe…”, „scrie…”, „deschide YouTube și pune…”)."
-                else "Oprit. Pornește din Setări → Accesibilitate → „FORJA · Comenzi pe ecran” ca FORJA să poată lucra în YouTube, Google, WhatsApp și orice altă aplicație."
+                when {
+                    screenConnected -> "Pornit: FORJA poate citi ecranul, apăsa, scrie și căuta în aplicația din față („citește ecranul”, „apasă pe…”, „scrie…”, „deschide YouTube și pune…”)."
+                    screenOn -> "Pornit în setări, dar neconectat încă. Oprește și pornește din nou „FORJA · Comenzi pe ecran” din Setări → Accesibilitate."
+                    else -> "Oprit. Pornește din Setări → Accesibilitate → „FORJA · Comenzi pe ecran” ca FORJA să poată lucra în YouTube, Google, WhatsApp și orice altă aplicație."
+                }
             ) {
-                if (screenOn) {
+                if (screenConnected) {
                     Box(Modifier.size(28.dp).clip(CircleShape).background(Positive), contentAlignment = Alignment.Center) {
                         Icon(Icons.Filled.Check, contentDescription = "Comenzi pe ecran: pornit", tint = Color.White, modifier = Modifier.size(16.dp))
                     }

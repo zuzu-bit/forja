@@ -495,7 +495,8 @@ class VoiceAssistant(private val app: ForjaApp) {
     /** Spune textul (dacă vocea e pornită) și apoi, opțional, continuă cu [then]. */
     private fun say(text: String, then: (() -> Unit)?, queue: Int = TextToSpeech.QUEUE_FLUSH) {
         lastSpoken = text
-        val silent = !speakOn || ttsFailed
+        // „Răspunsuri cu voce” oprit are sens doar cât FORJA e pe ecran (TalkBack citește ecranul); în fundal vocea e singura cale.
+        val silent = ttsFailed || (!speakOn && isForeground())
         _state.update { it.copy(response = text, phase = if (silent) it.phase else Phase.SPEAKING) }
         if (silent) {
             _state.update { it.copy(phase = Phase.IDLE) }

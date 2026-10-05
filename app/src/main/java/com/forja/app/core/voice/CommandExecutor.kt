@@ -183,29 +183,34 @@ class CommandExecutor(private val app: ForjaApp) {
             }
             is ScreenAction.Type ->
                 if (ScreenAgent.type(action.text)) Outcome.Done("Am scris „${action.text}”.")
-                else Outcome.Done("Nu văd un câmp de text pe ecran. Spune întâi „apasă pe …” câmpul, apoi „scrie …”.")
+                else Outcome.Done("Nu văd un câmp de text pe ecran. Spune întâi „apasă pe …” câmpul, apoi „scrie …”. Dacă vrei să trimiți un mesaj, spune „trimite mesaj lui …”.")
             ScreenAction.Enter -> if (ScreenAgent.enter()) Outcome.Done("Gata.", readScreenAfterMs = 2000) else Outcome.Done("Nu am găsit unde să apăs Enter.")
             is ScreenAction.Scroll ->
                 if (ScreenAgent.scroll(action.down)) Outcome.Done(if (action.down) "Am derulat în jos." else "Am derulat în sus.", readScreenAfterMs = 900)
                 else Outcome.Done("Nu am ce derula aici.")
             ScreenAction.Back -> if (ScreenAgent.back()) Outcome.Done("Înapoi.", readScreenAfterMs = 1200) else Outcome.Done("Nu pot merge înapoi.")
             ScreenAction.Home -> if (ScreenAgent.home()) Outcome.Done("Ecranul principal.") else Outcome.Done("Nu pot ajunge la ecranul principal.")
-            is ScreenAction.Search ->
-                if (ScreenAgent.search(action.query)) Outcome.Done("Caut „${action.query}”.", readScreenAfterMs = 2500)
-                else Outcome.Done("Nu am găsit căutarea în aplicația asta. Spune „apasă pe căutare”, apoi „scrie …”, apoi „enter”.")
+            is ScreenAction.Search -> when (ScreenAgent.search(action.query)) {
+                ScreenAgent.SearchResult.SUBMITTED -> Outcome.Done("Caut „${action.query}”.", readScreenAfterMs = 2500)
+                ScreenAgent.SearchResult.TYPED_ONLY -> Outcome.Done("Am scris „${action.query}” în căutare, dar nu am găsit butonul de căutare. Apasă tasta de căutare de pe tastatură.", readScreenAfterMs = 2500)
+                ScreenAgent.SearchResult.NO_SEARCH -> Outcome.Done("Nu am găsit căutarea în aplicația asta. Spune „apasă pe căutare”, apoi „scrie …”, apoi „enter”.")
+            }
         }
     }
 
     /** „deschide X și …”: aplicația, apoi acțiunea — pe ecranul ei sau prin intenție. */
     private suspend fun openAppThen(cmd: VoiceCommand.OpenAppThen, confirmSend: Boolean, lastSpoken: String): Outcome {
+        // Fără „Comenzi pe ecran” nu are rost să deschidem aplicația peste FORJA: întrebăm întâi (setările se pot deschide doar din prim-plan).
+        if (cmd.then is VoiceCommand.Screen && !ScreenAgent.isConnected()) return screenUnavailable("Pot deschide ${cmd.app}, dar nu și să lucrez în ea. ")
         val (opened, pkg, started) = openAppPkg(cmd.app)
         if (opened !is Outcome.Done || !started) return opened
         return when (val then = cmd.then) {
             is VoiceCommand.Screen -> {
                 if (!ScreenAgent.isConnected()) return screenUnavailable("Am deschis ${cmd.app}. ")
                 val arrived = pkg == null || ScreenAgent.waitForPackage(pkg, 6000)
-                delay(900)   // lăsăm ecranul să se așeze
                 if (!arrived) return Outcome.Done("Am deschis ${cmd.app}, dar nu a ajuns în față. Repetă comanda din aplicație.")
+                ScreenAgent.waitForContent(5000)   // o aplicație pornită la rece are nevoie de o clipă să se deseneze
+                delay(400)
                 val r = screen(then.action)
                 if (r is Outcome.Done) r.copy(spoken = "Am deschis ${cmd.app}. " + r.spoken) else r
             }

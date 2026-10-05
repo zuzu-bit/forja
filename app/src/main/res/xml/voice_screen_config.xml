@@ -8,5 +8,6 @@
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:description="@string/voice_screen_desc"
+    android:isAccessibilityTool="true"
     android:notificationTimeout="100"
     android:settingsActivity="com.forja.app.MainActivity" />

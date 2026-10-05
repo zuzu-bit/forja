@@ -256,6 +256,15 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- „Ascultă acum" din notificare / tile: închide panoul și ascultă pe loc, fără să deschidă FORJA peste aplicație. -->
+        <activity
+            android:name=".core.voice.VoiceListenActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Forja.Transparent" />
+
         <!-- „FORJA · Comenzi pe ecran": asistentul lucrează în alte aplicații (citește, apasă, scrie, caută).
              Serviciu de accesibilitate separat de Detox; îl pornește doar utilizatorul, din Setări → Accesibilitate. -->
         <service

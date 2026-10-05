@@ -31,7 +31,11 @@ class VoiceScreenService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            event.packageName?.toString()?.let { if (it.isNotBlank()) foregroundPackage = it }
+            val pkg = event.packageName?.toString().orEmpty()
+            // Tastatura, bara de sistem și ferestrele de sistem nu sunt „aplicația din față”.
+            if (pkg.isNotBlank() && pkg != "android" && pkg != "com.android.systemui" && !pkg.contains("inputmethod") && !pkg.contains("keyboard")) {
+                foregroundPackage = pkg
+            }
         }
     }
 
@@ -93,13 +97,23 @@ object ScreenAgent {
     suspend fun waitForPackage(pkg: String, timeoutMs: Long = 5000): Boolean {
         val start = SystemClock.elapsedRealtime()
         while (SystemClock.elapsedRealtime() - start < timeoutMs) {
-            if (foregroundPackage() == pkg || rootPackage() == pkg) return true
+            if (rootPackage() == pkg || foregroundPackage() == pkg) return true
             delay(150)
         }
-        return foregroundPackage() == pkg || rootPackage() == pkg
+        return rootPackage() == pkg || foregroundPackage() == pkg
     }
 
     private fun rootPackage(): String = try { VoiceScreenService.instance?.rootInActiveWindow?.packageName?.toString() ?: "" } catch (_: Exception) { "" }
+
+    /** Așteaptă să apară conținut pe ecran (o aplicație abia pornită are nevoie de o clipă să se deseneze). */
+    suspend fun waitForContent(timeoutMs: Long = 5000, minItems: Int = 3): Boolean {
+        val start = SystemClock.elapsedRealtime()
+        while (SystemClock.elapsedRealtime() - start < timeoutMs) {
+            if (items().count { it.text.isNotBlank() } >= minItems) return true
+            delay(200)
+        }
+        return false
+    }
 
     private suspend fun root(): AccessibilityNodeInfo? {
         val svc = VoiceScreenService.instance ?: return null
@@ -154,12 +168,14 @@ object ScreenAgent {
         val seen = HashSet<String>()
         val sb = StringBuilder()
         for (it in list) {
-            val t = it.text.replace(Regex("\\s+"), " ").trim()
+            val t = it.text.replace(Regex("\\s+"), " ").trim().let { x -> if (x.length > 300) x.take(300) + "…" else x }
             val key = VoiceText.normalize(t)
             if (key.isEmpty() || !seen.add(key)) continue
+            // Strict sub limită: TextToSpeech aruncă în tăcere textele peste ~4000 de caractere.
+            val room = maxChars - sb.length
+            if (room <= 0) { sb.append("…"); break }
             if (sb.isNotEmpty()) sb.append(". ")
-            sb.append(t)
-            if (sb.length > maxChars) { sb.append("…"); break }
+            sb.append(if (t.length > room) t.take(room) + "…" else t)
         }
         return sb.toString()
     }
@@ -223,7 +239,7 @@ object ScreenAgent {
         node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
     } catch (_: Exception) { false }
 
-    /** Enter / „caută” în câmpul focalizat. */
+    /** Enter / „caută” în câmpul focalizat (Android 11+ are acțiunea IME; mai jos, doar un buton vizibil). */
     suspend fun enter(): Boolean {
         val list = items()
         val field = list.firstOrNull { it.editable && it.focused } ?: list.firstOrNull { it.editable }
@@ -236,51 +252,58 @@ object ScreenAgent {
         return false
     }
 
-    /** Caută în aplicația din față: apasă pe „căutare”, scrie, Enter. */
-    suspend fun search(query: String): Boolean {
+    enum class SearchResult { NO_SEARCH, SUBMITTED, TYPED_ONLY }
+
+    /** Caută în aplicația din față: apasă pe „căutare”, scrie, Enter. Nu scrie în câmpuri care nu sunt de căutare. */
+    suspend fun search(query: String): SearchResult {
         var list = items()
-        var field = list.firstOrNull { it.editable && it.focused } ?: list.firstOrNull { it.editable && looksLikeSearch(it) }
+        var field = list.firstOrNull { it.editable && looksLikeSearch(it) }
         if (field == null) {
             val affordance = list.firstOrNull { it.clickable && looksLikeSearch(it) } ?: list.firstOrNull { looksLikeSearch(it) }
             if (affordance != null) {
                 tap(affordance)
-                delay(700)
-                list = items()
-                field = list.firstOrNull { it.editable && it.focused } ?: list.firstOrNull { it.editable }
+                // După apăsarea pe lupă, câmpul care primește focus e cel de căutare; îl așteptăm până la 2 s.
+                repeat(10) {
+                    delay(200)
+                    list = items()
+                    field = list.firstOrNull { it.editable && it.focused } ?: list.firstOrNull { it.editable && looksLikeSearch(it) }
+                    if (field != null) return@repeat
+                }
             }
         }
-        if (field == null) field = list.firstOrNull { it.editable }
-        if (field == null) return false
-        if (!setText(field.node, query)) return false
+        if (field == null) return SearchResult.NO_SEARCH
+        if (!setText(field.node, query)) return SearchResult.NO_SEARCH
         delay(350)
-        if (!enter()) {
-            // Unele aplicații caută singure după scriere; altele au nevoie de Enter prin tastatură — încercăm gestul pe lupă.
-            delay(300)
-        }
-        return true
+        return if (enter()) SearchResult.SUBMITTED else SearchResult.TYPED_ONLY
     }
 
     private fun looksLikeSearch(it: ScreenItem): Boolean {
         val label = VoiceText.normalize(it.text)
         val id = try { it.node.viewIdResourceName?.lowercase().orEmpty() } catch (_: Exception) { "" }
-        return label.contains("caut") || label.contains("search") || label.contains("cautare") ||
-            id.contains("search") || id.contains("query")
+        val hint = try { if (Build.VERSION.SDK_INT >= 26) VoiceText.normalize(it.node.hintText?.toString().orEmpty()) else "" } catch (_: Exception) { "" }
+        return label.contains("caut") || label.contains("search") || label.contains("find") ||
+            hint.contains("caut") || hint.contains("search") ||
+            id.contains("search") || id.contains("query") || id.contains("find")
     }
 
-    /** Derulează lista / pagina din față. */
+    /** Derulează lista / pagina din față: cel mai mare element derulabil (de regulă lista verticală, nu rândul de filtre). */
     suspend fun scroll(down: Boolean): Boolean {
         val r = root() ?: return false
-        var target: AccessibilityNodeInfo? = null
+        val candidates = ArrayList<Pair<AccessibilityNodeInfo, Long>>()
         fun walk(n: AccessibilityNodeInfo?, depth: Int) {
-            if (n == null || target != null || depth > 60) return
+            if (n == null || depth > 60) return
             try {
-                if (n.isScrollable && n.isVisibleToUser) { target = n; return }
+                if (n.isScrollable && n.isVisibleToUser) {
+                    val b = Rect(); n.getBoundsInScreen(b)
+                    val area = b.width().toLong() * b.height().toLong()
+                    candidates += n to (if (b.height() >= b.width()) area * 2 else area)
+                }
                 for (i in 0 until n.childCount) walk(n.getChild(i), depth + 1)
             } catch (_: Exception) { }
         }
         walk(r, 0)
-        target?.let {
-            val ok = it.performAction(if (down) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+        for ((node, _) in candidates.sortedByDescending { it.second }) {
+            val ok = try { node.performAction(if (down) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) } catch (_: Exception) { false }
             if (ok) return true
         }
         // Gest: tragem cu degetul pe mijlocul ecranului
@@ -299,7 +322,7 @@ object ScreenAgent {
 
     /** Numele aplicației din față, pentru „În YouTube: …”. */
     fun foregroundAppLabel(context: Context): String {
-        val pkg = foregroundPackage().ifBlank { rootPackage() }
+        val pkg = rootPackage().ifBlank { foregroundPackage() }
         if (pkg.isBlank()) return ""
         return try {
             context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(pkg, 0)).toString()

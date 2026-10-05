@@ -59,8 +59,9 @@ class VoiceWakeService : Service() {
             this, 0, Intent(this, MainActivity::class.java).setAction(MainActivity.ACTION_VOICE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val listenNow = PendingIntent.getService(
-            this, 1, Intent(this, VoiceWakeService::class.java).setAction(ACTION_LISTEN),
+        // O activitate transparentă de o clipă: închide panoul de notificări și ascultă în aplicația rămasă pe ecran.
+        val listenNow = PendingIntent.getActivity(
+            this, 1, Intent(this, VoiceListenActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val stop = PendingIntent.getService(

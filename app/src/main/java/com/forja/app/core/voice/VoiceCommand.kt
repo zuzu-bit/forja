@@ -104,6 +104,10 @@ object VoiceText {
     fun cleanRaw(raw: String): String =
         POLITE_RAW.replace(WHATSAPP_RAW.replace(raw.trim(), " "), "").replace(Regex("\\s+"), " ").trim().replace(Regex("[.!?]+$"), "").trim()
 
+    /** Ca [cleanRaw], dar păstrează orice cuvânt (și „whatsapp"): pentru ținte de pe ecran, căutări, locuri. */
+    fun cleanRawLight(raw: String): String =
+        POLITE_RAW.replace(raw.trim(), "").replace(Regex("\\s+"), " ").trim().replace(Regex("[.!?]+$"), "").trim()
+
     /** Ultimele [words] cuvinte din [raw] — corpul mesajului e mereu coada frazei; așa păstrăm diacriticele și majusculele. */
     fun tailWords(raw: String, words: Int): String {
         if (words <= 0) return ""
@@ -237,7 +241,7 @@ object CommandParser {
     private val SCREEN_TYPE = Regex("^(?:scrie|tasteaza|type|write|introdu|enter text|dicteaza|dictate)\\s+(?!(?:-i\\s|i\\s|lui\\s|la\\s|catre\\s|pentru\\s|un\\s|o\\s|a\\s|an\\s|the\\s|this\\s|that\\s|to\\s|mesaj|sms|text|pe whatsapp|on whatsapp))(?:textul\\s+|the text\\s+|aici\\s+|here\\s+)?(.+)$")
     private val SCREEN_SCROLL = Regex("^(?:deruleaza|scroll|da (?:in |mai )?(?:jos|sus)|mergi (?:mai )?(?:jos|sus)|swipe|mai (?:jos|sus)|pagina urmatoare|next page|page down|page up|continua)\\s*(?:in\\s+|pe\\s+)?(jos|sus|down|up|mai jos|mai sus|in jos|in sus)?\\s*$")
     private val SCREEN_BACK = Regex("^(?:inapoi|mergi inapoi|du-te inapoi|go back|back|navigate back|iesi|exit|close|inchide(?: asta| pagina| aplicatia)?)\\s*$")
-    private val SCREEN_HOME = Regex("^(?:ecranul principal|ecranul de start|home screen|go home|home|acasa pe telefon|la ecranul principal)\\s*$")
+    private val SCREEN_HOME = Regex("^(?:ecranul principal|ecranul de start|home screen|go to home screen|go to the home screen|acasa pe telefon|la ecranul principal|ecranul principal al telefonului)\\s*$")
     private val SCREEN_ENTER = Regex("^(?:enter|apasa(?: pe)? enter|press enter|apasa(?: pe)? cauta|apasa(?: pe)? trimite|apasa(?: pe)? ok|hit enter|submit|go)\\s*$")
     private val SCREEN_SEARCH_HERE = Regex("^(?:cauta(?:-mi|mi)?|search(?: for)?|find|gaseste(?:-mi|mi)?)\\s+(?:aici\\s+|here\\s+|in aplicatie\\s+|in aplicatia asta\\s+|in app\\s+|in the app\\s+|in this app\\s+)(.+)$|^(?:cauta(?:-mi|mi)?|search(?: for)?|find|gaseste(?:-mi|mi)?)\\s+(.+?)\\s+(?:aici|here|in aplicatie|in aplicatia asta|in app|in the app|in this app)$")
     private val ENABLE_SCREEN = Regex("^(?:activeaza|porneste|enable|turn on)\\s+(?:controlul (?:ecranului|pe ecran)|comenzile pe ecran|accesibilitatea|screen control|accessibility)\\b")
@@ -266,7 +270,7 @@ object CommandParser {
         NavRule(AppTarget.VOICE, "voce|vocea|asistent|asistentul|asistentul vocal|comenzi vocale|voice|assistant|voice assistant")
     )
     private val NAV_REGEX: List<Pair<Regex, AppTarget>> = NAV_RULES.map { r ->
-        Regex("^(?:(?:deschide(?:-mi|mi)?|du-ma la|du-ma in|duma la|arata(?:-mi|mi)?|mergi la|hai la|intra in|treci la|porneste|incepe|start|open|go to|show me|show|take me to|switch to|navigate to|launch)\\s+)?(?:la\\s+|in\\s+|the\\s+|pagina\\s+|ecranul\\s+|modulul\\s+|sectiunea\\s+|pagina de\\s+|ecranul de\\s+|modulul de\\s+|un\\s+|o\\s+)?(?:de\\s+)?(?:${r.keywords})(?:\\s+(?:te rog|please|acum|now))?$") to r.target
+        Regex("^(?:(?:deschide(?:-mi|mi)?|du-ma la|du-ma in|duma la|arata(?:-mi|mi)?|mergi la|hai la|intra in|treci la|navigheaza (?:la|spre|catre)|navigheaza|porneste|incepe|start|open|go to|show me|show|take me to|switch to|navigate to|launch)\\s+)?(?:la\\s+|in\\s+|the\\s+|pagina\\s+|ecranul\\s+|modulul\\s+|sectiunea\\s+|pagina de\\s+|ecranul de\\s+|modulul de\\s+|un\\s+|o\\s+)?(?:de\\s+)?(?:${r.keywords})(?:\\s+(?:te rog|please|acum|now))?$") to r.target
     }
 
     /** Textul rostit → comandă. Acceptă „hei forja" la început, îl ignoră. */
@@ -307,7 +311,7 @@ object CommandParser {
     /** Textul original (majuscule, diacritice) pentru ultimele [words] cuvinte ale frazei normalizate. */
     private fun rawTail(raw: String, normalizedPart: String): String {
         val n = normalizedPart.split(" ").count { it.isNotBlank() }
-        return VoiceText.tailWords(VoiceText.cleanRaw(raw), n).ifBlank { normalizedPart }
+        return VoiceText.tailWords(VoiceText.cleanRawLight(raw), n).ifBlank { normalizedPart }
     }
 
     /** „deschide youtube și pune meniato”, „open google and search about strawberries”, „deschide waze și du-mă la…”. */
@@ -332,9 +336,19 @@ object CommandParser {
                 if (nav != null) VoiceCommand.OpenPlace(rawTail(raw, nav.groupValues[1].trim()), navigate = true, app = which)
                 else VoiceCommand.OpenPlace(query(PLACE_SHOW), navigate = false, app = which)
             }
+            app in setOf("whatsapp", "telefonul", "phone") -> {
+                val inner = parse(rawTail(raw, rest))
+                when {
+                    app == "whatsapp" && inner is VoiceCommand.SendMessage -> inner.copy(channel = MessageChannel.WHATSAPP)
+                    inner is VoiceCommand.SendMessage || inner is VoiceCommand.Call -> inner
+                    else -> parseScreen(rest, rawTail(raw, rest))?.let { VoiceCommand.OpenAppThen(app, VoiceCommand.Screen(it)) }
+                        ?: VoiceCommand.OpenAppThen(app, VoiceCommand.Unknown(rest))
+                }
+            }
             else -> {
-                val action = parseScreen(rest, raw)
-                val inner = parse(rest)
+                val rawRest = rawTail(raw, rest)
+                val action = parseScreen(rest, rawRest)
+                val inner = parse(rawRest)
                 when {
                     action != null -> VoiceCommand.OpenAppThen(app, VoiceCommand.Screen(action))
                     // „caută X” / „pune X” într-o aplicație oarecare = căutare pe ecranul ei
@@ -361,7 +375,7 @@ object CommandParser {
         }
         SCREEN_SEARCH_HERE.find(t)?.let { m ->
             val q = (m.groupValues[1].ifBlank { m.groupValues[2] }).trim()
-            val rawNoTail = VoiceText.cleanRaw(raw).replace(Regex("\\s+(?:aici|here|in aplica[tț]ie|in aplica[tț]ia asta|in app|in the app|in this app)\\s*$", RegexOption.IGNORE_CASE), "")
+            val rawNoTail = VoiceText.cleanRawLight(raw).replace(Regex("\\s+(?:aici|here|[iî]n aplica[tț]ie|[iî]n aplica[tț]ia asta|in app|in the app|in this app)\\s*$", RegexOption.IGNORE_CASE), "")
             if (q.isNotBlank()) return ScreenAction.Search(VoiceText.tailWords(rawNoTail, q.split(" ").count { it.isNotBlank() }).ifBlank { q })
         }
         SCREEN_TYPE.find(t)?.let { m ->
@@ -380,21 +394,29 @@ object CommandParser {
             val q = m.groupValues[1].trim()
             if (q.isNotBlank()) return VoiceCommand.WebSearch(rawTail(raw, q))
         }
-        if (WEB_QUESTION.containsMatchIn(t) && t.split(" ").size >= 3) return VoiceCommand.WebSearch(VoiceText.cleanRaw(raw).let { VoiceText.stripWakeWord(VoiceText.normalize(it)).ifBlank { t } })
+        if (WEB_QUESTION.containsMatchIn(t) && t.split(" ").size >= 3) return VoiceCommand.WebSearch(rawTail(raw, t))
         return null
     }
 
     /** „du-mă la gară”, „navighează spre spital”, „arată-mi pe hartă farmacia” — doar dacă e clar că e un loc. */
+    private val MAP_PHRASE = Regex("\\b(?:pe harta|on the map|cu waze|on waze|pe waze|cu google maps|on google maps|in maps|pe maps)\\b")
+    private val MAP_PHRASE_RAW = Regex("(?<![\\p{L}])(?:pe hart[aă]|on the map|cu waze|on waze|pe waze|cu google maps|on google maps|in maps|pe maps)(?![\\p{L}])", RegexOption.IGNORE_CASE)
+
     private fun parsePlace(t: String, raw: String): VoiceCommand? {
-        if (Regex("\\b(?:pe harta|on the map|cu waze|on waze|pe waze|cu google maps|on google maps|in maps|pe maps)\\b").containsMatchIn(t)) {
+        if (MAP_PHRASE.containsMatchIn(t)) {
             val which = if (t.contains("waze")) "waze" else "maps"
-            val clean = t.replace(Regex("\\b(?:pe harta|on the map|cu waze|on waze|pe waze|cu google maps|on google maps|in maps|pe maps)\\b"), " ").replace(Regex("\\s+"), " ").trim()
-            PLACE_NAV.find(clean)?.let { return VoiceCommand.OpenPlace(rawTail(raw, it.groupValues[1].trim()), navigate = true, app = which) }
-            PLACE_SHOW.find(clean)?.let { return VoiceCommand.OpenPlace(rawTail(raw, it.groupValues[1].trim()), navigate = false, app = which) }
-            return VoiceCommand.OpenPlace(rawTail(raw, clean), navigate = false, app = which)
+            val clean = MAP_PHRASE.replace(t, " ").replace(Regex("\\s+"), " ").trim()
+            val rawClean = MAP_PHRASE_RAW.replace(VoiceText.cleanRawLight(raw), " ").replace(Regex("\\s+"), " ").trim()
+            fun tail(part: String) = VoiceText.tailWords(rawClean, part.split(" ").count { it.isNotBlank() }).ifBlank { part }
+            PLACE_NAV.find(clean)?.let { return VoiceCommand.OpenPlace(tail(it.groupValues[1].trim()), navigate = true, app = which) }
+            PLACE_SHOW.find(clean)?.let { return VoiceCommand.OpenPlace(tail(it.groupValues[1].trim()), navigate = false, app = which) }
+            return VoiceCommand.OpenPlace(tail(clean), navigate = false, app = which)
         }
-        Regex("^(?:navigheaza|navigate|cum ajung|directions|traseu|ruta)(?:\\s+(?:la|catre|spre|pana la|to))?\\s+(.+)$").find(t)?.let {
-            return VoiceCommand.OpenPlace(rawTail(raw, it.groupValues[1].trim()), navigate = true)
+        Regex("^(?:navigheaza|navigate|cum ajung|directions|traseu|ruta)(?:\\s+(?:la|catre|spre|pana la|to))?\\s+(.+)$").find(t)?.let { m ->
+            val place = m.groupValues[1].trim()
+            // „navighează la hartă / profil” = ecranele FORJA, nu un loc pe hartă
+            if (NAV_REGEX.any { (rx, _) -> rx.matches(place) }) return null
+            return VoiceCommand.OpenPlace(rawTail(raw, place), navigate = true)
         }
         return null
     }
