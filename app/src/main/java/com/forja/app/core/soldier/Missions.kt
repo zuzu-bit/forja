@@ -25,6 +25,7 @@ object Missions {
     const val GOOD_DAY = 3
     /** Zilele păstrate în stare. */
     private const val KEEP_DAYS = 10L
+    private const val DAY_MS = 24 * 3_600_000L
     /** Bonusul seriei: la fiecare 7 zile bune la rând. */
     const val STREAK_BONUS = 50
     const val STREAK_ID = "streak7"
@@ -63,14 +64,17 @@ object Missions {
         suspend fun <T> safe(default: T, block: suspend () -> T): T = try { withTimeoutOrNull(4000) { block() } ?: default } catch (_: Exception) { default }
 
         val meals = safe(0) { db.mealDao().mealsForDay(day).first().size }
-        val km = safe(0.0) { db.activityDao().since(dayStart).first().filter { it.startAt < dayEnd }.sumOf { it.distanceM } / 1000.0 }
+        // turele: și cea începută aseară și încheiată după miezul nopții (rândul apare abia la final) — în ziua încheierii
+        val km = safe(0.0) { db.activityDao().since(dayStart - DAY_MS).first().filter { inDay(it.startAt) || inDay(it.endAt) }.sumOf { it.distanceM } / 1000.0 }
         // un antrenament încheiat azi (pornit azi sau terminat azi — și cel început aseară contează în ziua în care s-a încheiat)
         val workout = safe(false) { db.workoutDao().lastSession().first()?.let { it.endedAt != null && (inDay(it.startedAt) || inDay(it.endedAt)) } ?: false }
         val sleep = safe(false) { db.sleepDao().lastFinished().first()?.let { inDay(it.endAt) } ?: false }
         val focusMin = safe(0) { prefs.focusForest.first().let { it.first * 15 + it.third / 60 } }
         val breath = safe(false) { db.breathSessionDao().since(dayStart).first().any { it.durationS >= 60 && it.startAt < dayEnd } }
         val detox = safe(false) { prefs.detoxOn.first() }
-        val place = safe(false) { db.exploreDao().places().first().any { inDay(it.firstAt) } }
+        // un loc nou: apare după pragul de ședere (firstAt = începutul șederii) — cel început aseară contează în ziua în care a atins pragul
+        val placeThresholdMs = safe(300L) { prefs.placeThresholdMin.first().coerceAtLeast(1).toLong() } * 60_000L
+        val place = safe(false) { db.exploreDao().places().first().any { inDay(it.firstAt) || (it.firstAt < dayStart && inDay(it.firstAt + placeThresholdMs)) } }
         val game = safe(false) { db.gamePlayDao().since(dayStart).first().any { it.outcome == "won" && it.at < dayEnd } }
         val voice = safe(false) { prefs.voiceUsedDay.first() == day }
         val present = foreground || safe(false) { prefs.presentDay.first() == day }
@@ -95,48 +99,61 @@ object Missions {
         SoldierStore.load(app)
         val today = evaluate(app, now, foreground)
         val day = dayOf(now)
-        var newPoints = 0
-        var newly: List<Mission> = emptyList()
-        var promoted: Rank? = null
-        var bonus = false
-        val next = SoldierStore.update(app) { s ->
-            // Ceasul dat înapoi (sau o zi mai veche decât ultima scrisă): nu dăm puncte pe o zi trecută.
-            val latest = s.days.keys.maxOrNull() ?: day
-            if (day < latest) return@update s
-            val before = s.rank
-            val already = s.doneOn(day)
-            newly = today.filter { it.done && it.mission.id !in already }.map { it.mission }
-            newPoints = newly.sumOf { it.points }
-            var todaySet = already + newly.map { it.id }
-            var earned = s.earned + newPoints
-            var balance = s.balance + newPoints
-            // Seria: zilele bune la rând, ținută ca un contor ([goodRun], până la [goodRunDay]) — nu depinde de câte
-            // zile păstrăm în [days]. Azi intră în serie când ajunge la prag; o zi fără prag o rupe.
-            var run = s.goodRun
-            var runDay = s.goodRunDay
-            if (runDay == 0L && s.streak > 0) {
-                // seria din 5.0 (numărată din zilele păstrate): o preluăm dacă e încă vie
-                val lastGood = listOf(day, day - 1).firstOrNull { d -> countMissions(s.days[d] ?: emptySet()) >= GOOD_DAY }
-                if (lastGood != null) { run = s.streak; runDay = lastGood }
-            }
-            val todayGood = countMissions(todaySet) >= GOOD_DAY
-            if (todayGood && runDay != day) {
-                run = (if (runDay == day - 1) run else 0) + 1
-                runDay = day
-                if (run % 7 == 0 && STREAK_ID !in todaySet) {
-                    bonus = true
-                    todaySet = todaySet + STREAK_ID
-                    earned += STREAK_BONUS; balance += STREAK_BONUS
-                }
-            }
-            val streak = if (runDay == day || runDay == day - 1) run else 0
-            val days = (s.days + (day to todaySet)).filterKeys { it >= day - KEEP_DAYS }
-            val withDays = s.copy(earned = earned, balance = balance, days = days, streak = streak, goodRun = run, goodRunDay = runDay)
-            val gifted = SoldierStore.grantGifts(withDays)
-            if (gifted.rank.index > before.index) promoted = gifted.rank
-            gifted
+        var adv: Advance? = null
+        val next = SoldierStore.update(app) { s -> advance(s, day, today).also { adv = it }.state }
+        val a = adv ?: return Sync(next, today, 0, emptyList(), null, false)
+        return Sync(next, today, a.newPoints, a.newly, a.promoted, a.bonus)
+    }
+
+    /** Ce a schimbat o zi evaluată: starea nouă, punctele și misiunile noi, gradul nou (dacă e), bonusul seriei (dacă s-a dat). */
+    class Advance(val state: SoldierState, val newPoints: Int, val newly: List<Mission>, val promoted: Rank?, val bonus: Boolean)
+
+    /**
+     * Partea pură a sincronizării: starea [s0] după ziua [day] cu misiunile [today] (bifate sau nu). Punctele se dau o
+     * singură dată pe zi, pe misiune; seria e un contor ([SoldierState.goodRun] până la [SoldierState.goodRunDay]).
+     */
+    fun advance(s0: SoldierState, day: Long, today: List<MissionStatus>): Advance {
+        // Zile din viitor (ceasul a stat dat înainte o vreme, apoi s-a îndreptat): nu-s de încredere — le lăsăm,
+        // altfel ar bloca tot ce urmează. O zi în urmă (fus orar, miezul nopții) e în regulă: `already` ne apără de dubluri.
+        val bogus = s0.days.keys.filter { it > day + 1 }
+        val s = if (bogus.isEmpty()) s0 else s0.copy(
+            days = s0.days - bogus.toSet(),
+            goodRun = if (s0.goodRunDay > day + 1) 0 else s0.goodRun,
+            goodRunDay = if (s0.goodRunDay > day + 1) 0L else s0.goodRunDay
+        )
+        val before = s.rank
+        val already = s.doneOn(day)
+        val newly = today.filter { it.done && it.mission.id !in already }.map { it.mission }
+        val newPoints = newly.sumOf { it.points }
+        var todaySet = already + newly.map { it.id }
+        var earned = s.earned + newPoints
+        var balance = s.balance + newPoints
+        // Seria: zilele bune la rând, ținută ca un contor ([goodRun], până la [goodRunDay]) — nu depinde de câte
+        // zile păstrăm în [days]. Azi intră în serie când ajunge la prag; o zi fără prag o rupe.
+        var run = s.goodRun
+        var runDay = s.goodRunDay
+        if (runDay == 0L && s.streak > 0) {
+            // seria din 5.0 (numărată din zilele păstrate): o preluăm dacă e încă vie
+            val lastGood = listOf(day, day - 1).firstOrNull { d -> countMissions(s.days[d] ?: emptySet()) >= GOOD_DAY }
+            if (lastGood != null) { run = s.streak; runDay = lastGood }
         }
-        return Sync(next, today, newPoints, newly, promoted, bonus)
+        var bonus = false
+        val todayGood = countMissions(todaySet) >= GOOD_DAY
+        if (todayGood && runDay < day) {
+            run = (if (runDay == day - 1) run else 0) + 1
+            runDay = day
+            if (run % 7 == 0 && STREAK_ID !in todaySet) {
+                bonus = true
+                todaySet = todaySet + STREAK_ID
+                earned += STREAK_BONUS; balance += STREAK_BONUS
+            }
+        }
+        // (runDay == day + 1: o zi „din viitor” încă vie, după un fus orar — seria rămâne cum e)
+        val streak = if (runDay in (day - 1)..(day + 1)) run else 0
+        val days = (s.days + (day to todaySet)).filterKeys { it >= day - KEEP_DAYS }
+        val withDays = s.copy(earned = earned, balance = balance, days = days, streak = streak, goodRun = run, goodRunDay = runDay)
+        val gifted = SoldierStore.grantGifts(withDays)
+        return Advance(gifted, newPoints, newly, if (gifted.rank.index > before.index) gifted.rank else null, bonus)
     }
 
     /** Câte misiuni adevărate (fără bonusuri) are o zi. */

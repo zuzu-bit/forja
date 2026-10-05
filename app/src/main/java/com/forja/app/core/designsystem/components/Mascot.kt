@@ -37,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
@@ -698,7 +699,14 @@ fun Mascot(
     Canvas(
         modifier
             .size(size)
-            .then(if (onTap != null) Modifier.semantics { role = Role.Button; contentDescription = description } else Modifier)
+            .then(
+                if (onTap != null) Modifier.semantics {
+                    role = Role.Button
+                    contentDescription = description
+                    // TalkBack / Switch Access: dubla atingere apelează același lucru ca atingerea.
+                    onClick { haptics.performHapticFeedback(HapticFeedbackType.LongPress); tap?.invoke(); true }
+                } else Modifier
+            )
             .pointerInput(Unit) {
                 detectTapGestures {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
