@@ -100,6 +100,8 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
     fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
     var refresh by remember { mutableIntStateOf(0) }
     var micGranted by remember { mutableStateOf(granted(Manifest.permission.RECORD_AUDIO)) }
+    // Tot ce se întâmplă aici se și spune: toast-urile nu sunt citite de TalkBack, iar cine nu vede nu le vede.
+    fun tell(msg: String) { toast.show(msg); voice.speak(msg) }
     // La revenirea din Setări (accesibilitate, permisiuni) recitim starea.
     val lifecycleOwner = LocalLifecycleOwner.current
     var screenWasOn by remember { mutableStateOf(ScreenAgent.isEnabled(context)) }
@@ -117,8 +119,6 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
-    // Tot ce se întâmplă aici se și spune: toast-urile nu sunt citite de TalkBack, iar cine nu vede nu le vede.
-    fun tell(msg: String) { toast.show(msg); voice.speak(msg) }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         micGranted = ok; refresh++
         if (!ok) tell("Fără microfon nu te pot auzi. Permite din Setări → Aplicații → FORJA.")
