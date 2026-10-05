@@ -32,6 +32,16 @@ object AccessibilityLink {
         )
     }
 
+    /**
+     * Intenția cea mai bună pe acest telefon: prima pe care Setările o recunosc; altfel lista generală (există peste tot).
+     * Niciodată null — pentru notificările care deschid setările la o atingere.
+     */
+    fun best(context: Context): Intent {
+        val all = intents(context)
+        val pm = context.packageManager
+        return all.firstOrNull { i -> try { i.resolveActivity(pm) != null } catch (_: Exception) { false } } ?: all.last()
+    }
+
     /** Deschide pagina serviciului (sau lista); false dacă telefonul nu are nici setările de accesibilitate. */
     fun open(context: Context): Boolean {
         for (i in intents(context)) {

@@ -62,6 +62,13 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- Pagina serviciului FORJA din Accesibilitate (ca să știm dinainte dacă telefonul o are; altfel lista). -->
+        <intent>
+            <action android:name="android.settings.ACCESSIBILITY_DETAILS_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.ACCESSIBILITY_SETTINGS" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>

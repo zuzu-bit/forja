@@ -300,7 +300,7 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
                 }
             }
 
-            // Lucrul în alte aplicații: serviciul de accesibilitate „Comenzi pe ecran” (doar utilizatorul îl poate porni)
+            // Lucrul în alte aplicații: serviciul de accesibilitate FORJA (același ca pentru Detox; doar utilizatorul îl poate porni)
             val screenOn = remember(refresh, st.phase) { ScreenAgent.isEnabled(context) }
             val screenConnected = remember(refresh, st.phase) { ScreenAgent.isConnected() }
             VoiceSetting(

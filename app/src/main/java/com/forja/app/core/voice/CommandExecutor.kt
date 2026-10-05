@@ -152,7 +152,7 @@ class CommandExecutor(private val app: ForjaApp) {
         }
     }
 
-    // ── Pe ecranul altor aplicații (serviciul de accesibilitate „Comenzi pe ecran”) ──────────────
+    // ── Pe ecranul altor aplicații (serviciul de accesibilitate FORJA, același ca pentru Detox) ──────
 
     private fun screenUnavailable(prefix: String = ""): Outcome =
         if (!ScreenAgent.isEnabled(app)) Outcome.Ask(
@@ -162,8 +162,7 @@ class CommandExecutor(private val app: ForjaApp) {
 
     private fun enableScreen(): Outcome {
         if (ScreenAgent.isConnected()) return Outcome.Done("Accesibilitatea FORJA e deja pornită.")
-        val i = com.forja.app.core.detox.AccessibilityLink.intents(app).firstOrNull { it.resolveActivity(app.packageManager) != null }
-            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) ?: return Outcome.Done("Nu găsesc setările de accesibilitate pe acest telefon.")
+        val i = com.forja.app.core.detox.AccessibilityLink.best(app).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return launch(i, "Am deschis Accesibilitatea. Pornește „FORJA” și confirmă. Dacă Android spune „setare restricționată”, intră în Setări, Aplicații, FORJA, meniul cu trei puncte, „Permite setările restricționate”. Apoi spune din nou comanda.", "Pornește accesibilitatea FORJA")
     }
 
@@ -201,7 +200,7 @@ class CommandExecutor(private val app: ForjaApp) {
 
     /** „deschide X și …”: aplicația, apoi acțiunea — pe ecranul ei sau prin intenție. */
     private suspend fun openAppThen(cmd: VoiceCommand.OpenAppThen, confirmSend: Boolean, lastSpoken: String): Outcome {
-        // Fără „Comenzi pe ecran” nu are rost să deschidem aplicația peste FORJA: întrebăm întâi (setările se pot deschide doar din prim-plan).
+        // Fără serviciul de accesibilitate nu are rost să deschidem aplicația peste FORJA: întrebăm întâi (setările se pot deschide doar din prim-plan).
         if (cmd.then is VoiceCommand.Screen && !ScreenAgent.isConnected()) return screenUnavailable("Pot deschide ${cmd.app}, dar nu și să lucrez în ea. ")
         val (opened, pkg, started) = openAppPkg(cmd.app)
         if (opened !is Outcome.Done || !started) return opened
