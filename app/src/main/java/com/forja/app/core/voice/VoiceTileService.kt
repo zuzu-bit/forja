@@ -25,6 +25,11 @@ class VoiceTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
+        if (VoiceWakeService.running && !isLocked) {
+            // Serviciul cu microfon rulează: ascultăm pe loc, fără să acoperim aplicația din față.
+            try { com.forja.app.ForjaApp.from(this).voice.listen() } catch (_: Exception) { }
+            return
+        }
         val intent = Intent(this, MainActivity::class.java)
             .setAction(MainActivity.ACTION_VOICE_LISTEN)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)

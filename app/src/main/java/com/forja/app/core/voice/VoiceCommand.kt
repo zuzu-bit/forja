@@ -48,6 +48,16 @@ sealed class VoiceCommand {
     data class Call(val who: String) : VoiceCommand()
     data class PlayMusic(val query: String, val service: MusicService) : VoiceCommand()
     data class OpenApp(val name: String) : VoiceCommand()
+    /** „deschide X și fă Y”: aplicația, apoi acțiunea — în ea (pe ecran) sau prin intenție. */
+    data class OpenAppThen(val app: String, val then: VoiceCommand) : VoiceCommand()
+    /** Căutare pe Google / internet. */
+    data class WebSearch(val query: String) : VoiceCommand()
+    /** Un loc pe hartă: arată-l sau pornește navigarea; [app] = „waze” / „maps” / null. */
+    data class OpenPlace(val place: String, val navigate: Boolean, val app: String? = null) : VoiceCommand()
+    /** Acțiune pe ecranul aplicației din față (prin serviciul de accesibilitate). */
+    data class Screen(val action: ScreenAction) : VoiceCommand()
+    /** Deschide setările de accesibilitate ca să pornească controlul ecranului. */
+    object EnableScreenControl : VoiceCommand()
     data class Navigate(val target: AppTarget) : VoiceCommand()
     data class SetAlarm(val hour: Int, val minute: Int) : VoiceCommand()
     object StartSleep : VoiceCommand()
@@ -61,6 +71,18 @@ sealed class VoiceCommand {
     object Stop : VoiceCommand()
     object StopListening : VoiceCommand()
     data class Unknown(val text: String) : VoiceCommand()
+}
+
+/** Ce se poate face pe ecranul altei aplicații. */
+sealed class ScreenAction {
+    object Read : ScreenAction()
+    data class Tap(val target: String) : ScreenAction()
+    data class Type(val text: String) : ScreenAction()
+    data class Scroll(val down: Boolean) : ScreenAction()
+    data class Search(val query: String) : ScreenAction()
+    object Enter : ScreenAction()
+    object Back : ScreenAction()
+    object Home : ScreenAction()
 }
 
 /** Normalizare text pentru potrivire: minuscule, fără diacritice, fără punctuație zgomotoasă. */
@@ -198,6 +220,28 @@ object CommandParser {
     private val MUSIC_VERB = Regex("^(?:pune(?:-mi|mi)?|porneste|da drumul la|da-i drumul la|dai drumul la|canta(?:-mi|mi)?|reda|ruleaza|play|put on|cauta(?:-mi|mi)?|search for|search|find|gaseste(?:-mi|mi)?|asculta|listen to|arata(?:-mi|mi)?)(?:\\s+te rog|\\s+please)?\\s*(?:la\\s+|the\\s+)?(?:(?:muzica|melodia|piesa|cantecul|un cantec|o melodie|o piesa|niste muzica|videoclipul|clipul|videoul|song|the song|music|some music|a song|video|the video|a video|videos|track|the track)\\s*)?(?:(?:asta|aceasta|acesta|acest|this|that|the)\\s*)?(.*)$")
     private val MUSIC_NOUN_ONLY = Regex("^(?:muzica|melodia|piesa|cantecul|song|music|video)\\s*(?:asta|this)?\\s*$")
 
+    // „deschide X și fă Y” — aplicația, apoi ce să facă în ea
+    private val COMPOUND = Regex("^(?:deschide(?:-mi|mi)?|porneste|lanseaza|intra in|open|launch|start|go to)\\s+(?:te rog\\s+|please\\s+)?(?:aplicatia\\s+|app\\s+|the app\\s+|the\\s+)?([a-z0-9][a-z0-9 .+'-]{0,30}?)\\s+(?:si|apoi|and then|and|then|dupa care)\\s+(.+)$")
+    private val YT_APPS = setOf("youtube", "iutub", "yutub", "you tube", "u tube")
+    private val WEB_APPS = setOf("google", "chrome", "browser", "browserul", "internet", "internetul", "web", "firefox", "brave", "edge", "samsung internet", "opera", "the browser", "the internet")
+    private val MAP_APPS = setOf("maps", "google maps", "harti", "hartile", "harta google", "waze", "navigatia", "navigation")
+    private val SEARCH_VERB = Regex("^(?:cauta(?:-mi|mi)?|cautati|search(?: for| about| up)?|look(?: for| up)?|find|google|go to|gaseste(?:-mi|mi)?|arata(?:-mi|mi)?|show(?: me)?)\\s+(?:pe\\s+(?:google|internet|net|web)\\s+|on\\s+(?:google|the internet|the web|internet)\\s+|online\\s+|the web\\s+|the internet\\s+)?(?:for\\s+|about\\s+|despre\\s+|informatii despre\\s+|something about\\s+|ceva despre\\s+)?(.+)$")
+    private val PLAY_VERB = Regex("^(?:pune(?:-mi|mi)?|porneste|da drumul la|canta(?:-mi|mi)?|reda|play|put on|cauta(?:-mi|mi)?|search for|search|find|look for|asculta|listen to|deschide|open|arata(?:-mi|mi)?|show me|show)\\s+(?:te rog\\s+|please\\s+)?(?:(?:melodia|piesa|cantecul|muzica|un cantec|o melodie|videoclipul|clipul|videoul|song|the song|music|some music|a song|video|the video|a video|videos|the track|track)\\s+)?(?:(?:cu|de la|by|from|despre|about|for)\\s+)?(.+)$")
+    private val WEB_SEARCH = Regex("^(?:cauta(?:-mi|mi)?|cautati|search|google|look up|lookup|look for)\\s+(?:pe\\s+(?:google|internet|net|web)\\s+|on\\s+(?:google|the internet|the web|internet)\\s+|google\\s+|online\\s+|the web\\s+|the internet\\s+|in browser\\s+)?(?:for\\s+|about\\s+|despre\\s+|informatii despre\\s+|something about\\s+|ceva despre\\s+)?(.+)$")
+    private val WEB_QUESTION = Regex("^(?:ce (?:e|este|inseamna|sunt)|cine (?:e|este|a fost|sunt)|cat (?:costa|face|e|este)|cum (?:se face|fac|se scrie|se traduce)|unde (?:e|este|se afla|gasesc)|cand (?:e|este|a fost|incepe)|de ce |what (?:is|are|was|does|do)|what's|who (?:is|was|are)|who's|how (?:much|many|do|to|does|can)|why |when (?:is|was|does)|where (?:is|can)|define |definitia )")
+    private val PLACE_NAV = Regex("^(?:navigheaza|navigate|du-ma|duma|drive|mergi|mergem|go|take me|directions|traseu|drum|ruta|cum ajung)(?:\\s+(?:la|catre|spre|pana la|to|in|into|on))?\\s+(.+)$")
+    private val PLACE_SHOW = Regex("^(?:arata(?:-mi|mi)?|show me|show|cauta|search|find|gaseste(?:-mi|mi)?|unde (?:e|este|se afla|sunt)|where (?:is|are))(?:\\s+(?:pe harta|on the map|the map|harta))?\\s+(?:pe harta\\s+|on the map\\s+|for\\s+)?(.+?)(?:\\s+(?:pe harta|on the map))?$")
+    // ── pe ecranul altei aplicații ──
+    private val SCREEN_READ = Regex("^(?:(?:citeste(?:-mi|mi)?|read(?: me)?|spune(?:-mi|mi)?|tell me|zi(?:-mi|mi)?)\\s+(?:ce (?:e|este|scrie|vezi|vad) pe ecran|ce (?:e|este) pe pagina|ecranul|ce scrie|pagina|the screen|whats on (?:the )?screen|what's on (?:the )?screen|what is on (?:the )?screen|the page|rezultatele|the results|textul|the text|tot|everything|mesajul|the message)|ce (?:e|este|scrie|vezi|vad|avem) pe ecran|ce scrie(?: aici| pe ecran)?|what(?:'s|s| is) on (?:the |my )?screen|what does it say|describe the screen|descrie ecranul|unde sunt)\\s*$")
+    private val SCREEN_TAP = Regex("^(?:apasa(?:-l|l)?|atinge|da click|click|clic|tap|press|push|hit|select|selecteaza|alege|activeaza|deschide-l|bifeaza|check)(?:\\s+(?:pe|on))?\\s+(?:butonul\\s+|the button\\s+|the\\s+|optiunea\\s+|pe\\s+)?(.+)$")
+    private val SCREEN_TYPE = Regex("^(?:scrie|tasteaza|type|write|introdu|enter text|dicteaza|dictate)\\s+(?!(?:-i\\s|i\\s|lui\\s|la\\s|catre\\s|pentru\\s|un\\s|o\\s|a\\s|an\\s|the\\s|this\\s|that\\s|to\\s|mesaj|sms|text|pe whatsapp|on whatsapp))(?:textul\\s+|the text\\s+|aici\\s+|here\\s+)?(.+)$")
+    private val SCREEN_SCROLL = Regex("^(?:deruleaza|scroll|da (?:in |mai )?(?:jos|sus)|mergi (?:mai )?(?:jos|sus)|swipe|mai (?:jos|sus)|pagina urmatoare|next page|page down|page up|continua)\\s*(?:in\\s+|pe\\s+)?(jos|sus|down|up|mai jos|mai sus|in jos|in sus)?\\s*$")
+    private val SCREEN_BACK = Regex("^(?:inapoi|mergi inapoi|du-te inapoi|go back|back|navigate back|iesi|exit|close|inchide(?: asta| pagina| aplicatia)?)\\s*$")
+    private val SCREEN_HOME = Regex("^(?:ecranul principal|ecranul de start|home screen|go home|home|acasa pe telefon|la ecranul principal)\\s*$")
+    private val SCREEN_ENTER = Regex("^(?:enter|apasa(?: pe)? enter|press enter|apasa(?: pe)? cauta|apasa(?: pe)? trimite|apasa(?: pe)? ok|hit enter|submit|go)\\s*$")
+    private val SCREEN_SEARCH_HERE = Regex("^(?:cauta(?:-mi|mi)?|search(?: for)?|find|gaseste(?:-mi|mi)?)\\s+(?:aici\\s+|here\\s+|in aplicatie\\s+|in aplicatia asta\\s+|in app\\s+|in the app\\s+|in this app\\s+)(.+)$|^(?:cauta(?:-mi|mi)?|search(?: for)?|find|gaseste(?:-mi|mi)?)\\s+(.+?)\\s+(?:aici|here|in aplicatie|in aplicatia asta|in app|in the app|in this app)$")
+    private val ENABLE_SCREEN = Regex("^(?:activeaza|porneste|enable|turn on)\\s+(?:controlul (?:ecranului|pe ecran)|comenzile pe ecran|accesibilitatea|screen control|accessibility)\\b")
+
     private val OPEN_APP = Regex("^(?:deschide(?:-mi|mi)?|porneste|lanseaza|ruleaza|intra in|open|launch|start|run|go to)\\s+(?:te rog\\s+|please\\s+)?(?:aplicatia\\s+|app\\s+|the app\\s+|the\\s+)?(.+?)(?:\\s+(?:aplicatia|app|te rog|please))?$")
     private val TRAILING_POLITE = Regex("\\s*(?:te rog|please|multumesc|thanks|thank you)\\s*$")
 
@@ -243,16 +287,116 @@ object CommandParser {
         if (SLEEP_START.containsMatchIn(t)) return VoiceCommand.StartSleep
         if (SLEEP_STOP.containsMatchIn(t)) return VoiceCommand.StopSleep
 
+        if (ENABLE_SCREEN.containsMatchIn(t)) return VoiceCommand.EnableScreenControl
+        parseCompound(t, raw)?.let { return it }
+        parseScreen(t, raw)?.let { return VoiceCommand.Screen(it) }
         parseAlarm(t)?.let { return it }
         parseMessage(t, VoiceText.cleanRaw(raw))?.let { return it }
         parseCall(t)?.let { return it }
         parseMusic(t)?.let { return it }
+        parsePlace(t, raw)?.let { return it }
         for ((rx, target) in NAV_REGEX) if (rx.matches(t)) return VoiceCommand.Navigate(target)
         OPEN_APP.find(t)?.let { m ->
             val name = m.groupValues[1].trim()
             if (name.isNotBlank()) return VoiceCommand.OpenApp(name)
         }
+        parseWebSearch(t, raw)?.let { return it }
         return VoiceCommand.Unknown(t)
+    }
+
+    /** Textul original (majuscule, diacritice) pentru ultimele [words] cuvinte ale frazei normalizate. */
+    private fun rawTail(raw: String, normalizedPart: String): String {
+        val n = normalizedPart.split(" ").count { it.isNotBlank() }
+        return VoiceText.tailWords(VoiceText.cleanRaw(raw), n).ifBlank { normalizedPart }
+    }
+
+    /** „deschide youtube și pune meniato”, „open google and search about strawberries”, „deschide waze și du-mă la…”. */
+    private fun parseCompound(t: String, raw: String): VoiceCommand? {
+        val m = COMPOUND.find(t) ?: return null
+        val app = m.groupValues[1].trim()
+        val rest = m.groupValues[2].trim()
+        if (app.isBlank() || rest.isBlank()) return null
+        val external = app in YT_APPS || app in WEB_APPS || app in MAP_APPS || app.startsWith("spotif") ||
+            app in setOf("youtube music", "yt music", "settings", "setari", "setarile", "setarile telefonului", "whatsapp", "telefonul", "phone")
+        // „deschide antrenamentul și …” nu e o aplicație externă: lăsăm restul regulilor.
+        if (!external && NAV_REGEX.any { (rx, _) -> rx.matches(app) }) return null
+        fun query(rx: Regex): String = (rx.find(rest)?.groupValues?.get(1) ?: rest).trim().let { rawTail(raw, it) }
+        return when {
+            app in YT_APPS -> VoiceCommand.PlayMusic(query(PLAY_VERB), MusicService.YOUTUBE)
+            app == "youtube music" || app == "yt music" -> VoiceCommand.PlayMusic(query(PLAY_VERB), MusicService.YOUTUBE_MUSIC)
+            app.startsWith("spotif") -> VoiceCommand.PlayMusic(query(PLAY_VERB), MusicService.SPOTIFY)
+            app in WEB_APPS -> VoiceCommand.WebSearch(query(SEARCH_VERB))
+            app in MAP_APPS -> {
+                val nav = PLACE_NAV.find(rest)
+                val which = if (app == "waze") "waze" else "maps"
+                if (nav != null) VoiceCommand.OpenPlace(rawTail(raw, nav.groupValues[1].trim()), navigate = true, app = which)
+                else VoiceCommand.OpenPlace(query(PLACE_SHOW), navigate = false, app = which)
+            }
+            else -> {
+                val action = parseScreen(rest, raw)
+                val inner = parse(rest)
+                when {
+                    action != null -> VoiceCommand.OpenAppThen(app, VoiceCommand.Screen(action))
+                    // „caută X” / „pune X” într-o aplicație oarecare = căutare pe ecranul ei
+                    SEARCH_VERB.containsMatchIn(rest) -> VoiceCommand.OpenAppThen(app, VoiceCommand.Screen(ScreenAction.Search(query(SEARCH_VERB))))
+                    PLAY_VERB.containsMatchIn(rest) && inner !is VoiceCommand.SendMessage && inner !is VoiceCommand.Call ->
+                        VoiceCommand.OpenAppThen(app, VoiceCommand.Screen(ScreenAction.Search(query(PLAY_VERB))))
+                    inner !is VoiceCommand.Unknown && inner !is VoiceCommand.OpenApp -> VoiceCommand.OpenAppThen(app, inner)
+                    else -> VoiceCommand.OpenAppThen(app, VoiceCommand.Unknown(rest))
+                }
+            }
+        }
+    }
+
+    /** Acțiunile pe ecranul aplicației din față. */
+    fun parseScreen(t: String, raw: String): ScreenAction? {
+        if (SCREEN_READ.containsMatchIn(t)) return ScreenAction.Read
+        if (SCREEN_BACK.matches(t)) return ScreenAction.Back
+        if (SCREEN_HOME.matches(t)) return ScreenAction.Home
+        if (SCREEN_ENTER.matches(t)) return ScreenAction.Enter
+        SCREEN_SCROLL.find(t)?.let { m ->
+            val dir = m.groupValues[1]
+            val up = dir.contains("sus") || dir.contains("up") || t.contains(" sus") || t == "page up"
+            return ScreenAction.Scroll(down = !up)
+        }
+        SCREEN_SEARCH_HERE.find(t)?.let { m ->
+            val q = (m.groupValues[1].ifBlank { m.groupValues[2] }).trim()
+            val rawNoTail = VoiceText.cleanRaw(raw).replace(Regex("\\s+(?:aici|here|in aplica[tț]ie|in aplica[tț]ia asta|in app|in the app|in this app)\\s*$", RegexOption.IGNORE_CASE), "")
+            if (q.isNotBlank()) return ScreenAction.Search(VoiceText.tailWords(rawNoTail, q.split(" ").count { it.isNotBlank() }).ifBlank { q })
+        }
+        SCREEN_TYPE.find(t)?.let { m ->
+            val text = m.groupValues[1].trim()
+            if (text.isNotBlank()) return ScreenAction.Type(rawTail(raw, text))
+        }
+        SCREEN_TAP.find(t)?.let { m ->
+            val target = m.groupValues[1].trim()
+            if (target.isNotBlank() && !Regex("^(?:alarma|alarm|enter)$").matches(target)) return ScreenAction.Tap(rawTail(raw, target))
+        }
+        return null
+    }
+
+    private fun parseWebSearch(t: String, raw: String): VoiceCommand? {
+        WEB_SEARCH.find(t)?.let { m ->
+            val q = m.groupValues[1].trim()
+            if (q.isNotBlank()) return VoiceCommand.WebSearch(rawTail(raw, q))
+        }
+        if (WEB_QUESTION.containsMatchIn(t) && t.split(" ").size >= 3) return VoiceCommand.WebSearch(VoiceText.cleanRaw(raw).let { VoiceText.stripWakeWord(VoiceText.normalize(it)).ifBlank { t } })
+        return null
+    }
+
+    /** „du-mă la gară”, „navighează spre spital”, „arată-mi pe hartă farmacia” — doar dacă e clar că e un loc. */
+    private fun parsePlace(t: String, raw: String): VoiceCommand? {
+        if (Regex("\\b(?:pe harta|on the map|cu waze|on waze|pe waze|cu google maps|on google maps|in maps|pe maps)\\b").containsMatchIn(t)) {
+            val which = if (t.contains("waze")) "waze" else "maps"
+            val clean = t.replace(Regex("\\b(?:pe harta|on the map|cu waze|on waze|pe waze|cu google maps|on google maps|in maps|pe maps)\\b"), " ").replace(Regex("\\s+"), " ").trim()
+            PLACE_NAV.find(clean)?.let { return VoiceCommand.OpenPlace(rawTail(raw, it.groupValues[1].trim()), navigate = true, app = which) }
+            PLACE_SHOW.find(clean)?.let { return VoiceCommand.OpenPlace(rawTail(raw, it.groupValues[1].trim()), navigate = false, app = which) }
+            return VoiceCommand.OpenPlace(rawTail(raw, clean), navigate = false, app = which)
+        }
+        Regex("^(?:navigheaza|navigate|cum ajung|directions|traseu|ruta)(?:\\s+(?:la|catre|spre|pana la|to))?\\s+(.+)$").find(t)?.let {
+            return VoiceCommand.OpenPlace(rawTail(raw, it.groupValues[1].trim()), navigate = true)
+        }
+        return null
     }
 
     /** „da" / „nu" pentru confirmări; null dacă nu e clar. */
@@ -452,7 +596,8 @@ object CommandParser {
 
     /** Lista rostită la „ajutor". */
     val HELP_TEXT = "Pot să trimit mesaje: „trimite mesaj lui Ion, ajung în zece minute”. Să sun: „sună-l pe Andrei”. " +
-        "Să pun muzică: „pune Phoenix pe YouTube”. Să deschid aplicații: „deschide WhatsApp”. " +
+        "Să pun muzică: „deschide YouTube și pune Phoenix”. Să caut pe internet: „caută pe Google despre căpșuni”. " +
+        "Să deschid aplicații și să lucrez în ele: „deschide WhatsApp”, „citește ecranul”, „apasă pe Abonează-te”, „scrie salut”, „derulează”, „înapoi”. " +
         "Să te duc în FORJA: „deschide antrenamentul”, „pornește somnul”, „respiră”. " +
         "Să îți citesc ziua: „cum stau azi”. Să îți spun ora: „cât e ceasul”. Să pun alarma: „pune alarma la șapte”."
 }

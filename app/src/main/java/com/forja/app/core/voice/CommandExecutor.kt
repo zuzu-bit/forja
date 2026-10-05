@@ -29,6 +29,7 @@ import com.forja.app.core.sleep.SleepTrackService
 import com.forja.app.core.sleep.SystemAlarm
 import com.forja.app.core.util.Fmt
 import com.forja.app.navigation.Route
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
@@ -47,11 +48,14 @@ sealed class Pending {
     data class Confirm(val draft: VoiceCommand.SendMessage, val contact: Contact) : Pending()
     data class MusicQuery(val service: MusicService) : Pending()
     object CallWho : Pending()
+    /** „Deschid setările ca să pornești controlul ecranului?” */
+    object EnableScreen : Pending()
 }
 
 /** Rezultatul unei comenzi: ce se spune și ce se întâmplă. */
 sealed class Outcome {
-    data class Done(val spoken: String, val navigate: String? = null) : Outcome()
+    /** [readScreenAfterMs] > 0: după răspuns, asistentul citește ecranul aplicației din față (dacă are acces). */
+    data class Done(val spoken: String, val navigate: String? = null, val readScreenAfterMs: Long = 0) : Outcome()
     data class Ask(val question: String, val pending: Pending) : Outcome()
     /** Lipsesc permisiuni; după ce utilizatorul răspunde, [retry] se execută din nou. */
     data class NeedPermission(val permissions: List<String>, val spoken: String, val retry: VoiceCommand) : Outcome()
@@ -76,6 +80,11 @@ class CommandExecutor(private val app: ForjaApp) {
             is VoiceCommand.Call -> call(cmd)
             is VoiceCommand.PlayMusic -> playMusic(cmd)
             is VoiceCommand.OpenApp -> openApp(cmd.name)
+            is VoiceCommand.OpenAppThen -> openAppThen(cmd, confirmSend, lastSpoken)
+            is VoiceCommand.WebSearch -> webSearch(cmd.query)
+            is VoiceCommand.OpenPlace -> openPlace(cmd)
+            is VoiceCommand.Screen -> screen(cmd.action)
+            VoiceCommand.EnableScreenControl -> enableScreen()
             is VoiceCommand.Navigate -> Outcome.Done("Deschid ${cmd.target.spoken}.", cmd.target.route)
             is VoiceCommand.SetAlarm -> setAlarm(cmd)
             VoiceCommand.StartSleep -> startSleep()
@@ -135,7 +144,99 @@ class CommandExecutor(private val app: ForjaApp) {
                 val who = CommandParser.recipientFromAnswer(raw)
                 if (who.isBlank()) Outcome.Ask("Pe cine să sun?", pending) else call(VoiceCommand.Call(who))
             }
+            Pending.EnableScreen -> when (CommandParser.yesNo(raw)) {
+                true -> enableScreen()
+                false -> Outcome.Done("Bine. Pot deschide aplicațiile, dar nu pot lucra în ele până nu pornești controlul ecranului.")
+                null -> Outcome.Ask("Spune „da” ca să deschid setările sau „nu”.", pending)
+            }
         }
+    }
+
+    // ── Pe ecranul altor aplicații (serviciul de accesibilitate „Comenzi pe ecran”) ──────────────
+
+    private fun screenUnavailable(prefix: String = ""): Outcome =
+        if (!ScreenAgent.isEnabled(app)) Outcome.Ask(
+            "${prefix}Ca să lucrez pe ecranul altor aplicații am nevoie de „FORJA, Comenzi pe ecran” din Accesibilitate. Deschid setările ca să-l pornești?",
+            Pending.EnableScreen
+        ) else Outcome.Done("${prefix}Controlul ecranului e pornit în setări, dar nu e conectat. Oprește-l și pornește-l din nou din Setări, Accesibilitate.")
+
+    private fun enableScreen(): Outcome {
+        if (ScreenAgent.isConnected()) return Outcome.Done("Controlul ecranului e deja pornit.")
+        val i = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return launch(i, "Am deschis setările de accesibilitate. Caută „FORJA, Comenzi pe ecran”, pornește-l și confirmă. Apoi spune din nou comanda.", "Pornește „Comenzi pe ecran”")
+    }
+
+    private suspend fun screen(action: ScreenAction): Outcome {
+        if (!ScreenAgent.isConnected()) return screenUnavailable()
+        return when (action) {
+            ScreenAction.Read -> {
+                val txt = ScreenAgent.read(900)
+                val label = ScreenAgent.foregroundAppLabel(app)
+                if (txt.isBlank()) Outcome.Done("Nu văd text pe ecran.")
+                else Outcome.Done((if (label.isNotBlank()) "În $label: " else "Pe ecran: ") + txt)
+            }
+            is ScreenAction.Tap -> {
+                val item = ScreenAgent.find(action.target)
+                    ?: return Outcome.Done("Nu am găsit „${action.target}” pe ecran. Văd: ${ScreenAgent.glance()}")
+                if (ScreenAgent.tap(item)) Outcome.Done("Am apăsat pe „${item.text.take(60)}”.", readScreenAfterMs = 1500)
+                else Outcome.Done("Nu am putut apăsa pe „${item.text.take(60)}”.")
+            }
+            is ScreenAction.Type ->
+                if (ScreenAgent.type(action.text)) Outcome.Done("Am scris „${action.text}”.")
+                else Outcome.Done("Nu văd un câmp de text pe ecran. Spune întâi „apasă pe …” câmpul, apoi „scrie …”.")
+            ScreenAction.Enter -> if (ScreenAgent.enter()) Outcome.Done("Gata.", readScreenAfterMs = 2000) else Outcome.Done("Nu am găsit unde să apăs Enter.")
+            is ScreenAction.Scroll ->
+                if (ScreenAgent.scroll(action.down)) Outcome.Done(if (action.down) "Am derulat în jos." else "Am derulat în sus.", readScreenAfterMs = 900)
+                else Outcome.Done("Nu am ce derula aici.")
+            ScreenAction.Back -> if (ScreenAgent.back()) Outcome.Done("Înapoi.", readScreenAfterMs = 1200) else Outcome.Done("Nu pot merge înapoi.")
+            ScreenAction.Home -> if (ScreenAgent.home()) Outcome.Done("Ecranul principal.") else Outcome.Done("Nu pot ajunge la ecranul principal.")
+            is ScreenAction.Search ->
+                if (ScreenAgent.search(action.query)) Outcome.Done("Caut „${action.query}”.", readScreenAfterMs = 2500)
+                else Outcome.Done("Nu am găsit căutarea în aplicația asta. Spune „apasă pe căutare”, apoi „scrie …”, apoi „enter”.")
+        }
+    }
+
+    /** „deschide X și …”: aplicația, apoi acțiunea — pe ecranul ei sau prin intenție. */
+    private suspend fun openAppThen(cmd: VoiceCommand.OpenAppThen, confirmSend: Boolean, lastSpoken: String): Outcome {
+        val (opened, pkg, started) = openAppPkg(cmd.app)
+        if (opened !is Outcome.Done || !started) return opened
+        return when (val then = cmd.then) {
+            is VoiceCommand.Screen -> {
+                if (!ScreenAgent.isConnected()) return screenUnavailable("Am deschis ${cmd.app}. ")
+                val arrived = pkg == null || ScreenAgent.waitForPackage(pkg, 6000)
+                delay(900)   // lăsăm ecranul să se așeze
+                if (!arrived) return Outcome.Done("Am deschis ${cmd.app}, dar nu a ajuns în față. Repetă comanda din aplicație.")
+                val r = screen(then.action)
+                if (r is Outcome.Done) r.copy(spoken = "Am deschis ${cmd.app}. " + r.spoken) else r
+            }
+            is VoiceCommand.Unknown -> Outcome.Done("Am deschis ${cmd.app}. Nu am înțeles ce să fac înăuntru: „${then.text}”. Poți spune „caută …”, „apasă pe …”, „scrie …” sau „citește ecranul”.")
+            else -> { delay(800); execute(then, confirmSend, lastSpoken) }
+        }
+    }
+
+    private fun webSearch(query: String): Outcome {
+        val q = query.trim()
+        if (q.isBlank()) return Outcome.Done("Ce să caut?")
+        val i = Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, q).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (i.resolveActivity(app.packageManager) != null) return launch(i, "Caut „$q” pe Google.", "Google: $q", readAfterMs = 3500)
+        val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + URLEncoder.encode(q, "UTF-8"))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (web.resolveActivity(app.packageManager) == null) return Outcome.Done("Nu am găsit un browser pe telefon.")
+        return launch(web, "Caut „$q” pe internet.", "Căutare: $q", readAfterMs = 4000)
+    }
+
+    private fun openPlace(cmd: VoiceCommand.OpenPlace): Outcome {
+        val place = cmd.place.trim()
+        if (place.isBlank()) return Outcome.Done("Unde să te duc?")
+        val enc = Uri.encode(place)
+        val waze = "com.waze"; val maps = "com.google.android.apps.maps"
+        val candidates = mutableListOf<Intent>()
+        if (cmd.app == "waze" && isInstalled(waze)) candidates += Intent(Intent.ACTION_VIEW, Uri.parse("https://waze.com/ul?q=$enc&navigate=${if (cmd.navigate) "yes" else "no"}")).setPackage(waze)
+        if (cmd.navigate && isInstalled(maps)) candidates += Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$enc")).setPackage(maps)
+        if (isInstalled(maps)) candidates += Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$enc")).setPackage(maps)
+        candidates += Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$enc"))
+        val i = candidates.firstOrNull { it.resolveActivity(app.packageManager) != null }?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ?: return Outcome.Done("Nu am găsit o aplicație de hărți pe telefon.")
+        return launch(i, if (cmd.navigate) "Pornesc navigarea spre $place." else "Îți arăt $place pe hartă.", if (cmd.navigate) "Navigare: $place" else "Hartă: $place")
     }
 
     // ── Mesaje ──────────────────────────────────────────────────────────────────────
@@ -385,10 +486,18 @@ class CommandExecutor(private val app: ForjaApp) {
         "google" to "com.google.android.googlequicksearchbox", "play store" to "com.android.vending", "magazin play" to "com.android.vending"
     )
 
-    private fun openApp(nameRaw: String): Outcome {
+    private fun openApp(nameRaw: String): Outcome = openAppPkg(nameRaw).first
+
+    /** (rezultat, pachetul aplicației, chiar a pornit pe ecran?) */
+    private fun openAppPkg(nameRaw: String): Triple<Outcome, String?, Boolean> {
         val name = VoiceText.normalize(nameRaw)
-        fun open(i: Intent, spoken: String, title: String, missing: String): Outcome =
-            if (i.resolveActivity(app.packageManager) == null) Outcome.Done(missing) else launch(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), spoken, title)
+        fun go(i: Intent, spoken: String, title: String): Triple<Outcome, String?, Boolean> {
+            val pkg = i.`package` ?: try { i.resolveActivity(app.packageManager)?.packageName } catch (_: Exception) { null }
+            val (o, started) = launchResult(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), spoken, title, 0)
+            return Triple(o, pkg, started)
+        }
+        fun open(i: Intent, spoken: String, title: String, missing: String): Triple<Outcome, String?, Boolean> =
+            if (i.resolveActivity(app.packageManager) == null) Triple(Outcome.Done(missing), null, false) else go(i, spoken, title)
         when (name) {
             "camera", "aparatul foto", "aparat foto" ->
                 return open(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA), "Deschid camera.", "Camera", "Nu am găsit camera.")
@@ -398,14 +507,12 @@ class CommandExecutor(private val app: ForjaApp) {
                 return open(Intent(Intent.ACTION_DIAL), "Deschid telefonul.", "Telefon", "Nu am găsit aplicația de telefon.")
             "mesaje", "mesajele", "messages", "sms" -> {
                 val pkg = try { Telephony.Sms.getDefaultSmsPackage(app) } catch (_: Exception) { null }
-                val i = pkg?.let { app.packageManager.getLaunchIntentForPackage(it) } ?: return Outcome.Done("Nu am găsit aplicația de mesaje.")
-                return launch(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), "Deschid mesajele.", "Mesaje")
+                val i = pkg?.let { app.packageManager.getLaunchIntentForPackage(it) } ?: return Triple(Outcome.Done("Nu am găsit aplicația de mesaje."), null, false)
+                return go(i, "Deschid mesajele.", "Mesaje")
             }
         }
         knownApps[name]?.let { pkg ->
-            app.packageManager.getLaunchIntentForPackage(pkg)?.let { i ->
-                return launch(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), "Deschid $nameRaw.", nameRaw)
-            }
+            app.packageManager.getLaunchIntentForPackage(pkg)?.let { i -> return go(i, "Deschid $nameRaw.", nameRaw) }
         }
         // Orice aplicație instalată, după numele de pe ecran.
         val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -425,9 +532,9 @@ class CommandExecutor(private val app: ForjaApp) {
             if (s > bestScore) { bestScore = s; best = label to pkg }
         }
         val found = best
-        if (found == null || bestScore < 60) return Outcome.Done("Nu am găsit aplicația „$nameRaw” pe telefon.")
-        val i = app.packageManager.getLaunchIntentForPackage(found.second) ?: return Outcome.Done("Nu pot porni „$nameRaw”.")
-        return launch(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), "Deschid ${found.first}.", found.first)
+        if (found == null || bestScore < 60) return Triple(Outcome.Done("Nu am găsit aplicația „$nameRaw” pe telefon."), null, false)
+        val i = app.packageManager.getLaunchIntentForPackage(found.second) ?: return Triple(Outcome.Done("Nu pot porni „$nameRaw”."), null, false)
+        return go(i, "Deschid ${found.first}.", found.first)
     }
 
     // ── Diverse ─────────────────────────────────────────────────────────────────────
@@ -537,15 +644,19 @@ class CommandExecutor(private val app: ForjaApp) {
         ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
     } catch (_: Exception) { true }
 
-    private fun canLaunch(): Boolean = isForeground() || (try { Settings.canDrawOverlays(app) } catch (_: Exception) { false })
+    private fun canLaunch(): Boolean = isForeground() || ScreenAgent.isConnected() || (try { Settings.canDrawOverlays(app) } catch (_: Exception) { false })
 
     /**
      * Pornește ceva pe ecran. Din fundal (ecran stins, altă aplicație în față) Android ar arunca intenția fără să spună:
      * lăsăm o notificare care o deschide la o atingere și îi spunem utilizatorului ce să facă.
      */
-    private fun launch(i: Intent, spokenOk: String, title: String): Outcome {
+    private fun launch(i: Intent, spokenOk: String, title: String, readAfterMs: Long = 0): Outcome = launchResult(i, spokenOk, title, readAfterMs).first
+
+    /** Ca [launch], plus dacă activitatea chiar a pornit acum (nu doar notificarea). */
+    private fun launchResult(i: Intent, spokenOk: String, title: String, readAfterMs: Long): Pair<Outcome, Boolean> {
         if (canLaunch()) {
-            return if (start(i)) Outcome.Done(spokenOk) else Outcome.Done("Nu am putut deschide. Mai încearcă.")
+            return if (start(i)) Outcome.Done(spokenOk, readScreenAfterMs = if (ScreenAgent.isConnected()) readAfterMs else 0) to true
+            else Outcome.Done("Nu am putut deschide. Mai încearcă.") to false
         }
         return try {
             val pi = PendingIntent.getActivity(app, (System.currentTimeMillis() and 0x7fffffff).toInt(), i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -555,9 +666,9 @@ class CommandExecutor(private val app: ForjaApp) {
                 .setContentText("Apasă ca să continui comanda „Hei FORJA”.")
                 .setAutoCancel(true).setContentIntent(pi).build()
             (app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(LAUNCH_NOTIF_ID, n)
-            Outcome.Done("Telefonul e blocat sau FORJA nu e pe ecran. Deblochează-l și apasă notificarea FORJA ca să continui.")
+            Outcome.Done("Telefonul e blocat sau FORJA nu e pe ecran. Deblochează-l și apasă notificarea FORJA ca să continui.") to false
         } catch (_: Exception) {
-            Outcome.Done("Deschide FORJA pe ecran și repetă comanda.")
+            Outcome.Done("Deschide FORJA pe ecran și repetă comanda.") to false
         }
     }
 

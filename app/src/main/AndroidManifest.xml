@@ -76,9 +76,23 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+        <intent>
+            <action android:name="android.intent.action.WEB_SEARCH" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="google.navigation" />
+        </intent>
         <package android:name="com.google.android.youtube" />
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.waze" />
+        <package android:name="com.google.android.googlequicksearchbox" />
     </queries>
 
     <application
@@ -241,6 +255,21 @@
             android:name=".core.voice.VoiceWakeService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- „FORJA · Comenzi pe ecran": asistentul lucrează în alte aplicații (citește, apasă, scrie, caută).
+             Serviciu de accesibilitate separat de Detox; îl pornește doar utilizatorul, din Setări → Accesibilitate. -->
+        <service
+            android:name=".core.voice.VoiceScreenService"
+            android:exported="false"
+            android:label="@string/voice_screen_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/voice_screen_config" />
+        </service>
 
         <!-- Butonul „FORJA Voce" din setările rapide. -->
         <service

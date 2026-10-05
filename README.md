@@ -144,7 +144,11 @@ Apeși microfonul, auzi un bip și spui comanda. Exemple (merg și în engleză)
 | „Scrie-i pe WhatsApp lui Maria, sunt pe drum” | deschide WhatsApp cu textul gata scris |
 | „Send this text to this contact” | întreabă cui și ce să trimită, pe rând |
 | „Sună-l pe Andrei” / „Call John” | formează și pornește apelul |
-| „Pune Phoenix pe YouTube” / „Play this music on YouTube” | pornește primul rezultat de pe YouTube (sau întreabă ce melodie) |
+| „Pune Phoenix pe YouTube” / „Deschide YouTube și pune Meniato” | pornește primul rezultat de pe YouTube (sau întreabă ce melodie) |
+| „Caută pe Google despre căpșuni” / „Open Google and search about strawberries” | caută pe Google și citește cu voce ce a apărut pe ecran |
+| „Deschide Waze și du-mă la gară” · „Arată-mi pe hartă farmacia” | navigare / loc pe hartă (Waze sau Google Maps) |
+| „Citește ecranul” · „Apasă pe primul rezultat” · „Scrie salut” · „Derulează” · „Înapoi” · „Caută aici …” | lucrează în interiorul aplicației din față (cu „Comenzi pe ecran” pornit) |
+| „Deschide Facebook și apasă pe notificări” · „Open Settings and search bluetooth” | deschide aplicația, apoi face acțiunea în ea |
 | „Pune muzică pe Spotify” | pornește playerul |
 | „Deschide WhatsApp” / „Open Waze” | deschide orice aplicație instalată |
 | „Deschide antrenamentul”, „Harta”, „Respiră”, „Profil” | navighează în FORJA |
@@ -157,6 +161,14 @@ Apeși microfonul, auzi un bip și spui comanda. Exemple (merg și în engleză)
 serviciu în fundal (cu notificare permanentă, cum cere Android) ascultă cuvântul „Hei FORJA” și
 cu ecranul stins. Pe telefoanele cu recunoaștere pe dispozitiv (Android 12+) ascultarea e locală;
 altfel trece prin serviciul de recunoaștere al telefonului (Google), ca orice dictare.
+
+**Comenzi pe ecran (în alte aplicații).** Din ecranul asistentului (sau Setări → Accesibilitate) pornești
+„FORJA · Comenzi pe ecran”, un serviciu de accesibilitate separat de Detox. Cu el pornit, FORJA vede ce e pe
+ecranul aplicației din față și lucrează în ea: citește conținutul cu voce, apasă pe ce îi spui, scrie, caută,
+derulează, merge înapoi. După „caută”, „apasă” sau „deschide X și …” citește singură ce a apărut. Citește
+ecranul doar când o comandă vocală o cere; nu ține jurnal și nu trimite nimic nicăieri. Cu „Hei FORJA” mereu
+la ascultare (sau butonul „Ascultă acum” din notificare / tile-ul „FORJA Voce”) comenzile se dau direct din
+aplicația în care ești, fără să deschizi FORJA.
 
 **Permisiuni.** Microfonul e necesar. Contactele, SMS-ul și apelurile se cer doar când o comandă
 are nevoie de ele; fără ele FORJA deschide aplicația de mesaje / telefon cu totul completat, și

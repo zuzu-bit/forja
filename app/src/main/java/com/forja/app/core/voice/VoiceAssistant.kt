@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -398,6 +399,15 @@ class VoiceAssistant(private val app: ForjaApp) {
         }
     }
 
+    private fun readScreenSoon(delayMs: Long) {
+        scope.launch {
+            delay(delayMs)
+            val txt = withContext(Dispatchers.IO) { try { ScreenAgent.read(500) } catch (_: Exception) { "" } }
+            if (txt.isBlank() || session != Session.NONE) { resumeWakeIfWanted(); return@launch }
+            say("Pe ecran: $txt", null)
+        }
+    }
+
     private fun answerPending(raw: String) {
         val p = pending ?: run { runCommand(CommandParser.parse(raw)); return }
         cancelSession()
@@ -414,7 +424,10 @@ class VoiceAssistant(private val app: ForjaApp) {
                 pending = null
                 _state.update { it.copy(question = null) }
                 outcome.navigate?.let { emit(Event.Navigate(it)) }
-                say(outcome.spoken, null)
+                if (outcome.readScreenAfterMs > 0 && ScreenAgent.isConnected()) {
+                    // După ce a deschis / apăsat / căutat ceva, citește ce a apărut pe ecran — ca să nu rămâi în întuneric.
+                    say(outcome.spoken, then = { readScreenSoon(outcome.readScreenAfterMs) })
+                } else say(outcome.spoken, null)
             }
             is Outcome.Ask -> {
                 pending = outcome.pending
