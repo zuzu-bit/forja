@@ -1,0 +1,55 @@
+package com.forja.app.core.soldier
+
+// Generat de scratchpad/art/forge.py — catalogul pieselor și gradele. Nu edita de mână: nume, grade, costuri.
+
+object GearCatalog {
+    val items: List<GearItem> = listOf(
+        GearItem("beret_olive", Slot.HEAD, "Beretă verde", 4, 0),
+        GearItem("beret_maroon", Slot.HEAD, "Beretă vișinie", 3, 90),
+        GearItem("beret_black", Slot.HEAD, "Beretă neagră", 8, 0),
+        GearItem("beret_blue", Slot.HEAD, "Beretă albastră", 8, 180),
+        GearItem("patrol_cap", Slot.HEAD, "Capelă de patrulă", 2, 60),
+        GearItem("boonie", Slot.HEAD, "Pălărie boonie", 4, 110),
+        GearItem("helmet", Slot.HEAD, "Cască de luptă", 7, 0),
+        GearItem("officer_cap", Slot.HEAD, "Chipiu de ofițer", 11, 0),
+        GearItem("aviators", Slot.EYES, "Aviatori", 5, 130),
+        GearItem("tactical_glasses", Slot.EYES, "Ochelari tactici", 3, 80),
+        GearItem("tshirt_khaki", Slot.TORSO, "Tricou kaki", 0, 0),
+        GearItem("field_jacket", Slot.TORSO, "Geacă de teren", 3, 0),
+        GearItem("camo_shirt", Slot.TORSO, "Cămașă de camuflaj", 5, 0),
+        GearItem("tactical_vest", Slot.TORSO, "Vestă tactică", 6, 0),
+        GearItem("dress_jacket", Slot.TORSO, "Uniformă de paradă", 10, 0),
+        GearItem("parka", Slot.TORSO, "Parka de iarnă", 8, 240),
+        GearItem("hoodie", Slot.TORSO, "Hanorac de sală", 2, 90),
+        GearItem("web_belt", Slot.BELT, "Centură", 1, 0),
+        GearItem("tactical_belt", Slot.BELT, "Centură tactică", 7, 120),
+        GearItem("sneakers", Slot.FEET, "Adidași", 0, 0),
+        GearItem("combat_boots", Slot.FEET, "Bocanci de luptă", 1, 0),
+        GearItem("desert_boots", Slot.FEET, "Bocanci de deșert", 4, 100),
+        GearItem("parade_shoes", Slot.FEET, "Pantofi de paradă", 10, 0),
+        GearItem("winter_boots", Slot.FEET, "Bocanci de iarnă", 8, 130),
+        GearItem("backpack", Slot.BACK, "Rucsac", 4, 110),
+        GearItem("dog_tags", Slot.CHEST, "Plăcuțe de identificare", 2, 50),
+        GearItem("ribbons", Slot.CHEST, "Barete", 9, 0),
+        GearItem("medal", Slot.CHEST, "Medalie de merit", 12, 0),
+        GearItem("flag_patch", Slot.CHEST, "Tricolorul", 3, 60),
+        GearItem("shemagh", Slot.CHEST, "Eșarfă de deșert", 5, 80),
+        GearItem("headset", Slot.HEAD, "Căști radio", 6, 140),
+    )
+    val ranks: List<Rank> = listOf(
+        Rank(0, "Recrut", 0),
+        Rank(1, "Soldat", 100),
+        Rank(2, "Fruntaș", 250),
+        Rank(3, "Caporal", 450),
+        Rank(4, "Sergent", 700),
+        Rank(5, "Sergent-major", 1000),
+        Rank(6, "Plutonier", 1400),
+        Rank(7, "Plutonier-adjutant", 1900),
+        Rank(8, "Sublocotenent", 2500),
+        Rank(9, "Locotenent", 3200),
+        Rank(10, "Căpitan", 4000),
+        Rank(11, "Maior", 5000),
+        Rank(12, "Colonel", 6500),
+        Rank(13, "General", 8500),
+    )
+}

@@ -64,7 +64,8 @@ fun DashboardScreen(
     onOpenModule: (String) -> Unit,
     onOpenProfile: () -> Unit,
     onOpenMap: () -> Unit,
-    onOpenActivities: () -> Unit = {}
+    onOpenActivities: () -> Unit = {},
+    onOpenSoldier: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
@@ -169,6 +170,10 @@ fun DashboardScreen(
             // Casca: dacă ai venit dintr-un mesaj, te așteaptă aici în aceeași poză, cu aceeași replică (o singură dată).
             com.forja.app.core.notify.NudgeEcho(Modifier.padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 12.dp))
             Spacer(Modifier.height(4.dp))
+
+            // Casca în uniformă (5.0): gradul, drumul spre următorul și misiunile de azi — o atingere deschide Cazarma.
+            com.forja.app.feature.soldier.SoldierCard(Modifier.padding(horizontal = 20.dp), onOpen = onOpenSoldier)
+            Spacer(Modifier.height(12.dp))
 
             // Motivația zilei — imagine + citat, cu ghidul care „dansează"
             MotivationCard()

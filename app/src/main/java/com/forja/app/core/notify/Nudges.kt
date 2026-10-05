@@ -78,6 +78,9 @@ object Nudges {
         // Mesajul „coach” și-a făcut treaba: ești în aplicație.
         Notifier.cancel(app, NotifIds.COACH)
         app.appScope.launch(Dispatchers.Default) {
+            // Casca în uniformă: „prezent la apel” și punctele misiunilor deja făcute (înainte de pictograme, ca ținuta să fie la zi).
+            try { app.prefs.markPresent() } catch (_: Exception) { }
+            try { com.forja.app.core.soldier.Missions.sync(app, foreground = true) } catch (_: Exception) { }
             try { MascotIcons.ensure(app) } catch (_: Throwable) { }
             try { SyncNotice.refresh(app) } catch (_: Exception) { }
             try { Bedtime.sync(app) } catch (_: Exception) { }
@@ -376,6 +379,8 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     override suspend fun doWork(): Result {
         val app = applicationContext as? ForjaApp ?: return Result.success()
         if (app.auth.currentUid == null) return Result.success()
+        // Casca: punctele misiunilor se adună și când FORJA nu e deschisă (somnul, tura, focusul de peste zi).
+        try { com.forja.app.core.soldier.Missions.sync(app) } catch (_: Exception) { }
         try { Bedtime.sync(app) } catch (_: Exception) { }
         try { SyncNotice.refresh(app) } catch (_: Exception) { }
         try { Nudges.tick(app) } catch (_: Exception) { }

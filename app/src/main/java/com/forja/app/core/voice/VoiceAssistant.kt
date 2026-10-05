@@ -389,6 +389,8 @@ class VoiceAssistant(private val app: ForjaApp) {
         if (cmd is VoiceCommand.Stop) pending = null
         scope.launch {
             val outcome = withContext(Dispatchers.IO) { executor.execute(cmd, confirmSend, lastSpoken, denied) }
+            // Misiunea „Hei FORJA” a Cascăi: o comandă adevărată pe zi.
+            if (cmd !is VoiceCommand.Unknown && cmd !is VoiceCommand.Stop && cmd !is VoiceCommand.Repeat) launch(Dispatchers.IO) { try { app.prefs.markVoiceUsed() } catch (_: Exception) { } }
             handle(outcome)
             if (cmd is VoiceCommand.StopListening) {
                 wakeLoopWanted = false

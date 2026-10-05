@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -52,6 +53,7 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -72,6 +74,8 @@ import com.forja.app.core.designsystem.Surface2
 import com.forja.app.core.designsystem.TextDim
 import com.forja.app.core.designsystem.TextPrimary
 import com.forja.app.core.designsystem.monoLabel
+import com.forja.app.core.soldier.Outfit
+import com.forja.app.core.soldier.SoldierStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.PI
@@ -85,6 +89,10 @@ import kotlin.random.Random
  * Desenată integral vectorial (Canvas/Path), într-un spațiu de 100×100 unități scalat la dimensiune;
  * conturul are 3 unități (3 % din dimensiune). Animată procedural; sub LocalReducedMotion e statică.
  * Fără alocări în desenare: căile sunt precalculate sau refolosite (reset), pensulele sunt create o dată.
+ *
+ * Din 5.0 poartă uniforma („Casca în uniformă”, core/soldier): piesele din [OutfitArt] se desenează în ordinea
+ * potrivită printre straturile ei (în spate, tălpile, haina decupată de corp, centura, pieptul, insigna de grad,
+ * capul, ochelarii). O pălărie cerută de ecran (Chef, Helmet) are întâietate în fața piesei de pe cap.
  */
 
 enum class MascotState { Idle, Thinking, Happy, Sorry, Talking, Reading, Wink, Angry }
@@ -210,32 +218,77 @@ private class MascotRig {
     val glowBrush = Brush.radialGradient(0f to Amber.copy(alpha = 0.45f), 0.55f to Amber.copy(alpha = 0.12f), 1f to Amber.copy(alpha = 0f), center = Offset(50f, 60f), radius = 46f)
 }
 
+// ───────────────────────────── Uniforma (OutfitArt) ─────────────────────────────
+
+/** Straturile unei piese ca Path-uri (parsate o dată din textul SVG, partajate între toate mascotele). */
+private class ArtPaths(val layers: List<Pair<Path, ArtLayer>>)
+
+private object OutfitPaths {
+    private val cache = HashMap<String, ArtPaths>()
+    private fun parse(ls: List<ArtLayer>): ArtPaths = ArtPaths(ls.map { PathParser().parsePathString(it.d).toPath() to it })
+    @Synchronized private fun get(key: String, ls: List<ArtLayer>?): ArtPaths? {
+        if (ls.isNullOrEmpty()) return null
+        return cache.getOrPut(key) { parse(ls) }
+    }
+    fun gear(id: String?): ArtPaths? = id?.let { get("g:$it", OutfitArt.gear[it]?.layers) }
+    fun behind(id: String?): ArtPaths? = id?.let { get("b:$it", OutfitArt.gear[it]?.behind) }
+    fun straps(id: String?): ArtPaths? = id?.let { get("s:$it", OutfitArt.gear[it]?.straps) }
+    fun rank(i: Int): ArtPaths? = OutfitArt.ranks.getOrNull(i)?.let { get("r:$i", it) }
+}
+
+private val artStrokes = HashMap<Float, Stroke>()
+private fun artStroke(w: Float): Stroke = synchronized(artStrokes) { artStrokes.getOrPut(w) { Stroke(width = w, cap = StrokeCap.Round, join = StrokeJoin.Round) } }
+
+private fun DrawScope.drawArt(paths: ArtPaths?) {
+    paths ?: return
+    for ((path, l) in paths.layers) {
+        if (l.fill != 0L) drawPath(path, Color(l.fill), alpha = l.alpha)
+        if (l.stroke != 0L) drawPath(path, Color(l.stroke), alpha = l.alpha, style = artStroke(l.w))
+    }
+}
+
+/** Ținuta de desenat: cea cerută sau cea purtată acum de Casca (din [SoldierStore]). */
+@Composable
+private fun rememberOutfit(outfit: Outfit?): Outfit {
+    if (outfit != null) return outfit
+    val worn by SoldierStore.outfit.collectAsState()
+    return worn
+}
+
 // ───────────────────────────── Desenarea ─────────────────────────────
 
 /** Desenează mascota cu originea (0,0) a spațiului de 100 unități în colțul din stânga-sus, `unit` px pe unitate. */
-private fun DrawScope.drawMascot(rig: MascotRig, p: Pose, hat: MascotHat, unit: Float) {
+private fun DrawScope.drawMascot(rig: MascotRig, p: Pose, hat: MascotHat, unit: Float, outfit: Outfit = Outfit.NONE) {
     scale(unit, unit, pivot = Offset.Zero) {
         translate(0f, -p.hop) {
             rotate(p.sway + p.tilt, pivot = Offset(PIVOT_X, PIVOT_Y)) {
                 val sx = p.breath * (1f + 0.08f * p.squash)
                 val sy = p.breath * (1f - 0.08f * p.squash)
                 scale(sx, sy, pivot = Offset(PIVOT_X, PIVOT_Y)) {
-                    drawFigure(rig, p, hat)
+                    drawFigure(rig, p, hat, outfit)
                 }
             }
         }
     }
 }
 
-private fun DrawScope.drawFigure(rig: MascotRig, p: Pose, hat: MascotHat) {
+private fun DrawScope.drawFigure(rig: MascotRig, p: Pose, hat: MascotHat, outfit: Outfit = Outfit.NONE) {
     // aura de jar
     drawCircle(rig.glowBrush, radius = 46f, center = Offset(50f, 60f), alpha = 0.7f + 0.3f * p.glow)
 
-    // tălpi
-    drawOval(Ink, topLeft = Offset(30f, 83.5f), size = Size(20f, 12f))
-    drawOval(Ink, topLeft = Offset(50f, 83.5f), size = Size(20f, 12f))
-    drawOval(BodyOlive, topLeft = Offset(33f, 86.5f), size = Size(14f, 6f))
-    drawOval(BodyOlive, topLeft = Offset(53f, 86.5f), size = Size(14f, 6f))
+    // în spatele corpului: rucsacul, gluga
+    drawArt(OutfitPaths.gear(outfit.back))
+    drawArt(OutfitPaths.behind(outfit.torso))
+
+    // tălpi (sau bocancii)
+    if (outfit.feet != null) {
+        drawArt(OutfitPaths.gear(outfit.feet))
+    } else {
+        drawOval(Ink, topLeft = Offset(30f, 83.5f), size = Size(20f, 12f))
+        drawOval(Ink, topLeft = Offset(50f, 83.5f), size = Size(20f, 12f))
+        drawOval(BodyOlive, topLeft = Offset(33f, 86.5f), size = Size(14f, 6f))
+        drawOval(BodyOlive, topLeft = Offset(53f, 86.5f), size = Size(14f, 6f))
+    }
 
     // corp + miez
     drawPath(rig.body, rig.bodyBrush)
@@ -245,6 +298,17 @@ private fun DrawScope.drawFigure(rig: MascotRig, p: Pose, hat: MascotHat) {
     // obraji
     drawOval(Blush, topLeft = Offset(24f, 58f), size = Size(10f, 5f))
     drawOval(Blush, topLeft = Offset(66f, 58f), size = Size(10f, 5f))
+
+    // haina, bretelele și centura — decupate de silueta corpului; apoi ce stă pe piept și insigna de grad
+    if (outfit.torso != null || outfit.back != null || outfit.belt != null) {
+        clipPath(rig.body) {
+            drawArt(OutfitPaths.gear(outfit.torso))
+            drawArt(OutfitPaths.straps(outfit.back))
+            drawArt(OutfitPaths.gear(outfit.belt))
+        }
+    }
+    drawArt(OutfitPaths.gear(outfit.chest))
+    if (outfit.rank > 0) drawArt(OutfitPaths.rank(outfit.rank))
 
     // ochi
     drawEye(rig, rig.eyeL, EYE_LX, p, p.lidL, p.arcL)
@@ -256,12 +320,13 @@ private fun DrawScope.drawFigure(rig: MascotRig, p: Pose, hat: MascotHat) {
     // sprâncene încruntate (Angry): coboară spre nas, în V
     if (p.brow > 0.01f) drawBrows(p.brow)
 
-    // pălăria
+    // pălăria (cea cerută de ecran are întâietate), apoi ochelarii
     when (hat) {
-        MascotHat.None -> Unit
+        MascotHat.None -> drawArt(OutfitPaths.gear(outfit.head))
         MascotHat.Chef -> drawToque(rig)
         MascotHat.Helmet -> drawHelmet(rig)
     }
+    drawArt(OutfitPaths.gear(outfit.eyes))
 
     // foaia (Reading) — alunecă de jos, sub brațe
     if (p.sheet > 0.01f) {
@@ -577,11 +642,14 @@ fun Mascot(
     hat: MascotHat = MascotHat.None,
     size: Dp = 120.dp,
     modifier: Modifier = Modifier,
-    onTap: (() -> Unit)? = null
+    onTap: (() -> Unit)? = null,
+    /** Ținuta; null = cea purtată acum de Casca ([SoldierStore]). [Outfit.NONE] = fără uniformă. */
+    outfit: Outfit? = null
 ) {
     val rig = remember { MascotRig() }
     val pose = remember { Pose() }
     val anim = rememberAnim(state)
+    val worn = rememberOutfit(outfit)
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val tap by rememberUpdatedState(onTap)
@@ -606,7 +674,7 @@ fun Mascot(
             }
     ) {
         anim.fill(pose)
-        drawMascot(rig, pose, hat, this.size.minDimension / 100f)
+        drawMascot(rig, pose, hat, this.size.minDimension / 100f, worn)
     }
 }
 
@@ -615,27 +683,30 @@ fun Mascot(
 fun MascotAvatar(
     hat: MascotHat = MascotHat.None,
     size: Dp = 40.dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    outfit: Outfit? = null
 ) {
     val rig = remember { MascotRig() }
     val pose = remember { Pose() }
+    val worn = rememberOutfit(outfit)
     Canvas(modifier.size(size)) {
-        drawHeadInCircle(rig, pose, hat, this.size.minDimension)
+        drawHeadInCircle(rig, pose, hat, this.size.minDimension, worn)
     }
 }
 
 /** Desenează cercul de fundal și mascota mărită, centrată pe față, decupată de cerc. */
-private fun DrawScope.drawHeadInCircle(rig: MascotRig, p: Pose, hat: MascotHat, d: Float) {
+private fun DrawScope.drawHeadInCircle(rig: MascotRig, p: Pose, hat: MascotHat, d: Float, outfit: Outfit = Outfit.NONE) {
     val r = d / 2f
     drawCircle(Surface2, radius = r, center = Offset(r, r))
     drawCircle(Accent.copy(alpha = 0.35f), radius = r, center = Offset(r, r))
-    // zoom: fața (centrul ~ (50, 52)) umple cercul; corpul ocupă 100 unități → 1.55× cerc
-    val unit = d * (if (hat == MascotHat.None) 1.55f else 1.42f) / 100f
+    // zoom: fața (centrul ~ (50, 52)) umple cercul; corpul ocupă 100 unități → 1.55× cerc; cu ceva pe cap, puțin mai departe
+    val covered = hat != MascotHat.None || outfit.head != null
+    val unit = d * (if (!covered) 1.55f else 1.42f) / 100f
     val ox = r - 50f * unit
-    val oy = r - (if (hat == MascotHat.None) 50f else 44f) * unit
+    val oy = r - (if (!covered) 50f else 44f) * unit
     clipPath(rig.circleClip(d)) {
         translate(ox, oy) {
-            drawMascot(rig, p, hat, unit)
+            drawMascot(rig, p, hat, unit, outfit)
         }
     }
     drawCircle(StrokeCardStrong, radius = r - 0.5f, center = Offset(r, r), style = Stroke(1f))
@@ -661,17 +732,19 @@ fun MascotSays(
     modifier: Modifier = Modifier,
     state: MascotState = MascotState.Talking,
     hat: MascotHat = MascotHat.None,
-    size: Dp = 56.dp
+    size: Dp = 56.dp,
+    outfit: Outfit? = null
 ) {
     val rig = remember { MascotRig() }
     val pose = remember { Pose() }
     val anim = rememberAnim(state)
+    val worn = rememberOutfit(outfit)
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Canvas(Modifier.size(size)) {
             anim.fill(pose)
             // în cerc, fără legănat/săritură (capul stă pe loc, doar fața trăiește)
             pose.sway = 0f; pose.hop = 0f; pose.squash = 0f; pose.tilt = pose.tilt * 0.5f
-            drawHeadInCircle(rig, pose, hat, this.size.minDimension)
+            drawHeadInCircle(rig, pose, hat, this.size.minDimension, worn)
         }
         Spacer(Modifier.width(10.dp))
         val tailPath = remember { Path() }
@@ -707,6 +780,55 @@ fun MascotSays(
                 style = Body.copy(fontSize = 16.sp, lineHeight = 22.sp, color = TextPrimary, fontWeight = FontWeight.SemiBold)
             )
         }
+    }
+}
+
+/** Mascota nemișcată, într-o poză, cu o ținută anume — pentru garderobă (multe deodată, fără animație). */
+@Composable
+fun MascotStill(
+    outfit: Outfit,
+    state: MascotState = MascotState.Idle,
+    hat: MascotHat = MascotHat.None,
+    size: Dp = 72.dp,
+    modifier: Modifier = Modifier
+) {
+    val rig = remember { MascotRig() }
+    val pose = remember(state) {
+        Pose().also { p ->
+            val t = targetsOf(state)
+            p.tilt = t.tilt; p.lookX = t.lookX; p.lookY = t.lookY
+            p.lidL = t.lidL; p.lidR = t.lidR; p.arcL = t.arcL; p.arcR = t.arcR
+            p.mouthOpen = t.mouthOpen; p.mouthSmile = t.mouthSmile
+            p.armLx = t.armLx; p.armLy = t.armLy; p.armRx = t.armRx; p.armRy = t.armRy
+            p.dots = t.dots; p.sheet = t.sheet; p.brow = t.brow
+        }
+    }
+    Canvas(modifier.size(size)) {
+        val unit = this.size.minDimension / 106f
+        translate((this.size.width - 100f * unit) / 2f, (this.size.height - 106f * unit) / 2f) {
+            drawMascot(rig, pose, hat, unit, outfit)
+        }
+    }
+}
+
+/** Insigna unui grad, mărită, într-un cerc — pentru scara gradelor. */
+@Composable
+fun RankBadge(rank: Int, size: Dp = 44.dp, modifier: Modifier = Modifier, highlight: Boolean = false) {
+    Canvas(modifier.size(size)) {
+        val d = this.size.minDimension
+        val r = d / 2f
+        drawCircle(if (highlight) Accent.copy(alpha = 0.45f) else Surface2, radius = r, center = Offset(r, r))
+        val paths = OutfitPaths.rank(rank)
+        if (paths != null) {
+            // peticul stă în (24, 64.5)–(37, 73.5): îl aducem în centrul cercului, la ~70 % din diametru
+            val unit = d * 0.70f / 13f
+            translate(r - 30.5f * unit, r - 69f * unit) {
+                scale(unit, unit, pivot = Offset.Zero) { drawArt(paths) }
+            }
+        } else {
+            drawCircle(Accent2.copy(alpha = 0.35f), radius = r * 0.18f, center = Offset(r, r))
+        }
+        drawCircle(if (highlight) Accent2 else StrokeCardStrong, radius = r - 0.5f, center = Offset(r, r), style = Stroke(if (highlight) 2f else 1f))
     }
 }
 
@@ -772,7 +894,7 @@ fun MascotShowcase(modifier: Modifier = Modifier) {
  * pictograma mare a notificărilor „Casca”, pre-randată o dată la deschiderea aplicației (core/notify/MascotIcons).
  * Figura întreagă, centrată, cu aura de jar; spațiul de 100 de unități se potrivește în latura mică.
  */
-fun DrawScope.drawMascotStill(state: MascotState, hat: MascotHat = MascotHat.None) {
+fun DrawScope.drawMascotStill(state: MascotState, hat: MascotHat = MascotHat.None, outfit: Outfit = SoldierStore.outfit.value) {
     val rig = MascotRig()
     val p = Pose()
     val t = targetsOf(state)
@@ -783,6 +905,6 @@ fun DrawScope.drawMascotStill(state: MascotState, hat: MascotHat = MascotHat.Non
     p.dots = t.dots; p.sheet = t.sheet; p.brow = t.brow
     val unit = size.minDimension / 106f
     translate((size.width - 100f * unit) / 2f, (size.height - 106f * unit) / 2f) {
-        drawMascot(rig, p, hat, unit)
+        drawMascot(rig, p, hat, unit, outfit)
     }
 }

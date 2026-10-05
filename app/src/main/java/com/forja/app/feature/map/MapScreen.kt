@@ -615,6 +615,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                             val myName = try { app.auth.loadProfile()?.name ?: "Un prieten" } catch (_: Exception) { "Un prieten" }
                             val sent = try { app.friends.sendEnergy(uid, myName, f.uid) } catch (_: Exception) { false }
                             energySentToday[f.uid] = true
+                            if (sent) try { app.prefs.markEnergySent() } catch (_: Exception) { }   // misiunea „Energie” a Cascăi
                             toast.show(
                                 if (sent) "${f.name.split(' ').first()} a primit energia ta."
                                 else "I-ai trimis deja energie azi. Un fulger pe zi."

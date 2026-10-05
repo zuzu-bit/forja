@@ -457,7 +457,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     onOpenModule = { r -> nav.navigate(r) },
                     onOpenProfile = { nav.navigate(Route.PROFILE) },
                     onOpenMap = { nav.navigate(Route.MAP) },
-                    onOpenActivities = { nav.navigate(Route.ACTIVITIES) }
+                    onOpenActivities = { nav.navigate(Route.ACTIVITIES) },
+                    onOpenSoldier = { nav.navigate(Route.SOLDIER) { launchSingleTop = true } }
                 )
             }
             composable(Route.WORKOUT) {
@@ -566,6 +567,21 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             composable(Route.MUSIC_PROBE) {
                 com.forja.app.feature.probe.ProbeScreen(onBack = { nav.popBackStack() })
             }
+            // „Casca în uniformă” (5.0): Cazarma — gradul, misiunile de azi, garderoba.
+            composable(
+                Route.SOLDIER,
+                enterTransition = modalEnter, exitTransition = fadeExit,
+                popEnterTransition = riseEnter, popExitTransition = modalExit
+            ) {
+                com.forja.app.feature.soldier.SoldierScreen(
+                    onBack = { if (!nav.popBackStack()) nav.navigate(Route.DASHBOARD) { launchSingleTop = true } },
+                    onOpenRoute = { r ->
+                        if (r == Route.CLEANUP) openInventory(null)
+                        else if (r in tabRoutes) nav.navigate(r) { popUpTo(Route.DASHBOARD) { inclusive = false }; launchSingleTop = true }
+                        else nav.navigate(r) { launchSingleTop = true }
+                    }
+                )
+            }
             // „Hei FORJA" — asistentul vocal (4.6): se deschide ca o foaie, de oriunde.
             composable(
                 Route.VOICE,
@@ -611,7 +627,8 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     onOpenMapGhost = { nav.navigate(Route.MAP) },
                     onOpenPermissions = { nav.navigate(Route.PERMISSIONS) },
                     onOpenContract = { nav.navigate(Route.CONTRACT) { launchSingleTop = true } },
-                    onOpenVoice = { nav.navigate(Route.VOICE) { launchSingleTop = true } }
+                    onOpenVoice = { nav.navigate(Route.VOICE) { launchSingleTop = true } },
+                    onOpenSoldier = { nav.navigate(Route.SOLDIER) { launchSingleTop = true } }
                 )
             }
         }

@@ -129,6 +129,32 @@ Proiectul Firebase există deja: **forja-65093** (fișierul `app/google-services
 
 Notă despre release: pagina de release afișează starea acestor servicii la momentul build-ului.
 
+## „Casca în uniformă” — mascota avansează în grad cu ce faci zilnic (5.0)
+
+Casca, mascota FORJA, poartă uniformă și avansează în grad cu punctele câștigate din ce faci tu zilnic în
+aplicație. Nu bifezi nimic de mână: **misiunile de azi** se citesc din jurnale — o masă în jurnal (10), rația
+completă (10), o tură de un kilometru (15) și de cinci (10), un antrenament încheiat (20), noaptea înregistrată
+(15), cincisprezece minute de focus (10), un minut de respirație (5), paznicul Detox ținut (5), un loc nou pe
+hartă (10), un joc câștigat (5), o comandă „Hei FORJA” (5), prezența (5), energia trimisă unui prieten (5).
+Fiecare misiune dă puncte o singură dată pe zi, și când FORJA e închisă (lucrătorul orar).
+
+**Gradele** (Recrut → Soldat → Fruntaș → Caporal → Sergent → Sergent-major → Plutonier → Plutonier-adjutant →
+Sublocotenent → Locotenent → Căpitan → Maior → Colonel → General) vin din punctele câștigate vreodată, care nu
+scad. Soldul se cheltuie în **garderobă**: 32 de piese pe șapte locuri (cap, ochi, corp, centură, bocanci,
+spate, piept), fiecare cu un grad de la care se poate purta și un preț; fiecare grad nou aduce o piesă în dar,
+pusă direct pe Casca (bocancii și centura la Soldat, capela la Fruntaș, geaca de teren la Caporal, bereta la
+Sergent, camuflajul, vesta, casca, uniforma de paradă, chipiul de ofițer…). Insigna gradului e pe pieptul
+hainei. Trei misiuni într-o zi fac o zi bună; șapte zile bune la rând aduc 50 de puncte bonus.
+
+Unde se vede: cardul de pe panoul „Azi” (mascota, gradul, drumul spre gradul următor, punctele misiunilor de
+azi), ecranul **Cazarma** (eroul pe jar, misiunile, garderoba cu previzualizări „cum stă”, scara gradelor,
+foaia „Avansat în grad”), rândul din Profil și, pentru că ținuta e a mascotei, peste tot unde apare Casca:
+bule, ghidaje, notificări. Cu vocea: „ce grad am”, „câte puncte am”, „misiunile de azi”.
+
+Grafica e integral vectorială (`OutfitArt.kt`, generat din `scratchpad/art/forge.py`): aceeași geometrie
+100×100 ca mascota, straturi în ordinea potrivită (în spate, tălpile, haina decupată de corp, centura,
+pieptul, insigna, capul, ochelarii), fără imagini.
+
 ## „Hei FORJA” — comenzi vocale (pentru cine nu poate sau nu vrea să se uite la ecran)
 
 FORJA are un asistent vocal gândit și pentru colegii cu probleme de vedere: totul se poate face
