@@ -2,62 +2,16 @@ package com.forja.app.core.voice
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
-import android.provider.Settings
-import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.forja.app.core.detox.AccessibilityLink
+import com.forja.app.core.detox.ForjaGuardService
 import kotlinx.coroutines.delay
-
-/**
- * „FORJA · Comenzi pe ecran”: serviciul de accesibilitate prin care asistentul vocal vede ce e pe ecranul
- * aplicației din față și lucrează în ea — citește, apasă, scrie, caută, derulează, înapoi.
- *
- * Citește ecranul DOAR când o comandă vocală o cere; nu ține jurnal, nu trimite nimic nicăieri.
- * Trebuie pornit de utilizator din Setări → Accesibilitate (Android nu lasă nicio aplicație să-l pornească singură).
- */
-class VoiceScreenService : AccessibilityService() {
-
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        instance = this
-    }
-
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val pkg = event.packageName?.toString().orEmpty()
-            // Tastatura, bara de sistem și ferestrele de sistem nu sunt „aplicația din față”.
-            if (pkg.isNotBlank() && pkg != "android" && pkg != "com.android.systemui" && !pkg.contains("inputmethod") && !pkg.contains("keyboard")) {
-                foregroundPackage = pkg
-            }
-        }
-    }
-
-    override fun onInterrupt() {}
-
-    override fun onUnbind(intent: Intent?): Boolean {
-        if (instance === this) instance = null
-        return super.onUnbind(intent)
-    }
-
-    override fun onDestroy() {
-        if (instance === this) instance = null
-        super.onDestroy()
-    }
-
-    companion object {
-        @Volatile var instance: VoiceScreenService? = null
-            private set
-        @Volatile var foregroundPackage: String = ""
-            private set
-    }
-}
 
 /** Un element de pe ecran, așa cum îl vede serviciul de accesibilitate. */
 data class ScreenItem(
@@ -69,29 +23,24 @@ data class ScreenItem(
     val bounds: Rect
 )
 
-/** Operațiile pe ecran, pe înțelesul executorului de comenzi. */
+/**
+ * Operațiile pe ecran, pe înțelesul executorului de comenzi. Trec prin singurul serviciu de accesibilitate FORJA
+ * ([ForjaGuardService] — același ca pentru Focus/Detox): citesc ecranul DOAR când o comandă vocală o cere.
+ */
 object ScreenAgent {
 
     private const val MAX_SPOKEN = 900
 
-    fun isEnabled(context: Context): Boolean {
-        if (VoiceScreenService.instance != null) return true
-        return try {
-            val enabled = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
-            val me = ComponentName(context, VoiceScreenService::class.java)
-            enabled.split(':').any { ComponentName.unflattenFromString(it) == me }
-        } catch (_: Exception) { false }
-    }
+    /** Serviciul FORJA e pornit în Setări → Accesibilitate. */
+    fun isEnabled(context: Context): Boolean = ForjaGuardService.instance != null || ForjaGuardService.isEnabled(context)
 
     /** Serviciul e pornit în setări ȘI conectat acum (poate vedea ecranul). */
-    fun isConnected(): Boolean = VoiceScreenService.instance != null
+    fun isConnected(): Boolean = ForjaGuardService.instance != null
 
-    fun openSettings(context: Context): Boolean = try {
-        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        true
-    } catch (_: Exception) { false }
+    /** Pagina serviciului FORJA din Accesibilitate (sau lista, pe telefoanele fără pagină directă). */
+    fun openSettings(context: Context): Boolean = AccessibilityLink.open(context)
 
-    fun foregroundPackage(): String = VoiceScreenService.foregroundPackage
+    fun foregroundPackage(): String = ForjaGuardService.foregroundPackage
 
     /** Așteaptă până când aplicația [pkg] ajunge în față (cel mult [timeoutMs]). */
     suspend fun waitForPackage(pkg: String, timeoutMs: Long = 5000): Boolean {
@@ -103,7 +52,7 @@ object ScreenAgent {
         return rootPackage() == pkg || foregroundPackage() == pkg
     }
 
-    private fun rootPackage(): String = try { VoiceScreenService.instance?.rootInActiveWindow?.packageName?.toString() ?: "" } catch (_: Exception) { "" }
+    private fun rootPackage(): String = try { ForjaGuardService.instance?.rootInActiveWindow?.packageName?.toString() ?: "" } catch (_: Exception) { "" }
 
     /** Așteaptă să apară conținut pe ecran (o aplicație abia pornită are nevoie de o clipă să se deseneze). */
     suspend fun waitForContent(timeoutMs: Long = 5000, minItems: Int = 3): Boolean {
@@ -116,7 +65,7 @@ object ScreenAgent {
     }
 
     private suspend fun root(): AccessibilityNodeInfo? {
-        val svc = VoiceScreenService.instance ?: return null
+        val svc = ForjaGuardService.instance ?: return null
         repeat(8) {
             val r = try { svc.rootInActiveWindow } catch (_: Exception) { null }
             if (r != null) return r
@@ -218,7 +167,7 @@ object ScreenAgent {
     }
 
     fun tapAt(x: Float, y: Float): Boolean {
-        val svc = VoiceScreenService.instance ?: return false
+        val svc = ForjaGuardService.instance ?: return false
         return try {
             val path = Path().apply { moveTo(x, y) }
             val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 60)).build()
@@ -307,7 +256,7 @@ object ScreenAgent {
             if (ok) return true
         }
         // Gest: tragem cu degetul pe mijlocul ecranului
-        val svc = VoiceScreenService.instance ?: return false
+        val svc = ForjaGuardService.instance ?: return false
         val m = svc.resources.displayMetrics
         val x = m.widthPixels / 2f
         val (y1, y2) = if (down) m.heightPixels * 0.70f to m.heightPixels * 0.30f else m.heightPixels * 0.30f to m.heightPixels * 0.70f
@@ -317,8 +266,8 @@ object ScreenAgent {
         } catch (_: Exception) { false }
     }
 
-    fun back(): Boolean = VoiceScreenService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK) ?: false
-    fun home(): Boolean = VoiceScreenService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME) ?: false
+    fun back(): Boolean = ForjaGuardService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK) ?: false
+    fun home(): Boolean = ForjaGuardService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME) ?: false
 
     /** Numele aplicației din față, pentru „În YouTube: …”. */
     fun foregroundAppLabel(context: Context): String {

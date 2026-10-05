@@ -162,13 +162,14 @@ serviciu în fundal (cu notificare permanentă, cum cere Android) ascultă cuvâ
 cu ecranul stins. Pe telefoanele cu recunoaștere pe dispozitiv (Android 12+) ascultarea e locală;
 altfel trece prin serviciul de recunoaștere al telefonului (Google), ca orice dictare.
 
-**Comenzi pe ecran (în alte aplicații).** Din ecranul asistentului (sau Setări → Accesibilitate) pornești
-„FORJA · Comenzi pe ecran”, un serviciu de accesibilitate separat de Detox. Cu el pornit, FORJA vede ce e pe
-ecranul aplicației din față și lucrează în ea: citește conținutul cu voce, apasă pe ce îi spui, scrie, caută,
-derulează, merge înapoi. După „caută”, „apasă” sau „deschide X și …” citește singură ce a apărut. Citește
-ecranul doar când o comandă vocală o cere; nu ține jurnal și nu trimite nimic nicăieri. Cu „Hei FORJA” mereu
-la ascultare (sau butonul „Ascultă acum” din notificare / tile-ul „FORJA Voce”) comenzile se dau direct din
-aplicația în care ești, fără să deschizi FORJA.
+**Comenzi pe ecran (în alte aplicații).** FORJA are un singur serviciu de accesibilitate, „FORJA · Accesibilitate”,
+cu două roluri: Paznicul Detox din Focus și comenzile vocale pe ecran. Se pornește o singură dată, din panoul de
+început „Echipare” (bifa „Accesibilitate”), care deschide direct pagina lui din Setări → Accesibilitate. Cu el pornit,
+FORJA vede ce e pe ecranul aplicației din față și lucrează în ea: citește conținutul cu voce, apasă pe ce îi spui,
+scrie, caută, derulează, merge înapoi. După „caută”, „apasă” sau „deschide X și …” citește singură ce a apărut.
+Citește ecranul doar când Detoxul e pornit sau când o comandă vocală o cere; nu ține jurnal și nu trimite nimic
+nicăieri. Cu „Hei FORJA” mereu la ascultare (sau butonul „Ascultă acum” din notificare / tile-ul „FORJA Voce”)
+comenzile se dau direct din aplicația în care ești, fără să deschizi FORJA.
 
 **Permisiuni.** Microfonul e necesar. Contactele, SMS-ul și apelurile se cer doar când o comandă
 are nevoie de ele; fără ele FORJA deschide aplicația de mesaje / telefon cu totul completat, și

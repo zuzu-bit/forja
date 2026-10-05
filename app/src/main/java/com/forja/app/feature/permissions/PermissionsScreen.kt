@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.Accessibility
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.Folder
@@ -52,6 +53,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.forja.app.ForjaApp
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
+import com.forja.app.core.detox.AccessibilityLink
+import com.forja.app.core.detox.ForjaGuardService
 import com.forja.app.core.media.Media
 import com.forja.app.core.music.Music
 import com.forja.app.core.social.ContactsReader
@@ -67,6 +70,8 @@ private enum class Gear(val title: String, val icon: ImageVector) {
     Battery("Baterie", Icons.Outlined.BatteryChargingFull),
     Contacts("Agendă", Icons.Outlined.Contacts),
     Music("Muzică", Icons.Outlined.MusicNote),
+    /** Un singur serviciu de accesibilitate: Paznicul Detox (Focus) și comenzile vocale pe ecran („Hei FORJA”). */
+    Accessibility("Accesibilitate", Icons.Outlined.Accessibility),
     Contract("Contract", Icons.Outlined.VerifiedUser)
 }
 
@@ -81,7 +86,7 @@ private const val FALLBACK_POSTER = "https://t3.ftcdn.net/jpg/04/70/98/78/500_F_
 
 /** Ghidajul primei vizite: explicațiile stau aici, nu pe rânduri (≤ 90 de caractere pe pas, 4 pași). */
 private val ECHIPARE_STEPS = listOf(
-    CoachStep("echipare.progres", "Nouă bife, o singură dată. Apoi FORJA nu te mai întrerupe."),
+    CoachStep("echipare.progres", "Zece bife, o singură dată. Apoi FORJA nu te mai întrerupe."),
     CoachStep("echipare.lista", "Atinge un rând ca să-l bifezi. Bateria și alarma se pornesc din Setări Android."),
     CoachStep("echipare.muzica", "Muzică: FORJA vede doar titlul și artistul și le arată prietenilor pe hartă."),
     CoachStep("echipare.contract", "Contractul spune ce pleacă pe site. Mesajele și parolele nu se citesc niciodată.", MascotState.Happy)
@@ -95,10 +100,14 @@ private const val ECHIPARE_DETAILS =
         "Muzica: Android numește accesul „Acces la notificări”, dar FORJA nu citește notificările. Vede doar melodia care " +
         "cântă, titlul și artistul, o arată prietenilor pe hartă și pune pauză muzicii la finalul inventarului.\n\n" +
         "Fișiere: „Acces la toate fișierele”, doar ca Inventarul să mute pozele unde alegi tu.\n\n" +
-        "Agenda: numărul tău îl scrii în Profil. Focusul își cere accesul special direct din modulul lui.\n\n" +
+        "Agenda: numărul tău îl scrii în Profil. Focusul își cere accesul la utilizare direct din modulul lui.\n\n" +
+        "Accesibilitate: un singur serviciu FORJA, pornit din Setări → Accesibilitate, cu două roluri — Paznicul Detox din Focus și " +
+        "comenzile vocale „Hei FORJA” în alte aplicații (citește ecranul, apasă, scrie, caută). Citește ecranul doar când Detoxul e pornit " +
+        "sau când dai o comandă vocală; nimic nu pleacă de pe telefon. Pe Android 13+, dacă apare „Setare restricționată”: " +
+        "Setări → Aplicații → FORJA → meniul ⋮ → „Permite setările restricționate”, apoi revino în Accesibilitate.\n\n" +
         "Un rând „blocat” înseamnă că Android a închis dialogul: atinge-l și pornește-l din Setări."
 
-/** „Echipare” — nouă bife, o singură dată; apoi FORJA nu te mai întrerupe. Rândurile nu explică: arată starea. */
+/** „Echipare” — zece bife, o singură dată; apoi FORJA nu te mai întrerupe. Rândurile nu explică: arată starea. */
 @Composable
 fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
     val context = LocalContext.current
@@ -154,9 +163,11 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
     // Muzica: „Acces la notificări” pentru serviciul FORJA — doar ca să vedem sesiunile media.
     val musicOn = remember(refresh) { Music.hasAccess(context) }
     LaunchedEffect(musicOn) { if (musicOn) Music.ensureStarted(context) }
+    // Accesibilitate: serviciul FORJA (Detox + comenzi vocale pe ecran) pornit din Setări → Accesibilitate.
+    val accessOn = remember(refresh) { ForjaGuardService.isEnabled(context) }
     // Contractul: semnat la versiunea curentă.
     val contractSigned by app.prefs.contractSigned.collectAsState(initial = false)
-    val done = listOf(notifOn, locationOn, micOn, photosOn, filesOn, powerOn, contactsGranted, musicOn, contractSigned).count { it }
+    val done = listOf(notifOn, locationOn, micOn, photosOn, filesOn, powerOn, contactsGranted, musicOn, accessOn, contractSigned).count { it }
 
     // Rândurile pe care Android nu mai arată dialogul: starea „blocat”, iar atingerea deschide setările aplicației.
     var blocked by remember { mutableStateOf(emptySet<Gear>()) }
@@ -259,6 +270,8 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
             Gear.Files -> if (!filesOn) AllFiles.intents(context).let { openSafe(it[0], fallback = it.getOrNull(1)) }
             // „Acces la notificări” e o pagină de setări, nu un dialog: direct la FORJA pe 11+, lista generală altfel.
             Gear.Music -> openSafe(Music.accessIntent(context), fallback = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            // Accesibilitatea e o pagină de setări, nu un dialog: direct la serviciul FORJA pe telefoanele care știu, lista altfel.
+            Gear.Accessibility -> AccessibilityLink.intents(context).let { openSafe(it[0], fallback = it[2]) }
             Gear.Contract -> onOpenContract()
         }
     }
@@ -272,6 +285,7 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
         Gear.Battery -> powerOn
         Gear.Contacts -> contactsGranted
         Gear.Music -> musicOn
+        Gear.Accessibility -> accessOn
         Gear.Contract -> contractSigned
     }
 
@@ -349,7 +363,7 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
                         }
                         Spacer(Modifier.height(6.dp))
                         Reveal(index = 2) {
-                            Text("Nouă bife. O singură dată.", style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp))
+                            Text("Zece bife. O singură dată.", style = Body.copy(fontSize = 14.sp, lineHeight = 19.sp))
                         }
                     }
                 }

@@ -23,6 +23,10 @@ import kotlinx.coroutines.launch
  * la o oprire se numără doar codul pachetului care a prins ([DetoxPacks.match]), pe zile (Prefs.addDetoxHit).
  * Cu contractul v4, numărătorile ajung pe site (FocusMirror); cuvintele și scrisoarea doar cu acordul separat
  * „Arată pe site” (Prefs.detoxWordsOnSite, oprit implicit). Când prinde tentația, întâmpină cu blândețe, nu cu rușine.
+ *
+ * De la 4.8 e și singurul serviciu de accesibilitate al aplicației: asistentul vocal „Hei FORJA” îl folosește
+ * (prin [com.forja.app.core.voice.ScreenAgent]) ca să citească ecranul aplicației din față și să lucreze în ea —
+ * dar DOAR când o comandă vocală o cere. Un singur comutator în Setări → Accesibilitate, cerut din „Echipare”.
  */
 class ForjaGuardService : AccessibilityService() {
 
@@ -33,14 +37,28 @@ class ForjaGuardService : AccessibilityService() {
     private var essentials: Set<String> = emptySet()
 
     override fun onServiceConnected() {
+        instance = this
         val app = ForjaApp.from(this)
         essentials = buildEssentials()
         scope.launch { app.prefs.detoxOn.collect { on = it } }
         scope.launch { app.prefs.detoxWords.collect { userWords = parseWords(it) } }
     }
 
+    override fun onUnbind(intent: Intent?): Boolean {
+        if (instance === this) instance = null
+        return super.onUnbind(intent)
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (!on || event == null) return
+        if (event == null) return
+        // Aplicația din față (pentru comenzile vocale pe ecran): tastatura, bara de sistem și ferestrele de sistem nu contează.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val fg = event.packageName?.toString().orEmpty()
+            if (fg.isNotBlank() && fg != "android" && fg != "com.android.systemui" && !fg.contains("inputmethod") && !fg.contains("keyboard")) {
+                foregroundPackage = fg
+            }
+        }
+        if (!on) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg == packageName || pkg.contains("forja")) return
         if (pkg in essentials) return
@@ -106,11 +124,19 @@ class ForjaGuardService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         scope.cancel()
         super.onDestroy()
     }
 
     companion object {
+        /** Serviciul conectat acum (null = oprit din Setări sau deconectat). Îl folosește asistentul vocal. */
+        @Volatile var instance: ForjaGuardService? = null
+            private set
+        /** Ultima aplicație adevărată ajunsă în față (fără tastatură / bară de sistem). */
+        @Volatile var foregroundPackage: String = ""
+            private set
+
         fun parseWords(s: String): List<String> = DetoxPacks.parseWords(s)
 
         /** E pornit serviciul de accesibilitate FORJA? (nu se poate porni programatic) */

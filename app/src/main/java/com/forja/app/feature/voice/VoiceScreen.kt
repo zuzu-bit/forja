@@ -112,7 +112,7 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
                 micGranted = granted(Manifest.permission.RECORD_AUDIO)
                 val nowOn = ScreenAgent.isEnabled(context)
                 // Întors din Setări cu serviciul pornit: spunem cu voce, nu doar cu o bifă.
-                if (nowOn && !screenWasOn) tell("Comenzile pe ecran sunt pornite. Încearcă: „deschide YouTube și pune Phoenix” sau „citește ecranul”.")
+                if (nowOn && !screenWasOn) tell("Accesibilitatea FORJA e pornită: comenzile pe ecran merg. Încearcă: „deschide YouTube și pune Phoenix” sau „citește ecranul”.")
                 screenWasOn = nowOn
             }
         }
@@ -300,15 +300,15 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
                 }
             }
 
-            // Lucrul în alte aplicații: serviciul de accesibilitate „Comenzi pe ecran” (doar utilizatorul îl poate porni)
+            // Lucrul în alte aplicații: serviciul de accesibilitate FORJA (același ca pentru Detox; doar utilizatorul îl poate porni)
             val screenOn = remember(refresh, st.phase) { ScreenAgent.isEnabled(context) }
             val screenConnected = remember(refresh, st.phase) { ScreenAgent.isConnected() }
             VoiceSetting(
                 "Comenzi pe ecran, în alte aplicații",
                 when {
-                    screenConnected -> "Pornit: FORJA poate citi ecranul, apăsa, scrie și căuta în aplicația din față („citește ecranul”, „apasă pe…”, „scrie…”, „deschide YouTube și pune…”)."
-                    screenOn -> "Pornit în setări, dar neconectat încă. Oprește și pornește din nou „FORJA · Comenzi pe ecran” din Setări → Accesibilitate."
-                    else -> "Oprit. Pornește din Setări → Accesibilitate → „FORJA · Comenzi pe ecran” ca FORJA să poată lucra în YouTube, Google, WhatsApp și orice altă aplicație."
+                    screenConnected -> "Pornit (serviciul FORJA din Accesibilitate, același ca pentru Focus): FORJA poate citi ecranul, apăsa, scrie și căuta în aplicația din față („citește ecranul”, „apasă pe…”, „scrie…”, „deschide YouTube și pune…”)."
+                    screenOn -> "Pornit în setări, dar neconectat încă. Oprește și pornește din nou „FORJA” din Setări → Accesibilitate."
+                    else -> "Oprit. Pornește serviciul „FORJA” din Setări → Accesibilitate (e în Echipare, la „Accesibilitate”) ca FORJA să poată lucra în YouTube, Google, WhatsApp și orice altă aplicație."
                 }
             ) {
                 if (screenConnected) {
@@ -320,8 +320,8 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
                         Modifier.clip(ChipShape).background(AccentGradient)
                             .semantics { role = Role.Button; contentDescription = "Pornește comenzile pe ecran din setările de accesibilitate" }
                             .pressable({
-                                if (!ScreenAgent.openSettings(context)) tell("Deschide manual Setări → Accesibilitate → FORJA · Comenzi pe ecran.")
-                                else voice.speak("Caută „FORJA, Comenzi pe ecran”, pornește-l și confirmă. Apoi revino în FORJA.")
+                                if (!ScreenAgent.openSettings(context)) tell("Deschide manual Setări → Accesibilitate → FORJA.")
+                                else voice.speak("Pornește „FORJA” și confirmă. Dacă Android spune „setare restricționată”, intră în Setări, Aplicații, FORJA, meniul cu trei puncte, „Permite setările restricționate”. Apoi revino în FORJA.")
                             }).padding(horizontal = 14.dp, vertical = 8.dp)
                     ) { Text("Pornește", style = ButtonTextSmall) }
                 }

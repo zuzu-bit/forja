@@ -62,6 +62,13 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- Pagina serviciului FORJA din Accesibilitate (ca să știm dinainte dacă telefonul o are; altfel lista). -->
+        <intent>
+            <action android:name="android.settings.ACCESSIBILITY_DETAILS_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.ACCESSIBILITY_SETTINGS" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
@@ -217,7 +224,7 @@
             android:name=".core.detox.ForjaGuardService"
             android:exported="false"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:label="FORJA · Detox de adicție">
+            android:label="FORJA · Accesibilitate">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
@@ -264,21 +271,6 @@
             android:noHistory="true"
             android:taskAffinity=""
             android:theme="@style/Theme.Forja.Transparent" />
-
-        <!-- „FORJA · Comenzi pe ecran": asistentul lucrează în alte aplicații (citește, apasă, scrie, caută).
-             Serviciu de accesibilitate separat de Detox; îl pornește doar utilizatorul, din Setări → Accesibilitate. -->
-        <service
-            android:name=".core.voice.VoiceScreenService"
-            android:exported="false"
-            android:label="@string/voice_screen_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/voice_screen_config" />
-        </service>
 
         <!-- Butonul „FORJA Voce" din setările rapide. -->
         <service
