@@ -44,6 +44,12 @@ class VoiceWakeService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        running = true
+        if (intent?.action == ACTION_LISTEN) {
+            // „Ascultă acum” din notificare: ascultăm pe loc, în aplicația în care ești — nu deschidem FORJA peste ea.
+            ForjaApp.from(this).voice.listen()
+            return START_STICKY
+        }
         ForjaApp.from(this).voice.startWakeLoop()
         return START_STICKY
     }
@@ -53,8 +59,9 @@ class VoiceWakeService : Service() {
             this, 0, Intent(this, MainActivity::class.java).setAction(MainActivity.ACTION_VOICE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        // O activitate transparentă de o clipă: închide panoul de notificări și ascultă în aplicația rămasă pe ecran.
         val listenNow = PendingIntent.getActivity(
-            this, 1, Intent(this, MainActivity::class.java).setAction(MainActivity.ACTION_VOICE_LISTEN).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            this, 1, Intent(this, VoiceListenActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val stop = PendingIntent.getService(
@@ -73,6 +80,7 @@ class VoiceWakeService : Service() {
     }
 
     override fun onDestroy() {
+        running = false
         ForjaApp.from(this).voice.stopWakeLoop()
         super.onDestroy()
     }
@@ -80,6 +88,10 @@ class VoiceWakeService : Service() {
     companion object {
         const val NOTIF_ID = 70
         const val ACTION_STOP = "com.forja.app.voice.STOP"
+        const val ACTION_LISTEN = "com.forja.app.voice.LISTEN"
+        /** Serviciul e pornit (microfonul poate fi folosit și din fundal). */
+        @Volatile var running: Boolean = false
+            private set
 
         /** Pornește ascultarea continuă; întoarce false dacă lipsește microfonul sau sistemul refuză. */
         fun start(context: Context): Boolean {

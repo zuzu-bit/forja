@@ -10,6 +10,8 @@
     <string name="shortcut_voice_short">Hei FORJA</string>
     <string name="shortcut_voice_long">Hei FORJA — spune o comandă</string>
     <string name="tile_voice_label">FORJA Voce</string>
+    <string name="voice_screen_label">FORJA · Comenzi pe ecran</string>
+    <string name="voice_screen_desc">Asistentul vocal „Hei FORJA” poate lucra în interiorul altor aplicații: citește ce e pe ecran, apasă pe ce îi spui, scrie, caută, derulează, merge înapoi. Citește ecranul DOAR când îi dai o comandă vocală; nu ține jurnal și nu trimite nimic nicăieri. Gândit pentru cine nu vede ecranul.</string>
     <string name="notif_channel_explore">Locurile tale</string>
     <string name="notif_channel_cleanup">Curățenie</string>
     <string name="notif_channel_sync">Sincronizare în cont</string>

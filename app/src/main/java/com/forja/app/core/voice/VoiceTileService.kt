@@ -25,7 +25,10 @@ class VoiceTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        val intent = Intent(this, MainActivity::class.java)
+        // Cu serviciul de microfon pornit: închidem panoul printr-o activitate transparentă și ascultăm în aplicația din față.
+        val intent = if (VoiceWakeService.running && !isLocked)
+            Intent(this, VoiceListenActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        else Intent(this, MainActivity::class.java)
             .setAction(MainActivity.ACTION_VOICE_LISTEN)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val launch = Runnable {

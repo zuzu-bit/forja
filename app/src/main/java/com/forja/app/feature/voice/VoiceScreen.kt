@@ -47,9 +47,13 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.forja.app.ForjaApp
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
+import com.forja.app.core.voice.ScreenAgent
 import com.forja.app.core.voice.VoiceAssistant
 import com.forja.app.core.voice.VoiceWakeService
 import kotlinx.coroutines.flow.first
@@ -61,13 +65,18 @@ private const val INTRO = "Salut, sunt FORJA. Apasă butonul mare din mijloc și
 private val EXAMPLES = listOf(
     "Trimite mesaj lui Ion: ajung în zece minute",
     "Sună-l pe Andrei",
-    "Pune Phoenix pe YouTube",
+    "Deschide YouTube și pune Phoenix",
+    "Caută pe Google despre căpșuni",
+    "Deschide Waze și du-mă la gară",
+    "Citește ecranul",
+    "Apasă pe primul rezultat",
+    "Scrie salut, ce faci",
+    "Derulează în jos",
+    "Înapoi",
     "Deschide antrenamentul",
     "Pornește somnul",
     "Cum stau azi?",
-    "Cât e ceasul?",
-    "Pune alarma la 7",
-    "Deschide WhatsApp"
+    "Pune alarma la 7"
 )
 
 /**
@@ -93,6 +102,23 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
     var micGranted by remember { mutableStateOf(granted(Manifest.permission.RECORD_AUDIO)) }
     // Tot ce se întâmplă aici se și spune: toast-urile nu sunt citite de TalkBack, iar cine nu vede nu le vede.
     fun tell(msg: String) { toast.show(msg); voice.speak(msg) }
+    // La revenirea din Setări (accesibilitate, permisiuni) recitim starea.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var screenWasOn by remember { mutableStateOf(ScreenAgent.isEnabled(context)) }
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) {
+                refresh++
+                micGranted = granted(Manifest.permission.RECORD_AUDIO)
+                val nowOn = ScreenAgent.isEnabled(context)
+                // Întors din Setări cu serviciul pornit: spunem cu voce, nu doar cu o bifă.
+                if (nowOn && !screenWasOn) tell("Comenzile pe ecran sunt pornite. Încearcă: „deschide YouTube și pune Phoenix” sau „citește ecranul”.")
+                screenWasOn = nowOn
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         micGranted = ok; refresh++
         if (!ok) tell("Fără microfon nu te pot auzi. Permite din Setări → Aplicații → FORJA.")
@@ -274,6 +300,33 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
                 }
             }
 
+            // Lucrul în alte aplicații: serviciul de accesibilitate „Comenzi pe ecran” (doar utilizatorul îl poate porni)
+            val screenOn = remember(refresh, st.phase) { ScreenAgent.isEnabled(context) }
+            val screenConnected = remember(refresh, st.phase) { ScreenAgent.isConnected() }
+            VoiceSetting(
+                "Comenzi pe ecran, în alte aplicații",
+                when {
+                    screenConnected -> "Pornit: FORJA poate citi ecranul, apăsa, scrie și căuta în aplicația din față („citește ecranul”, „apasă pe…”, „scrie…”, „deschide YouTube și pune…”)."
+                    screenOn -> "Pornit în setări, dar neconectat încă. Oprește și pornește din nou „FORJA · Comenzi pe ecran” din Setări → Accesibilitate."
+                    else -> "Oprit. Pornește din Setări → Accesibilitate → „FORJA · Comenzi pe ecran” ca FORJA să poată lucra în YouTube, Google, WhatsApp și orice altă aplicație."
+                }
+            ) {
+                if (screenConnected) {
+                    Box(Modifier.size(28.dp).clip(CircleShape).background(Positive), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Check, contentDescription = "Comenzi pe ecran: pornit", tint = Color.White, modifier = Modifier.size(16.dp))
+                    }
+                } else {
+                    Box(
+                        Modifier.clip(ChipShape).background(AccentGradient)
+                            .semantics { role = Role.Button; contentDescription = "Pornește comenzile pe ecran din setările de accesibilitate" }
+                            .pressable({
+                                if (!ScreenAgent.openSettings(context)) tell("Deschide manual Setări → Accesibilitate → FORJA · Comenzi pe ecran.")
+                                else voice.speak("Caută „FORJA, Comenzi pe ecran”, pornește-l și confirmă. Apoi revino în FORJA.")
+                            }).padding(horizontal = 14.dp, vertical = 8.dp)
+                    ) { Text("Pornește", style = ButtonTextSmall) }
+                }
+            }
+
             Spacer(Modifier.height(16.dp))
             SectionLabel("Permisiuni pentru comenzi")
             Spacer(Modifier.height(10.dp))
@@ -310,7 +363,8 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
             }
             Spacer(Modifier.height(10.dp))
             Text(
-                "Mai poți spune: „deschide harta”, „respiră”, „ce zi e azi”, „cine e online”, „m-am trezit”, „repetă”, „oprește ascultarea”.",
+                "Mai poți spune: „deschide harta”, „respiră”, „ce zi e azi”, „cine e online”, „m-am trezit”, „repetă”, „oprește ascultarea”, " +
+                    "„deschide WhatsApp și trimite mesaj lui Ion că ajung”, „open Google and search about strawberries”, „caută aici …”, „apasă pe căutare”, „enter”.",
                 style = BodySmall.copy(color = TextSecondary)
             )
         }
