@@ -263,11 +263,11 @@ object ScreenAgent {
             if (affordance != null) {
                 tap(affordance)
                 // După apăsarea pe lupă, câmpul care primește focus e cel de căutare; îl așteptăm până la 2 s.
-                repeat(10) {
+                var tries = 0
+                while (field == null && tries++ < 10) {
                     delay(200)
                     list = items()
                     field = list.firstOrNull { it.editable && it.focused } ?: list.firstOrNull { it.editable && looksLikeSearch(it) }
-                    if (field != null) return@repeat
                 }
             }
         }

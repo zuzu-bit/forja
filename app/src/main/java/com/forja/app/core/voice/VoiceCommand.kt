@@ -406,6 +406,10 @@ object CommandParser {
         if (MAP_PHRASE.containsMatchIn(t)) {
             val which = if (t.contains("waze")) "waze" else "maps"
             val clean = MAP_PHRASE.replace(t, " ").replace(Regex("\\s+"), " ").trim()
+            // „du-mă pe hartă”, „arată-mi pe hartă”, „deschide harta pe waze”: a rămas doar verbul → ecranul Hartă din FORJA
+            if (clean.isBlank() || Regex("^(?:du-ma|duma|arata(?:-mi|mi)?|show me|show|deschide|open|mergi|go|navigheaza|navigate|cauta|search|harta|the map|map)$").matches(clean)) {
+                return VoiceCommand.Navigate(AppTarget.MAP)
+            }
             val rawClean = MAP_PHRASE_RAW.replace(VoiceText.cleanRawLight(raw), " ").replace(Regex("\\s+"), " ").trim()
             fun tail(part: String) = VoiceText.tailWords(rawClean, part.split(" ").count { it.isNotBlank() }).ifBlank { part }
             PLACE_NAV.find(clean)?.let { return VoiceCommand.OpenPlace(tail(it.groupValues[1].trim()), navigate = true, app = which) }
