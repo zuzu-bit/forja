@@ -715,27 +715,10 @@ private fun DetoxAddictionSection() {
             },
             onNext = { guardStep = (guardStep + 1).coerceAtMost(3) },
             onOpenAccess = {
-                // Încearcă să deschidă DIRECT pagina serviciului FORJA din Accesibilitate; altfel, lista.
-                val cn = android.content.ComponentName(context, com.forja.app.core.detox.ForjaGuardService::class.java)
-                val flat = cn.flattenToString()
-                fun args() = android.os.Bundle().apply { putString(":settings:fragment_args_key", flat) }
-                val tries = listOf(
-                    Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
-                        putExtra(":settings:fragment_args_key", flat)
-                        putExtra(":settings:show_fragment_args", args())
-                        putExtra(Intent.EXTRA_COMPONENT_NAME, cn)
-                    },
-                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                        putExtra(":settings:fragment_args_key", flat)
-                        putExtra(":settings:show_fragment_args", args())
-                    },
-                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                )
-                var ok = false
-                for (i in tries) {
-                    try { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(i); ok = true; break } catch (_: Exception) { }
+                // Același drum ca din „Echipare”: direct pagina serviciului FORJA din Accesibilitate; altfel, lista.
+                if (!com.forja.app.core.detox.AccessibilityLink.open(context)) {
+                    toast.show("Deschide Setări → Accesibilitate → Aplicații instalate → FORJA.")
                 }
-                if (!ok) toast.show("Deschide Setări → Accesibilitate → Aplicații instalate → FORJA.")
             },
             onClose = { guardStep = 0 }
         )
@@ -1103,7 +1086,7 @@ private fun GuardWizardSheet(
                     Text("Încearcă să pornești paznicul", style = TitleModule.copy(fontSize = 20.sp))
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "În Accesibilitate, atinge „FORJA · Detox de adicție” și pornește-l. Android îl blochează: „Setare restricționată”.",
+                        "În Accesibilitate, atinge „FORJA · Accesibilitate” și pornește-l. Android îl blochează: „Setare restricționată”.",
                         style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
                     )
                     Spacer(Modifier.height(8.dp))
@@ -1136,7 +1119,7 @@ private fun GuardWizardSheet(
                     Text("Pornește paznicul", style = TitleModule.copy(fontSize = 20.sp))
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "Înapoi în Accesibilitate: pornește „FORJA · Detox de adicție”. Acum merge.",
+                        "Înapoi în Accesibilitate: pornește „FORJA · Accesibilitate”. Acum merge.",
                         style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
                     )
                     Spacer(Modifier.height(16.dp))

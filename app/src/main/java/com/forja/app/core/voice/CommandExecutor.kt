@@ -156,14 +156,15 @@ class CommandExecutor(private val app: ForjaApp) {
 
     private fun screenUnavailable(prefix: String = ""): Outcome =
         if (!ScreenAgent.isEnabled(app)) Outcome.Ask(
-            "${prefix}Ca să lucrez pe ecranul altor aplicații am nevoie de „FORJA, Comenzi pe ecran” din Accesibilitate. Deschid setările ca să-l pornești?",
+            "${prefix}Ca să lucrez pe ecranul altor aplicații am nevoie de serviciul FORJA din Accesibilitate, același ca pentru Focus. Deschid setările ca să-l pornești?",
             Pending.EnableScreen
-        ) else Outcome.Done("${prefix}Controlul ecranului e pornit în setări, dar nu e conectat. Oprește-l și pornește-l din nou din Setări, Accesibilitate.")
+        ) else Outcome.Done("${prefix}Serviciul FORJA e pornit în Accesibilitate, dar nu e conectat. Oprește-l și pornește-l din nou din Setări, Accesibilitate.")
 
     private fun enableScreen(): Outcome {
-        if (ScreenAgent.isConnected()) return Outcome.Done("Controlul ecranului e deja pornit.")
-        val i = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        return launch(i, "Am deschis setările de accesibilitate. Caută „FORJA, Comenzi pe ecran”, pornește-l și confirmă. Apoi spune din nou comanda.", "Pornește „Comenzi pe ecran”")
+        if (ScreenAgent.isConnected()) return Outcome.Done("Accesibilitatea FORJA e deja pornită.")
+        val i = com.forja.app.core.detox.AccessibilityLink.intents(app).firstOrNull { it.resolveActivity(app.packageManager) != null }
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) ?: return Outcome.Done("Nu găsesc setările de accesibilitate pe acest telefon.")
+        return launch(i, "Am deschis Accesibilitatea. Pornește „FORJA” și confirmă. Dacă Android spune „setare restricționată”, intră în Setări, Aplicații, FORJA, meniul cu trei puncte, „Permite setările restricționate”. Apoi spune din nou comanda.", "Pornește accesibilitatea FORJA")
     }
 
     private suspend fun screen(action: ScreenAction): Outcome {
