@@ -79,6 +79,9 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
         focusActive = app.prefs.focusActive.first()
         while (true) { kotlinx.coroutines.delay(30_000); tick++ }
     }
+    // Pornit / oprit din altă parte („Hei FORJA, pornește focusul”): ecranul se ține după preferință.
+    val focusActivePref by app.prefs.focusActive.collectAsState(initial = false)
+    LaunchedEffect(focusActivePref) { focusActive = focusActivePref }
     // Raportul de utilizare — azi + săptămâna, per aplicație (à la Digital Detox).
     LaunchedEffect(hasUsage, tick) {
         if (hasUsage) {

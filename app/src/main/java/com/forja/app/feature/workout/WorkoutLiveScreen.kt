@@ -69,9 +69,9 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
 
     // Cronometru sesiune
     var elapsed by remember { mutableStateOf(0L) }
-    LaunchedEffect(live.startedAt) {
+    LaunchedEffect(live.startedAt, live.paused, live.pausedMs) {
         while (true) {
-            elapsed = if (live.startedAt > 0) (System.currentTimeMillis() - live.startedAt) / 1000 else 0
+            elapsed = live.elapsedSec()
             delay(1000)
         }
     }
@@ -137,6 +137,8 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
         showMusic = showMusic,
         actions = LiveActions(
             onEnd = { vm.endEarly(); onExit() },
+            onPause = { vm.pause() },
+            onResume = { vm.resume() },
             onToggleAngle = { vm.toggleAngle() },
             onFinishSet = { vm.finishSet() },
             onAddRest = { vm.addRest() },
@@ -153,6 +155,8 @@ fun WorkoutLiveScreen(onExit: () -> Unit) {
 /** Acțiunile sesiunii live (seria, pauza, muzica). */
 data class LiveActions(
     val onEnd: () -> Unit = {},
+    val onPause: () -> Unit = {},
+    val onResume: () -> Unit = {},
     val onToggleAngle: () -> Unit = {},
     val onFinishSet: () -> Unit = {},
     val onAddRest: () -> Unit = {},
@@ -200,10 +204,15 @@ fun WorkoutLiveContent(live: LiveState, elapsedSec: Long, disc: DiscUi, showMusi
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "SESIUNE LIVE · ${Fmt.durationMs(elapsedSec)}",
-                    style = monoLabel(9, 0.14f).copy(color = Accent2)
+                    if (live.paused) "ÎN PAUZĂ · ${Fmt.durationMs(elapsedSec)}" else "SESIUNE LIVE · ${Fmt.durationMs(elapsedSec)}",
+                    style = monoLabel(9, 0.14f).copy(color = if (live.paused) EmberHot else Accent2)
                 )
-                OverVideoButton("Încheie", onClick = actions.onEnd)
+                Row {
+                    // Pauza cerută de om (și cu vocea: „pauză” / „continuă”): cronometrul stă, muzica FORJA tace.
+                    OverVideoButton(if (live.paused) "Continuă" else "Pauză", onClick = if (live.paused) actions.onResume else actions.onPause)
+                    Spacer(Modifier.width(8.dp))
+                    OverVideoButton("Încheie", onClick = actions.onEnd)
+                }
             }
 
             Column(
@@ -319,10 +328,10 @@ fun WorkoutLiveContent(live: LiveState, elapsedSec: Long, disc: DiscUi, showMusi
             Spacer(Modifier.height(22.dp))
         }
 
-        AnimatedVisibility(visible = !live.resting, enter = fadeIn(), exit = fadeOut()) {
+        AnimatedVisibility(visible = !live.resting || live.paused, enter = fadeIn(), exit = fadeOut()) {
             PrimaryButton(
-                text = "Termină seria",
-                onClick = actions.onFinishSet,
+                text = if (live.paused) "Continuă antrenamentul" else "Termină seria",
+                onClick = if (live.paused) actions.onResume else actions.onFinishSet,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp)

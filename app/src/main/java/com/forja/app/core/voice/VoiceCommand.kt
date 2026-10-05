@@ -11,6 +11,12 @@ enum class MusicService(val spoken: String) {
     YOUTUBE("YouTube"), YOUTUBE_MUSIC("YouTube Music"), SPOTIFY("Spotify"), ANY("player")
 }
 
+/** Ce să facă muzica din telefon (sesiunile media ale playerului: Spotify, YouTube Music, orice). */
+enum class MusicAction { PLAY, PAUSE, NEXT, PREVIOUS, NOW_PLAYING }
+
+/** O acțiune în sesiunea de antrenament FORJA. */
+enum class WorkoutAction { PAUSE, RESUME, END, FINISH_SET, SKIP_REST, ADD_REST, NEXT_EXERCISE, SUMMARY }
+
 /** Ecranele FORJA la care se poate ajunge cu vocea. */
 enum class AppTarget(val route: String, val spoken: String) {
     DASHBOARD(Route.DASHBOARD, "Ziua ta"),
@@ -59,6 +65,29 @@ sealed class VoiceCommand {
     /** Deschide setările de accesibilitate ca să pornească controlul ecranului. */
     object EnableScreenControl : VoiceCommand()
     data class Navigate(val target: AppTarget) : VoiceCommand()
+    // ── În FORJA (4.9): antrenamentul, muzica, Focusul, respirația, nutriția, somnul, prietenii, turele ──
+    /** „începe antrenamentul (de picioare)”: sesiunea live; [plan] = numele rostit sau null (planul ales în hub). */
+    data class StartWorkout(val plan: String?) : VoiceCommand()
+    data class WorkoutControl(val action: WorkoutAction) : VoiceCommand()
+    data class MusicControl(val action: MusicAction) : VoiceCommand()
+    /** „pornește un playlist (X) (pe Spotify)”: fără nume = lista FORJA; [mix] = mix / noi / vechi / apreciate, dacă s-a spus. */
+    data class PlayPlaylist(val name: String, val service: MusicService, val mix: String?) : VoiceCommand()
+    /** „pauză” / „continuă” / „următorul” fără obiect: antrenamentul dacă e pornit, altfel muzica (altfel ecranul). */
+    object Pause : VoiceCommand()
+    object Continue : VoiceCommand()
+    object Next : VoiceCommand()
+    /** [detoxMinutes] = null: Focus (aplicațiile alese); altfel Detox digital atâtea minute. */
+    data class StartFocus(val detoxMinutes: Int?) : VoiceCommand()
+    object StopFocus : VoiceCommand()
+    object FocusStatus : VoiceCommand()
+    object StartBreath : VoiceCommand()
+    object NutritionSummary : VoiceCommand()
+    object SleepSummary : VoiceCommand()
+    /** „unde e Ion” / „arată-l pe Ion pe hartă”: un prieten pe harta FORJA; altfel, un loc în aplicația de hărți. */
+    data class FriendWhere(val name: String) : VoiceCommand()
+    /** O tură pe hartă (GO): [sport] = run / walk / ride. */
+    data class StartGo(val sport: String) : VoiceCommand()
+    object StopGo : VoiceCommand()
     data class SetAlarm(val hour: Int, val minute: Int) : VoiceCommand()
     object StartSleep : VoiceCommand()
     object StopSleep : VoiceCommand()
@@ -239,7 +268,7 @@ object CommandParser {
     private val SCREEN_READ = Regex("^(?:(?:citeste(?:-mi|mi)?|read(?: me)?|spune(?:-mi|mi)?|tell me|zi(?:-mi|mi)?)\\s+(?:ce (?:e|este|scrie|vezi|vad) pe ecran|ce (?:e|este) pe pagina|ecranul|ce scrie|pagina|the screen|whats on (?:the )?screen|what's on (?:the )?screen|what is on (?:the )?screen|the page|rezultatele|the results|textul|the text|tot|everything|mesajul|the message)|ce (?:e|este|scrie|vezi|vad|avem) pe ecran|ce scrie(?: aici| pe ecran)?|what(?:'s|s| is) on (?:the |my )?screen|what does it say|describe the screen|descrie ecranul|unde sunt)\\s*$")
     private val SCREEN_TAP = Regex("^(?:apasa(?:-l|l)?|atinge|da click|click|clic|tap|press|push|hit|select|selecteaza|alege|activeaza|deschide-l|bifeaza|check)(?:\\s+(?:pe|on))?\\s+(?:butonul\\s+|the button\\s+|the\\s+|optiunea\\s+|pe\\s+)?(.+)$")
     private val SCREEN_TYPE = Regex("^(?:scrie|tasteaza|type|write|introdu|enter text|dicteaza|dictate)\\s+(?!(?:-i\\s|i\\s|lui\\s|la\\s|catre\\s|pentru\\s|un\\s|o\\s|a\\s|an\\s|the\\s|this\\s|that\\s|to\\s|mesaj|sms|text|pe whatsapp|on whatsapp))(?:textul\\s+|the text\\s+|aici\\s+|here\\s+)?(.+)$")
-    private val SCREEN_SCROLL = Regex("^(?:deruleaza|scroll|da (?:in |mai )?(?:jos|sus)|mergi (?:mai )?(?:jos|sus)|swipe|mai (?:jos|sus)|pagina urmatoare|next page|page down|page up|continua)\\s*(?:in\\s+|pe\\s+)?(jos|sus|down|up|mai jos|mai sus|in jos|in sus)?\\s*$")
+    private val SCREEN_SCROLL = Regex("^(?:deruleaza|scroll|da (?:in |mai )?(?:jos|sus)|mergi (?:mai )?(?:jos|sus)|swipe|mai (?:jos|sus)|pagina urmatoare|next page|page down|page up)\\s*(?:in\\s+|pe\\s+)?(jos|sus|down|up|mai jos|mai sus|in jos|in sus)?\\s*$")
     private val SCREEN_BACK = Regex("^(?:inapoi|mergi inapoi|du-te inapoi|go back|back|navigate back|iesi|exit|close|inchide(?: asta| pagina| aplicatia)?)\\s*$")
     private val SCREEN_HOME = Regex("^(?:ecranul principal|ecranul de start|home screen|go to home screen|go to the home screen|acasa pe telefon|la ecranul principal|ecranul principal al telefonului)\\s*$")
     private val SCREEN_ENTER = Regex("^(?:enter|apasa(?: pe)? enter|press enter|apasa(?: pe)? cauta|apasa(?: pe)? trimite|apasa(?: pe)? ok|hit enter|submit|go)\\s*$")
@@ -247,6 +276,46 @@ object CommandParser {
     private val ENABLE_SCREEN = Regex("^(?:activeaza|porneste|enable|turn on)\\s+(?:controlul (?:ecranului|pe ecran)|comenzile pe ecran|accesibilitatea|screen control|accessibility)\\b")
 
     private val OPEN_APP = Regex("^(?:deschide(?:-mi|mi)?|porneste|lanseaza|ruleaza|intra in|open|launch|start|run|go to)\\s+(?:te rog\\s+|please\\s+)?(?:aplicatia\\s+|app\\s+|the app\\s+|the\\s+)?(.+?)(?:\\s+(?:aplicatia|app|te rog|please))?$")
+
+    // ── În FORJA (4.9) ──
+    private const val WK_NOUN = "antrenament(?:ul)?|sesiunea(?: de antrenament)?|sesiunea de sala|workout|training(?: session)?|the workout|the session|my workout|exercitiile"
+    private val WK_START = Regex("^(?:incepe(?:m)?|porneste|start|begin|lanseaza|da drumul la|hai cu|hai sa (?:facem|incepem|pornim)|sa (?:facem|incepem|pornim)|let'?s (?:do|start))\\s+(?:un\\s+|o\\s+|a\\s+|an\\s+|the\\s+|my\\s+|noul\\s+)?(?:$WK_NOUN)(?:\\s+(?:de|cu|pentru|for|of|la|on)\\s+(.+))?$")
+    private val WK_PAUSE = Regex("^(?:pune (?:pe )?pauza|pauza|pauzeaza|opreste putin|stai putin|pause|hold on|hold)\\s*(?:la\\s+|the\\s+|pe\\s+|cu\\s+)?(?:$WK_NOUN)\\s*$")
+    private val WK_RESUME = Regex("^(?:continua(?:m)?|reia|reporneste|reluam|resume|continue|unpause|dai drumul|da-i drumul|da drumul)\\s+(?:la\\s+|the\\s+|cu\\s+)?(?:$WK_NOUN)\\s*$")
+    private val WK_END = Regex("^(?:opreste|termina|incheie|stop|end|finish|gata cu|inchide|anuleaza|abandoneaza|quit)\\s+(?:$WK_NOUN)\\s*$")
+    private val WK_SET = Regex("^(?:am terminat seria|seria (?:e |este )?gata|gata seria|termina seria|am facut seria|serie terminata|serie gata|urmatoarea serie|seria urmatoare|set done|done with (?:the|this) set|finish(?:ed)? (?:the |this )?set|set finished|next set|log (?:the )?set)\\s*$")
+    private val WK_SKIP_REST = Regex("^(?:sari (?:peste )?pauza|fara pauza|skip (?:the )?(?:rest|break|pause)|gata pauza|pauza gata|continua seria|no rest)\\s*$")
+    private val WK_ADD_REST = Regex("^(?:mai (?:da-mi|dami|vreau|lasa-mi|lasa|am nevoie de|stau)(?: \\S+)? (?:secunde|timp|pauza)|prelungeste pauza|mai multa pauza|inca (?:\\S+ )?secunde|more rest|extend (?:the )?(?:rest|break)|add (?:\\S+ )?seconds|longer (?:rest|break))\\s*$")
+    private val WK_NEXT = Regex("^(?:urmatorul exercitiu|treci la urmatorul(?: exercitiu)?|sari (?:peste )?(?:exercitiul(?: asta| acesta)?|exercitiu)|exercitiul urmator|next exercise|skip (?:this )?exercise|move on)\\s*$")
+    private val WK_SUMMARY = Regex("^(?:(?:spune(?:-mi|mi)?|citeste(?:-mi|mi)?|arata(?:-mi|mi)?|da(?:-mi|mi)?|zi(?:-mi|mi)?|tell me|read me|give me|show me)\\s+)?(?:un\\s+|the\\s+|a\\s+)?(?:rezumat(?:ul)?(?: la| al| pentru| de)? (?:antrenament(?:ului|ul)?|sesiunii|sesiunea)(?: de pana acum| pana acum)?|rezumat antrenament|cum (?:stau|merge|merg|e|este) (?:cu )?antrenamentul|unde am ajuns(?: cu antrenamentul| in antrenament)?|ce exercitiu urmeaza|ce (?:exercitiu|serie) (?:e|este|am) acum|la ce (?:exercitiu|serie) (?:sunt|am ajuns)|cat (?:mai )?am(?: din antrenament| de facut| pana la final)?|cate serii am (?:facut|terminat)|workout (?:summary|status|progress)|how(?:'s| is) (?:my|the) workout(?: going)?|what(?:'s| is) (?:the )?next exercise|where am i in (?:my|the) workout|how many sets (?:have i done|did i do))\\s*$")
+
+    private const val MU_NOUN = "muzica|music|the music|melodia|piesa|cantecul|the song|song|the track|playback|redarea|sunetul|the sound|playerul|the player"
+    private val MU_PLAY = Regex("^(?:porneste|pune|da drumul la|da-i drumul la|dai drumul la|reia|reporneste|play|start|resume|unpause|continua|turn on)\\s+(?:te rog\\s+)?(?:la\\s+|the\\s+|din nou\\s+)?(?:$MU_NOUN)(?:\\s+(?:din nou|again|inapoi|la loc))?\\s*$")
+    private val MU_PAUSE = Regex("^(?:(?:pune (?:pe )?pauza|pauza|pauzeaza|opreste|stop|pause|taci|mute|inchide|turn off|stai)\\s+(?:la\\s+|the\\s+|cu\\s+|pe\\s+)?(?:$MU_NOUN)|(?:$MU_NOUN)\\s+(?:pauza|pe pauza|stop|off))\\s*$")
+    private val MU_NEXT = Regex("^(?:urmatoarea (?:melodie|piesa)|(?:melodia|piesa|cantecul) urmat(?:oare|or)|schimba (?:melodia|piesa|cantecul)|treci la urmatoarea(?: melodie| piesa)?|sari (?:melodia|piesa)(?: asta)?|alta (?:melodie|piesa)|next (?:song|track|one)|skip (?:this )?(?:song|track)|change (?:the )?(?:song|track))\\s*$")
+    private val MU_PREV = Regex("^(?:melodia (?:anterioara|dinainte|de dinainte|precedenta)|piesa (?:anterioara|dinainte|precedenta)|inapoi la (?:melodia|piesa)(?: dinainte)?|pune (?:melodia|piesa) dinainte|previous (?:song|track)|last song|go back a song|back a track)\\s*$")
+    private val MU_NOW = Regex("^(?:ce (?:canta|se aude|asculta?|melodie (?:e|este)(?: asta)?|melodie canta|piesa (?:e|este)(?: asta)?|muzica (?:e|este) asta)(?: acum)?|cine canta(?: acum)?|cum se numeste (?:melodia|piesa)(?: asta)?|ce (?:e|este) (?:melodia|piesa) asta|what(?:'s|s| is) (?:playing|this song|this track|this)(?: now)?|what song is this|who (?:is this|sings this|is singing)|name (?:this|the) song|now playing)\\s*$")
+    private val MU_PLAYLIST = Regex("^(?:porneste|pune(?:-mi|mi)?|da drumul la|play|start|put on|deschide|open|reda|pornim)\\s+(?:te rog\\s+)?(?:un\\s+|o\\s+|a\\s+|the\\s+|my\\s+|niste\\s+)?(?:playlist(?:ul|-ul)?|lista(?: de (?:redare|melodii|muzica))?|listele)(?:\\s+(?:de|cu|pentru|named|called|de la|for)\\s+)?\\s*(.*?)\\s*(?:(?:pe|on|din|from|in)\\s+(spotify|spotifai|youtube music|yt music|youtube|player(?:ul)?))?\\s*$")
+    private val MU_WORKOUT = Regex("^(?:pune(?:-mi|mi)?|porneste|play|put on|da drumul la)\\s+(?:niste\\s+|some\\s+)?(?:muzica|music)\\s+(?:de|pentru|for)\\s+(?:antrenament|sala|workout|gym|training)\\s*$")
+    private val NEXT_BARE = Regex("^(?:next|skip|urmatorul|urmatoarea|treci mai departe|mai departe|urmatoru)\\s*$")
+    private val PAUSE_BARE = Regex("^(?:pauza|pune (?:pe )?pauza|pauzeaza|pause|hold on|stai putin|o pauza)\\s*$")
+    private val CONTINUE_BARE = Regex("^(?:continua|continuam|reia|reluam|resume|continue|unpause|dai drumul|da-i drumul|da drumul|go on|carry on)\\s*$")
+
+    private const val FO_NOUN = "focus(?:ul|-ul)?|modul focus|focus mode|concentrarea"
+    private val FO_START = Regex("^(?:porneste|activeaza|incepe|start|activate|turn on|enable)\\s+(?:te rog\\s+)?(?:modul\\s+)?(?:$FO_NOUN)\\s*$")
+    private val FO_STOP = Regex("^(?:opreste|dezactiveaza|termina|incheie|stop|end|deactivate|turn off|disable)\\s+(?:modul\\s+)?(?:$FO_NOUN)\\s*$")
+    private val DX_START = Regex("^(?:porneste|activeaza|incepe|start|activate|turn on|enable)\\s+(?:te rog\\s+)?(?:un\\s+|a\\s+|the\\s+)?(?:detox(?:ul)?(?: digital)?|digital detox)(?:\\s+(?:de|pentru|for|timp de|of)?\\s*(.+?))?\\s*$")
+    private val DX_STOP = Regex("^(?:opreste|dezactiveaza|termina|incheie|stop|end|turn off)\\s+(?:detox(?:ul)?(?: digital)?|digital detox)\\s*$")
+    private val FO_STATUS = Regex("^(?:cat (?:mai )?(?:am|tine|dureaza|e|este|ramane)(?: din| la| pana la)? (?:focus(?:ul)?|detox(?:ul)?(?: digital)?|concentrarea)|cum (?:stau|merge) cu (?:focusul|detoxul|concentrarea)|(?:e|este) (?:focusul|detoxul) pornit|focus status|detox status|how (?:much|long) (?:focus|detox)(?: time)? (?:is )?left|is focus on)\\s*$")
+
+    private val BR_START = Regex("^(?:(?:porneste|incepe|start|begin|hai|hai la|hai sa facem|sa facem|do|let'?s do)\\s+(?:un\\s+|o\\s+|a\\s+|the\\s+|niste\\s+)?(?:respiratia|respiratie|exercitiul de respiratie|exercitiu de respiratie|exercitii de respiratie|respiro|breathing(?: exercise)?|breath(?: exercise)?|box breathing)|respira cu mine|respira|respiram|sa respiram|hai sa respiram|breathe with me|breathe|let'?s breathe)\\s*$")
+    private val NU_SUMMARY = Regex("^(?:cate calorii (?:am|am mancat|mai am|mi-au ramas|am consumat|imi raman|am azi)(?: azi| astazi)?|ce am mancat(?: azi| astazi)?|cum stau cu (?:mancarea|mesele|caloriile|nutritia|dieta)|(?:(?:spune(?:-mi|mi)?|citeste(?:-mi|mi)?|arata(?:-mi|mi)?)\\s+)?rezumat(?:ul)? (?:de )?(?:nutritie|nutritiei|al meselor|meselor|mancarii|la mancare)|how many calories (?:do i have|have i eaten|are left|left)(?: today)?|what did i eat(?: today)?|calories today|nutrition summary|my meals(?: today)?)\\s*$")
+    private val SL_SUMMARY = Regex("^(?:cat am dormit(?: azi-noapte| azi noapte| aseara| noaptea trecuta| noaptea asta)?|cum am dormit(?: azi-noapte| azi noapte| aseara)?|cat timp am dormit|(?:(?:spune(?:-mi|mi)?|citeste(?:-mi|mi)?)\\s+)?rezumat(?:ul)? (?:de )?somn(?:ului)?|somnul meu(?: de azi-noapte)?|how (?:much|long|well) did i sleep(?: last night)?|how did i sleep|sleep summary|my sleep)\\s*$")
+    private val FR_WHERE = Regex("^(?:unde (?:e|este|se afla|a ajuns|i) |where(?:'s| is) )(?:prietenul |prietena |my friend |camaradul |pe )?(.+?)\\s*(?:\\s(?:acum|now|pe harta|on the map))?\\s*$")
+    private val FR_SHOW = Regex("^(?:arata(?:-mi|mi)?(?:-l|-o|l|o)?|show me|show|gaseste(?:-mi|mi)?(?:-l|-o)?|find|cauta(?:-l|-o)?)\\s+(?:pe\\s+)?(?:prietenul\\s+|prietena\\s+|camaradul\\s+|my friend\\s+)?(.+?)\\s+(?:pe harta|on the map)\\s*$|^(?:arata(?:-mi|mi)?(?:-l|-o|l|o)?|show me|show)\\s+(?:pe harta|on the map)\\s+(?:pe\\s+)?(?:prietenul\\s+|prietena\\s+)?(.+)$")
+    private val GO_START = Regex("^(?:porneste|incepe|start|begin|hai la|hai sa (?:alergam|mergem|facem)|inregistreaza|record)\\s+(?:o\\s+|a\\s+|un\\s+|the\\s+|my\\s+)?(?:(alergare(?:a)?|alergam|alergatul|run(?:ning)?(?: session)?|jogging|jog)|(plimbare(?:a)?|mers(?:ul)?(?: pe jos)?|mergem|walk(?:ing)?)|(tura (?:cu|pe) bicicleta|bicicleta|ciclism|pedalare|pedalat|ride|bike ride|cycling|biking)|(tura|tura de alergare|inregistrarea|tracking|urmarirea|go))\\s*$")
+    private val GO_STOP = Regex("^(?:opreste|termina|incheie|stop|end|finish)\\s+(?:alergarea|alergatul|tura|plimbarea|mersul|pedalarea|inregistrarea|urmarirea|the run|run|running|the walk|walk|the ride|ride|tracking|recording|go)\\s*$")
+
     private val TRAILING_POLITE = Regex("\\s*(?:te rog|please|multumesc|thanks|thank you)\\s*$")
 
     private val YES = Regex("^(?:da|sigur|desigur|confirm|confirma|trimite|trimite-l|ok|okay|oche|bine|corect|exact|yes|yeah|yep|yup|sure|send|send it|go|go ahead|correct|right|do it|afirmativ)\\b")
@@ -286,6 +355,7 @@ object CommandParser {
         if (TIME.containsMatchIn(t)) return VoiceCommand.TellTime
         if (DATE.containsMatchIn(t)) return VoiceCommand.TellDate
         if (REPEAT.containsMatchIn(t)) return VoiceCommand.Repeat
+        parseInApp(t, raw)?.let { return it }
         if (PROGRESS.containsMatchIn(t)) return VoiceCommand.Progress
         if (FRIENDS.containsMatchIn(t)) return VoiceCommand.Friends
         if (SLEEP_START.containsMatchIn(t)) return VoiceCommand.StartSleep
@@ -306,6 +376,99 @@ object CommandParser {
         }
         parseWebSearch(t, raw)?.let { return it }
         return VoiceCommand.Unknown(t)
+    }
+
+    /** Comenzile din interiorul FORJA: antrenament, muzică, Focus, respirație, nutriție, somn, prieteni, ture. */
+    private fun parseInApp(t: String, raw: String): VoiceCommand? {
+        // antrenamentul
+        WK_START.find(t)?.let { m -> return VoiceCommand.StartWorkout(m.groupValues[1].trim().ifBlank { null }?.let { rawTail(raw, it) }) }
+        if (WK_PAUSE.matches(t)) return VoiceCommand.WorkoutControl(WorkoutAction.PAUSE)
+        if (WK_RESUME.matches(t)) return VoiceCommand.WorkoutControl(WorkoutAction.RESUME)
+        if (WK_END.matches(t)) return VoiceCommand.WorkoutControl(WorkoutAction.END)
+        if (WK_SET.matches(t)) return VoiceCommand.WorkoutControl(WorkoutAction.FINISH_SET)
+        if (WK_SKIP_REST.matches(t)) return VoiceCommand.WorkoutControl(WorkoutAction.SKIP_REST)
+        if (WK_ADD_REST.matches(t)) return VoiceCommand.WorkoutControl(WorkoutAction.ADD_REST)
+        if (WK_NEXT.matches(t)) return VoiceCommand.WorkoutControl(WorkoutAction.NEXT_EXERCISE)
+        if (WK_SUMMARY.matches(t)) return VoiceCommand.WorkoutControl(WorkoutAction.SUMMARY)
+        // muzica
+        if (MU_WORKOUT.matches(t)) return VoiceCommand.PlayPlaylist("", MusicService.ANY, "antrenament")
+        if (MU_PLAY.matches(t)) return VoiceCommand.MusicControl(MusicAction.PLAY)
+        if (MU_PAUSE.matches(t)) return VoiceCommand.MusicControl(MusicAction.PAUSE)
+        if (MU_NEXT.matches(t)) return VoiceCommand.MusicControl(MusicAction.NEXT)
+        if (MU_PREV.matches(t)) return VoiceCommand.MusicControl(MusicAction.PREVIOUS)
+        if (MU_NOW.matches(t)) return VoiceCommand.MusicControl(MusicAction.NOW_PLAYING)
+        MU_PLAYLIST.find(t)?.let { m ->
+            val name = m.groupValues[1].trim()
+            val service = m.groupValues[2].takeIf { it.isNotBlank() }?.let { if (it.startsWith("player")) MusicService.ANY else serviceFrom(it) } ?: MusicService.ANY
+            val mix = mixWord(name)
+            // Numele cu majusculele lui, fără „pe Spotify” de la coadă.
+            val rawNoService = VoiceText.cleanRawLight(raw).replace(Regex("\\s+(?:pe|on|din|from|in)\\s+(?:spotify|spotifai|youtube music|yt music|youtube|player(?:ul)?)\\s*$", RegexOption.IGNORE_CASE), "")
+            val rawName = VoiceText.tailWords(rawNoService, name.split(" ").count { it.isNotBlank() }).ifBlank { name }
+            return VoiceCommand.PlayPlaylist(if (mix != null) "" else rawName, service, mix)
+        }
+        if (PAUSE_BARE.matches(t)) return VoiceCommand.Pause
+        if (CONTINUE_BARE.matches(t)) return VoiceCommand.Continue
+        if (NEXT_BARE.matches(t)) return VoiceCommand.Next
+        // Focus / detox digital
+        if (FO_START.matches(t)) return VoiceCommand.StartFocus(null)
+        if (FO_STOP.matches(t) || DX_STOP.matches(t)) return VoiceCommand.StopFocus
+        DX_START.find(t)?.let { m -> return VoiceCommand.StartFocus(parseMinutes(m.groupValues[1]) ?: 60) }
+        if (FO_STATUS.matches(t)) return VoiceCommand.FocusStatus
+        // respirație, nutriție, somn
+        if (BR_START.matches(t)) return VoiceCommand.StartBreath
+        if (NU_SUMMARY.matches(t)) return VoiceCommand.NutritionSummary
+        if (SL_SUMMARY.matches(t)) return VoiceCommand.SleepSummary
+        // ture pe hartă
+        GO_START.find(t)?.let { m ->
+            val sport = when {
+                m.groupValues[2].isNotBlank() -> "walk"
+                m.groupValues[3].isNotBlank() -> "ride"
+                else -> "run"
+            }
+            return VoiceCommand.StartGo(sport)
+        }
+        if (GO_STOP.matches(t)) return VoiceCommand.StopGo
+        // un prieten pe hartă („unde e Ion”, „arată-l pe Ion pe hartă”); un loc, dacă nu e prieten
+        // Numele cu majusculele lui: fără „pe hartă” / „acum” de la coadă.
+        fun friendName(who: String): String {
+            val rawNoTail = VoiceText.cleanRawLight(raw).replace(Regex("\\s+(?:acum|now|pe hart[aă]|on the map)\\s*$", RegexOption.IGNORE_CASE), "")
+            return VoiceText.tailWords(rawNoTail, who.split(" ").count { it.isNotBlank() }).ifBlank { who }
+        }
+        FR_SHOW.find(t)?.let { m ->
+            val who = (m.groupValues[1].ifBlank { m.groupValues[2] }).trim()
+            if (who.isNotBlank() && !Regex("^(?:prietenii|friends|harta|the map|map|toti)$").matches(who)) return VoiceCommand.FriendWhere(friendName(who))
+        }
+        FR_WHERE.find(t)?.let { m ->
+            val who = m.groupValues[1].trim()
+            if (who.isNotBlank() && who.split(" ").size <= 4 && !Regex("^(?:prietenii|prietenii mei|friends|my friends|eu|i)$").matches(who)) return VoiceCommand.FriendWhere(friendName(who))
+        }
+        return null
+    }
+
+    /** „mix”, „noi”, „vechi”, „apreciate” (și în engleză) → codul listei FORJA; „antrenament” = lista aleasă în hub. */
+    fun mixWord(name: String): String? {
+        val n = name.trim()
+        return when {
+            n.isBlank() -> null
+            Regex("^(?:mix(?:ul)?|forja|mixul forja)$").matches(n) -> "mix"
+            Regex("^(?:noi|noua|nou|new|melodii noi|new songs)$").matches(n) -> "new"
+            Regex("^(?:vechi|veche|old|clasice|melodii vechi|old songs|oldies)$").matches(n) -> "old"
+            Regex("^(?:apreciate|aprecieri|liked|favorite|preferate|favorites|liked songs|melodii apreciate|melodiile apreciate)$").matches(n) -> "liked"
+            Regex("^(?:antrenament|de antrenament|antrenamentul|sala|de sala|workout|gym|training|de la sala)$").matches(n) -> "antrenament"
+            else -> null
+        }
+    }
+
+    /** „30 de minute”, „o ora”, „doua ore”, „jumatate de ora”, „45 min” → minute; null dacă nu e clar. */
+    fun parseMinutes(text: String): Int? {
+        val s = text.trim()
+        if (s.isBlank()) return null
+        if (Regex("^(?:o |un |de )?(?:jumatate de ora|jumatate|half an hour|half hour|half)$").matches(s)) return 30
+        val hours = Regex("\\b(?:ora|ore|hour|hours|h)\\b").containsMatchIn(s)
+        val half = Regex("\\b(?:jumatate|jumate|and a half|si jumatate)\\b").containsMatchIn(s)
+        val words = s.replace(Regex("\\b(?:de|si|and|un|o|an|a)\\b"), " ").replace(Regex("\\s+"), " ").trim().split(" ").filter { it.isNotBlank() }
+        val n = VoiceText.numberFrom(words) ?: (if (hours) 1 else return null)
+        return if (hours) n * 60 + (if (half) 30 else 0) else n
     }
 
     /** Textul original (majuscule, diacritice) pentru ultimele [words] cuvinte ale frazei normalizate. */
@@ -420,7 +583,7 @@ object CommandParser {
             PLACE_SHOW.find(clean)?.let { return VoiceCommand.OpenPlace(tail(it.groupValues[1].trim()), navigate = false, app = which) }
             return VoiceCommand.OpenPlace(tail(clean), navigate = false, app = which)
         }
-        Regex("^(?:navigheaza|navigate|cum ajung|directions|traseu|ruta)(?:\\s+(?:la|catre|spre|pana la|to))?\\s+(.+)$").find(t)?.let { m ->
+        Regex("^(?:navigheaza|navigate|cum ajung|directions|traseu|ruta|du-ma|duma|take me|drive me)(?:\\s+(?:la|catre|spre|pana la|to))?\\s+(.+)$").find(t)?.let { m ->
             val place = m.groupValues[1].trim()
             // „navighează la hartă / profil” = ecranele FORJA, nu un loc pe hartă
             if (NAV_REGEX.any { (rx, _) -> rx.matches(place) }) return null
@@ -625,9 +788,9 @@ object CommandParser {
     }
 
     /** Lista rostită la „ajutor". */
-    val HELP_TEXT = "Pot să trimit mesaje: „trimite mesaj lui Ion, ajung în zece minute”. Să sun: „sună-l pe Andrei”. " +
-        "Să pun muzică: „deschide YouTube și pune Phoenix”. Să caut pe internet: „caută pe Google despre căpșuni”. " +
-        "Să deschid aplicații și să lucrez în ele: „deschide WhatsApp”, „citește ecranul”, „apasă pe Abonează-te”, „scrie salut”, „derulează”, „înapoi”. " +
-        "Să te duc în FORJA: „deschide antrenamentul”, „pornește somnul”, „respiră”. " +
-        "Să îți citesc ziua: „cum stau azi”. Să îți spun ora: „cât e ceasul”. Să pun alarma: „pune alarma la șapte”."
+    val HELP_TEXT = "În FORJA: „începe antrenamentul”, „am terminat seria”, „pauză”, „continuă”, „următorul exercițiu”, „rezumat antrenament”; " +
+        "„pornește muzica”, „pornește un playlist”, „următoarea melodie”, „ce cântă acum”; „pornește focusul”, „pornește detoxul 30 de minute”; " +
+        "„respiră cu mine”, „pornește somnul”, „cât am dormit”, „câte calorii am azi”, „unde e Ion”, „pornește o alergare”, „cum stau azi”. " +
+        "Pe telefon: „trimite mesaj lui Ion, ajung în zece minute”, „sună-l pe Andrei”, „deschide YouTube și pune Phoenix”, „caută pe Google despre căpșuni”, " +
+        "„deschide WhatsApp”, „citește ecranul”, „apasă pe …”, „scrie …”, „derulează”, „înapoi”, „cât e ceasul”, „pune alarma la șapte”."
 }

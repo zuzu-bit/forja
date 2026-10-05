@@ -12,6 +12,7 @@ import com.forja.app.core.music.Mix
 import com.forja.app.core.music.Music
 import com.forja.app.core.music.MusicKind
 import com.forja.app.core.music.MusicStarter
+import com.forja.app.core.music.MusicSource
 import com.forja.app.core.music.MusicStats
 import com.forja.app.core.music.Playlist
 import com.forja.app.core.music.Want
@@ -39,10 +40,22 @@ data class LiveState(
     val totalSetsDone: Int = 0,
     val finished: Boolean = false,
     val toast: String = "",
-    val toastKey: Int = 0
+    val toastKey: Int = 0,
+    /** Pauză cerută de om („pauză” / butonul): cronometrul și pauza dintre serii stau pe loc. */
+    val paused: Boolean = false,
+    val pausedAt: Long = 0L,
+    /** Cât a stat sesiunea în pauză până acum (fără pauza în curs). */
+    val pausedMs: Long = 0L
 ) {
     val current: ExerciseEntity? get() = exercises.getOrNull(exPos)
     val next: ExerciseEntity? get() = exercises.getOrNull(exPos + 1)
+    /** Secundele de antrenament efectiv (fără pauzele cerute). */
+    fun elapsedSec(now: Long = System.currentTimeMillis()): Long {
+        if (startedAt <= 0L) return 0L
+        val pausing = if (paused && pausedAt > 0L) now - pausedAt else 0L
+        return ((now - startedAt - pausedMs - pausing) / 1000L).coerceAtLeast(0L)
+    }
+    val plannedSets: Int get() = exercises.sumOf { it.sets }
 }
 
 class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
@@ -65,6 +78,16 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private var restJob: Job? = null
     /** O sesiune e în curs (între „Începe sesiunea” și final / „Încheie” / Înapoi). */
     private var sessionLive = false
+    /** Pauza cerută de om a oprit și muzica FORJA: la continuare o reia. */
+    private var musicPausedByUs = false
+    /** „Hei FORJA, începe antrenamentul” sosit înainte să fie planurile încărcate. */
+    private var wantStart: WorkoutLink.Request.Start? = null
+
+    /** Orice schimbare a stării live se vede și prin [WorkoutLink] (comenzile vocale). */
+    private fun setLive(s: LiveState) {
+        _live.value = s
+        WorkoutLink.publish(if (sessionLive && !s.finished) s else null)
+    }
 
     /** „Muzică” la Antrenament: comutatorul, lista aleasă, „Oprește la final”, listele pentru planul de azi. */
     private val _music = MutableStateFlow(WorkoutMusicState())
@@ -72,12 +95,17 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private var musicJob: Job? = null
 
     init {
+        WorkoutLink.takePendingStart()?.let { wantStart = it }
         viewModelScope.launch {
             dao.plans().collect { list ->
                 _plans.value = list
-                if (list.isNotEmpty()) loadPlan(_planIdx.value.coerceIn(0, list.size - 1))
+                if (list.isNotEmpty()) {
+                    loadPlan(_planIdx.value.coerceIn(0, list.size - 1))
+                    wantStart?.let { wantStart = null; startByVoice(it) }
+                }
             }
         }
+        viewModelScope.launch { WorkoutLink.requests.collect { apply(it) } }
         viewModelScope.launch {
             combine(MusicStats.workoutMusicFlow(app), MusicStats.workoutMixFlow(app), MusicStats.workoutStopFlow(app)) { on, mix, stop ->
                 Triple(on, mix, stop)
@@ -181,23 +209,91 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         refreshMusic()
     }
 
+    // ── „Hei FORJA” (4.9): cererile asistentului, aplicate pe firul principal, doar când au sens ──
+
+    private fun apply(r: WorkoutLink.Request) {
+        val s = _live.value
+        when (r) {
+            is WorkoutLink.Request.Start -> startByVoice(r)
+            WorkoutLink.Request.Pause -> pause()
+            WorkoutLink.Request.Resume -> resume()
+            WorkoutLink.Request.FinishSet -> if (sessionLive && !s.finished && !s.paused && !s.resting) finishSet()
+            WorkoutLink.Request.SkipRest -> if (sessionLive && s.resting && !s.paused) skipRest()
+            WorkoutLink.Request.AddRest -> if (sessionLive && s.resting) addRest()
+            WorkoutLink.Request.NextExercise -> nextExercise()
+            WorkoutLink.Request.End -> if (sessionLive && !s.finished) endEarly()
+        }
+    }
+
+    /** Pornirea cerută cu vocea: planul cerut (sau cel ales), încărcat dacă trebuie, apoi sesiunea de la primul exercițiu. */
+    private fun startByVoice(r: WorkoutLink.Request.Start) {
+        WorkoutLink.clearPendingStart()
+        if (sessionLive && !_live.value.finished) return
+        val plans = _plans.value
+        if (plans.isEmpty()) { wantStart = r; return }
+        viewModelScope.launch {
+            val idx = r.planIdx?.coerceIn(0, plans.size - 1) ?: _planIdx.value
+            if (idx != _planIdx.value || _planExercises.value.isEmpty()) {
+                _planIdx.value = idx
+                loadPlan(idx)
+            }
+            if (_planExercises.value.isEmpty()) return@launch
+            startSession(0)
+        }
+    }
+
+    /** Pauză cerută de om: cronometrul și pauza dintre serii stau; muzica pornită de FORJA tace și ea. */
+    fun pause() {
+        val s = _live.value
+        if (!sessionLive || s.finished || s.paused) return
+        restJob?.cancel()
+        setLive(s.copy(paused = true, pausedAt = System.currentTimeMillis()))
+        val track = Music.nowPlaying.value
+        if (MusicStarter.origin.value == MusicSource.WORKOUT && track?.playing == true) {
+            musicPausedByUs = true
+            Music.pause(forja)
+        }
+    }
+
+    /** Continuarea după pauză: timpul stat nu se numără; pauza dintre serii reia de unde a rămas. */
+    fun resume() {
+        val s = _live.value
+        if (!sessionLive || !s.paused) return
+        setLive(s.copy(paused = false, pausedAt = 0L, pausedMs = s.pausedMs + (System.currentTimeMillis() - s.pausedAt).coerceAtLeast(0L)))
+        if (s.resting) startRestTimer()
+        if (musicPausedByUs) {
+            musicPausedByUs = false
+            val id = Music.nowPlaying.value?.id
+            if (id != null) MusicStarter.start(forja, Want.Resume(id), MusicSource.WORKOUT, tap = false) else startMusicNow()
+        }
+    }
+
+    /** „Următorul exercițiu”: seriile rămase la cel curent se lasă; ultimul exercițiu încheie sesiunea. */
+    fun nextExercise() {
+        val s = _live.value
+        if (!sessionLive || s.finished || s.paused) return
+        advance(s.totalSetsDone)
+    }
+
     fun startSession(fromExercise: Int = 0) {
         val plan = _plans.value.getOrNull(_planIdx.value) ?: return
         val exs = _planExercises.value
         if (exs.isEmpty()) return
-        _live.value = LiveState(
+        restJob?.cancel()
+        musicPausedByUs = false
+        sessionLive = true
+        setLive(LiveState(
             exercises = exs,
             planName = plan.name,
             exPos = fromExercise.coerceIn(0, exs.size - 1),
             startedAt = System.currentTimeMillis()
-        )
+        ))
         viewModelScope.launch {
             sessionId = dao.insertSession(
                 WorkoutSessionEntity(planId = plan.id, planName = plan.name, startedAt = System.currentTimeMillis())
             )
         }
         // Cât ține sesiunea, un inventar terminat nu oprește muzica (nici pe a ta, nici pe cea pornită de FORJA).
-        sessionLive = true
         MusicStarter.workoutBegan()
         // Muzica pornește odată cu sesiunea, fără să țină nimic în loc; dacă muzica ta cântă deja, rămâne a ta.
         // „Începe sesiunea” e o atingere (4.4.1): fără nicio cale invizibilă, cel mult un salt în Spotify, în 1,5 s de la ea.
@@ -207,11 +303,11 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun toast(msg: String) {
-        _live.value = _live.value.copy(toast = msg, toastKey = _live.value.toastKey + 1)
+        setLive(_live.value.copy(toast = msg, toastKey = _live.value.toastKey + 1))
     }
 
     fun toggleAngle() {
-        _live.value = _live.value.copy(angleFront = !_live.value.angleFront)
+        setLive(_live.value.copy(angleFront = !_live.value.angleFront))
     }
 
     /** „Termină seria": salvează în jurnal; pauză sau avans. */
@@ -228,7 +324,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         }
         val done = s.totalSetsDone + 1
         if (s.setNo < ex.sets) {
-            _live.value = s.copy(resting = true, restLeft = 90, totalSetsDone = done)
+            setLive(s.copy(resting = true, restLeft = 90, totalSetsDone = done))
             toast("Serie salvată. Încă ${ex.sets - s.setNo} la acest exercițiu.")
             startRestTimer()
         } else {
@@ -246,7 +342,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                 if (s.restLeft <= 1) {
                     endRest()
                 } else {
-                    _live.value = s.copy(restLeft = s.restLeft - 1)
+                    setLive(s.copy(restLeft = s.restLeft - 1))
                 }
             }
         }
@@ -254,7 +350,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     fun addRest() {
         val s = _live.value
-        _live.value = s.copy(restLeft = (s.restLeft + 15).coerceAtMost(180))
+        setLive(s.copy(restLeft = (s.restLeft + 15).coerceAtMost(180)))
     }
 
     fun skipRest() = endRest()
@@ -262,7 +358,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private fun endRest() {
         restJob?.cancel()
         val s = _live.value
-        _live.value = s.copy(resting = false, restLeft = 90, setNo = s.setNo + 1)
+        setLive(s.copy(resting = false, restLeft = 90, setNo = s.setNo + 1))
     }
 
     /** Ultima serie a exercițiului → auto-avans; ultimul exercițiu → înapoi în hub + rezumat. */
@@ -271,19 +367,21 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         val s = _live.value
         if (s.exPos < s.exercises.size - 1) {
             val next = s.exercises[s.exPos + 1]
-            _live.value = s.copy(
+            setLive(s.copy(
                 resting = false, restLeft = 90, setNo = 1,
                 exPos = s.exPos + 1, totalSetsDone = done
-            )
+            ))
             toast("Exercițiu terminat. Urmează: ${next.name}.")
         } else {
-            val durS = (System.currentTimeMillis() - s.startedAt) / 1000
+            val durS = s.elapsedSec()
             val min = durS / 60
             val sec = durS % 60
-            _live.value = s.copy(resting = false, finished = true, totalSetsDone = done)
-            toast("Sesiune încheiată în %d:%02d. Misiune îndeplinită.".format(min, sec))
-            // Muzica pornită de FORJA se oprește (dacă „Oprește la final”), apoi sunetul „misiune îndeplinită”.
+            // Sesiunea s-a încheiat: nu mai e „în curs” pentru asistent, iar muzica pornită de FORJA se oprește
+            // (dacă „Oprește la final”), apoi sunetul „misiune îndeplinită”.
             sessionLive = false
+            musicPausedByUs = false
+            setLive(s.copy(resting = false, finished = true, totalSetsDone = done))
+            toast("Sesiune încheiată în %d:%02d. Misiune îndeplinită.".format(min, sec))
             MusicStarter.endWorkout(forja, finished = true)
             viewModelScope.launch {
                 dao.session(sessionId)?.let {
@@ -297,6 +395,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         restJob?.cancel()
         // „Încheie” (sau Înapoi): se oprește doar muzica pornită de FORJA, fără sunet.
         sessionLive = false
+        musicPausedByUs = false
+        WorkoutLink.publish(null)
         MusicStarter.endWorkout(forja, finished = false)
         val s = _live.value
         if (s.totalSetsDone > 0) {
@@ -310,6 +410,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Aplicația s-a închis în timpul sesiunii: coada FORJA și împrumutul nu trăiesc mai departe decât antrenamentul. */
     override fun onCleared() {
+        WorkoutLink.publish(null)
         if (sessionLive) {
             sessionLive = false
             MusicStarter.endWorkout(forja, finished = false)
