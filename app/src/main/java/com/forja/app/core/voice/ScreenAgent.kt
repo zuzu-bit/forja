@@ -246,8 +246,8 @@ object ScreenAgent {
         if (field != null && Build.VERSION.SDK_INT >= 30) {
             try { if (field.node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) return true } catch (_: Exception) { }
         }
-        // Un buton de căutare / trimitere vizibil
-        val btn = list.firstOrNull { it.clickable && Regex("^(?:search|cauta|cautare|caută|căutare|go|done|trimite|send|ok)$").matches(VoiceText.normalize(it.text)) }
+        // Un buton de căutare vizibil (niciodată „Trimite”: într-un chat ar expedia mesajul)
+        val btn = list.firstOrNull { it.clickable && Regex("^(?:search|cauta|cautare|go|done|ok)$").matches(VoiceText.normalize(it.text)) }
         if (btn != null) return tap(btn)
         return false
     }
