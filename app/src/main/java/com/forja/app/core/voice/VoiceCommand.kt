@@ -410,6 +410,10 @@ object CommandParser {
             if (clean.isBlank() || Regex("^(?:du-ma|duma|arata(?:-mi|mi)?|show me|show|deschide|open|mergi|go|navigheaza|navigate|cauta|search|harta|the map|map)$").matches(clean)) {
                 return VoiceCommand.Navigate(AppTarget.MAP)
             }
+            // „deschide harta pe waze / google maps” = aplicația de hărți, nu un loc
+            if (Regex("^(?:deschide(?:-mi|mi)?|open|porneste|start|lanseaza|launch)\\s+(?:harta|hartile|the map|map|maps|navigatia|navigation)$").matches(clean)) {
+                return VoiceCommand.OpenApp(if (which == "waze") "waze" else "google maps")
+            }
             val rawClean = MAP_PHRASE_RAW.replace(VoiceText.cleanRawLight(raw), " ").replace(Regex("\\s+"), " ").trim()
             fun tail(part: String) = VoiceText.tailWords(rawClean, part.split(" ").count { it.isNotBlank() }).ifBlank { part }
             PLACE_NAV.find(clean)?.let { return VoiceCommand.OpenPlace(tail(it.groupValues[1].trim()), navigate = true, app = which) }
