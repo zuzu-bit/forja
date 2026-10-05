@@ -420,6 +420,17 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
         }
     }
 
+    // „Hei FORJA, arată-l pe Ion pe hartă”: când prietenii și harta sunt gata, îl alegem și zburăm la el.
+    val wantedFriend by MapLinks.friend.collectAsState()
+    LaunchedEffect(wantedFriend, shownFriends.size, styleReady) {
+        val want = wantedFriend ?: return@LaunchedEffect
+        if (!styleReady || shownFriends.isEmpty()) return@LaunchedEffect
+        MapLinks.consumeFriend()
+        val name = MapLinks.match(want, shownFriends.map { it.name })
+        val f = shownFriends.firstOrNull { it.name == name }
+        if (f != null) pickFriend(f) else toast.show("Nu am găsit un prieten pe nume $want.")
+    }
+
     Box(Modifier.fillMaxSize().background(Surface0)) {
         // Harta — un singur MapView; 3D = pitch real al camerei, cromul rămâne drept.
         ForjaMap(controller = controller, modifier = Modifier.fillMaxSize(), bottomInsetDp = BOTTOM_BAR_DP)

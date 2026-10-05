@@ -136,10 +136,17 @@ vorbind, iar FORJA răspunde cu voce. Se deschide din butonul rotund cu microfon
 orice ecran principal), din **Profil → Asistent vocal**, din butonul **FORJA Voce** din setările
 rapide ale telefonului, sau cu apăsare lungă pe iconița FORJA → **Hei FORJA**.
 
-Apeși microfonul, auzi un bip și spui comanda. Exemple (merg și în engleză):
+Apeși microfonul, auzi un bip și spui comanda. Ecranul asistentului arată comenzile pe module
+(Antrenament, Muzică, Hartă, Focus, Somn, Respiră, Nutriție, Ziua ta, Mesaje & apeluri, Aplicații & web,
+Pe ecran): o plăcuță cu un exemplu, iar la atingere lista întreagă, fiecare rând o atingere „Încearcă”.
+Exemple (merg și în engleză):
 
 | Spui | Se întâmplă |
 |---|---|
+| „Începe antrenamentul” / „… de picioare” · „Am terminat seria” · „Pauză” / „Continuă” · „Sari pauza” · „Următorul exercițiu” · „Rezumat antrenament” · „Termină antrenamentul” | conduce sesiunea live din FORJA, fără să atingi ecranul (cronometrul stă în pauză, muzica FORJA tace) |
+| „Pornește muzica” · „Pornește un playlist” · „Pune muzică de antrenament” · „Pornește playlistul Rock pe Spotify” · „Următoarea melodie” · „Ce cântă acum?” · „Pauză la muzică” | playerul tău, prin sesiunile media (cu „Acces la notificări”); lista FORJA e clădită din ce asculți |
+| „Unde e Ion?” · „Arată-l pe Andrei pe hartă” · „Pornește o alergare / o plimbare / o tură pe bicicletă” · „Oprește tura” | prietenul pe harta FORJA (altfel, locul în aplicația de hărți); turele GO |
+| „Pornește focusul” · „Pornește detoxul digital 30 de minute” · „Cât mai am din focus?” · „Respiră cu mine” · „Câte calorii am azi?” · „Cât am dormit?” | Focus / detox, respirația pornită, jurnalul de mese și noaptea trecută, citite cu voce |
 | „Trimite mesaj lui Ion: ajung în zece minute” | caută numărul în agendă, citește mesajul, întreabă „Confirmi?” și trimite SMS-ul |
 | „Scrie-i pe WhatsApp lui Maria, sunt pe drum” | deschide WhatsApp cu textul gata scris |
 | „Send this text to this contact” | întreabă cui și ce să trimită, pe rând |
@@ -151,11 +158,17 @@ Apeși microfonul, auzi un bip și spui comanda. Exemple (merg și în engleză)
 | „Deschide Facebook și apasă pe notificări” · „Open Settings and search bluetooth” | deschide aplicația, apoi face acțiunea în ea |
 | „Pune muzică pe Spotify” | pornește playerul |
 | „Deschide WhatsApp” / „Open Waze” | deschide orice aplicație instalată |
-| „Deschide antrenamentul”, „Harta”, „Respiră”, „Profil” | navighează în FORJA |
+| „Deschide antrenamentul”, „Harta”, „Profil” | navighează în FORJA |
 | „Pornește somnul” / „Noapte bună” · „M-am trezit” | pornește / oprește monitorizarea somnului |
 | „Cum stau azi?” · „Cine e online?” | citește progresul zilei / starea prietenilor |
 | „Cât e ceasul?” · „Ce zi e azi?” · „Pune alarma la 7” | ora, data, alarma în aplicația de Ceas |
 | „Ajutor” · „Repetă” · „Anulează” · „Oprește ascultarea” | ajutor, repetă răspunsul, anulează dialogul, oprește modul mereu-la-ascultare |
+
+**În FORJA, nu doar pe telefon.** Comenzile de mai sus lucrează în modulele FORJA prin punți mici
+(`WorkoutLink`, `MapLinks`, `BreathLinks`): sesiunea de antrenament e condusă din ViewModel-ul ei (cu pauză
+adevărată: cronometrul și pauza dintre serii stau pe loc), harta zboară la prietenul cerut când s-a încărcat,
+respirația pornește singură. „Pauză”, „continuă” și „următorul” spuse singure aleg singure: antrenamentul dacă
+e pornit, altfel muzica, altfel ecranul. Butonul plutitor cu microfon apare și în sesiunea live.
 
 **Mereu la ascultare.** Din ecranul asistentului poți porni „Hei FORJA mereu la ascultare”: un
 serviciu în fundal (cu notificare permanentă, cum cere Android) ascultă cuvântul „Hei FORJA” și

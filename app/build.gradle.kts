@@ -21,8 +21,8 @@ android {
         applicationId = "com.forja.app.research"
         minSdk = 26
         targetSdk = 35
-        versionCode = 72
-        versionName = "4.8"
+        versionCode = 73
+        versionName = "4.9"
         vectorDrawables { useSupportLibrary = true }
         // MapLibre aduce libmaplibre.so (~10-13 MB per ABI): doar ARM, fără x86 (emulatoarele x86 nu sunt ținta noastră).
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }

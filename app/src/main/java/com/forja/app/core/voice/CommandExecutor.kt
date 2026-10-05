@@ -25,12 +25,29 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.forja.app.ForjaApp
 import com.forja.app.R
+import com.forja.app.core.data.Friend
+import com.forja.app.core.data.listening
+import com.forja.app.core.focus.FocusMonitorService
+import com.forja.app.core.location.GoTrackService
+import com.forja.app.core.music.Mix
+import com.forja.app.core.music.Music
+import com.forja.app.core.music.MusicSource
+import com.forja.app.core.music.MusicStarter
+import com.forja.app.core.music.MusicStats
 import com.forja.app.core.sleep.SleepTrackService
 import com.forja.app.core.sleep.SystemAlarm
 import com.forja.app.core.util.Fmt
+import com.forja.app.feature.breath.BreathLinks
+import com.forja.app.feature.map.MapLinks
+import com.forja.app.feature.nutrition.NutritionPrefs
+import com.forja.app.feature.nutrition.Targets
+import com.forja.app.feature.workout.LiveState
+import com.forja.app.feature.workout.WorkoutLink
 import com.forja.app.navigation.Route
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -86,6 +103,23 @@ class CommandExecutor(private val app: ForjaApp) {
             is VoiceCommand.Screen -> screen(cmd.action)
             VoiceCommand.EnableScreenControl -> enableScreen()
             is VoiceCommand.Navigate -> Outcome.Done("Deschid ${cmd.target.spoken}.", cmd.target.route)
+            // ── în FORJA (4.9) ──
+            is VoiceCommand.StartWorkout -> startWorkout(cmd)
+            is VoiceCommand.WorkoutControl -> workout(cmd.action)
+            is VoiceCommand.MusicControl -> musicControl(cmd.action)
+            is VoiceCommand.PlayPlaylist -> playPlaylist(cmd)
+            VoiceCommand.Pause -> pauseAny()
+            VoiceCommand.Continue -> continueAny()
+            VoiceCommand.Next -> nextAny()
+            is VoiceCommand.StartFocus -> startFocus(cmd)
+            VoiceCommand.StopFocus -> stopFocus()
+            VoiceCommand.FocusStatus -> Outcome.Done(focusStatus())
+            VoiceCommand.StartBreath -> startBreath()
+            VoiceCommand.NutritionSummary -> Outcome.Done(nutritionSummary())
+            VoiceCommand.SleepSummary -> Outcome.Done(sleepSummary())
+            is VoiceCommand.FriendWhere -> friendWhere(cmd)
+            is VoiceCommand.StartGo -> startGo(cmd)
+            VoiceCommand.StopGo -> stopGo()
             is VoiceCommand.SetAlarm -> setAlarm(cmd)
             VoiceCommand.StartSleep -> startSleep()
             VoiceCommand.StopSleep -> {
@@ -617,23 +651,435 @@ class CommandExecutor(private val app: ForjaApp) {
     }
 
     private suspend fun friends(): String {
-        val uid = app.auth.currentUid ?: return "Nu ești conectat. Intră în cont ca să-ți vezi prietenii."
-        val list = withTimeoutOrNull(5000) { app.friends.friendsFlow(uid).first() } ?: return "Nu am putut citi lista de prieteni acum."
+        if (app.auth.currentUid == null) return "Nu ești conectat. Intră în cont ca să-ți vezi prietenii."
+        val list = friendsSnapshot(3000)
         if (list.isEmpty()) return "Încă nu ai prieteni în FORJA. Dă-le codul tău de invitație din Profil."
+        val now = System.currentTimeMillis()
         val parts = list.map { f ->
             val first = f.name.split(' ').first()
-            val state = when {
-                f.ghost -> "e fantomă"
-                f.state == "run" -> "aleargă acum"
-                f.state == "ride" -> "e pe roți"
-                f.state == "walk" -> "se plimbă"
-                f.state == "gym" -> "e la sală"
-                f.state == "sleep" -> "doarme"
-                else -> "e liniștit"
-            }
-            "$first $state"
+            val music = f.listening(now)?.let { ", ascultă $it" } ?: ""
+            "$first ${friendState(f)}$music"
         }
-        return "Ai ${list.size} ${if (list.size == 1) "prieten" else "prieteni"}: " + parts.joinToString(", ") + "."
+        return "Ai ${list.size} ${if (list.size == 1) "prieten" else "prieteni"}: " + parts.joinToString("; ") + "."
+    }
+
+    private fun friendState(f: Friend): String = when {
+        f.ghost -> "e fantomă"
+        f.state == "run" -> "aleargă acum"
+        f.state == "ride" -> "e pe roți"
+        f.state == "walk" -> "se plimbă"
+        f.state == "gym" -> "e la sală"
+        f.state == "sleep" -> "doarme"
+        f.state == "off" -> "e deconectat"
+        else -> "e liniștit"
+    }
+
+    /** Lista de prieteni, întreagă: fluxul emite pe rând (câte un prieten sosit), deci așteptăm o clipă ultima valoare. */
+    private suspend fun friendsSnapshot(ms: Long): List<Friend> {
+        val uid = app.auth.currentUid ?: return emptyList()
+        var last: List<Friend> = emptyList()
+        try { withTimeoutOrNull(ms) { app.friends.friendsFlow(uid).collect { last = it } } } catch (_: Exception) { }
+        return last
+    }
+
+    // ── În FORJA (4.9): antrenamentul ─────────────────────────────────────────────────
+
+    private fun planMatches(planName: String, q: String): Boolean {
+        val name = VoiceText.normalize(planName).replace(Regex("[&+/]"), " ").replace(Regex("\\s+"), " ").trim()
+        val tokens = name.split(" ").filter { it.isNotBlank() }
+        val qt = q.replace(Regex("[&+/]"), " ").split(" ").filter { it.isNotBlank() && it !in setOf("si", "and", "de", "la", "cu") }
+        if (qt.isEmpty()) return false
+        if (name.contains(q)) return true
+        if (qt.all { w -> tokens.any { it == w || it.startsWith(w) } }) return true
+        // „acasă” / „fără echipament” → planul de acasă; „sală” → primul plan de sală
+        if (qt.any { it in setOf("acasa", "home", "casa") } && name.contains("acasa")) return true
+        return false
+    }
+
+    private suspend fun startWorkout(cmd: VoiceCommand.StartWorkout): Outcome {
+        val live = WorkoutLink.live.value
+        if (live != null && !live.finished) {
+            return Outcome.Done("Antrenamentul e deja pornit: ${workoutWhere(live)}. Spune „pauză”, „am terminat seria” sau „următorul exercițiu”.", Route.WORKOUT_LIVE)
+        }
+        val plans = try { withTimeoutOrNull(3000) { app.db.workoutDao().plans().first() } } catch (_: Exception) { null } ?: emptyList()
+        var idx: Int? = null
+        val q = cmd.plan?.let { VoiceText.normalize(it) }?.trim().orEmpty()
+        if (q.isNotBlank() && plans.isNotEmpty()) {
+            val found = plans.indexOfFirst { planMatches(it.name, q) }
+            if (found < 0) {
+                return Outcome.Done("Nu am un plan „${cmd.plan}”. Planurile sunt: ${plans.joinToString(", ") { it.name }}. Spune, de exemplu, „începe antrenamentul de ${plans.first().name}”.")
+            }
+            idx = found
+        }
+        WorkoutLink.request(WorkoutLink.Request.Start(idx))
+        val name = idx?.let { plans.getOrNull(it)?.name }
+        return Outcome.Done(
+            (if (name != null) "Pornesc antrenamentul „$name”. " else "Pornesc antrenamentul. ") +
+                "Spune „am terminat seria” după fiecare serie, „pauză” când ai nevoie și „rezumat” ca să afli unde ai ajuns.",
+            Route.WORKOUT_LIVE
+        )
+    }
+
+    /** „exercițiul 2 din 5, Genuflexiuni, seria 1 din 4” */
+    private fun workoutWhere(s: LiveState): String {
+        val ex = s.current ?: return "sesiune fără exerciții"
+        val where = "exercițiul ${s.exPos + 1} din ${s.exercises.size}, ${ex.name}, seria ${s.setNo} din ${ex.sets}"
+        return when {
+            s.paused -> "$where, pe pauză"
+            s.resting -> "$where, în pauza dintre serii (${s.restLeft} secunde)"
+            else -> where
+        }
+    }
+
+    private suspend fun workout(action: WorkoutAction): Outcome {
+        val s = WorkoutLink.live.value
+        if (action == WorkoutAction.SUMMARY) return Outcome.Done(workoutSummary(s))
+        if (s == null || s.finished) return Outcome.Done("Nu e niciun antrenament pornit. Spune „începe antrenamentul”.")
+        val ex = s.current
+        return when (action) {
+            WorkoutAction.PAUSE ->
+                if (s.paused) Outcome.Done("Antrenamentul e deja în pauză. Spune „continuă” când ești gata.")
+                else { WorkoutLink.request(WorkoutLink.Request.Pause); Outcome.Done("Pauză. Cronometrul stă. Spune „continuă” când ești gata.") }
+            WorkoutAction.RESUME ->
+                if (!s.paused) Outcome.Done("Antrenamentul merge deja: ${workoutWhere(s)}.")
+                else { WorkoutLink.request(WorkoutLink.Request.Resume); Outcome.Done("Continuăm: ${workoutWhere(s.copy(paused = false))}.") }
+            WorkoutAction.END -> {
+                WorkoutLink.request(WorkoutLink.Request.End)
+                val min = (s.elapsedSec() / 60).toInt()
+                Outcome.Done("Am încheiat antrenamentul „${s.planName}” după ${spokenDuration(min)}, cu ${s.totalSetsDone} ${if (s.totalSetsDone == 1) "serie" else "serii"}.", Route.WORKOUT)
+            }
+            WorkoutAction.FINISH_SET -> when {
+                s.paused -> Outcome.Done("Antrenamentul e în pauză. Spune „continuă” mai întâi.")
+                s.resting -> Outcome.Done("Ești în pauza dintre serii: mai sunt ${s.restLeft} secunde. Spune „sari pauza” ca să continui.")
+                ex == null -> Outcome.Done("Nu văd exercițiul curent.")
+                else -> {
+                    WorkoutLink.request(WorkoutLink.Request.FinishSet)
+                    delay(300)
+                    val n = WorkoutLink.live.value
+                    when {
+                        s.setNo < ex.sets -> Outcome.Done("Serie salvată: ${s.setNo} din ${ex.sets} la ${ex.name}. Pauză 90 de secunde; spune „sari pauza” dacă vrei mai repede.")
+                        n != null && !n.finished && n.exPos > s.exPos -> Outcome.Done("${ex.name} terminat. Urmează: ${n.current?.name}, ${n.current?.sets} serii de ${n.current?.reps} repetări.")
+                        else -> Outcome.Done("Ultima serie. Antrenament încheiat — misiune îndeplinită!")
+                    }
+                }
+            }
+            WorkoutAction.SKIP_REST ->
+                if (!s.resting) Outcome.Done("Nu ești în pauza dintre serii acum: ${workoutWhere(s)}.")
+                else {
+                    WorkoutLink.request(WorkoutLink.Request.SkipRest)
+                    Outcome.Done("Fără pauză. Seria ${s.setNo + 1} din ${ex?.sets}: ${ex?.name}, ${ex?.reps} repetări.")
+                }
+            WorkoutAction.ADD_REST ->
+                if (!s.resting) Outcome.Done("Nu ești în pauza dintre serii acum.")
+                else { WorkoutLink.request(WorkoutLink.Request.AddRest); Outcome.Done("Încă 15 secunde de pauză.") }
+            WorkoutAction.NEXT_EXERCISE -> when {
+                s.paused -> Outcome.Done("Antrenamentul e în pauză. Spune „continuă” mai întâi.")
+                s.next == null -> Outcome.Done("E ultimul exercițiu: ${ex?.name}. Spune „am terminat seria” după fiecare serie sau „termină antrenamentul”.")
+                else -> {
+                    val nx = s.next!!
+                    WorkoutLink.request(WorkoutLink.Request.NextExercise)
+                    Outcome.Done("Trecem la ${nx.name}: ${nx.sets} serii de ${nx.reps} repetări.")
+                }
+            }
+            WorkoutAction.SUMMARY -> Outcome.Done(workoutSummary(s))
+        }
+    }
+
+    private suspend fun workoutSummary(s: LiveState?): String {
+        if (s != null && !s.finished && s.current != null) {
+            val ex = s.current!!
+            val sb = StringBuilder()
+            sb.append("Antrenamentul „${s.planName}”: ${spokenDuration((s.elapsedSec() / 60).toInt())} de când ai început")
+            sb.append(if (s.paused) ", acum pe pauză. " else ". ")
+            sb.append("Ești la exercițiul ${s.exPos + 1} din ${s.exercises.size}, ${ex.name}, seria ${s.setNo} din ${ex.sets}")
+            sb.append(if (s.resting) ", în pauza dintre serii: ${s.restLeft} secunde. " else ". ")
+            sb.append("Ai făcut ${s.totalSetsDone} ${if (s.totalSetsDone == 1) "serie" else "serii"} din ${s.plannedSets}. ")
+            s.next?.let { sb.append("Urmează: ${it.name}.") }
+            return sb.toString().trim()
+        }
+        val last = try { app.db.workoutDao().lastSession().first() } catch (_: Exception) { null }
+        val week = try { app.db.workoutDao().sessionCountSince(Fmt.startOfWeekMillis()).first() } catch (_: Exception) { 0 }
+        val sb = StringBuilder("Nu e niciun antrenament pornit acum. ")
+        if (last != null) {
+            val whenSpoken = when {
+                last.startedAt >= Fmt.startOfDayMillis(0) -> "azi"
+                last.startedAt >= Fmt.startOfDayMillis(1) -> "ieri"
+                else -> "pe " + DateTimeFormatter.ofPattern("d MMMM", Locale("ro")).format(java.time.Instant.ofEpochMilli(last.startedAt).atZone(java.time.ZoneId.systemDefault()))
+            }
+            val end = last.endedAt
+            val dur = if (end != null) ", ${spokenDuration(((end - last.startedAt) / 60000).toInt())}" else ""
+            sb.append("Ultimul: „${last.planName}”, $whenSpoken$dur, ${last.totalSets} ${if (last.totalSets == 1) "serie" else "serii"}. ")
+        }
+        sb.append("Săptămâna asta: $week ${if (week == 1) "antrenament" else "antrenamente"}. Spune „începe antrenamentul” ca să pornești unul.")
+        return sb.toString()
+    }
+
+    // ── Muzica (sesiunile media ale playerului tău) ─────────────────────────────────
+
+    /** Sesiunile media se citesc doar după ce motorul muzicii a pornit (pe firul principal, sincron). */
+    private suspend fun musicWarm() {
+        try { withContext(Dispatchers.Main.immediate) { Music.ensureStarted(app) } } catch (_: Exception) { }
+    }
+
+    private suspend fun musicControl(action: MusicAction): Outcome {
+        musicWarm()
+        val access = Music.hasAccess(app)
+        val track = Music.nowPlaying.value
+        val audible = Music.audible.value
+        val noAccess = " Ca să văd ce cântă și să controlez exact playerul, dă acces la notificări din Echipare, la Muzică."
+        return when (action) {
+            MusicAction.PLAY -> when {
+                track?.playing == true -> Outcome.Done("Muzica merge deja: „${track.title}” de ${track.artist}.")
+                track != null -> { Music.play(app); Outcome.Done("Reiau „${track.title}” de ${track.artist}.") }
+                else -> { Music.play(app); Outcome.Done("Pornesc muzica." + if (!access) noAccess else "") }
+            }
+            MusicAction.PAUSE -> when {
+                track?.playing == true || audible -> {
+                    // Lista FORJA pornită cu vocea (fără antrenament): se închide de tot, nu doar pauză.
+                    if (!WorkoutLink.active() && MusicStarter.origin.value == MusicSource.WORKOUT) MusicStarter.endWorkout(app, finished = false)
+                    else Music.pause(app)
+                    Outcome.Done("Pauză la muzică.")
+                }
+                else -> Outcome.Done("Nu cântă nimic acum.")
+            }
+            MusicAction.NEXT -> when {
+                track != null || audible || !access -> { Music.next(app); Outcome.Done("Următoarea melodie.") }
+                else -> Outcome.Done("Nu cântă nimic acum. Spune „pornește muzica”.")
+            }
+            MusicAction.PREVIOUS -> when {
+                track != null || audible || !access -> { Music.previous(app); Outcome.Done("Melodia dinainte.") }
+                else -> Outcome.Done("Nu cântă nimic acum. Spune „pornește muzica”.")
+            }
+            MusicAction.NOW_PLAYING -> when {
+                track != null -> Outcome.Done("${if (track.playing) "Cântă" else "E pe pauză"} „${track.title}”${if (track.artist.isNotBlank()) " de ${track.artist}" else ""}, pe ${track.app}.")
+                !access && audible -> Outcome.Done("Se aude ceva, dar nu văd ce." + noAccess)
+                !access -> Outcome.Done("Nu cântă nimic acum." + noAccess)
+                else -> Outcome.Done("Nu cântă nimic acum. Spune „pornește muzica” sau „pornește un playlist”.")
+            }
+        }
+    }
+
+    private suspend fun playPlaylist(cmd: VoiceCommand.PlayPlaylist): Outcome {
+        val name = cmd.name.trim()
+        val mixWord = cmd.mix ?: CommandParser.mixWord(name)
+        if (name.isBlank() || mixWord != null) {
+            // Lista FORJA, clădită din ce asculți de obicei (Mix / Noi / Vechi / Apreciate), în playerul tău.
+            musicWarm()
+            val mix = when (mixWord) {
+                "new" -> Mix.NEW
+                "old" -> Mix.OLD
+                "liked" -> Mix.LIKED
+                "mix" -> Mix.MIX
+                else -> try { MusicStats.workoutMix(app) } catch (_: Exception) { Mix.MIX }
+            }
+            val access = Music.hasAccess(app)
+            val target = WorkoutLink.live.value?.let { s -> com.forja.app.core.music.Playlist.targetMinutes(s.exercises.map { it.sets to it.reps }) } ?: 25
+            MusicStarter.startWorkout(app, mix, target, tap = isForeground())
+            val label = when (mix) {
+                Mix.MIX -> "mixul FORJA"
+                Mix.NEW -> "lista cu melodii noi"
+                Mix.OLD -> "lista cu melodii vechi"
+                Mix.LIKED -> "melodiile apreciate"
+            }
+            return Outcome.Done(
+                "Pornesc $label în playerul tău." +
+                    (if (!access) " Fără acces la notificări pot doar să apăs Play; dă accesul din Echipare, la Muzică." else "") +
+                    (if (!isForeground()) " Dacă playerul e închis, deschide FORJA și spune din nou." else "")
+            )
+        }
+        // Un playlist cu nume: căutare de playlist în Spotify / YouTube Music / playerul implicit
+        val spotify = "com.spotify.music"
+        val ytm = "com.google.android.apps.youtube.music"
+        val pkg = when (cmd.service) {
+            MusicService.SPOTIFY -> spotify
+            MusicService.YOUTUBE_MUSIC -> ytm
+            else -> null
+        }
+        val i = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/playlist")
+            .putExtra(MediaStore.EXTRA_MEDIA_PLAYLIST, name)
+            .putExtra(SearchManager.QUERY, name)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        when {
+            pkg != null && isInstalled(pkg) -> i.setPackage(pkg)
+            isInstalled(spotify) -> i.setPackage(spotify)
+            isInstalled(ytm) -> i.setPackage(ytm)
+        }
+        if (i.resolveActivity(app.packageManager) == null) {
+            return Outcome.Done("Nu am găsit un player care să pornească playlisturi după nume. Spune „pornește un playlist” pentru lista FORJA.")
+        }
+        val where = i.`package`?.let { if (it == spotify) " pe Spotify" else if (it == ytm) " pe YouTube Music" else "" } ?: ""
+        return launch(i, "Pornesc playlistul „$name”$where.", "Playlist: $name")
+    }
+
+    // ── „pauză” / „continuă” / „următorul” fără obiect: după ce se întâmplă acum ───────
+
+    private suspend fun pauseAny(): Outcome {
+        val s = WorkoutLink.live.value
+        if (s != null && !s.finished && !s.paused) return workout(WorkoutAction.PAUSE)
+        musicWarm()
+        val track = Music.nowPlaying.value
+        if (track?.playing == true || Music.audible.value) return musicControl(MusicAction.PAUSE)
+        if (s != null && !s.finished && s.paused) return Outcome.Done("Antrenamentul e deja în pauză. Spune „continuă” când ești gata.")
+        return Outcome.Done("Nimic de pus pe pauză acum.")
+    }
+
+    private suspend fun continueAny(): Outcome {
+        val s = WorkoutLink.live.value
+        if (s != null && !s.finished && s.paused) return workout(WorkoutAction.RESUME)
+        musicWarm()
+        val track = Music.nowPlaying.value
+        if (track != null && !track.playing) return musicControl(MusicAction.PLAY)
+        if (ScreenAgent.isConnected() && ScreenAgent.foregroundPackage().isNotBlank() && ScreenAgent.foregroundPackage() != app.packageName) {
+            return screen(ScreenAction.Scroll(down = true))
+        }
+        return Outcome.Done("Nimic de continuat acum. Spune „începe antrenamentul” sau „pornește muzica”.")
+    }
+
+    private suspend fun nextAny(): Outcome {
+        val s = WorkoutLink.live.value
+        musicWarm()
+        val track = Music.nowPlaying.value
+        if (s != null && !s.finished && track?.playing != true) return workout(WorkoutAction.NEXT_EXERCISE)
+        if (track != null || Music.audible.value) return musicControl(MusicAction.NEXT)
+        return Outcome.Done("Nimic de sărit acum. În antrenament spune „următorul exercițiu”; la muzică, „următoarea melodie”.")
+    }
+
+    // ── Focus / Detox digital ──────────────────────────────────────────────────────
+
+    private suspend fun startFocus(cmd: VoiceCommand.StartFocus): Outcome {
+        val hasUsage = try { FocusMonitorService.hasUsageAccess(app) } catch (_: Exception) { false }
+        val hasOverlay = try { Settings.canDrawOverlays(app) } catch (_: Exception) { false }
+        if (!hasUsage || !hasOverlay) {
+            return Outcome.Done("Focusul are nevoie întâi de două acorduri Android: accesul la utilizare și afișarea peste alte aplicații. Le dai din ecranul Focus, cu butonul „Permite accesul”.", Route.FOCUS)
+        }
+        val minutes = cmd.detoxMinutes
+        if (minutes != null) {
+            val min = minutes.coerceIn(5, 24 * 60)
+            app.prefs.setDetoxUntil(System.currentTimeMillis() + min * 60_000L)
+            try { FocusMonitorService.start(app) } catch (_: Exception) { }
+            return Outcome.Done("Detox digital pornit pentru ${spokenDuration(min)}: rămân doar telefonul, mesajele, setările și FORJA. Spune „oprește detoxul” ca să-l închei mai devreme.", Route.FOCUS)
+        }
+        if (app.prefs.focusActive.first()) return Outcome.Done("Focusul e deja pornit. Spune „cât mai am din focus” sau „oprește focusul”.")
+        val rules = try { app.db.focusDao().enabledRules() } catch (_: Exception) { emptyList() }
+        if (rules.isEmpty()) {
+            return Outcome.Done("Alege întâi, din ecranul Focus, aplicațiile pe care să le blochez. Sau spune „pornește detoxul digital 30 de minute”.", Route.FOCUS)
+        }
+        try { FocusMonitorService.start(app) } catch (_: Exception) { return Outcome.Done("Nu am putut porni Focusul acum.") }
+        app.prefs.setFocusActive(true)
+        val names = rules.take(3).joinToString(", ") { it.label }
+        return Outcome.Done("Focus pornit: ${rules.size} ${if (rules.size == 1) "aplicație blocată" else "aplicații blocate"} ($names). Respiră.", Route.FOCUS)
+    }
+
+    private suspend fun stopFocus(): Outcome {
+        val detoxOn = app.prefs.detoxUntil.first() > System.currentTimeMillis()
+        val focusOn = app.prefs.focusActive.first()
+        if (!detoxOn && !focusOn) return Outcome.Done("Nici Focusul, nici detoxul digital nu sunt pornite.")
+        val parts = mutableListOf<String>()
+        if (detoxOn) { app.prefs.setDetoxUntil(0L); parts += "detoxul digital" }
+        if (focusOn) { try { FocusMonitorService.stop(app) } catch (_: Exception) { }; app.prefs.setFocusActive(false); parts += "Focusul" }
+        app.prefs.witherFocusTree()
+        return Outcome.Done("Am oprit ${parts.joinToString(" și ")}. Cât ai rezistat, contează.", Route.FOCUS)
+    }
+
+    private suspend fun focusStatus(): String {
+        val now = System.currentTimeMillis()
+        val detoxUntil = app.prefs.detoxUntil.first()
+        val focusOn = app.prefs.focusActive.first()
+        val forest = try { app.prefs.focusForest.first() } catch (_: Exception) { Triple(0, 0, 0) }
+        val focusMin = forest.first * 15 + forest.third / 60
+        val sb = StringBuilder()
+        if (detoxUntil > now) sb.append("Detoxul digital mai ține ${spokenDuration(((detoxUntil - now) / 60000).toInt().coerceAtLeast(1))}. ")
+        if (focusOn) {
+            val rules = try { app.db.focusDao().enabledRules() } catch (_: Exception) { emptyList() }
+            sb.append("Focusul e pornit${if (rules.isNotEmpty()) ", cu ${rules.size} ${if (rules.size == 1) "aplicație blocată" else "aplicații blocate"}" else ""}. ")
+        }
+        if (detoxUntil <= now && !focusOn) sb.append("Nici Focusul, nici detoxul nu sunt pornite acum. ")
+        if (focusMin > 0 || forest.first > 0) sb.append("Azi: $focusMin minute de focus, ${forest.first} ${if (forest.first == 1) "copac crescut" else "copaci crescuți"}.")
+        return sb.toString().trim()
+    }
+
+    // ── Respirație, nutriție, somn ──────────────────────────────────────────────────
+
+    private fun startBreath(): Outcome {
+        BreathLinks.requestStart()
+        return Outcome.Done("Respirăm împreună: inspiră patru secunde, ține, expiră, ține. Apasă „Oprește” sau ieși din ecran când vrei să te oprești.", Route.BREATH)
+    }
+
+    private suspend fun nutritionSummary(): String {
+        val day = Fmt.epochDay()
+        val meals = try { app.db.mealDao().mealsForDay(day).first() } catch (_: Exception) { emptyList() }
+        val np = NutritionPrefs.of(app)
+        val target = try { Targets.of(np.profile.first())?.kcal ?: np.kcalTarget.first() } catch (_: Exception) { 0 }
+        val kcal = meals.sumOf { it.kcal }
+        if (meals.isEmpty()) {
+            return "Nicio masă în jurnal azi." + (if (target > 0) " Ținta ta e $target calorii." else "") + " Poți adăuga o masă din Nutriție, cu poza sau codul de bare."
+        }
+        val list = meals.joinToString(", ") { "${it.name.take(40)} (${it.kcal} calorii)" }
+        val sb = StringBuilder("Azi ai ${meals.size} ${if (meals.size == 1) "masă" else "mese"}: $list. ")
+        sb.append("În total $kcal calorii")
+        if (target > 0) {
+            val left = target - kcal
+            sb.append(if (left >= 0) " din $target; mai ai loc de $left. " else " din $target; ai depășit ținta cu ${-left}. ")
+        } else sb.append(". ")
+        val p = meals.sumOf { it.protein }
+        if (p > 0) sb.append("Proteine: $p grame.")
+        return sb.toString().trim()
+    }
+
+    private suspend fun sleepSummary(): String {
+        val s = try { app.db.sleepDao().lastFinished().first() } catch (_: Exception) { null }
+            ?: return "Nu am nicio noapte înregistrată încă. Spune „pornește somnul” la culcare și „m-am trezit” dimineața."
+        val end = s.endAt ?: s.startAt
+        val min = ((end - s.startAt) / 60000).toInt()
+        val whenSpoken = when {
+            end >= Fmt.startOfDayMillis(0) -> "Azi-noapte"
+            end >= Fmt.startOfDayMillis(1) -> "Noaptea trecută, ieri,"
+            else -> "Ultima noapte înregistrată, pe " + DateTimeFormatter.ofPattern("d MMMM", Locale("ro")).format(java.time.Instant.ofEpochMilli(end).atZone(java.time.ZoneId.systemDefault())) + ","
+        }
+        val sb = StringBuilder("$whenSpoken ai dormit ${spokenDuration(min)}, de la ${Fmt.clock(s.startAt)} la ${Fmt.clock(end)}. ")
+        if (s.score > 0) sb.append("Scor: ${s.score} din 100. ")
+        if (s.deepMin > 0 || s.remMin > 0) sb.append("Somn profund ${spokenDuration(s.deepMin)}, REM ${spokenDuration(s.remMin)}. ")
+        if (s.summary.isNotBlank()) sb.append(s.summary.trim())
+        return sb.toString().trim()
+    }
+
+    // ── Prieteni pe hartă, ture (GO) ────────────────────────────────────────────────
+
+    private suspend fun friendWhere(cmd: VoiceCommand.FriendWhere): Outcome {
+        val who = cmd.name.trim()
+        val list = if (app.auth.currentUid != null) friendsSnapshot(2500) else emptyList()
+        val matched = MapLinks.match(who, list.map { it.name })
+        val f = list.firstOrNull { it.name == matched }
+            ?: return openPlace(VoiceCommand.OpenPlace(who, navigate = false))   // nu e un prieten: un loc, în aplicația de hărți
+        val now = System.currentTimeMillis()
+        MapLinks.requestFriend(f.name)
+        val seen = if (f.lat != null && (!f.ghost || f.viaFamily)) ", văzut ${Fmt.freshness(f.locUpdatedAt)}" else if (f.ghost) ", fără locație (fantomă)" else ", fără locație"
+        val music = f.listening(now)?.let { ", ascultă $it" } ?: ""
+        return Outcome.Done("${f.name} ${friendState(f)}$seen$music. Îl arăt pe hartă.", Route.MAP)
+    }
+
+    private fun sportLabel(sport: String) = when (sport) { "walk" -> "Plimbarea"; "ride" -> "Tura pe bicicletă"; else -> "Alergarea" }
+
+    private fun startGo(cmd: VoiceCommand.StartGo): Outcome {
+        if (!granted(Manifest.permission.ACCESS_FINE_LOCATION) && !granted(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            return Outcome.NeedPermission(
+                listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                "Pentru tură am nevoie de locația telefonului. Permite accesul și pornesc.", cmd
+            )
+        }
+        val st = GoTrackService.state.value
+        if (st.recording) return Outcome.Done("${sportLabel(st.sport)} e deja pornită: ${Fmt.km(st.distanceM)} kilometri până acum.", Route.MAP)
+        GoTrackService.start(app, cmd.sport)
+        return Outcome.Done("${sportLabel(cmd.sport)} a pornit. Harta te urmărește; spune „oprește tura” la final.", Route.MAP)
+    }
+
+    private fun stopGo(): Outcome {
+        val st = GoTrackService.state.value
+        if (!st.recording) return Outcome.Done("Nicio tură pornită acum. Spune „pornește o alergare”, „o plimbare” sau „o tură pe bicicletă”.")
+        GoTrackService.stop(app)
+        val min = ((System.currentTimeMillis() - st.startedAt) / 60000).toInt()
+        return Outcome.Done("${sportLabel(st.sport)} s-a încheiat: ${Fmt.km(st.distanceM)} kilometri în ${spokenDuration(min)}." + if (st.distanceM <= 30) " Prea scurtă ca să o salvez." else "", Route.MAP)
     }
 
     private fun isInstalled(pkg: String): Boolean = try {

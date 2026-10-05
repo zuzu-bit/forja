@@ -280,6 +280,13 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             when (e) {
                 is VoiceAssistant.Event.Navigate -> try {
                     if (e.route == Route.CLEANUP) openInventory(null)
+                    else if (e.route == Route.WORKOUT_LIVE) {
+                        // „Începe antrenamentul”: sesiunea live stă peste hub (ieșirea ei revine la hub).
+                        if (nav.currentDestination?.route != Route.WORKOUT_LIVE) {
+                            nav.navigate(Route.WORKOUT) { popUpTo(Route.DASHBOARD) { inclusive = false }; launchSingleTop = true }
+                            nav.navigate(Route.WORKOUT_LIVE) { launchSingleTop = true }
+                        }
+                    }
                     else if (e.route in tabRoutes) nav.navigate(e.route) { popUpTo(Route.DASHBOARD) { inclusive = false }; launchSingleTop = true }
                     else nav.navigate(e.route) { launchSingleTop = true }
                 } catch (_: Exception) { }
@@ -616,9 +623,10 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
         ) {
             ForjaTabBar(current = currentTab, onSelect = ::goTab)
         }
-        // „Hei FORJA": microfonul plutitor — o atingere, un bip, și spui comanda — de pe orice ecran principal.
+        // „Hei FORJA": microfonul plutitor — o atingere, un bip, și spui comanda — de pe orice ecran principal
+        // și din sesiunea live de antrenament („pauză”, „am terminat seria”, „următorul exercițiu”).
         AnimatedVisibility(
-            visible = tabsVisible,
+            visible = tabsVisible || route == Route.WORKOUT_LIVE,
             modifier = Modifier.align(Alignment.BottomEnd),
             enter = fadeIn(), exit = fadeOut()
         ) {
@@ -628,7 +636,7 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     fabListen++
                     nav.navigate(Route.VOICE) { launchSingleTop = true }
                 },
-                modifier = Modifier.navigationBarsPadding().padding(end = 16.dp, bottom = 96.dp)
+                modifier = Modifier.navigationBarsPadding().padding(end = 16.dp, bottom = if (tabsVisible) 96.dp else 24.dp)
             )
         }
         // Contractul v3: cine a semnat v2 vede o singură dată, pe „Azi”, rândurile noi și „Semnează”.

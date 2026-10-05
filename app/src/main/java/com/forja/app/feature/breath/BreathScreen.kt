@@ -57,6 +57,14 @@ fun BreathScreen() {
     var elapsedMs by remember { mutableStateOf(0L) }
     // Plecarea din ecran în timpul unei sesiuni o scrie și ea (neterminată).
     DisposableEffect(Unit) { onDispose { if (startedAt != 0L) record(false) } }
+    // „Hei FORJA, respiră cu mine”: exercițiul pornește singur, la deschidere sau pe loc dacă ecranul e deja deschis.
+    val startTick by BreathLinks.start.collectAsState()
+    LaunchedEffect(startTick) {
+        if (startTick > 0) {
+            BreathLinks.consumed()
+            if (!running) { elapsedMs = 0L; startedAt = System.currentTimeMillis(); running = true }
+        }
+    }
 
     LaunchedEffect(running) {
         if (running) {
