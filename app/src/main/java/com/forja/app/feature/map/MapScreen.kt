@@ -420,15 +420,24 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
         }
     }
 
-    // „Hei FORJA, arată-l pe Ion pe hartă”: când prietenii și harta sunt gata, îl alegem și zburăm la el.
+    // „Hei FORJA, arată-l pe Ion pe hartă”: când prietenul cerut apare (lista sosește pe rând) și harta e gata, zburăm la el.
     val wantedFriend by MapLinks.friend.collectAsState()
-    LaunchedEffect(wantedFriend, shownFriends.size, styleReady) {
+    LaunchedEffect(wantedFriend, shownFriends, styleReady) {
         val want = wantedFriend ?: return@LaunchedEffect
-        if (!styleReady || shownFriends.isEmpty()) return@LaunchedEffect
+        if (!styleReady) return@LaunchedEffect
+        val name = MapLinks.match(want, shownFriends.map { it.name }) ?: return@LaunchedEffect   // poate n-a sosit încă
+        val f = shownFriends.firstOrNull { it.name == name } ?: return@LaunchedEffect
         MapLinks.consumeFriend()
-        val name = MapLinks.match(want, shownFriends.map { it.name })
-        val f = shownFriends.firstOrNull { it.name == name }
-        if (f != null) pickFriend(f) else toast.show("Nu am găsit un prieten pe nume $want.")
+        pickFriend(f)
+    }
+    // Dacă nu apare în câteva secunde, nu e pe hartă: spunem și lăsăm cererea.
+    LaunchedEffect(wantedFriend) {
+        val want = wantedFriend ?: return@LaunchedEffect
+        kotlinx.coroutines.delay(6000)
+        if (MapLinks.friend.value == want) {
+            MapLinks.consumeFriend()
+            toast.show("Nu am găsit un prieten pe nume $want pe hartă.")
+        }
     }
 
     Box(Modifier.fillMaxSize().background(Surface0)) {

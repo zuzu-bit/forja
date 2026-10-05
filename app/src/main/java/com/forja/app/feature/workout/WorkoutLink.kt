@@ -1,5 +1,6 @@
 package com.forja.app.feature.workout
 
+import android.os.SystemClock
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -33,7 +34,8 @@ object WorkoutLink {
     private val _requests = MutableSharedFlow<Request>(extraBufferCapacity = 8)
     val requests: SharedFlow<Request> = _requests.asSharedFlow()
 
-    @Volatile private var pendingStart: Request.Start? = null
+    /** Pornirea cerută și clipa ei ([SystemClock.elapsedRealtime]): o pornire veche nu mai pornește nimic. */
+    @Volatile private var pendingStart: Pair<Request.Start, Long>? = null
 
     /** Doar ViewModel-ul. */
     fun publish(state: LiveState?) { _live.value = state }
@@ -42,12 +44,19 @@ object WorkoutLink {
     fun active(): Boolean = _live.value?.let { !it.finished } == true
 
     fun request(r: Request) {
-        if (r is Request.Start) pendingStart = r
+        if (r is Request.Start) pendingStart = r to SystemClock.elapsedRealtime()
         _requests.tryEmit(r)
     }
 
-    /** ViewModel-ul abia creat ia pornirea rămasă în așteptare (dacă n-a prins-o prin [requests]). */
-    fun takePendingStart(): Request.Start? = pendingStart.also { pendingStart = null }
+    /** ViewModel-ul abia creat ia pornirea rămasă în așteptare (dacă n-a prins-o prin [requests]) — doar una proaspătă. */
+    fun takePendingStart(maxAgeMs: Long = 15_000L): Request.Start? {
+        val p = pendingStart ?: return null
+        pendingStart = null
+        return if (SystemClock.elapsedRealtime() - p.second <= maxAgeMs) p.first else null
+    }
+
+    /** Utilizatorul a atins notificarea „Hei FORJA: antrenamentul” mai târziu: pornirea parcată e din nou proaspătă. */
+    fun refreshPendingStart() { pendingStart = pendingStart?.let { it.first to SystemClock.elapsedRealtime() } }
 
     /** Pornirea a fost preluată: nu mai așteaptă pe nimeni. */
     fun clearPendingStart() { pendingStart = null }

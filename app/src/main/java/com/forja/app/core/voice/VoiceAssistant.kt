@@ -15,6 +15,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.provider.Settings
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.speech.RecognitionListener
@@ -27,6 +29,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.forja.app.ForjaApp
 import com.forja.app.MainActivity
 import com.forja.app.R
+import com.forja.app.navigation.Route
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -388,9 +391,9 @@ class VoiceAssistant(private val app: ForjaApp) {
         _state.update { it.copy(phase = Phase.THINKING) }
         if (cmd is VoiceCommand.Stop) pending = null
         scope.launch {
+            // Misiunea „Hei FORJA” a Cascăi: o comandă adevărată pe zi — scrisă înainte de execuție, ca „ce grad am” s-o vadă bifată.
+            if (cmd !is VoiceCommand.Unknown && cmd !is VoiceCommand.Stop && cmd !is VoiceCommand.Repeat) withContext(Dispatchers.IO) { try { app.prefs.markVoiceUsed() } catch (_: Exception) { } }
             val outcome = withContext(Dispatchers.IO) { executor.execute(cmd, confirmSend, lastSpoken, denied) }
-            // Misiunea „Hei FORJA” a Cascăi: o comandă adevărată pe zi.
-            if (cmd !is VoiceCommand.Unknown && cmd !is VoiceCommand.Stop && cmd !is VoiceCommand.Repeat) launch(Dispatchers.IO) { try { app.prefs.markVoiceUsed() } catch (_: Exception) { } }
             handle(outcome)
             if (cmd is VoiceCommand.StopListening) {
                 wakeLoopWanted = false
@@ -425,11 +428,12 @@ class VoiceAssistant(private val app: ForjaApp) {
             is Outcome.Done -> {
                 pending = null
                 _state.update { it.copy(question = null) }
-                outcome.navigate?.let { emit(Event.Navigate(it)) }
+                val opened = outcome.navigate?.let { navigateTo(it) } ?: true
+                val spoken = if (opened) outcome.spoken else outcome.spoken + " FORJA nu se poate deschide singură de aici: am lăsat o notificare, atinge-o și ajungi acolo."
                 if (outcome.readScreenAfterMs > 0 && ScreenAgent.isConnected()) {
                     // După ce a deschis / apăsat / căutat ceva, citește ce a apărut pe ecran — ca să nu rămâi în întuneric.
-                    say(outcome.spoken, then = { readScreenSoon(outcome.readScreenAfterMs) })
-                } else say(outcome.spoken, null)
+                    say(spoken, then = { readScreenSoon(outcome.readScreenAfterMs) })
+                } else say(spoken, null)
             }
             is Outcome.Ask -> {
                 pending = outcome.pending
@@ -520,6 +524,64 @@ class VoiceAssistant(private val app: ForjaApp) {
     private fun isForeground(): Boolean = try {
         ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
     } catch (_: Exception) { true }
+
+    @Volatile private var pendingRoute: Pair<String, Long>? = null
+
+    /** FORJA poate porni un ecran acum? (prim-plan, serviciul de accesibilitate pornit sau „peste alte aplicații” permis) */
+    private fun canLaunch(): Boolean = isForeground() || ScreenAgent.isConnected() || (try { Settings.canDrawOverlays(app) } catch (_: Exception) { false })
+
+    /**
+     * Un ecran FORJA de deschis după o comandă („deschide antrenamentul”, „unde e Ion”). Cu activitatea în viață, direct;
+     * cu FORJA închisă, ruta așteaptă aici ([takePendingRoute]) și aducem activitatea în față, cu ruta în intent. Când
+     * Android nu lasă pornirea din fundal (aruncă intenția fără să spună), rămâne o notificare care deschide ecranul la o
+     * atingere. @return false = doar notificarea (utilizatorului i se spune).
+     */
+    private fun navigateTo(route: String): Boolean {
+        if (_events.subscriptionCount.value > 0) emit(Event.Navigate(route))
+        else parkRoute(route)
+        if (isForeground()) return true
+        val i = Intent(app, MainActivity::class.java)
+            .putExtra(MainActivity.EXTRA_VOICE_ROUTE, route)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        if (canLaunch()) {
+            try { app.startActivity(i); return true } catch (_: Exception) { }
+        }
+        return !notifyRoute(i, route)
+    }
+
+    /** Ruta cerută cu vocea, proaspătă (din [navigateTo] sau din intentul unei notificări atinse). */
+    fun parkRoute(route: String) { pendingRoute = route to SystemClock.elapsedRealtime() }
+
+    /** MainActivity, la pornire sau la un intent nou: ruta cerută cu vocea (doar dacă e proaspătă). */
+    fun takePendingRoute(maxAgeMs: Long = 15_000L): String? {
+        val p = pendingRoute ?: return null
+        pendingRoute = null
+        return if (SystemClock.elapsedRealtime() - p.second <= maxAgeMs) p.first else null
+    }
+
+    private fun routeLabel(route: String): String = when (route) {
+        Route.WORKOUT, Route.WORKOUT_LIVE -> "antrenamentul"
+        Route.MAP -> "harta"
+        Route.NUTRITION -> "nutriția"
+        Route.SLEEP -> "somnul"
+        Route.FOCUS -> "Focusul"
+        Route.BREATH -> "respirația"
+        Route.SOLDIER -> "Cazarma"
+        Route.VOICE -> "Hei FORJA"
+        else -> "ecranul cerut"
+    }
+
+    /** Notificarea care deschide FORJA pe [route] la o atingere; true dacă s-a putut lăsa. */
+    private fun notifyRoute(i: Intent, route: String): Boolean = try {
+        val pi = PendingIntent.getActivity(app, 73, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val n = Notification.Builder(app, "voice")
+            .setSmallIcon(R.drawable.ic_voice_mic)
+            .setContentTitle("Hei FORJA: ${routeLabel(route)}")
+            .setContentText("Atinge ca să deschizi FORJA aici.")
+            .setAutoCancel(true).setContentIntent(pi).build()
+        (app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(73, n)
+        true
+    } catch (_: Exception) { false }
 
     private fun speechFinished() {
         abandonFocus()

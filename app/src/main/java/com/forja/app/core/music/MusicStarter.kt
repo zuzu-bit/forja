@@ -647,10 +647,12 @@ object MusicStarter {
      * playerului, apoi coada. Din 4.4.1 atingerea pe „Începe sesiunea” e atingerea care permite un salt (cel mult unul,
      * în 1,5 s de la ea). Nu așteaptă nimic: antrenamentul merge oricum. [ready] = lista clădită de hub la deschidere
      * (folosită dacă e pentru aceeași alegere și durată, [Playlist.readyOr]), ca atingerea să găsească planul gata.
+     * [session] = false: lista FORJA cerută cu vocea fără antrenament — muzica nu ia „permisul” de antrenament
+     * ([workoutBegan]), ca un inventar să o poată opri ca de obicei.
      */
-    fun startWorkout(context: Context, mix: Mix, targetMin: Int, tap: Boolean = false, ready: FPlaylist? = null) {
+    fun startWorkout(context: Context, mix: Mix, targetMin: Int, tap: Boolean = false, ready: FPlaylist? = null, session: Boolean = true) {
         val app = context.applicationContext
-        workoutBegan()
+        if (session) workoutBegan()
         launchStart(app, MusicSource.WORKOUT, tap, Want.Workout(null)) {
             val list = Playlist.readyOr(ready, mix, targetMin) {
                 try {

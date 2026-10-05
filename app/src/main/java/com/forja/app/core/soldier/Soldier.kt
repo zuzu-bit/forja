@@ -12,7 +12,7 @@ import org.json.JSONObject
 
 /** Locul unei piese pe mascotă (ordinea de desenare e în Mascot.kt). */
 enum class Slot(val label: String) {
-    HEAD("Cap"), EYES("Ochi"), TORSO("Corp"), BELT("Centură"), FEET("Bocanci"), BACK("Spate"), CHEST("Piept")
+    HEAD("Cap"), EYES("Ochi"), TORSO("Corp"), BELT("Centură"), FEET("Încălțări"), BACK("Spate"), CHEST("Piept")
 }
 
 /** O piesă din garderobă: [rank] = gradul de la care se poate purta; [cost] = 0 → dar la avansarea în acel grad. */
@@ -92,6 +92,10 @@ data class SoldierState(
     val days: Map<Long, Set<String>> = emptyMap(),
     /** Zile la rând cu cel puțin [Missions.GOOD_DAY] misiuni bifate (ziua de azi intră când ajunge la prag). */
     val streak: Int = 0,
+    /** Seria la zi: câte zile bune la rând până la (și cu) [goodRunDay] — nu depinde de câte zile mai ținem în [days]. */
+    val goodRun: Int = 0,
+    /** Ultima zi bună numărată în [goodRun] (epochDay; 0 = niciuna). */
+    val goodRunDay: Long = 0L,
     /** Gradul până la care darurile au fost primite. */
     val gifted: Int = 0,
     /** Gradul până la care avansarea a fost sărbătorită (foaia „Avansat în grad”). */
@@ -115,7 +119,8 @@ data class SoldierState(
         o.put("owned", JSONArray(owned.toList()))
         o.put("equipped", JSONObject().also { e -> equipped.forEach { (s, id) -> e.put(s.name, id) } })
         o.put("days", JSONObject().also { d -> days.forEach { (day, ids) -> d.put(day.toString(), JSONArray(ids.toList())) } })
-        o.put("streak", streak); o.put("gifted", gifted); o.put("promoSeen", promoSeen); o.put("createdAt", createdAt)
+        o.put("streak", streak); o.put("goodRun", goodRun); o.put("goodRunDay", goodRunDay)
+        o.put("gifted", gifted); o.put("promoSeen", promoSeen); o.put("createdAt", createdAt)
         return o.toString()
     }
 
@@ -144,7 +149,8 @@ data class SoldierState(
                     earned = o.optInt("earned", 0), balance = o.optInt("balance", 0),
                     owned = owned.ifEmpty { setOf("tshirt_khaki", "sneakers") },
                     equipped = equipped, days = days,
-                    streak = o.optInt("streak", 0), gifted = o.optInt("gifted", 0), promoSeen = o.optInt("promoSeen", 0),
+                    streak = o.optInt("streak", 0), goodRun = o.optInt("goodRun", 0), goodRunDay = o.optLong("goodRunDay", 0L),
+                    gifted = o.optInt("gifted", 0), promoSeen = o.optInt("promoSeen", 0),
                     createdAt = o.optLong("createdAt", 0L)
                 )
             } catch (_: Exception) { null }

@@ -81,11 +81,21 @@ class MainActivity : ComponentActivity() {
         private set
     var voiceListen by mutableIntStateOf(0)
         private set
+    /** Crește când un intent aduce o rută cerută cu vocea ([EXTRA_VOICE_ROUTE]) — MainNav o ia din [VoiceAssistant.takePendingRoute]. */
+    var voiceRouteTick by mutableIntStateOf(0)
+        private set
 
     private fun handleVoiceIntent(intent: android.content.Intent?) {
         when (intent?.action) {
             ACTION_VOICE -> voiceOpen++
             ACTION_VOICE_LISTEN -> { voiceOpen++; voiceListen++ }
+        }
+        // „Hei FORJA” a cerut un ecran cât FORJA era închisă (pornită de comandă sau din notificarea ei, mai târziu).
+        intent?.getStringExtra(EXTRA_VOICE_ROUTE)?.let { route ->
+            intent.removeExtra(EXTRA_VOICE_ROUTE)
+            (application as? ForjaApp)?.voice?.parkRoute(route)
+            if (route == Route.WORKOUT_LIVE) com.forja.app.feature.workout.WorkoutLink.refreshPendingStart()
+            voiceRouteTick++
         }
     }
 
@@ -94,6 +104,8 @@ class MainActivity : ComponentActivity() {
         const val ACTION_VOICE = "com.forja.app.action.VOICE"
         /** Deschide ecranul și ascultă imediat. */
         const val ACTION_VOICE_LISTEN = "com.forja.app.action.VOICE_LISTEN"
+        /** Extra (String): ruta cerută cu vocea, pusă de [VoiceAssistant] când deschide FORJA din fundal. */
+        const val EXTRA_VOICE_ROUTE = "voice_route"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -275,21 +287,36 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
     val voicePerms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         app.voice.onPermissionsResult(result)
     }
+    fun goVoice(route: String) {
+        try {
+            when {
+                route == Route.CLEANUP -> openInventory(null)
+                route == Route.WORKOUT_LIVE -> {
+                    // „Începe antrenamentul”: sesiunea live stă peste hub (ieșirea ei revine la hub).
+                    if (nav.currentDestination?.route != Route.WORKOUT_LIVE) {
+                        nav.navigate(Route.WORKOUT) { popUpTo(Route.DASHBOARD) { inclusive = false }; launchSingleTop = true }
+                        nav.navigate(Route.WORKOUT_LIVE) { launchSingleTop = true }
+                    }
+                }
+                route in tabRoutes -> nav.navigate(route) { popUpTo(Route.DASHBOARD) { inclusive = false }; launchSingleTop = true }
+                else -> nav.navigate(route) { launchSingleTop = true }
+            }
+        } catch (_: Exception) { }
+    }
+    // Ruta cerută cu vocea cât FORJA era închisă (comanda a adus activitatea în față, acum sau din notificarea ei):
+    // o luăm la pornire și la fiecare intent nou — doar peste panou, nu peste onboarding sau login.
+    val voiceRouteTick = (hostActivity as? MainActivity)?.voiceRouteTick ?: 0
+    LaunchedEffect(voiceRouteTick) {
+        val route = app.voice.takePendingRoute() ?: return@LaunchedEffect
+        if (startRoute != Route.DASHBOARD) return@LaunchedEffect
+        var tries = 0
+        while (nav.currentBackStackEntry == null && tries++ < 40) kotlinx.coroutines.delay(50)
+        goVoice(route)
+    }
     LaunchedEffect(Unit) {
         app.voice.events.collect { e ->
             when (e) {
-                is VoiceAssistant.Event.Navigate -> try {
-                    if (e.route == Route.CLEANUP) openInventory(null)
-                    else if (e.route == Route.WORKOUT_LIVE) {
-                        // „Începe antrenamentul”: sesiunea live stă peste hub (ieșirea ei revine la hub).
-                        if (nav.currentDestination?.route != Route.WORKOUT_LIVE) {
-                            nav.navigate(Route.WORKOUT) { popUpTo(Route.DASHBOARD) { inclusive = false }; launchSingleTop = true }
-                            nav.navigate(Route.WORKOUT_LIVE) { launchSingleTop = true }
-                        }
-                    }
-                    else if (e.route in tabRoutes) nav.navigate(e.route) { popUpTo(Route.DASHBOARD) { inclusive = false }; launchSingleTop = true }
-                    else nav.navigate(e.route) { launchSingleTop = true }
-                } catch (_: Exception) { }
+                is VoiceAssistant.Event.Navigate -> goVoice(e.route)
                 is VoiceAssistant.Event.NeedPermissions -> try { voicePerms.launch(e.permissions.toTypedArray()) } catch (_: Exception) { }
             }
         }

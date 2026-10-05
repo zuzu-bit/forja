@@ -46,6 +46,7 @@ import com.forja.app.feature.workout.WorkoutLink
 import com.forja.app.navigation.Route
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -130,6 +131,7 @@ class CommandExecutor(private val app: ForjaApp) {
             VoiceCommand.TellTime -> Outcome.Done(spokenTime())
             VoiceCommand.TellDate -> Outcome.Done(spokenDate())
             VoiceCommand.Progress -> Outcome.Done(progress())
+            VoiceCommand.Summary -> summaryAny()
             VoiceCommand.Friends -> Outcome.Done(friends())
             VoiceCommand.Help -> Outcome.Done(CommandParser.HELP_TEXT)
             VoiceCommand.Repeat -> Outcome.Done(lastSpoken.ifBlank { "Nu am spus nimic încă." })
@@ -675,12 +677,32 @@ class CommandExecutor(private val app: ForjaApp) {
         else -> "e liniștit"
     }
 
-    /** Lista de prieteni, întreagă: fluxul emite pe rând (câte un prieten sosit), deci așteptăm o clipă ultima valoare. */
+    /** Lista s-a așezat (nimic nou o jumătate de secundă). */
+    private class Settled : RuntimeException() { override fun fillInStackTrace(): Throwable = this }
+
+    /**
+     * Lista de prieteni, întreagă: fluxul emite pe rând (câte un prieten sosit), deci luăm valoarea după care nu mai
+     * vine nimic o jumătate de secundă — fără să așteptăm tot [ms] când lista e gata din prima.
+     */
     private suspend fun friendsSnapshot(ms: Long): List<Friend> {
         val uid = app.auth.currentUid ?: return emptyList()
         var last: List<Friend> = emptyList()
-        try { withTimeoutOrNull(ms) { app.friends.friendsFlow(uid).collect { last = it } } } catch (_: Exception) { }
+        try {
+            withTimeoutOrNull(ms) {
+                app.friends.friendsFlow(uid).collectLatest { list ->
+                    last = list
+                    delay(500)
+                    throw Settled()
+                }
+            }
+        } catch (_: Settled) { } catch (_: Exception) { }
         return last
+    }
+
+    /** „rezumat”, fără obiect: al antrenamentului pornit, altfel al zilei. */
+    private suspend fun summaryAny(): Outcome {
+        val s = WorkoutLink.live.value
+        return Outcome.Done(if (s != null && !s.finished) workoutSummary(s) else progress())
     }
 
     // ── În FORJA (4.9): antrenamentul ─────────────────────────────────────────────────
@@ -875,7 +897,8 @@ class CommandExecutor(private val app: ForjaApp) {
             }
             val access = Music.hasAccess(app)
             val target = WorkoutLink.live.value?.let { s -> com.forja.app.core.music.Playlist.targetMinutes(s.exercises.map { it.sets to it.reps }) } ?: 25
-            MusicStarter.startWorkout(app, mix, target, tap = isForeground())
+            // Fără antrenament pornit, muzica nu ia „permisul” de sală (un inventar o poate opri ca de obicei).
+            MusicStarter.startWorkout(app, mix, target, tap = isForeground(), session = WorkoutLink.active())
             val label = when (mix) {
                 Mix.MIX -> "mixul FORJA"
                 Mix.NEW -> "lista cu melodii noi"
@@ -938,10 +961,11 @@ class CommandExecutor(private val app: ForjaApp) {
     }
 
     private suspend fun nextAny(): Outcome {
+        // În antrenament, „următorul” e exercițiul (chiar cu muzica pornită — ea are „următoarea melodie”).
         val s = WorkoutLink.live.value
+        if (s != null && !s.finished) return workout(WorkoutAction.NEXT_EXERCISE)
         musicWarm()
         val track = Music.nowPlaying.value
-        if (s != null && !s.finished && track?.playing != true) return workout(WorkoutAction.NEXT_EXERCISE)
         if (track != null || Music.audible.value) return musicControl(MusicAction.NEXT)
         return Outcome.Done("Nimic de sărit acum. În antrenament spune „următorul exercițiu”; la muzică, „următoarea melodie”.")
     }
@@ -1073,7 +1097,8 @@ class CommandExecutor(private val app: ForjaApp) {
         val list = if (app.auth.currentUid != null) friendsSnapshot(2500) else emptyList()
         val matched = MapLinks.match(who, list.map { it.name })
         val f = list.firstOrNull { it.name == matched }
-            ?: return openPlace(VoiceCommand.OpenPlace(who, navigate = false))   // nu e un prieten: un loc, în aplicația de hărți
+            // nu e un prieten FORJA: cu „pe hartă” / „prietenul”, un loc în aplicația de hărți; altfel, o întrebare pentru web
+            ?: return if (cmd.onMap) openPlace(VoiceCommand.OpenPlace(who, navigate = false)) else webSearch("unde e $who")
         val now = System.currentTimeMillis()
         MapLinks.requestFriend(f.name)
         val seen = if (f.lat != null && (!f.ghost || f.viaFamily)) ", văzut ${Fmt.freshness(f.locUpdatedAt)}" else if (f.ghost) ", fără locație (fantomă)" else ", fără locație"

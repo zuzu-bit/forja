@@ -140,7 +140,7 @@ Fiecare misiune dă puncte o singură dată pe zi, și când FORJA e închisă (
 
 **Gradele** (Recrut → Soldat → Fruntaș → Caporal → Sergent → Sergent-major → Plutonier → Plutonier-adjutant →
 Sublocotenent → Locotenent → Căpitan → Maior → Colonel → General) vin din punctele câștigate vreodată, care nu
-scad. Soldul se cheltuie în **garderobă**: 32 de piese pe șapte locuri (cap, ochi, corp, centură, bocanci,
+scad. Soldul se cheltuie în **garderobă**: 31 de piese pe șapte locuri (cap, ochi, corp, centură, încălțări,
 spate, piept), fiecare cu un grad de la care se poate purta și un preț; fiecare grad nou aduce o piesă în dar,
 pusă direct pe Casca (bocancii și centura la Soldat, capela la Fruntaș, geaca de teren la Caporal, bereta la
 Sergent, camuflajul, vesta, casca, uniforma de paradă, chipiul de ofițer…). Insigna gradului e pe pieptul
@@ -154,6 +154,17 @@ bule, ghidaje, notificări. Cu vocea: „ce grad am”, „câte puncte am”, �
 Grafica e integral vectorială (`OutfitArt.kt`, generat din `scratchpad/art/forge.py`): aceeași geometrie
 100×100 ca mascota, straturi în ordinea potrivită (în spate, tălpile, haina decupată de corp, centura,
 pieptul, insigna, capul, ochelarii), fără imagini.
+
+**5.0.1** (după o revizuire adversă a 4.9 + 5.0): seria de zile bune e un contor persistat (nu se rupe când
+zilele vechi ies din memorie), misiunile se citesc strict în ziua clipei (fără puncte pe o zi trecută dacă
+ceasul se dă înapoi; antrenamentul început aseară contează în ziua încheierii), „+N puncte” vine din
+schimbarea stării (o singură dată, de la ecranul care o vede), cardul de pe panou stă nemișcat și se atinge
+oriunde, insigna de grad e mai mare și mai lizibilă, cureaua căștii trece pe sub bărbie, textele garderobei
+sunt neutre („pe Casca”, „în dotare”). Cu vocea: „rezumat” fără obiect dă antrenamentul (dacă e pornit) sau
+ziua; „următorul” în antrenament e exercițiul; „unde e X” fără prieten și fără „pe hartă” întreabă webul;
+prietenul cerut pe hartă se așteaptă până sosește lista (sau se spune că nu e); o navigare cerută cu FORJA
+închisă deschide aplicația pe ecranul cerut; lista FORJA pornită cu vocea fără antrenament nu mai blochează
+pauza de inventar.
 
 ## „Hei FORJA” — comenzi vocale (pentru cine nu poate sau nu vrea să se uite la ecran)
 

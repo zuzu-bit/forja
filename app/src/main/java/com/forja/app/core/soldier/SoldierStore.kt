@@ -26,7 +26,8 @@ object SoldierStore {
         if (loaded) return _state.value
         lock.withLock {
             if (!loaded) {
-                val s = SoldierState.fromJson(app.prefs.soldierState.first()) ?: SoldierState(createdAt = System.currentTimeMillis())
+                val s = (SoldierState.fromJson(app.prefs.soldierState.first()) ?: SoldierState())
+                    .let { if (it.createdAt == 0L) it.copy(createdAt = System.currentTimeMillis()) else it }   // createdAt = „citită de pe disc”
                 publish(s)
                 loaded = true
             }
