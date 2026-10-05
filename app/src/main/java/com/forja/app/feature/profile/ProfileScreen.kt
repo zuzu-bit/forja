@@ -15,6 +15,7 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.MilitaryTech
 import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Edit
@@ -98,7 +99,8 @@ fun ProfileScreen(
     onOpenMapGhost: () -> Unit,
     onOpenPermissions: () -> Unit = {},
     onOpenContract: () -> Unit = {},
-    onOpenVoice: () -> Unit = {}
+    onOpenVoice: () -> Unit = {},
+    onOpenSoldier: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = remember { ForjaApp.from(context) }
@@ -365,6 +367,10 @@ fun ProfileScreen(
                 RowDivider()
                 // 4.6 — „Hei FORJA": mesaje, apeluri, muzică și navigare doar cu vocea (și pentru cine nu vede ecranul).
                 SettingRow(icon = Icons.Outlined.Mic, title = "Hei FORJA · asistent vocal", onClick = onOpenVoice)
+                RowDivider()
+                // 5.0 — Casca în uniformă: gradul, misiunile de azi, garderoba.
+                val soldier by com.forja.app.core.soldier.SoldierStore.state.collectAsState()
+                SettingRow(icon = Icons.Outlined.MilitaryTech, title = "Casca în uniformă · Cazarma", state = soldier.rank.name, stateColor = Accent2, onClick = onOpenSoldier)
                 RowDivider()
                 // v4.2 — Contractul de securitate: aici îl recitești sau îl revoci.
                 SettingRow(

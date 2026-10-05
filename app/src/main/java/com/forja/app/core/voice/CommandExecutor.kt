@@ -117,6 +117,7 @@ class CommandExecutor(private val app: ForjaApp) {
             VoiceCommand.StartBreath -> startBreath()
             VoiceCommand.NutritionSummary -> Outcome.Done(nutritionSummary())
             VoiceCommand.SleepSummary -> Outcome.Done(sleepSummary())
+            VoiceCommand.SoldierStatus -> soldierStatus()
             is VoiceCommand.FriendWhere -> friendWhere(cmd)
             is VoiceCommand.StartGo -> startGo(cmd)
             VoiceCommand.StopGo -> stopGo()
@@ -1042,6 +1043,27 @@ class CommandExecutor(private val app: ForjaApp) {
         if (s.deepMin > 0 || s.remMin > 0) sb.append("Somn profund ${spokenDuration(s.deepMin)}, REM ${spokenDuration(s.remMin)}. ")
         if (s.summary.isNotBlank()) sb.append(s.summary.trim())
         return sb.toString().trim()
+    }
+
+    // ── Casca în uniformă ────────────────────────────────────────────────────────────
+
+    private suspend fun soldierStatus(): Outcome {
+        val r = try { com.forja.app.core.soldier.Missions.sync(app, foreground = isForeground()) } catch (_: Exception) { null }
+            ?: return Outcome.Done("Nu am putut citi starea Cascăi acum.", Route.SOLDIER)
+        val s = r.state
+        val rank = s.rank
+        val next = com.forja.app.core.soldier.Ranks.next(rank)
+        val done = r.today.filter { it.done }
+        val left = r.today.filter { !it.done && it.mission.route != null }
+        val sb = StringBuilder("Casca e ${rank.name}, cu ${s.earned} puncte")
+        sb.append(if (next != null) "; mai are ${next.minPoints - s.earned} până la ${next.name}. " else " — gradul cel mai înalt. ")
+        sb.append("Azi: ${done.size} ${if (done.size == 1) "misiune bifată" else "misiuni bifate"}")
+        if (done.isNotEmpty()) sb.append(" (${done.joinToString(", ") { it.mission.short.lowercase() }})")
+        sb.append(". ")
+        if (left.isNotEmpty()) sb.append("Mai poți face: ${left.take(4).joinToString(", ") { it.mission.title.lowercase() }}. ")
+        if (r.newPoints > 0) sb.append("Tocmai a primit ${r.newPoints} puncte. ")
+        sb.append("Soldul pentru garderobă: ${s.balance} puncte.")
+        return Outcome.Done(sb.toString(), Route.SOLDIER)
     }
 
     // ── Prieteni pe hartă, ture (GO) ────────────────────────────────────────────────

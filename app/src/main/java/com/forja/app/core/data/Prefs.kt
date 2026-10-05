@@ -93,6 +93,11 @@ class Prefs(private val context: Context) {
         val voiceConfirmSend = booleanPreferencesKey("voice_confirm_send")
         val voiceLang = stringPreferencesKey("voice_lang")
         val voiceIntroSeen = booleanPreferencesKey("voice_intro_seen")
+        // Casca în uniformă (5.0)
+        val soldierState = stringPreferencesKey("soldier_state")
+        val voiceUsedDay = longPreferencesKey("soldier_voice_day")
+        val presentDay = longPreferencesKey("soldier_present_day")
+        val energySentDay = longPreferencesKey("soldier_energy_day")
     }
 
     companion object {
@@ -416,6 +421,19 @@ class Prefs(private val context: Context) {
     /** Prezentarea asistentului a fost citită o dată la prima deschidere. */
     val voiceIntroSeen: Flow<Boolean> = context.dataStore.data.map { it[K.voiceIntroSeen] ?: false }
     suspend fun setVoiceIntroSeen() = context.dataStore.edit { it[K.voiceIntroSeen] = true }
+
+    // ── Casca în uniformă (5.0): starea (JSON, core/soldier) și zilele în care s-au făcut misiunile fără jurnal propriu ──
+    val soldierState: Flow<String?> = context.dataStore.data.map { it[K.soldierState] }
+    suspend fun setSoldierState(json: String) = context.dataStore.edit { it[K.soldierState] = json }
+    /** Ziua (epochDay) în care s-a dat ultima comandă „Hei FORJA”. */
+    val voiceUsedDay: Flow<Long> = context.dataStore.data.map { it[K.voiceUsedDay] ?: -1L }
+    suspend fun markVoiceUsed() = context.dataStore.edit { it[K.voiceUsedDay] = com.forja.app.core.util.Fmt.epochDay() }
+    /** Ziua în care FORJA a fost deschisă ultima dată („prezent la apel”). */
+    val presentDay: Flow<Long> = context.dataStore.data.map { it[K.presentDay] ?: -1L }
+    suspend fun markPresent() = context.dataStore.edit { it[K.presentDay] = com.forja.app.core.util.Fmt.epochDay() }
+    /** Ziua în care s-a trimis energie unui prieten. */
+    val energySentDay: Flow<Long> = context.dataStore.data.map { it[K.energySentDay] ?: -1L }
+    suspend fun markEnergySent() = context.dataStore.edit { it[K.energySentDay] = com.forja.app.core.util.Fmt.epochDay() }
 
     /** Ecranul de pornire cu permisiuni a fost arătat o dată. */
     val permsIntroSeen: Flow<Boolean> = context.dataStore.data.map { it[K.permsIntroSeen] ?: false }

@@ -88,6 +88,8 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         } catch (_: Exception) { }
 
         appScope.launch { Seed.ensure(db) }
+        // Casca în uniformă (5.0): ținuta se citește de pe disc înainte să apară mascota pe vreun ecran.
+        appScope.launch { try { com.forja.app.core.soldier.SoldierStore.load(this@ForjaApp) } catch (_: Exception) { } }
         appScope.launch { com.forja.app.core.media.Media.refresh() }
         appScope.launch {
             // Scanarea galeriei a fost eliminată — anulăm orice programare rămasă.

@@ -83,6 +83,8 @@ sealed class VoiceCommand {
     object StartBreath : VoiceCommand()
     object NutritionSummary : VoiceCommand()
     object SleepSummary : VoiceCommand()
+    /** „ce grad am”, „cum stă Casca”, „câte puncte am”: gradul, punctele și misiunile de azi. */
+    object SoldierStatus : VoiceCommand()
     /** „unde e Ion” / „arată-l pe Ion pe hartă”: un prieten pe harta FORJA; altfel, un loc în aplicația de hărți. */
     data class FriendWhere(val name: String) : VoiceCommand()
     /** O tură pe hartă (GO): [sport] = run / walk / ride. */
@@ -310,6 +312,7 @@ object CommandParser {
 
     private val BR_START = Regex("^(?:(?:porneste|incepe|start|begin|hai|hai la|hai sa facem|sa facem|do|let'?s do)\\s+(?:un\\s+|o\\s+|a\\s+|the\\s+|niste\\s+)?(?:respiratia|respiratie|exercitiul de respiratie|exercitiu de respiratie|exercitii de respiratie|respiro|breathing(?: exercise)?|breath(?: exercise)?|box breathing)|respira cu mine|respira|respiram|sa respiram|hai sa respiram|breathe with me|breathe|let'?s breathe)\\s*$")
     private val NU_SUMMARY = Regex("^(?:cate calorii (?:am|am mancat|mai am|mi-au ramas|am consumat|imi raman|am azi)(?: azi| astazi)?|ce am mancat(?: azi| astazi)?|cum stau cu (?:mancarea|mesele|caloriile|nutritia|dieta)|(?:(?:spune(?:-mi|mi)?|citeste(?:-mi|mi)?|arata(?:-mi|mi)?)\\s+)?rezumat(?:ul)? (?:de )?(?:nutritie|nutritiei|al meselor|meselor|mancarii|la mancare)|how many calories (?:do i have|have i eaten|are left|left)(?: today)?|what did i eat(?: today)?|calories today|nutrition summary|my meals(?: today)?)\\s*$")
+    private val SOLDIER = Regex("^(?:ce grad (?:am|sunt|are casca)|care (?:e|este) gradul meu|gradul meu|cum (?:sta|merge|e|o duce) casca|cate puncte am|cate puncte (?:mai )?am pana la (?:gradul urmator|urmatorul grad)|ce misiuni (?:am|mai am|imi raman)(?: azi)?|misiunile (?:de azi|mele)|cazarma|deschide cazarma|garderoba|(?:what(?:'s|s| is) my rank|my rank|how many points (?:do i have|have i got)|rank status|my missions(?: today)?|what missions (?:are left|do i have)))\\s*$")
     private val SL_SUMMARY = Regex("^(?:cat am dormit(?: azi-noapte| azi noapte| aseara| noaptea trecuta| noaptea asta)?|cum am dormit(?: azi-noapte| azi noapte| aseara)?|cat timp am dormit|(?:(?:spune(?:-mi|mi)?|citeste(?:-mi|mi)?)\\s+)?rezumat(?:ul)? (?:de )?somn(?:ului)?|somnul meu(?: de azi-noapte)?|how (?:much|long|well) did i sleep(?: last night)?|how did i sleep|sleep summary|my sleep)\\s*$")
     private val FR_WHERE = Regex("^(?:unde (?:e|este|se afla|a ajuns|i) |where(?:'s| is) )(?:prietenul |prietena |my friend |camaradul |pe )?(.+?)\\s*(?:\\s(?:acum|now|pe harta|on the map))?\\s*$")
     private val FR_SHOW = Regex("^(?:arata(?:-mi|mi)?(?:-l|-o|l|o)?|show me|show|gaseste(?:-mi|mi)?(?:-l|-o)?|find|cauta(?:-l|-o)?)\\s+(?:pe\\s+)?(?:prietenul\\s+|prietena\\s+|camaradul\\s+|my friend\\s+)?(.+?)\\s+(?:pe harta|on the map)\\s*$|^(?:arata(?:-mi|mi)?(?:-l|-o|l|o)?|show me|show)\\s+(?:pe harta|on the map)\\s+(?:pe\\s+)?(?:prietenul\\s+|prietena\\s+)?(.+)$")
@@ -418,6 +421,7 @@ object CommandParser {
         if (BR_START.matches(t)) return VoiceCommand.StartBreath
         if (NU_SUMMARY.matches(t)) return VoiceCommand.NutritionSummary
         if (SL_SUMMARY.matches(t)) return VoiceCommand.SleepSummary
+        if (SOLDIER.matches(t)) return VoiceCommand.SoldierStatus
         // ture pe hartă
         GO_START.find(t)?.let { m ->
             val sport = when {
@@ -790,7 +794,7 @@ object CommandParser {
     /** Lista rostită la „ajutor". */
     val HELP_TEXT = "În FORJA: „începe antrenamentul”, „am terminat seria”, „pauză”, „continuă”, „următorul exercițiu”, „rezumat antrenament”; " +
         "„pornește muzica”, „pornește un playlist”, „următoarea melodie”, „ce cântă acum”; „pornește focusul”, „pornește detoxul 30 de minute”; " +
-        "„respiră cu mine”, „pornește somnul”, „cât am dormit”, „câte calorii am azi”, „unde e Ion”, „pornește o alergare”, „cum stau azi”. " +
+        "„respiră cu mine”, „pornește somnul”, „cât am dormit”, „câte calorii am azi”, „unde e Ion”, „pornește o alergare”, „cum stau azi”, „ce grad am”. " +
         "Pe telefon: „trimite mesaj lui Ion, ajung în zece minute”, „sună-l pe Andrei”, „deschide YouTube și pune Phoenix”, „caută pe Google despre căpșuni”, " +
         "„deschide WhatsApp”, „citește ecranul”, „apasă pe …”, „scrie …”, „derulează”, „înapoi”, „cât e ceasul”, „pune alarma la șapte”."
 }
