@@ -59,7 +59,7 @@ object OutfitArt {
             ArtLayer("M18 30 C30 32 70 32 82 30", 0L, 0xFFFFFFFFL, 1.0f, 0.12f)
         )),
         "helmet" to GearArt(listOf(
-            ArtLayer("M27 82 C27 55 73 55 73 82", 0L, 0xFF3B4A2FL, 2.6f, 1.0f),
+            ArtLayer("M28.4 57.7 C34 80 66 80 71.6 57.7", 0L, 0xFF3B4A2FL, 2.6f, 1.0f),
             ArtLayer("M19 27 C19 5 81 5 81 27 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
             ArtLayer("M22 26 C22 9 78 9 78 26 Z", 0xFF3B4A2FL, 0L, 0f, 1.0f),
             ArtLayer("M30 20 C34 12 44 9 50 9", 0L, 0xFF55673FL, 1.8f, 1.0f),
@@ -120,12 +120,12 @@ object OutfitArt {
             ArtLayer("M65 62 L67.5 64.5 L50 80.5 L50 78 Z", 0xFF6F855AL, 0L, 0f, 1.0f),
             ArtLayer("M35 62 L32.5 64.5 L50 80.5", 0L, 0xFF0A0A0BL, 1.6f, 1.0f),
             ArtLayer("M65 62 L67.5 64.5 L50 80.5", 0L, 0xFF0A0A0BL, 1.6f, 1.0f),
-            ArtLayer("M21.5 74 L35.0 74 L35.0 80 L21.5 80 Z", 0xFF2F3D27L, 0L, 0f, 1.0f),
-            ArtLayer("M21.5 74 L35.0 74 L35.0 80 L21.5 80 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
-            ArtLayer("M21.5 74 L35.0 74", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
-            ArtLayer("M65 74 L78.5 74 L78.5 80 L65 80 Z", 0xFF2F3D27L, 0L, 0f, 1.0f),
-            ArtLayer("M65 74 L78.5 74 L78.5 80 L65 80 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
-            ArtLayer("M65 74 L78.5 74", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
+            ArtLayer("M21.5 75.5 L35.0 75.5 L35.0 81.5 L21.5 81.5 Z", 0xFF2F3D27L, 0L, 0f, 1.0f),
+            ArtLayer("M21.5 75.5 L35.0 75.5 L35.0 81.5 L21.5 81.5 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
+            ArtLayer("M21.5 75.5 L35.0 75.5", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
+            ArtLayer("M65 75.5 L78.5 75.5 L78.5 81.5 L65 81.5 Z", 0xFF2F3D27L, 0L, 0f, 1.0f),
+            ArtLayer("M65 75.5 L78.5 75.5 L78.5 81.5 L65 81.5 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
+            ArtLayer("M65 75.5 L78.5 75.5", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
             ArtLayer("M50 78 L50 92", 0L, 0xFFC8CAD0L, 1.3f, 1.0f),
             ArtLayer("M50 78 L50 92", 0L, 0xFF0A0A0BL, 0.5f, 0.5f),
             ArtLayer("M35 62 L50 78 L65 62", 0L, 0xFF0A0A0BL, 2.8f, 1.0f),
@@ -139,12 +139,12 @@ object OutfitArt {
             ArtLayer("M65 62 L67.5 64.5 L50 80.5 L50 78 Z", 0xFF6F855AL, 0L, 0f, 1.0f),
             ArtLayer("M35 62 L32.5 64.5 L50 80.5", 0L, 0xFF0A0A0BL, 1.6f, 1.0f),
             ArtLayer("M65 62 L67.5 64.5 L50 80.5", 0L, 0xFF0A0A0BL, 1.6f, 1.0f),
-            ArtLayer("M21.5 74 L35.0 74 L35.0 80 L21.5 80 Z", 0xFF3A4A2EL, 0L, 0f, 1.0f),
-            ArtLayer("M21.5 74 L35.0 74 L35.0 80 L21.5 80 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
-            ArtLayer("M21.5 74 L35.0 74", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
-            ArtLayer("M65 74 L78.5 74 L78.5 80 L65 80 Z", 0xFF3A4A2EL, 0L, 0f, 1.0f),
-            ArtLayer("M65 74 L78.5 74 L78.5 80 L65 80 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
-            ArtLayer("M65 74 L78.5 74", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
+            ArtLayer("M21.5 75.5 L35.0 75.5 L35.0 81.5 L21.5 81.5 Z", 0xFF3A4A2EL, 0L, 0f, 1.0f),
+            ArtLayer("M21.5 75.5 L35.0 75.5 L35.0 81.5 L21.5 81.5 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
+            ArtLayer("M21.5 75.5 L35.0 75.5", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
+            ArtLayer("M65 75.5 L78.5 75.5 L78.5 81.5 L65 81.5 Z", 0xFF3A4A2EL, 0L, 0f, 1.0f),
+            ArtLayer("M65 75.5 L78.5 75.5 L78.5 81.5 L65 81.5 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
+            ArtLayer("M65 75.5 L78.5 75.5", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
             ArtLayer("M50 83 m-1.9 0 a1.9 1.9 0 1 0 3.8 0 a1.9 1.9 0 1 0 -3.8 0", 0xFF0A0A0BL, 0L, 0f, 1.0f),
             ArtLayer("M50 83 m-1.4 0 a1.4 1.4 0 1 0 2.8 0 a1.4 1.4 0 1 0 -2.8 0", 0xFFD9B24CL, 0L, 0f, 1.0f),
             ArtLayer("M50 88 m-1.9 0 a1.9 1.9 0 1 0 3.8 0 a1.9 1.9 0 1 0 -3.8 0", 0xFF0A0A0BL, 0L, 0f, 1.0f),
@@ -173,16 +173,16 @@ object OutfitArt {
             ArtLayer("M86 62 C80 60 70 60 64 63 L53 79 L53 100 L92 100 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
             ArtLayer("M36 63 L47 79 L47 100", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
             ArtLayer("M64 63 L53 79 L53 100", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
-            ArtLayer("M20 74 L34 74 L35 81 L21 81 Z", 0xFF3A4530L, 0L, 0f, 1.0f),
-            ArtLayer("M20 74 L34 74 L35 81 L21 81 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
-            ArtLayer("M21 77 L34 77", 0L, 0xFF0A0A0BL, 1.0f, 1.0f),
-            ArtLayer("M66 74 L80 74 L79 81 L65 81 Z", 0xFF3A4530L, 0L, 0f, 1.0f),
-            ArtLayer("M66 74 L80 74 L79 81 L65 81 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
-            ArtLayer("M66 77 L79 77", 0L, 0xFF0A0A0BL, 1.0f, 1.0f),
-            ArtLayer("M26 84 L40 84 L40 91 L27 91 Z", 0xFF3A4530L, 0L, 0f, 1.0f),
-            ArtLayer("M26 84 L40 84 L40 91 L27 91 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
-            ArtLayer("M60 84 L74 84 L73 91 L60 91 Z", 0xFF3A4530L, 0L, 0f, 1.0f),
-            ArtLayer("M60 84 L74 84 L73 91 L60 91 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
+            ArtLayer("M20 75.5 L34 75.5 L35 82 L21 82 Z", 0xFF3A4530L, 0L, 0f, 1.0f),
+            ArtLayer("M20 75.5 L34 75.5 L35 82 L21 82 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
+            ArtLayer("M21 78.5 L34 78.5", 0L, 0xFF0A0A0BL, 1.0f, 1.0f),
+            ArtLayer("M66 75.5 L80 75.5 L79 82 L65 82 Z", 0xFF3A4530L, 0L, 0f, 1.0f),
+            ArtLayer("M66 75.5 L80 75.5 L79 82 L65 82 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
+            ArtLayer("M66 78.5 L79 78.5", 0L, 0xFF0A0A0BL, 1.0f, 1.0f),
+            ArtLayer("M27 84.5 L40 84.5 L40 90.5 L28 90.5 Z", 0xFF3A4530L, 0L, 0f, 1.0f),
+            ArtLayer("M27 84.5 L40 84.5 L40 90.5 L28 90.5 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
+            ArtLayer("M60 84.5 L73 84.5 L72 90.5 L60 90.5 Z", 0xFF3A4530L, 0L, 0f, 1.0f),
+            ArtLayer("M60 84.5 L73 84.5 L72 90.5 L60 90.5 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
             ArtLayer("M40 64 L44 70", 0L, 0xFFC9B58AL, 1.4f, 1.0f),
             ArtLayer("M60 64 L56 70", 0L, 0xFFC9B58AL, 1.4f, 1.0f),
             ArtLayer("M35 62 L50 78 L65 62", 0L, 0xFF0A0A0BL, 2.8f, 1.0f),
@@ -211,12 +211,12 @@ object OutfitArt {
         "parka" to GearArt(listOf(
             ArtLayer("M12 60 C22 60 30 61 35 62 L50 78 L65 62 C70 61 78 60 88 60 L92 100 L8 100 Z", 0xFF6E7A5AL, 0L, 0f, 1.0f),
             ArtLayer("M12 84 C26 90 74 90 88 84 L88 100 L12 100 Z", 0xFF4E5940L, 0L, 0f, 0.45f),
-            ArtLayer("M21.5 74 L35.0 74 L35.0 80 L21.5 80 Z", 0xFF4E5940L, 0L, 0f, 1.0f),
-            ArtLayer("M21.5 74 L35.0 74 L35.0 80 L21.5 80 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
-            ArtLayer("M21.5 74 L35.0 74", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
-            ArtLayer("M65 74 L78.5 74 L78.5 80 L65 80 Z", 0xFF4E5940L, 0L, 0f, 1.0f),
-            ArtLayer("M65 74 L78.5 74 L78.5 80 L65 80 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
-            ArtLayer("M65 74 L78.5 74", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
+            ArtLayer("M21.5 75.5 L35.0 75.5 L35.0 81.5 L21.5 81.5 Z", 0xFF4E5940L, 0L, 0f, 1.0f),
+            ArtLayer("M21.5 75.5 L35.0 75.5 L35.0 81.5 L21.5 81.5 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
+            ArtLayer("M21.5 75.5 L35.0 75.5", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
+            ArtLayer("M65 75.5 L78.5 75.5 L78.5 81.5 L65 81.5 Z", 0xFF4E5940L, 0L, 0f, 1.0f),
+            ArtLayer("M65 75.5 L78.5 75.5 L78.5 81.5 L65 81.5 Z", 0L, 0xFF0A0A0BL, 1.3f, 1.0f),
+            ArtLayer("M65 75.5 L78.5 75.5", 0L, 0xFF0A0A0BL, 2.0f, 1.0f),
             ArtLayer("M50 78 L50 92", 0L, 0xFFC8CAD0L, 1.3f, 1.0f),
             ArtLayer("M50 78 L50 92", 0L, 0xFF0A0A0BL, 0.5f, 0.5f),
             ArtLayer("M35 62 L50 78 L65 62", 0L, 0xFF0A0A0BL, 2.8f, 1.0f),
@@ -378,83 +378,83 @@ object OutfitArt {
     val ranks: List<List<ArtLayer>> = listOf(
         listOf(),  // Recrut
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f)
         ),  // Soldat
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M27 69.7 L30.5 67.4 L34 69.7", 0L, 0xFFD9B24CL, 1.3f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M24.5 70.1 L29.5 67.5 L34.5 70.1", 0L, 0xFFD9B24CL, 1.7f, 1.0f)
         ),  // Fruntaș
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M27 68.7 L30.5 66.4 L34 68.7", 0L, 0xFFD9B24CL, 1.3f, 1.0f),
-            ArtLayer("M27 70.8 L30.5 68.5 L34 70.8", 0L, 0xFFD9B24CL, 1.3f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M24.5 69.3 L29.5 66.7 L34.5 69.3", 0L, 0xFFD9B24CL, 1.7f, 1.0f),
+            ArtLayer("M24.5 71.7 L29.5 69.10000000000001 L34.5 71.7", 0L, 0xFFD9B24CL, 1.7f, 1.0f)
         ),  // Caporal
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M27 68.7 L30.5 66.4 L34 68.7", 0L, 0xFFD9B24CL, 1.3f, 1.0f),
-            ArtLayer("M27 70.8 L30.5 68.5 L34 70.8", 0L, 0xFFD9B24CL, 1.3f, 1.0f),
-            ArtLayer("M27 72.9 L30.5 70.60000000000001 L34 72.9", 0L, 0xFFD9B24CL, 1.3f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M24.5 68.89999999999999 L29.5 66.3 L34.5 68.89999999999999", 0L, 0xFFD9B24CL, 1.7f, 1.0f),
+            ArtLayer("M24.5 71.3 L29.5 68.7 L34.5 71.3", 0L, 0xFFD9B24CL, 1.7f, 1.0f),
+            ArtLayer("M24.5 73.69999999999999 L29.5 71.1 L34.5 73.69999999999999", 0L, 0xFFD9B24CL, 1.7f, 1.0f)
         ),  // Sergent
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M27 68.7 L30.5 66.4 L34 68.7", 0L, 0xFFD9B24CL, 1.3f, 1.0f),
-            ArtLayer("M27 70.8 L30.5 68.5 L34 70.8", 0L, 0xFFD9B24CL, 1.3f, 1.0f),
-            ArtLayer("M27 71.3 L34 71.3", 0L, 0xFFD9B24CL, 1.3f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M24.5 69.3 L29.5 66.7 L34.5 69.3", 0L, 0xFFD9B24CL, 1.7f, 1.0f),
+            ArtLayer("M24.5 71.7 L29.5 69.10000000000001 L34.5 71.7", 0L, 0xFFD9B24CL, 1.7f, 1.0f),
+            ArtLayer("M24.5 72.3 L34.5 72.3", 0L, 0xFFD9B24CL, 1.7f, 1.0f)
         ),  // Sergent-major
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M27 67.5 L34 67.5", 0L, 0xFFD9B24CL, 1.3f, 1.0f),
-            ArtLayer("M27 69.7 L34 69.7", 0L, 0xFFD9B24CL, 1.3f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M24.5 67.39999999999999 L34.5 67.39999999999999", 0L, 0xFFD9B24CL, 1.7f, 1.0f),
+            ArtLayer("M24.5 69.99999999999999 L34.5 69.99999999999999", 0L, 0xFFD9B24CL, 1.7f, 1.0f)
         ),  // Plutonier
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M27 67.0 L34 67.0", 0L, 0xFFD9B24CL, 1.3f, 1.0f),
-            ArtLayer("M27 69.2 L34 69.2", 0L, 0xFFD9B24CL, 1.3f, 1.0f),
-            ArtLayer("M27 71.4 L34 71.4", 0L, 0xFFD9B24CL, 1.3f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M24.5 66.8 L34.5 66.8", 0L, 0xFFD9B24CL, 1.7f, 1.0f),
+            ArtLayer("M24.5 69.39999999999999 L34.5 69.39999999999999", 0L, 0xFFD9B24CL, 1.7f, 1.0f),
+            ArtLayer("M24.5 72.0 L34.5 72.0", 0L, 0xFFD9B24CL, 1.7f, 1.0f)
         ),  // Plutonier-adjutant
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M30.50 66.40 L31.19 68.05 L32.97 68.20 L31.61 69.36 L32.03 71.10 L30.50 70.17 L28.97 71.10 L29.39 69.36 L28.03 68.20 L29.81 68.05 Z", 0xFFD9B24CL, 0L, 0f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M29.50 66.00 L30.35 68.04 L32.54 68.21 L30.87 69.64 L31.38 71.79 L29.50 70.64 L27.62 71.79 L28.13 69.64 L26.46 68.21 L28.65 68.04 Z", 0xFFD9B24CL, 0L, 0f, 1.0f)
         ),  // Sublocotenent
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M27.80 66.40 L28.49 68.05 L30.27 68.20 L28.91 69.36 L29.33 71.10 L27.80 70.17 L26.27 71.10 L26.69 69.36 L25.33 68.20 L27.11 68.05 Z", 0xFFD9B24CL, 0L, 0f, 1.0f),
-            ArtLayer("M33.20 66.40 L33.89 68.05 L35.67 68.20 L34.31 69.36 L34.73 71.10 L33.20 70.17 L31.67 71.10 L32.09 69.36 L30.73 68.20 L32.51 68.05 Z", 0xFFD9B24CL, 0L, 0f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M26.30 66.00 L27.15 68.04 L29.34 68.21 L27.67 69.64 L28.18 71.79 L26.30 70.64 L24.42 71.79 L24.93 69.64 L23.26 68.21 L25.45 68.04 Z", 0xFFD9B24CL, 0L, 0f, 1.0f),
+            ArtLayer("M32.70 66.00 L33.55 68.04 L35.74 68.21 L34.07 69.64 L34.58 71.79 L32.70 70.64 L30.82 71.79 L31.33 69.64 L29.66 68.21 L31.85 68.04 Z", 0xFFD9B24CL, 0L, 0f, 1.0f)
         ),  // Locotenent
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M26.80 66.80 L27.38 68.20 L28.89 68.32 L27.74 69.31 L28.09 70.78 L26.80 69.99 L25.51 70.78 L25.86 69.31 L24.71 68.32 L26.22 68.20 Z", 0xFFD9B24CL, 0L, 0f, 1.0f),
-            ArtLayer("M30.50 66.80 L31.08 68.20 L32.59 68.32 L31.44 69.31 L31.79 70.78 L30.50 69.99 L29.21 70.78 L29.56 69.31 L28.41 68.32 L29.92 68.20 Z", 0xFFD9B24CL, 0L, 0f, 1.0f),
-            ArtLayer("M34.20 66.80 L34.78 68.20 L36.29 68.32 L35.14 69.31 L35.49 70.78 L34.20 69.99 L32.91 70.78 L33.26 69.31 L32.11 68.32 L33.62 68.20 Z", 0xFFD9B24CL, 0L, 0f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M25.10 66.50 L25.81 68.22 L27.67 68.37 L26.26 69.58 L26.69 71.38 L25.10 70.42 L23.51 71.38 L23.94 69.58 L22.53 68.37 L24.39 68.22 Z", 0xFFD9B24CL, 0L, 0f, 1.0f),
+            ArtLayer("M29.50 66.50 L30.21 68.22 L32.07 68.37 L30.66 69.58 L31.09 71.38 L29.50 70.42 L27.91 71.38 L28.34 69.58 L26.93 68.37 L28.79 68.22 Z", 0xFFD9B24CL, 0L, 0f, 1.0f),
+            ArtLayer("M33.90 66.50 L34.61 68.22 L36.47 68.37 L35.06 69.58 L35.49 71.38 L33.90 70.42 L32.31 71.38 L32.74 69.58 L31.33 68.37 L33.19 68.22 Z", 0xFFD9B24CL, 0L, 0f, 1.0f)
         ),  // Căpitan
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M30.50 66.40 L31.19 68.05 L32.97 68.20 L31.61 69.36 L32.03 71.10 L30.50 70.17 L28.97 71.10 L29.39 69.36 L28.03 68.20 L29.81 68.05 Z", 0xFFC0C4CCL, 0L, 0f, 1.0f),
-            ArtLayer("M27 72 L34 72", 0L, 0xFFC0C4CCL, 1.2f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M29.50 65.20 L30.35 67.24 L32.54 67.41 L30.87 68.84 L31.38 70.99 L29.50 69.84 L27.62 70.99 L28.13 68.84 L26.46 67.41 L28.65 67.24 Z", 0xFFC0C4CCL, 0L, 0f, 1.0f),
+            ArtLayer("M24.5 72.9 L34.5 72.9", 0L, 0xFFC0C4CCL, 1.5f, 1.0f)
         ),  // Maior
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M26.80 66.80 L27.38 68.20 L28.89 68.32 L27.74 69.31 L28.09 70.78 L26.80 69.99 L25.51 70.78 L25.86 69.31 L24.71 68.32 L26.22 68.20 Z", 0xFFC0C4CCL, 0L, 0f, 1.0f),
-            ArtLayer("M30.50 66.80 L31.08 68.20 L32.59 68.32 L31.44 69.31 L31.79 70.78 L30.50 69.99 L29.21 70.78 L29.56 69.31 L28.41 68.32 L29.92 68.20 Z", 0xFFC0C4CCL, 0L, 0f, 1.0f),
-            ArtLayer("M34.20 66.80 L34.78 68.20 L36.29 68.32 L35.14 69.31 L35.49 70.78 L34.20 69.99 L32.91 70.78 L33.26 69.31 L32.11 68.32 L33.62 68.20 Z", 0xFFC0C4CCL, 0L, 0f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M25.10 66.50 L25.81 68.22 L27.67 68.37 L26.26 69.58 L26.69 71.38 L25.10 70.42 L23.51 71.38 L23.94 69.58 L22.53 68.37 L24.39 68.22 Z", 0xFFC0C4CCL, 0L, 0f, 1.0f),
+            ArtLayer("M29.50 66.50 L30.21 68.22 L32.07 68.37 L30.66 69.58 L31.09 71.38 L29.50 70.42 L27.91 71.38 L28.34 69.58 L26.93 68.37 L28.79 68.22 Z", 0xFFC0C4CCL, 0L, 0f, 1.0f),
+            ArtLayer("M33.90 66.50 L34.61 68.22 L36.47 68.37 L35.06 69.58 L35.49 71.38 L33.90 70.42 L32.31 71.38 L32.74 69.58 L31.33 68.37 L33.19 68.22 Z", 0xFFC0C4CCL, 0L, 0f, 1.0f)
         ),  // Colonel
         listOf(
-            ArtLayer("M24 64.5 L37 64.5 L37 73.5 L24 73.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
-            ArtLayer("M25 65.5 L36 65.5 L36 72.5 L25 72.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
-            ArtLayer("M26 71.8 C27 66 34 66 35 71.8", 0L, 0xFFD9B24CL, 1.2f, 1.0f),
-            ArtLayer("M30.50 66.10 L31.16 67.69 L32.88 67.83 L31.57 68.95 L31.97 70.62 L30.50 69.72 L29.03 70.62 L29.43 68.95 L28.12 67.83 L29.84 67.69 Z", 0xFFD9B24CL, 0L, 0f, 1.0f)
+            ArtLayer("M21.5 64 L37.5 64 L37.5 74.5 L21.5 74.5 Z", 0xFF0A0A0BL, 0L, 0f, 1.0f),
+            ArtLayer("M22.5 65 L36.5 65 L36.5 73.5 L22.5 73.5 Z", 0xFF2B3324L, 0L, 0f, 1.0f),
+            ArtLayer("M24 72.6 C25 65.5 34 65.5 35 72.6", 0L, 0xFFD9B24CL, 1.5f, 1.0f),
+            ArtLayer("M29.50 65.80 L30.29 67.71 L32.35 67.87 L30.78 69.22 L31.26 71.23 L29.50 70.15 L27.74 71.23 L28.22 69.22 L26.65 67.87 L28.71 67.71 Z", 0xFFD9B24CL, 0L, 0f, 1.0f)
         ),  // General
     )
 }

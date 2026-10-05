@@ -370,7 +370,7 @@ fun ProfileScreen(
                 RowDivider()
                 // 5.0 — Casca în uniformă: gradul, misiunile de azi, garderoba.
                 val soldier by com.forja.app.core.soldier.SoldierStore.state.collectAsState()
-                SettingRow(icon = Icons.Outlined.MilitaryTech, title = "Casca în uniformă · Cazarma", state = soldier.rank.name, stateColor = Accent2, onClick = onOpenSoldier)
+                SettingRow(icon = Icons.Outlined.MilitaryTech, title = "Cazarma", state = soldier.rank.name, stateColor = Accent2, onClick = onOpenSoldier)
                 RowDivider()
                 // v4.2 — Contractul de securitate: aici îl recitești sau îl revoci.
                 SettingRow(

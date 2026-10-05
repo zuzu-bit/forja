@@ -85,8 +85,13 @@ sealed class VoiceCommand {
     object SleepSummary : VoiceCommand()
     /** „ce grad am”, „cum stă Casca”, „câte puncte am”: gradul, punctele și misiunile de azi. */
     object SoldierStatus : VoiceCommand()
-    /** „unde e Ion” / „arată-l pe Ion pe hartă”: un prieten pe harta FORJA; altfel, un loc în aplicația de hărți. */
-    data class FriendWhere(val name: String) : VoiceCommand()
+    /**
+     * „unde e Ion” / „arată-l pe Ion pe hartă”: un prieten pe harta FORJA. Dacă nu e un prieten: cu [onMap] (s-a spus
+     * „pe hartă” / „prietenul”), un loc în aplicația de hărți; altfel, o întrebare pentru web („unde e Lisabona”).
+     */
+    data class FriendWhere(val name: String, val onMap: Boolean = false) : VoiceCommand()
+    /** „rezumat” / „rezumatul”, fără obiect: al antrenamentului, dacă e pornit; altfel, al zilei. */
+    object Summary : VoiceCommand()
     /** O tură pe hartă (GO): [sport] = run / walk / ride. */
     data class StartGo(val sport: String) : VoiceCommand()
     object StopGo : VoiceCommand()
@@ -314,7 +319,8 @@ object CommandParser {
     private val NU_SUMMARY = Regex("^(?:cate calorii (?:am|am mancat|mai am|mi-au ramas|am consumat|imi raman|am azi)(?: azi| astazi)?|ce am mancat(?: azi| astazi)?|cum stau cu (?:mancarea|mesele|caloriile|nutritia|dieta)|(?:(?:spune(?:-mi|mi)?|citeste(?:-mi|mi)?|arata(?:-mi|mi)?)\\s+)?rezumat(?:ul)? (?:de )?(?:nutritie|nutritiei|al meselor|meselor|mancarii|la mancare)|how many calories (?:do i have|have i eaten|are left|left)(?: today)?|what did i eat(?: today)?|calories today|nutrition summary|my meals(?: today)?)\\s*$")
     private val SOLDIER = Regex("^(?:ce grad (?:am|sunt|are casca)|care (?:e|este) gradul meu|gradul meu|cum (?:sta|merge|e|o duce) casca|cate puncte am|cate puncte (?:mai )?am pana la (?:gradul urmator|urmatorul grad)|ce misiuni (?:am|mai am|imi raman)(?: azi)?|misiunile (?:de azi|mele)|cazarma|deschide cazarma|garderoba|(?:what(?:'s|s| is) my rank|my rank|how many points (?:do i have|have i got)|rank status|my missions(?: today)?|what missions (?:are left|do i have)))\\s*$")
     private val SL_SUMMARY = Regex("^(?:cat am dormit(?: azi-noapte| azi noapte| aseara| noaptea trecuta| noaptea asta)?|cum am dormit(?: azi-noapte| azi noapte| aseara)?|cat timp am dormit|(?:(?:spune(?:-mi|mi)?|citeste(?:-mi|mi)?)\\s+)?rezumat(?:ul)? (?:de )?somn(?:ului)?|somnul meu(?: de azi-noapte)?|how (?:much|long|well) did i sleep(?: last night)?|how did i sleep|sleep summary|my sleep)\\s*$")
-    private val FR_WHERE = Regex("^(?:unde (?:e|este|se afla|a ajuns|i) |where(?:'s| is) )(?:prietenul |prietena |my friend |camaradul |pe )?(.+?)\\s*(?:\\s(?:acum|now|pe harta|on the map))?\\s*$")
+    private val FR_WHERE = Regex("^(?:unde (?:e|este|se afla|a ajuns|i) |where(?:'s| is) )(prietenul |prietena |my friend |camaradul |pe )?(.+?)\\s*(?:\\s(?:acum|now))?(\\s(?:pe harta|on the map))?(?:\\s(?:acum|now))?\\s*$")
+    private val SUMMARY_BARE = Regex("^(?:(?:un |the |a )?(?:rezumat(?:ul)?|summary)|(?:spune(?:-mi|mi)?|citeste(?:-mi|mi)?|da(?:-mi|mi)?|zi(?:-mi|mi)?|tell me|read me|give me) (?:un |the |a )?(?:rezumat(?:ul)?|summary))$")
     private val FR_SHOW = Regex("^(?:arata(?:-mi|mi)?(?:-l|-o|l|o)?|show me|show|gaseste(?:-mi|mi)?(?:-l|-o)?|find|cauta(?:-l|-o)?)\\s+(?:pe\\s+)?(?:prietenul\\s+|prietena\\s+|camaradul\\s+|my friend\\s+)?(.+?)\\s+(?:pe harta|on the map)\\s*$|^(?:arata(?:-mi|mi)?(?:-l|-o|l|o)?|show me|show)\\s+(?:pe harta|on the map)\\s+(?:pe\\s+)?(?:prietenul\\s+|prietena\\s+)?(.+)$")
     private val GO_START = Regex("^(?:porneste|incepe|start|begin|hai la|hai sa (?:alergam|mergem|facem)|inregistreaza|record)\\s+(?:o\\s+|a\\s+|un\\s+|the\\s+|my\\s+)?(?:(alergare(?:a)?|alergam|alergatul|run(?:ning)?(?: session)?|jogging|jog)|(plimbare(?:a)?|mers(?:ul)?(?: pe jos)?|mergem|walk(?:ing)?)|(tura (?:cu|pe) bicicleta|bicicleta|ciclism|pedalare|pedalat|ride|bike ride|cycling|biking)|(tura|tura de alergare|inregistrarea|tracking|urmarirea|go))\\s*$")
     private val GO_STOP = Regex("^(?:opreste|termina|incheie|stop|end|finish)\\s+(?:alergarea|alergatul|tura|plimbarea|mersul|pedalarea|inregistrarea|urmarirea|the run|run|running|the walk|walk|the ride|ride|tracking|recording|go)\\s*$")
@@ -383,6 +389,8 @@ object CommandParser {
 
     /** Comenzile din interiorul FORJA: antrenament, muzică, Focus, respirație, nutriție, somn, prieteni, ture. */
     private fun parseInApp(t: String, raw: String): VoiceCommand? {
+        // „rezumat” fără obiect: după ce se întâmplă acum (antrenamentul pornit sau ziua)
+        if (SUMMARY_BARE.matches(t)) return VoiceCommand.Summary
         // antrenamentul
         WK_START.find(t)?.let { m -> return VoiceCommand.StartWorkout(m.groupValues[1].trim().ifBlank { null }?.let { rawTail(raw, it) }) }
         if (WK_PAUSE.matches(t)) return VoiceCommand.WorkoutControl(WorkoutAction.PAUSE)
@@ -435,16 +443,17 @@ object CommandParser {
         // un prieten pe hartă („unde e Ion”, „arată-l pe Ion pe hartă”); un loc, dacă nu e prieten
         // Numele cu majusculele lui: fără „pe hartă” / „acum” de la coadă.
         fun friendName(who: String): String {
-            val rawNoTail = VoiceText.cleanRawLight(raw).replace(Regex("\\s+(?:acum|now|pe hart[aă]|on the map)\\s*$", RegexOption.IGNORE_CASE), "")
+            val rawNoTail = VoiceText.cleanRawLight(raw).replace(Regex("(?:\\s+(?:acum|now|pe hart[aă]|on the map))+\\s*$", RegexOption.IGNORE_CASE), "")
             return VoiceText.tailWords(rawNoTail, who.split(" ").count { it.isNotBlank() }).ifBlank { who }
         }
         FR_SHOW.find(t)?.let { m ->
             val who = (m.groupValues[1].ifBlank { m.groupValues[2] }).trim()
-            if (who.isNotBlank() && !Regex("^(?:prietenii|friends|harta|the map|map|toti)$").matches(who)) return VoiceCommand.FriendWhere(friendName(who))
+            if (who.isNotBlank() && !Regex("^(?:prietenii|friends|harta|the map|map|toti)$").matches(who)) return VoiceCommand.FriendWhere(friendName(who), onMap = true)
         }
         FR_WHERE.find(t)?.let { m ->
-            val who = m.groupValues[1].trim()
-            if (who.isNotBlank() && who.split(" ").size <= 4 && !Regex("^(?:prietenii|prietenii mei|friends|my friends|eu|i)$").matches(who)) return VoiceCommand.FriendWhere(friendName(who))
+            val who = m.groupValues[2].trim()
+            val cue = m.groupValues[1].trim().let { it.isNotBlank() && it != "pe" } || m.groupValues[3].isNotBlank()
+            if (who.isNotBlank() && who.split(" ").size <= 4 && !Regex("^(?:prietenii|prietenii mei|friends|my friends|eu|i)$").matches(who)) return VoiceCommand.FriendWhere(friendName(who), onMap = cue)
         }
         return null
     }

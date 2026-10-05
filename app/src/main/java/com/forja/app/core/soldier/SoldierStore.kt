@@ -17,6 +17,9 @@ object SoldierStore {
     val state: StateFlow<SoldierState> = _state.asStateFlow()
     private val _outfit = MutableStateFlow(Outfit.RECRUIT)
     val outfit: StateFlow<Outfit> = _outfit.asStateFlow()
+    private val _ready = MutableStateFlow(false)
+    /** Starea e cea de pe disc (nu cea goală dinainte de [load])? */
+    val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
     private val lock = Mutex()
     @Volatile private var loaded = false
@@ -29,6 +32,7 @@ object SoldierStore {
                 val s = SoldierState.fromJson(app.prefs.soldierState.first()) ?: SoldierState(createdAt = System.currentTimeMillis())
                 publish(s)
                 loaded = true
+                _ready.value = true
             }
         }
         return _state.value

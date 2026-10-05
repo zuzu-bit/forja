@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.speech.RecognitionListener
@@ -388,9 +389,9 @@ class VoiceAssistant(private val app: ForjaApp) {
         _state.update { it.copy(phase = Phase.THINKING) }
         if (cmd is VoiceCommand.Stop) pending = null
         scope.launch {
+            // Misiunea „Hei FORJA” a Cascăi: o comandă adevărată pe zi — scrisă înainte de execuție, ca „ce grad am” s-o vadă bifată.
+            if (cmd !is VoiceCommand.Unknown && cmd !is VoiceCommand.Stop && cmd !is VoiceCommand.Repeat) withContext(Dispatchers.IO) { try { app.prefs.markVoiceUsed() } catch (_: Exception) { } }
             val outcome = withContext(Dispatchers.IO) { executor.execute(cmd, confirmSend, lastSpoken, denied) }
-            // Misiunea „Hei FORJA” a Cascăi: o comandă adevărată pe zi.
-            if (cmd !is VoiceCommand.Unknown && cmd !is VoiceCommand.Stop && cmd !is VoiceCommand.Repeat) launch(Dispatchers.IO) { try { app.prefs.markVoiceUsed() } catch (_: Exception) { } }
             handle(outcome)
             if (cmd is VoiceCommand.StopListening) {
                 wakeLoopWanted = false
@@ -425,7 +426,7 @@ class VoiceAssistant(private val app: ForjaApp) {
             is Outcome.Done -> {
                 pending = null
                 _state.update { it.copy(question = null) }
-                outcome.navigate?.let { emit(Event.Navigate(it)) }
+                outcome.navigate?.let { navigateTo(it) }
                 if (outcome.readScreenAfterMs > 0 && ScreenAgent.isConnected()) {
                     // După ce a deschis / apăsat / căutat ceva, citește ce a apărut pe ecran — ca să nu rămâi în întuneric.
                     say(outcome.spoken, then = { readScreenSoon(outcome.readScreenAfterMs) })
@@ -520,6 +521,30 @@ class VoiceAssistant(private val app: ForjaApp) {
     private fun isForeground(): Boolean = try {
         ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
     } catch (_: Exception) { true }
+
+    @Volatile private var pendingRoute: Pair<String, Long>? = null
+
+    /**
+     * Un ecran FORJA de deschis după o comandă („deschide antrenamentul”, „unde e Ion”). Cu activitatea în viață, direct;
+     * cu FORJA închisă, ruta așteaptă aici și aducem activitatea în față (cât permite Android din fundal) — ea o ia la
+     * pornire ([takePendingRoute]).
+     */
+    private fun navigateTo(route: String) {
+        if (_events.subscriptionCount.value > 0) emit(Event.Navigate(route))
+        else pendingRoute = route to SystemClock.elapsedRealtime()
+        if (!isForeground()) {
+            try {
+                app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            } catch (_: Exception) { }
+        }
+    }
+
+    /** MainActivity, la pornire: ruta cerută cu vocea cât FORJA era închisă (doar dacă e proaspătă). */
+    fun takePendingRoute(maxAgeMs: Long = 15_000L): String? {
+        val p = pendingRoute ?: return null
+        pendingRoute = null
+        return if (SystemClock.elapsedRealtime() - p.second <= maxAgeMs) p.first else null
+    }
 
     private fun speechFinished() {
         abandonFocus()

@@ -276,20 +276,31 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
         app.voice.onPermissionsResult(result)
     }
     LaunchedEffect(Unit) {
-        app.voice.events.collect { e ->
-            when (e) {
-                is VoiceAssistant.Event.Navigate -> try {
-                    if (e.route == Route.CLEANUP) openInventory(null)
-                    else if (e.route == Route.WORKOUT_LIVE) {
+        fun goVoice(route: String) {
+            try {
+                when {
+                    route == Route.CLEANUP -> openInventory(null)
+                    route == Route.WORKOUT_LIVE -> {
                         // „Începe antrenamentul”: sesiunea live stă peste hub (ieșirea ei revine la hub).
                         if (nav.currentDestination?.route != Route.WORKOUT_LIVE) {
                             nav.navigate(Route.WORKOUT) { popUpTo(Route.DASHBOARD) { inclusive = false }; launchSingleTop = true }
                             nav.navigate(Route.WORKOUT_LIVE) { launchSingleTop = true }
                         }
                     }
-                    else if (e.route in tabRoutes) nav.navigate(e.route) { popUpTo(Route.DASHBOARD) { inclusive = false }; launchSingleTop = true }
-                    else nav.navigate(e.route) { launchSingleTop = true }
-                } catch (_: Exception) { }
+                    route in tabRoutes -> nav.navigate(route) { popUpTo(Route.DASHBOARD) { inclusive = false }; launchSingleTop = true }
+                    else -> nav.navigate(route) { launchSingleTop = true }
+                }
+            } catch (_: Exception) { }
+        }
+        // Ruta cerută cu vocea cât FORJA era închisă (comanda a adus activitatea în față): o luăm la pornire.
+        app.voice.takePendingRoute()?.let { route ->
+            var tries = 0
+            while (nav.currentBackStackEntry == null && tries++ < 40) kotlinx.coroutines.delay(50)
+            goVoice(route)
+        }
+        app.voice.events.collect { e ->
+            when (e) {
+                is VoiceAssistant.Event.Navigate -> goVoice(e.route)
                 is VoiceAssistant.Event.NeedPermissions -> try { voicePerms.launch(e.permissions.toTypedArray()) } catch (_: Exception) { }
             }
         }

@@ -88,23 +88,20 @@ fun SoldierScreen(onBack: () -> Unit, onOpenRoute: (String) -> Unit) {
     val state by SoldierStore.state.collectAsState()
     var today by remember { mutableStateOf<List<MissionStatus>>(emptyList()) }
 
-    // La intrare și la fiecare revenire: punctele pentru ce s-a făcut între timp.
+    // La intrare și la fiecare revenire: punctele pentru ce s-a făcut între timp („+N puncte” vine din schimbarea stării).
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, e ->
             if (e == Lifecycle.Event.ON_RESUME) scope.launch {
-                try {
-                    val r = Missions.sync(app, foreground = true)
-                    today = r.today
-                    if (r.newPoints > 0) {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        toast.show("+${r.newPoints} puncte: ${r.newlyDone.joinToString(", ") { it.short.lowercase() }}")
-                    }
-                } catch (_: Exception) { }
+                try { today = Missions.sync(app, foreground = true).today } catch (_: Exception) { }
             }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+    SoldierPointsToast(state) { pts, names ->
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        toast.show("+$pts puncte: $names")
     }
 
     val rank = state.rank
@@ -128,8 +125,9 @@ fun SoldierScreen(onBack: () -> Unit, onOpenRoute: (String) -> Unit) {
                 .padding(bottom = 40.dp)
         ) {
             Spacer(Modifier.height(14.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                ModuleHeader(stamp = "CAZARMA", title = "Casca, ${rank.name}", titleStyle = TitleModule.copy(fontSize = 26.sp), reveal = false)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                ModuleHeader(stamp = "CAZARMA", title = "Casca, ${rank.name}", modifier = Modifier.weight(1f), titleStyle = TitleModule.copy(fontSize = 26.sp), reveal = false)
+                Spacer(Modifier.width(12.dp))
                 SecondaryButton("Închide", onClick = onBack, modifier = Modifier.semantics { role = Role.Button }, padV = 8.dp)
             }
 
@@ -146,19 +144,21 @@ fun SoldierScreen(onBack: () -> Unit, onOpenRoute: (String) -> Unit) {
                 EmberField(Modifier.fillMaxSize(), count = 26, alpha = 0.5f, speed = 0.7f)
                 Mascot(
                     state = if (celebrate) MascotState.Happy else MascotState.Idle,
-                    size = 208.dp,
-                    modifier = Modifier.align(Alignment.Center).padding(top = 6.dp),
-                    onTap = { toast.show(mascotLine(state, doneToday)) }
+                    size = 200.dp,
+                    modifier = Modifier.align(Alignment.Center).padding(bottom = 22.dp),
+                    onTap = { toast.show(mascotLine(state, doneToday)) },
+                    description = "Casca. Atinge ca să-ți spună cum stă ziua."
                 )
                 StampLabel(rank.name.uppercase(), modifier = Modifier.align(Alignment.TopStart).padding(14.dp), rotationDeg = -4f, appear = false)
                 PointsChip(state.balance, Modifier.align(Alignment.TopEnd).padding(12.dp))
                 Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("${state.earned} PUNCTE CÂȘTIGATE", style = monoLabel(9, 0.12f).copy(color = TextSecondary))
-                        Spacer(Modifier.weight(1f))
+                        Text("${state.earned} PUNCTE CÂȘTIGATE", style = monoLabel(9, 0.12f).copy(color = TextSecondary), maxLines = 1)
+                        Spacer(Modifier.width(10.dp))
                         Text(
-                            if (next != null) "${next.minPoints - state.earned} PÂNĂ LA ${next.name.uppercase()}" else "GRADUL CEL MAI ÎNALT",
-                            style = monoLabel(9, 0.12f).copy(color = Accent2)
+                            if (next != null) "ÎNCĂ ${next.minPoints - state.earned} · ${next.name.uppercase()}" else "GRADUL CEL MAI ÎNALT",
+                            style = monoLabel(9, 0.12f).copy(color = Accent2), textAlign = TextAlign.End,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
                         )
                     }
                     Spacer(Modifier.height(6.dp))
@@ -192,9 +192,14 @@ fun SoldierScreen(onBack: () -> Unit, onOpenRoute: (String) -> Unit) {
             }
             if (state.streak > 0) {
                 Spacer(Modifier.height(2.dp))
+                val todayGood = doneToday >= Missions.GOOD_DAY
                 Text(
                     "Seria: ${state.streak} ${if (state.streak == 1) "zi bună" else "zile bune"} la rând" +
-                        (if (state.streak % 7 == 6) " — mâine, bonusul de ${Missions.STREAK_BONUS}." else "."),
+                        when {
+                            state.streak % 7 != 6 -> "."
+                            todayGood -> " — mâine, bonusul de ${Missions.STREAK_BONUS}."
+                            else -> " — azi, la a ${Missions.GOOD_DAY}-a misiune, bonusul de ${Missions.STREAK_BONUS}."
+                        },
                     style = BodyTiny.copy(color = TextSecondary)
                 )
             }
@@ -221,10 +226,10 @@ fun SoldierScreen(onBack: () -> Unit, onOpenRoute: (String) -> Unit) {
                         GearTile(item, state, Modifier.weight(1f).fillMaxHeight().padding(end = if (i < 2) 8.dp else 0.dp)) {
                             val equipped = state.equipped[item.slot] == item.id
                             when {
-                                equipped -> scope.launch { SoldierStore.equip(app, item.slot, null); toast.show("${item.name}: dată jos.") }
+                                equipped -> scope.launch { SoldierStore.equip(app, item.slot, null); toast.show("Jos: ${item.name}.") }
                                 item.id in state.owned -> scope.launch {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    SoldierStore.equip(app, item.slot, item.id); toast.show("${item.name}: pusă.")
+                                    SoldierStore.equip(app, item.slot, item.id); toast.show("Pe Casca: ${item.name}.")
                                 }
                                 state.rank.index < item.rank -> toast.show("${item.name} se deblochează la gradul de ${Ranks.byIndex(item.rank).name}.")
                                 else -> buying = item
@@ -246,11 +251,6 @@ fun SoldierScreen(onBack: () -> Unit, onOpenRoute: (String) -> Unit) {
                     Spacer(Modifier.width(8.dp))
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "Punctele câștigate vreodată dau gradul și nu scad când cumperi. Fiecare grad nou vine cu o piesă în dar, pusă direct pe Casca.",
-                style = BodyTiny.copy(color = TextDim)
-            )
         }
     }
 
@@ -259,7 +259,7 @@ fun SoldierScreen(onBack: () -> Unit, onOpenRoute: (String) -> Unit) {
             scope.launch {
                 val ok = SoldierStore.buy(app, item.id)
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                toast.show(if (ok) "${item.name}: a ta. Casca o poartă deja." else "Nu s-a putut cumpăra.")
+                toast.show(if (ok) "Gata: ${item.name} e deja pe Casca." else "Nu s-a putut cumpăra.")
                 buying = null
             }
         }, onClose = { buying = null })
@@ -295,7 +295,7 @@ private fun PointsChip(balance: Int, modifier: Modifier = Modifier) {
         Spacer(Modifier.width(6.dp))
         Text("$balance", style = BodyStrong.copy(fontSize = 15.sp, color = TextPrimary))
         Spacer(Modifier.width(4.dp))
-        Text("PUNCTE", style = monoLabel(8, 0.14f).copy(color = TextSecondary))
+        Text("DE CHELTUIT", style = monoLabel(8, 0.14f).copy(color = TextSecondary))
     }
 }
 
@@ -370,9 +370,9 @@ private fun GearTile(item: GearItem, state: SoldierState, modifier: Modifier = M
     val owned = item.id in state.owned
     val locked = !owned && state.rank.index < item.rank
     val status = when {
-        equipped -> "PURTATĂ"
-        owned -> "A TA"
-        locked -> "DE LA ${Ranks.byIndex(item.rank).name.uppercase()}"
+        equipped -> "PE CASCA"
+        owned -> "ÎN DOTARE"
+        locked -> Ranks.byIndex(item.rank).name.uppercase()
         else -> "${item.cost} PUNCTE"
     }
     val statusColor = when {
@@ -386,7 +386,7 @@ private fun GearTile(item: GearItem, state: SoldierState, modifier: Modifier = M
             .clip(CardShape)
             .background(Surface1)
             .border(1.dp, if (equipped) Color(0x996F855A) else StrokeCard, CardShape)
-            .semantics { role = Role.Button; contentDescription = "${item.name}, $status" }
+            .semantics { role = Role.Button; contentDescription = "${item.name}, " + if (locked) "de la gradul de ${Ranks.byIndex(item.rank).name}" else status.lowercase() }
             .pressable(onClick, scaleDown = 0.97f)
             .padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -399,9 +399,9 @@ private fun GearTile(item: GearItem, state: SoldierState, modifier: Modifier = M
             }
         }
         Spacer(Modifier.height(6.dp))
-        Text(item.name, style = BodyStrong.copy(fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+        Text(item.name, style = BodyStrong.copy(fontSize = 12.sp), maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
         Spacer(Modifier.height(3.dp))
-        Text(status, style = monoLabel(8, 0.12f).copy(color = statusColor), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(status, style = monoLabel(8, 0.12f).copy(color = statusColor), maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
     }
 }
 
@@ -424,11 +424,7 @@ private fun RankCard(r: Rank, state: SoldierState) {
         Text(r.name, style = BodyStrong.copy(fontSize = 12.sp), maxLines = 2, textAlign = TextAlign.Center, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(4.dp))
         Text(
-            when {
-                current -> "ACUM"
-                reached -> "✓ ${r.minPoints} P"
-                else -> "${r.minPoints} P"
-            },
+            if (current) "ACUM" else "${r.minPoints} PUNCTE",
             style = monoLabel(8, 0.12f).copy(color = if (current) Accent2 else TextDim)
         )
     }
@@ -478,7 +474,7 @@ fun PromotionSheet(rank: Rank, onClose: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             Text(
                 if (gifts.isEmpty()) "Ai ajuns la gradul de ${rank.name}. Insigna nouă e pe piept."
-                else "Ai ajuns la gradul de ${rank.name}. În dar: ${gifts.joinToString(" și ") { it.name.lowercase() }} — deja ${if (gifts.size == 1) "pusă" else "puse"}.",
+                else "Ai ajuns la gradul de ${rank.name}. În dar: ${gifts.joinToString(" și ") { it.name.lowercase() }} — deja pe Casca.",
                 style = Body.copy(color = TextSecondary), textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(18.dp))

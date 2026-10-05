@@ -4,9 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,8 +15,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -28,13 +25,15 @@ import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
 import com.forja.app.core.soldier.Missions
 import com.forja.app.core.soldier.Ranks
+import com.forja.app.core.soldier.SoldierState
 import com.forja.app.core.soldier.SoldierStore
 import com.forja.app.core.util.Fmt
 import kotlinx.coroutines.launch
 
 /**
  * Cardul Cascăi de pe panoul „Azi”: mascota în uniformă, gradul, drumul spre gradul următor și misiunile de azi —
- * dintr-o privire, fără text obositor. Atingerea deschide Cazarma. Punctele se sincronizează la fiecare revenire.
+ * dintr-o privire, fără text obositor. Atingerea (oriunde pe card) deschide Cazarma. Punctele se sincronizează la
+ * fiecare revenire; „+N puncte” se anunță din schimbarea stării, oricine ar fi sincronizat.
  */
 @Composable
 fun SoldierCard(modifier: Modifier = Modifier, onOpen: () -> Unit) {
@@ -47,16 +46,12 @@ fun SoldierCard(modifier: Modifier = Modifier, onOpen: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, e ->
-            if (e == Lifecycle.Event.ON_RESUME) scope.launch {
-                try {
-                    val r = Missions.sync(app, foreground = true)
-                    if (r.newPoints > 0) toast.show("Casca: +${r.newPoints} puncte (${r.newlyDone.joinToString(", ") { it.short.lowercase() }}).")
-                } catch (_: Exception) { }
-            }
+            if (e == Lifecycle.Event.ON_RESUME) scope.launch { try { Missions.sync(app, foreground = true) } catch (_: Exception) { } }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
+    SoldierPointsToast(state) { pts, names -> toast.show("Casca: +$pts puncte ($names).") }
 
     val rank = state.rank
     val next = Ranks.next(rank)
@@ -79,18 +74,19 @@ fun SoldierCard(modifier: Modifier = Modifier, onOpen: () -> Unit) {
             .padding(start = 8.dp, end = 14.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Mascot(size = 96.dp, state = if (state.promotionPending) MascotState.Happy else MascotState.Idle)
+        // Nemișcată (fără animație perpetuă pe panou); fericită când are un grad nou de sărbătorit.
+        MascotStill(outfit = state.outfit, state = if (state.promotionPending) MascotState.Happy else MascotState.Idle, size = 92.dp)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                StampLabel(rank.name.uppercase(), rotationDeg = -3f, fontSize = 10, appear = false)
-                Spacer(Modifier.weight(1f))
+                Text(
+                    "CASCA · ${rank.name.uppercase()}",
+                    style = monoLabel(9, 0.14f).copy(color = Accent2),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
+                )
                 if (state.promotionPending) {
+                    Spacer(Modifier.width(8.dp))
                     Text("GRAD NOU", style = monoLabel(8, 0.14f).copy(color = EmberHot))
-                } else {
-                    Icon(Icons.Filled.Star, contentDescription = null, tint = EmberHot, modifier = Modifier.size(11.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("${state.balance}", style = monoLabel(9, 0.10f).copy(color = TextSecondary))
                 }
             }
             Spacer(Modifier.height(6.dp))
@@ -117,5 +113,31 @@ fun SoldierCard(modifier: Modifier = Modifier, onOpen: () -> Unit) {
                 Text(if (points > 0) "+$points AZI" else "MISIUNILE DE AZI", style = monoLabel(8, 0.12f).copy(color = if (points > 0) Accent2 else TextDim))
             }
         }
+    }
+}
+
+/**
+ * „+N puncte”: anunțat din schimbarea stării Cascăi (misiunile de azi proaspăt bifate), nu de cine a pornit
+ * sincronizarea — cardul, Cazarma și deschiderea aplicației sincronizează toate, dar anunțul vine o dată, de la
+ * ecranul care îl vede. Prima stare văzută (și cea goală dinainte de citirea de pe disc) nu anunță nimic.
+ */
+@Composable
+internal fun SoldierPointsToast(state: SoldierState, show: (points: Int, names: String) -> Unit) {
+    val ready by SoldierStore.ready.collectAsState()
+    val doneNow = state.doneOn(Fmt.epochDay())
+    var seen by remember { mutableStateOf<Set<String>?>(null) }
+    LaunchedEffect(doneNow, ready) {
+        if (!ready) return@LaunchedEffect
+        val before = seen
+        seen = doneNow
+        if (before == null) return@LaunchedEffect
+        val fresh = doneNow - before
+        if (fresh.isEmpty()) return@LaunchedEffect
+        val missions = Missions.all.filter { it.id in fresh }
+        val bonus = Missions.STREAK_ID in fresh
+        val pts = missions.sumOf { it.points } + (if (bonus) Missions.STREAK_BONUS else 0)
+        if (pts <= 0) return@LaunchedEffect
+        val names = missions.map { it.short.lowercase() } + (if (bonus) listOf("bonusul seriei") else emptyList())
+        show(pts, names.joinToString(", "))
     }
 }

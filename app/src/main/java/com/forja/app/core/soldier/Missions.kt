@@ -5,6 +5,9 @@ import com.forja.app.core.util.Fmt
 import com.forja.app.navigation.Route
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 
 /** O misiune zilnică: ce bifezi în FORJA ca să câștigi puncte. [route] = unde se face (null = se face singură). */
 data class Mission(val id: String, val title: String, val short: String, val points: Int, val route: String?)
@@ -45,23 +48,30 @@ object Missions {
     val byId: Map<String, Mission> = all.associateBy { it.id }
     val maxPerDay: Int = all.sumOf { it.points }
 
-    /** Ce e bifat azi, din jurnale. [foreground] = FORJA e pe ecran acum (prezența). */
+    /** Ziua (epochDay) a clipei [now], după fusul telefonului. */
+    fun dayOf(now: Long): Long = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate().toEpochDay()
+    private fun dayStartMillis(day: Long): Long = LocalDate.ofEpochDay(day).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    /** Ce e bifat în ziua lui [now], din jurnale. [foreground] = FORJA e pe ecran acum (prezența). */
     suspend fun evaluate(app: ForjaApp, now: Long = System.currentTimeMillis(), foreground: Boolean = false): List<MissionStatus> {
-        val day = Fmt.epochDay()
-        val dayStart = Fmt.startOfDayMillis(0)
+        val day = dayOf(now)
+        val dayStart = dayStartMillis(day)
+        val dayEnd = dayStartMillis(day + 1)
+        fun inDay(t: Long?) = t != null && t >= dayStart && t < dayEnd
         val db = app.db
         val prefs = app.prefs
         suspend fun <T> safe(default: T, block: suspend () -> T): T = try { withTimeoutOrNull(4000) { block() } ?: default } catch (_: Exception) { default }
 
         val meals = safe(0) { db.mealDao().mealsForDay(day).first().size }
-        val km = safe(0.0) { db.activityDao().since(dayStart).first().sumOf { it.distanceM } / 1000.0 }
-        val workout = safe(false) { db.workoutDao().lastSession().first()?.let { it.endedAt != null && it.startedAt >= dayStart } ?: false }
-        val sleep = safe(false) { db.sleepDao().lastFinished().first()?.let { (it.endAt ?: 0L) >= dayStart } ?: false }
+        val km = safe(0.0) { db.activityDao().since(dayStart).first().filter { it.startAt < dayEnd }.sumOf { it.distanceM } / 1000.0 }
+        // un antrenament încheiat azi (pornit azi sau terminat azi — și cel început aseară contează în ziua în care s-a încheiat)
+        val workout = safe(false) { db.workoutDao().lastSession().first()?.let { it.endedAt != null && (inDay(it.startedAt) || inDay(it.endedAt)) } ?: false }
+        val sleep = safe(false) { db.sleepDao().lastFinished().first()?.let { inDay(it.endAt) } ?: false }
         val focusMin = safe(0) { prefs.focusForest.first().let { it.first * 15 + it.third / 60 } }
-        val breath = safe(false) { db.breathSessionDao().since(dayStart).first().any { it.durationS >= 60 } }
+        val breath = safe(false) { db.breathSessionDao().since(dayStart).first().any { it.durationS >= 60 && it.startAt < dayEnd } }
         val detox = safe(false) { prefs.detoxOn.first() }
-        val place = safe(false) { db.exploreDao().places().first().any { it.firstAt >= dayStart } }
-        val game = safe(false) { db.gamePlayDao().since(dayStart).first().any { it.outcome == "won" } }
+        val place = safe(false) { db.exploreDao().places().first().any { inDay(it.firstAt) } }
+        val game = safe(false) { db.gamePlayDao().since(dayStart).first().any { it.outcome == "won" && it.at < dayEnd } }
         val voice = safe(false) { prefs.voiceUsedDay.first() == day }
         val present = foreground || safe(false) { prefs.presentDay.first() == day }
         val energy = safe(false) { prefs.energySentDay.first() == day }
@@ -84,12 +94,15 @@ object Missions {
     suspend fun sync(app: ForjaApp, now: Long = System.currentTimeMillis(), foreground: Boolean = false): Sync {
         SoldierStore.load(app)
         val today = evaluate(app, now, foreground)
-        val day = Fmt.epochDay()
+        val day = dayOf(now)
         var newPoints = 0
         var newly: List<Mission> = emptyList()
         var promoted: Rank? = null
         var bonus = false
         val next = SoldierStore.update(app) { s ->
+            // Ceasul dat înapoi (sau o zi mai veche decât ultima scrisă): nu dăm puncte pe o zi trecută.
+            val latest = s.days.keys.maxOrNull() ?: day
+            if (day < latest) return@update s
             val before = s.rank
             val already = s.doneOn(day)
             newly = today.filter { it.done && it.mission.id !in already }.map { it.mission }
@@ -97,23 +110,28 @@ object Missions {
             var todaySet = already + newly.map { it.id }
             var earned = s.earned + newPoints
             var balance = s.balance + newPoints
-            // seria: zilele bune la rând, numărate înapoi de la azi (azi intră doar când ajunge la prag)
-            val days = (s.days + (day to todaySet)).filterKeys { it >= day - KEEP_DAYS }
-            var streak = 0
-            var d = day
+            // Seria: zilele bune la rând, ținută ca un contor ([goodRun], până la [goodRunDay]) — nu depinde de câte
+            // zile păstrăm în [days]. Azi intră în serie când ajunge la prag; o zi fără prag o rupe.
+            var run = s.goodRun
+            var runDay = s.goodRunDay
+            if (runDay == 0L && s.streak > 0) {
+                // seria din 5.0 (numărată din zilele păstrate): o preluăm dacă e încă vie
+                val lastGood = listOf(day, day - 1).firstOrNull { d -> countMissions(s.days[d] ?: emptySet()) >= GOOD_DAY }
+                if (lastGood != null) { run = s.streak; runDay = lastGood }
+            }
             val todayGood = countMissions(todaySet) >= GOOD_DAY
-            if (!todayGood) d -= 1
-            while (true) {
-                val set = days[d] ?: break
-                if (countMissions(set) < GOOD_DAY) break
-                streak++; d -= 1
+            if (todayGood && runDay != day) {
+                run = (if (runDay == day - 1) run else 0) + 1
+                runDay = day
+                if (run % 7 == 0 && STREAK_ID !in todaySet) {
+                    bonus = true
+                    todaySet = todaySet + STREAK_ID
+                    earned += STREAK_BONUS; balance += STREAK_BONUS
+                }
             }
-            if (todayGood && streak > 0 && streak % 7 == 0 && STREAK_ID !in todaySet) {
-                bonus = true
-                todaySet = todaySet + STREAK_ID
-                earned += STREAK_BONUS; balance += STREAK_BONUS
-            }
-            val withDays = s.copy(earned = earned, balance = balance, days = days + (day to todaySet), streak = streak)
+            val streak = if (runDay == day || runDay == day - 1) run else 0
+            val days = (s.days + (day to todaySet)).filterKeys { it >= day - KEEP_DAYS }
+            val withDays = s.copy(earned = earned, balance = balance, days = days, streak = streak, goodRun = run, goodRunDay = runDay)
             val gifted = SoldierStore.grantGifts(withDays)
             if (gifted.rank.index > before.index) promoted = gifted.rank
             gifted
@@ -124,6 +142,6 @@ object Missions {
     /** Câte misiuni adevărate (fără bonusuri) are o zi. */
     fun countMissions(ids: Set<String>): Int = ids.count { it in byId }
 
-    /** Punctele bifate azi (fără bonus). */
+    /** Punctele bifate într-o zi (cu bonusul seriei, dacă s-a dat atunci). */
     fun pointsOn(s: SoldierState, day: Long = Fmt.epochDay()): Int = s.doneOn(day).sumOf { byId[it]?.points ?: if (it == STREAK_ID) STREAK_BONUS else 0 }
 }
