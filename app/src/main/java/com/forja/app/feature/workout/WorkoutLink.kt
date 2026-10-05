@@ -55,6 +55,9 @@ object WorkoutLink {
         return if (SystemClock.elapsedRealtime() - p.second <= maxAgeMs) p.first else null
     }
 
+    /** Utilizatorul a atins notificarea „Hei FORJA: antrenamentul” mai târziu: pornirea parcată e din nou proaspătă. */
+    fun refreshPendingStart() { pendingStart = pendingStart?.let { it.first to SystemClock.elapsedRealtime() } }
+
     /** Pornirea a fost preluată: nu mai așteaptă pe nimeni. */
     fun clearPendingStart() { pendingStart = null }
 }

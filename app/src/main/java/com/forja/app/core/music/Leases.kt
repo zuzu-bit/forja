@@ -46,6 +46,9 @@ class LeaseBook {
 
     fun current(): Lease? = current
 
-    /** Finalul unui inventar are voie să pună pauză? Niciodată cât ține un antrenament. */
-    fun inventoryMayPause(): Boolean = !workoutLive && current?.source != MusicSource.WORKOUT
+    /**
+     * Finalul unui inventar are voie să pună pauză? Niciodată cât ține un antrenament ([workoutLive]) — dar lista de
+     * antrenament pornită cu vocea fără sesiune (4.9: „pornește un playlist”) nu e o sesiune: se oprește ca orice muzică.
+     */
+    fun inventoryMayPause(): Boolean = !workoutLive
 }

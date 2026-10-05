@@ -123,7 +123,8 @@ fun SoldierCard(modifier: Modifier = Modifier, onOpen: () -> Unit) {
  */
 @Composable
 internal fun SoldierPointsToast(state: SoldierState, show: (points: Int, names: String) -> Unit) {
-    val ready by SoldierStore.ready.collectAsState()
+    // Starea de pe disc are mereu createdAt; cea goală dinainte de citire nu — o singură citire decide.
+    val ready = state.createdAt != 0L
     val doneNow = state.doneOn(Fmt.epochDay())
     var seen by remember { mutableStateOf<Set<String>?>(null) }
     LaunchedEffect(doneNow, ready) {

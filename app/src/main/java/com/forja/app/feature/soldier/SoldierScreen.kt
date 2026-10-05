@@ -149,7 +149,7 @@ fun SoldierScreen(onBack: () -> Unit, onOpenRoute: (String) -> Unit) {
                     onTap = { toast.show(mascotLine(state, doneToday)) },
                     description = "Casca. Atinge ca să-ți spună cum stă ziua."
                 )
-                StampLabel(rank.name.uppercase(), modifier = Modifier.align(Alignment.TopStart).padding(14.dp), rotationDeg = -4f, appear = false)
+                StampLabel(rank.name.uppercase(), modifier = Modifier.align(Alignment.TopStart).padding(14.dp), rotationDeg = -4f, fontSize = if (rank.name.length > 13) 10 else 11, appear = false)
                 PointsChip(state.balance, Modifier.align(Alignment.TopEnd).padding(12.dp))
                 Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -158,7 +158,7 @@ fun SoldierScreen(onBack: () -> Unit, onOpenRoute: (String) -> Unit) {
                         Text(
                             if (next != null) "ÎNCĂ ${next.minPoints - state.earned} · ${next.name.uppercase()}" else "GRADUL CEL MAI ÎNALT",
                             style = monoLabel(9, 0.12f).copy(color = Accent2), textAlign = TextAlign.End,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
+                            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
                         )
                     }
                     Spacer(Modifier.height(6.dp))
@@ -288,14 +288,14 @@ private fun PointsChip(balance: Int, modifier: Modifier = Modifier) {
             .background(Color(0xB80D1207))
             .border(1.dp, Color(0x4D90A873), ChipShape)
             .padding(horizontal = 10.dp, vertical = 6.dp)
-            .semantics { contentDescription = "$balance puncte de cheltuit" },
+            .semantics { contentDescription = "Sold: $balance puncte de cheltuit în garderobă" },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(Icons.Filled.Star, contentDescription = null, tint = EmberHot, modifier = Modifier.size(14.dp))
         Spacer(Modifier.width(6.dp))
         Text("$balance", style = BodyStrong.copy(fontSize = 15.sp, color = TextPrimary))
         Spacer(Modifier.width(4.dp))
-        Text("DE CHELTUIT", style = monoLabel(8, 0.14f).copy(color = TextSecondary))
+        Text("SOLD", style = monoLabel(8, 0.14f).copy(color = TextSecondary))
     }
 }
 
