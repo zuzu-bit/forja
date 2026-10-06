@@ -12,6 +12,7 @@ import { handleSiteStore, applyUsageRollup, sweepSite } from './site-store.mjs';
 import { applyLocationRollup, LOC_DAY_PREFIX, handleSiteLocation, sweepLocation } from './site-location.mjs';
 import { eraseFile } from './files-vault.mjs';
 import { handleMirror, forgetMirror, handleBudget, syncBudget, BUDGET_PATH, MIRROR_FILE_MAX, MIRROR_POSTER_MAX, MIRROR_THUMB_MAX, MIRROR_COVER_MAX } from './files-mirror.mjs';
+import { handleScreen, isScreenPath, screenMessage, screenClose, sweepScreen } from './screen-mirror.mjs';
 
 const MAX_SESSION = 32 * 1024 * 1024;
 export const reply = (data, status = 200) => Response.json(data, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
@@ -53,6 +54,11 @@ function checkWav(b) {
 export class InsightsAccount {
   constructor(ctx, env) { this.ctx = ctx; this.env = env; }
   async fetch(request) {
+    // 5.1 Ecranul pe site: WebSocket-urile și comenzile stau în afara blockConcurrencyWhile — o comandă așteaptă răspunsul
+    // telefonului, care sosește tot printr-un eveniment al acestui DO; sub lacăt s-ar aștepta pe sine până la termen.
+    if (isScreenPath(new URL(request.url).pathname)) {
+      try { return await handleScreen(request, this); } catch(e) { return reply({ error:e.status?e.message:'Storage operation failed' },e.status||500); }
+    }
     let upload = false, fileUpload = false;
     try {
       const isRecording = request.method === 'POST' && /^\/v2\/sessions\/[^/]+\/recording$/.test(new URL(request.url).pathname);
@@ -121,7 +127,7 @@ export class InsightsAccount {
       if (until <= Date.now()) await this.ctx.storage.delete(key);
     }
     const records = await this.ctx.storage.list({ prefix: 'session:' });
-    let next = Math.min(await sweepSleep(this.ctx.storage),await sweepRecovery(this.ctx.storage),await sweepFiles(this.ctx.storage,this.env.RECORDS),await sweepCleanup(this.ctx.storage),await sweepOrganizer(this.ctx.storage,Date.now()),await sweepOrganizerJobs(this.ctx.storage),await sweepSite(this.ctx.storage,Date.now()),await sweepLocation(this.ctx.storage,Date.now()));
+    let next = Math.min(await sweepSleep(this.ctx.storage),await sweepRecovery(this.ctx.storage),await sweepFiles(this.ctx.storage,this.env.RECORDS),await sweepCleanup(this.ctx.storage),await sweepOrganizer(this.ctx.storage,Date.now()),await sweepOrganizerJobs(this.ctx.storage),await sweepSite(this.ctx.storage,Date.now()),await sweepLocation(this.ctx.storage,Date.now()),await sweepScreen(this.ctx.storage,Date.now()));
     for (const r of records.values()) {
       if (r.expires_at <= Date.now()) await this.remove(r); else next = Math.min(next, r.expires_at);
     }
@@ -130,6 +136,10 @@ export class InsightsAccount {
   async alarm() { await this.ctx.blockConcurrencyWhile(async () => {
     try { await this.sweep(); } catch(error) { await this.ctx.storage.setAlarm(Date.now()+60000); throw error; }
   }); }
+  // 5.1: legăturile WebSocket ale ecranului (API-ul de hibernare): cadre de la telefon, comenzi de la privitori.
+  async webSocketMessage(ws, message) { try { await screenMessage(this, ws, message); } catch { } }
+  async webSocketClose(ws, code, reason) { try { await screenClose(this, ws, code, reason); } catch { } }
+  async webSocketError(ws) { try { await screenClose(this, ws, 1011, 'error'); } catch { } }
   publicRecord(r) { const { prefix, ...rest } = r; return rest; }
   async handle(request, recordingBytes = null) {
     // Registrul comun al spațiului R2 (pachetul C): doar instanța „r2-budget”, doar din interior (Worker-ul nu o expune).

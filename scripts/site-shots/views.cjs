@@ -67,5 +67,14 @@ module.exports = [
   {id: '91-paza', title: 'Pază', hash: 'paza'},
   {id: '91b-paza-14', title: 'Pază · 14 zile', hash: 'paza', requires: '#s-paza .seg-btn', steps: [{eval: () => [...document.querySelectorAll('#s-paza .seg-btn')].find(b => /14/.test(b.textContent)).click()}, {wait: 700}]},
   {id: '92-concentrare', title: 'Concentrare', hash: 'concentrare'},
+  // Ecran (5.1): telefonul jucat de shots.cjs pe legătura WebSocket (`phone`: live implicit, sau waiting).
+  {id: '93-ecran', title: 'Ecran · telefonul pe viu, o comandă în consolă', hash: 'ecran', requires: () => !document.getElementById('ecran-layout')?.hidden,
+    steps: [{waitFor: '#ecran-phone.live', timeout: 15000}, {waitFor: '.ecran-img:not([hidden])'}, {eval: () => { document.getElementById('ecran-cmd').value = 'read'; document.querySelector('.ecran-cmdline').requestSubmit(); }}, {wait: 500}, tap('#ecran-keys .chip-btn'), {wait: 700}], shot: 'viewport'},
+  {id: '93b-ecran-apps', title: 'Ecran · aplicațiile în consolă', hash: 'ecran', requires: () => !document.getElementById('ecran-layout')?.hidden,
+    steps: [{waitFor: '.ecran-img:not([hidden])', timeout: 15000}, {eval: () => [...document.querySelectorAll('#ecran-keys .chip-btn')].find(b => /Aplicații/.test(b.textContent)).click()}, {wait: 700}], shot: 'viewport'},
+  {id: '94-ecran-waiting', title: 'Ecran · aștept telefonul', hash: 'ecran', phone: 'waiting', requires: () => !document.getElementById('ecran-layout')?.hidden, steps: [{waitFor: '#ecran-card .device-state'}, {wait: 700}], shot: 'viewport'},
+  {id: '95-ecran-terminal', title: 'Ecran · din terminal', hash: 'ecran', requires: () => !document.getElementById('ecran-layout')?.hidden,
+    steps: [{waitFor: '#ecran-card .device-actions'}, {clickText: ['#ecran-card .device-actions button', /terminal/]}, {waitFor: '#sheet-dialog[open]'}], shot: 'viewport'},
+  {id: '96-ecran-empty', title: 'Ecran · fără telefon', hash: 'ecran', requires: () => !!document.getElementById('ecran-layout')?.hidden, steps: [{wait: 400}]},
   {id: '95-cont', title: 'Cont', hash: 'cont', steps: [{eval: () => { const d = document.querySelector('#s-cont details.privacy'); if (d) d.open = true; }}]}
 ];

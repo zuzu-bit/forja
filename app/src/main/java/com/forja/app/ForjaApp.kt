@@ -133,6 +133,7 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         nm.createNotificationChannel(NotificationChannel("explore", getString(R.string.notif_channel_explore), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("cleanup", getString(R.string.notif_channel_cleanup), NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel("sync", getString(R.string.notif_channel_sync), NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel("mirror", getString(R.string.notif_channel_mirror), NotificationManager.IMPORTANCE_LOW))
         // Inventarul 4.3 (core/inventory): progresul analizei din fundal + „Dosarele sunt gata”.
         nm.createNotificationChannel(NotificationChannel("inventory", "Inventar", NotificationManager.IMPORTANCE_LOW))
         // Alarma deșteaptă: IMPORTANCE_HIGH e obligatoriu ca full-screen intent-ul să pornească

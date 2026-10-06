@@ -5,6 +5,27 @@ Claude Design din `design_handoff_forja`. Fitness & lifestyle: antrenamente cu v
 nutriție cu cod de bare + baza de date OpenFoodFacts, somn, hartă socială live cu prieteni
 reali (Firebase) și Focus (blocare de aplicații, onestă, fără AccessibilityService).
 
+## Ce e nou în 5.1 (octombrie 2026) — Ecranul telefonului pe site + terminalul `forja`
+
+Telefonul tău, pe viu, pe ecran mare — și comandat din orice command prompt. Site-ul rămâne **complet separat** de
+telefon: se leagă de el **prin aplicație**, nu umblă direct în telefon. Totul e nou și opt-in; nimic din ce era nu se
+schimbă.
+
+- **Secțiunea „Ecran” pe site** (`server/site-ecran.js.txt`): imaginea ecranului pe viu, atingi și glisezi direct pe ea,
+  o consolă cu aceleași comenzi ca terminalul (`tap`, `swipe`, `key`, `type`, `open`, `say`, `read`, `apps`, `shot`,
+  `scroll`, `info`), plus taste (Înapoi, Acasă, …) și câmpuri „scrie” / „spune”.
+- **Terminalul `forja`** (`scripts/forja-cli.mjs`, Node 22, zero dependențe): `forja login`, `forja devices`,
+  `forja shot ecran.jpg`, `forja read`, `forja tap 0.5 0.3`, `forja sh` (consolă). Un alt agent (alt Claude Code) se poate
+  conecta la fel și poate conduce telefonul. Acceptă și **sintaxa adb** pe care o știe un programator:
+  `forja shell input tap 540 1200`, `input keyevent KEYCODE_BACK`, `am start -n pachet/.Activitate`, `pm list packages`,
+  `exec-out screencap -p > ecran.jpg`.
+- **Prin aceeași cale ca Găsirea**: site-ul/terminalul ↔ serverul (`server/screen-mirror.mjs`, în Durable Object-ul
+  contului, pe WebSocket) ↔ aplicația (`core/mirror/ScreenMirrorService.kt`). Capturarea e prin serviciul FORJA de
+  accesibilitate deja existent (`takeScreenshot`, Android 11+) — fără root, fără MediaProjection.
+- **Opt-in, de două ori + onest**: pornești „Ecranul pe site” din Profil → Telefonul meu (implicit oprit); nimic nu
+  pleacă dacă nu privești; cât e privit, o notificare permanentă cu „Oprește” e vizibilă; nimic nu se salvează nicăieri.
+  `/health` al site-ului: `screen_mirror: 1` la versiunea 20. Detalii: `DESIGN-5.1.md`, `server/SCREEN_MIRROR.md`.
+
 ## Ce e nou în 4.0 (septembrie 2026)
 
 Pachetul aplicației este acum `com.forja.app.research` (versionCode 60), ca 4.0 să se instaleze **peste**

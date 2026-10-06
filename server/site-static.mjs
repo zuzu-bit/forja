@@ -16,6 +16,7 @@ import mars from './site-mars.js.txt';
 import muzica from './site-muzica.js.txt';
 import paza from './site-paza.js.txt';
 import concentrare from './site-concentrare.js.txt';
+import ecran from './site-ecran.js.txt';
 import cont from './site-cont.js.txt';
 import boot from './site-boot.js.txt';
 import mapRenderer from './map-renderer.js.txt';
@@ -30,8 +31,8 @@ import hanken from './fonts/hanken-var.woff2';
 import jbmono from './fonts/jbmono-var.woff2';
 
 /** Ordinea contează: un singur modul ES, un singur domeniu de nume (site-core întâi, site-boot la final). */
-export const CLIENT_FILES = ['site-core.js.txt', 'site-mascot.js.txt', 'files-preview.js.txt', 'site-azi.js.txt', 'site-teren.js.txt', 'site-camarazi.js.txt', 'site-gasire.js.txt', 'site-inventar.js.txt', 'site-somn.js.txt', 'site-ratie.js.txt', 'site-mars.js.txt', 'site-muzica.js.txt', 'site-paza.js.txt', 'site-concentrare.js.txt', 'site-cont.js.txt', 'site-boot.js.txt'];
-const appJs = [core, mascot, filePreview, azi, teren, camarazi, gasire, inventar, somn, ratie, mars, muzica, paza, concentrare, cont, boot].join('\n');
+export const CLIENT_FILES = ['site-core.js.txt', 'site-mascot.js.txt', 'files-preview.js.txt', 'site-azi.js.txt', 'site-teren.js.txt', 'site-camarazi.js.txt', 'site-gasire.js.txt', 'site-inventar.js.txt', 'site-somn.js.txt', 'site-ratie.js.txt', 'site-mars.js.txt', 'site-muzica.js.txt', 'site-paza.js.txt', 'site-concentrare.js.txt', 'site-ecran.js.txt', 'site-cont.js.txt', 'site-boot.js.txt'];
+const appJs = [core, mascot, filePreview, azi, teren, camarazi, gasire, inventar, somn, ratie, mars, muzica, paza, concentrare, ecran, cont, boot].join('\n');
 
 /** Doar gazdele de care are nevoie pagina: Firebase (logare), OpenFreeMap (harta). Fonturile sunt servite de aici. */
 export const PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://tiles.openfreemap.org; img-src 'self' blob: data: https://tiles.openfreemap.org; media-src 'self' blob:; worker-src 'self' blob:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";

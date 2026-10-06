@@ -27,6 +27,7 @@ const {chromium} = require(process.env.FORJA_PLAYWRIGHT || '/opt/node22/lib/node
 const {buildFixture, NOW} = require('./fixture.cjs');
 const {createApi} = require('./mock-api.cjs');
 const {createAssets} = require('./assets.cjs');
+const {phoneFrame} = require('./phone-frame.cjs');
 let VIEWS = require('./views.cjs');
 
 const SERVER = path.resolve(__dirname, '../../server');
@@ -102,6 +103,28 @@ async function runView({browser, base, assets, opts, profile, vpName, view}) {
       return await route.abort('blockedbyclient');
     } catch (e) { if (!/closed|disposed/i.test(String(e))) record.errors.push('route: ' + e.message); }
     finally { inflight--; lastActivity = Date.now(); }
+  });
+  // Ecran (5.1): telefonul jucat pe legătura WebSocket a privitorului — stare, cadre (PNG desenat local), răspunsuri la comenzi.
+  await page.routeWebSocket(/\/v2\/screen\/devices\/[^/]+\/socket/, ws => {
+    const phone = view.phone || 'live', send = o => ws.send(JSON.stringify(o)); let n = 0;
+    const dev = fixture.devices[0] || {id: 'x', name: 'Telefon'};
+    const frame = () => ws.send(phoneFrame({variant: n++}));
+    setTimeout(() => {
+      if (phone === 'live') { send({t: 'state', phone: 'live', width: 1080, height: 2340, fg: 'com.forja.app.research', battery: 64, viewers: 1, since: fixture.now, requested_until: null, frame_at: fixture.now, device: {id: dev.id, name: dev.name}}); frame(); }
+      else send({t: 'state', phone: 'waiting', width: null, height: null, fg: null, battery: null, viewers: 1, requested_until: fixture.now + 600000, device: {id: dev.id, name: dev.name}});
+    }, 60);
+    ws.onMessage(raw => {
+      let c; try { c = JSON.parse(String(raw)); } catch { return; }
+      if (c.t !== 'cmd') return;
+      const line = String(c.line || ''), v = line.split(/\s+/)[0];
+      if (phone !== 'live') return send({t: 'result', id: c.id, line, ok: false, text: 'Telefonul nu e conectat. L-am chemat: se conectează la următoarea bătaie.'});
+      if (v === 'shot') { frame(); return send({t: 'result', id: c.id, line, ok: true, text: 'Cadru trimis.'}); }
+      if (v === 'read') return send({t: 'result', id: c.id, line, ok: true, text: 'RAPORT DE ZI · Azi. Casca · Caporal · 120 de puncte până la Sergent. Misiunile de azi: masa în jurnal, 15 minute de focus, o tură de un kilometru.'});
+      if (v === 'apps') return send({t: 'result', id: c.id, line, ok: true, text: '3 aplicații', data: {apps: [{label: 'FORJA', pkg: 'com.forja.app.research'}, {label: 'YouTube', pkg: 'com.google.android.youtube'}, {label: 'Spotify', pkg: 'com.spotify.music'}]}});
+      if (v === 'info') return send({t: 'result', id: c.id, line, ok: true, text: 'Galaxy S23', data: {info: {model: 'SM-S911B', android: 14, ecran: '1080×2340', fata: 'com.forja.app.research', baterie: '64%'}}});
+      if (/^(tap|apasa|apasă|atinge|click)$/.test(v)) { setTimeout(frame, 120); return send({t: 'result', id: c.id, line, ok: true, text: 'Apăsat.'}); }
+      send({t: 'result', id: c.id, line, ok: true, text: 'Gata.'});
+    });
   });
   if (process.env.FORJA_SHOTS_DEBUG) await page.addInitScript(() => { let v; Object.defineProperty(window, 'ForjaMapRenderer', {configurable: true, get: () => v, set: x => { const c = x.create; x.create = (...a) => (window.__r = c(...a)); v = x; }}); });
   const storage = {...(view.storage || {})};

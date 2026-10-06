@@ -117,6 +117,17 @@ function createApi(fixture, assets, {fail = []} = {}) {
       if (!m[2] && method === 'PATCH') { if (typeof data.name !== 'string' || !data.name.trim() || data.name.length > 40) return json({error: 'Nume invalid.'}, 400); d.name = data.name.trim(); return json({ok: true, name: d.name}); }
     }
 
+    // ——— 5.1 Ecranul telefonului (/v2/screen; legătura WebSocket e jucată de shots.cjs cu page.routeWebSocket) ———
+    if (path === '/v2/screen/devices' && method === 'GET') return json({devices: f.devices.map(d => ({id: d.id, name: d.name, online: d.online, seen_at: d.seen_at, status: d.status, capability: {supported: true, enabled: true, android: 14},
+      screen: {phone: f.screenPhone || 'off', viewers: 0, width: null, height: null, fg: null, battery: null, since: null, requested_until: null, frame_at: null}})),
+      rules: {idle_ms: 120000, session_max_ms: 3600000}, help: ['tap <x> <y>  · fracții 0–1 (0.5 0.3), procente (50% 30%) sau pixeli (540 700)', 'swipe <x1> <y1> <x2> <y2> [ms]', 'key back|home|recents|notifications|settings|lock', 'type <text>', 'open <aplicație>', 'say <comandă vocală>', 'read', 'apps', 'shot', 'scroll up|down', 'info']});
+    m = /^\/v2\/screen\/devices\/([0-9a-f-]+)\/(command|session)$/.exec(path);
+    if (m) {
+      const d = device(m[1]); if (!d) return json({error: 'Telefonul nu e în gardă.'}, 404);
+      if (m[2] === 'session' && method === 'DELETE') return json({ok: true});
+      if (m[2] === 'command' && method === 'POST') return json({error: 'Telefonul nu e conectat. L-am chemat: se conectează la următoarea bătaie (de obicei sub un minut).', phone: 'waiting', requested_until: pageNow() + 600000}, 409);
+    }
+
     // ——— Copiile din galerie (/v2/files, existent) ———
     if (path === '/v2/files' && method === 'GET') {
       const kind = q.get('kind') || 'all', list = f.files.filter(i => kind === 'all' || i.kind === kind);

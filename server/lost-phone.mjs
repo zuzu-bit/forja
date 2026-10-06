@@ -1,4 +1,5 @@
 import {bad,keys} from './phone-schema.mjs';
+import {noteScreenCapability,screenForBeat,SCREEN_RULES} from './screen-mirror.mjs';
 /*
  * Găsirea telefonului, protocolul 2 (FORJA 4.4). Telefonul e ținta, nu căutătorul: se înrolează singur când e semnat
  * contractul v3 (basis "contract"), bate la ~60 s cu ultima poziție și bateria (`beat`), iar site-ul îl caută sau îl sună.
@@ -121,8 +122,12 @@ export async function handleRecovery(req,account,readJSON){
    keepLast(d,{lat:f.lat,lon:f.lon,accuracy:f.accuracy,at:Math.min(f.at,now)});
   if(validNumber(v.battery,0,100)){d.battery=Math.round(v.battery);d.battery_at=now;}
   if(typeof v.charging==='boolean')d.charging=v.charging;
+  // 5.1: ce știe telefonul despre ecranul pe site (opțional, lenient ca restul bătăii).
+  noteScreenCapability(d,v.screen);
   d.seen_at=now;d.expires_at=now+RECOVERY_RULES.enrollment_ms;d.status=v.status;d.proto=2;await s.put(key,d);await alarm(d);
-  return reply({command:d.command,next_s:d.command?RECOVERY_RULES.active_beat_s:RECOVERY_RULES.beat_s});
+  // 5.1: cineva așteaptă ecranul pe site → telefonul se conectează (ScreenMirrorService) și bate mai des până atunci.
+  const screen=await screenForBeat(account,id,now);
+  return reply({command:d.command,next_s:d.command?RECOVERY_RULES.active_beat_s:screen?SCREEN_RULES.wanted_beat_s:RECOVERY_RULES.beat_s,screen});
  }
  if(action==='status'&&method==='POST'){
   const v=await body(['secret','command','status']);await device(v);current(v.command);if(!states.includes(v.status))bad('Stare invalidă.');d.seen_at=now;d.status=v.status;

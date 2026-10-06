@@ -1,5 +1,14 @@
 # BRIEF FORJA — de dat lui Claude într-o sesiune nouă („continuă FORJA după brief”)
 
+## Stare (6 octombrie 2026) — FORJA 5.1 (cod 76)
+
+- **5.1 „Ecranul pe site” + terminalul `forja`**: telefonul își trimite ecranul pe viu în cont și primește comenzi, de pe
+  site (secțiunea Ecran), din `scripts/forja-cli.mjs` sau de la orice agent (sintaxă proprie + adb). Site-ul se leagă prin
+  aplicație, nu direct de telefon. Server: `server/screen-mirror.mjs` (WebSocket în DO-ul contului, `/health` v20,
+  `screen_mirror:1`). Aplicație: `core/mirror/*` (capturare prin serviciul de accesibilitate, Android 11+, opt-in din
+  Profil → Telefonul meu). Teste: `screen-mirror.test.mjs`, `scripts/forja-cli.test.mjs`, secțiunea Ecran din ux + capturi,
+  `ScreenMirrorProtocolTest`. Detalii: `DESIGN-5.1.md`, `server/SCREEN_MIRROR.md`. Proba pe telefon real rămâne de făcut.
+
 ## Stare (29 septembrie 2026) — FORJA 4.4.1 (cod 67)
 
 - Sursa: branch-ul `claude/quirky-hamilton-7nbpi8` (GitHub `zuzu-bit/forja`); `main` a rămas la v3.7 (merge opțional).

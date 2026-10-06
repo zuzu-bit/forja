@@ -7,7 +7,7 @@ const {buildFixture, NOW} = require('./site-shots/fixture.cjs');
 const {createApi} = require('./site-shots/mock-api.cjs');
 const server = path.resolve(__dirname, '../server');
 /** Same list and order as server/site-static.mjs CLIENT_FILES and server/verify-live.mjs (ux-ui-test checks it). */
-const clients = ['site-core.js.txt', 'site-mascot.js.txt', 'files-preview.js.txt', 'site-azi.js.txt', 'site-teren.js.txt', 'site-camarazi.js.txt', 'site-gasire.js.txt', 'site-inventar.js.txt', 'site-somn.js.txt', 'site-ratie.js.txt', 'site-mars.js.txt', 'site-muzica.js.txt', 'site-paza.js.txt', 'site-concentrare.js.txt', 'site-cont.js.txt', 'site-boot.js.txt'];
+const clients = ['site-core.js.txt', 'site-mascot.js.txt', 'files-preview.js.txt', 'site-azi.js.txt', 'site-teren.js.txt', 'site-camarazi.js.txt', 'site-gasire.js.txt', 'site-inventar.js.txt', 'site-somn.js.txt', 'site-ratie.js.txt', 'site-mars.js.txt', 'site-muzica.js.txt', 'site-paza.js.txt', 'site-concentrare.js.txt', 'site-ecran.js.txt', 'site-cont.js.txt', 'site-boot.js.txt'];
 const assets = {scene: () => Buffer.from('\x89PNG\r\n\x1a\nfixture'), pdf: () => Buffer.from('%PDF-1.4 fixture'), audio: () => Buffer.from('fixture-audio')};
 
 function createFixture(profile = 'rich', now = NOW, options = {}) {

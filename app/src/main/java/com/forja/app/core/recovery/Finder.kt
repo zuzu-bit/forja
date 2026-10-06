@@ -16,6 +16,7 @@ import android.os.SystemClock
 import com.forja.app.core.network.InsightsFailure
 import com.forja.app.core.sync.AutomaticCollectionService
 import com.forja.app.core.sync.CollectionSettings
+import com.forja.app.core.mirror.ScreenMirror
 import com.forja.app.core.sync.SyncFix
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -29,6 +30,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
@@ -119,6 +121,8 @@ object Finder {
                     })
                     if (battery != null) put("battery", battery.first)
                     if (battery != null) put("charging", battery.second)
+                    // 5.1: ce știe telefonul despre „Ecranul pe site” (suportat, pornit, Android) — ca site-ul să spună de ce (nu) merge.
+                    put("screen", ScreenMirror.capability(c))
                 }) else LostPhoneRecovery.call(c, d, "poll", buildJsonObject {
                     put("secret", d.secret)
                     // Serverul vechi nu știe „ringing” / „permission_missing”.
@@ -144,6 +148,8 @@ object Finder {
             if (send != null && v2) edit.putLong("sent_fix_at", send.at)
             edit.apply()
             dispatch(c, FinderCommand.parse(result["command"] as? JsonObject))
+            // 5.1: cineva așteaptă ecranul pe site → deschide legătura (dacă e pornit din Profil); altfel oprește-o.
+            try { ScreenMirror.onBeat(c, (result["screen"] as? JsonObject)?.get("wanted")?.let { runCatching { it.jsonPrimitive.booleanOrNull }.getOrNull() } == true) } catch (_: Exception) { }
             Beat(true, FinderLogic.nextBeatMillis(result["next_s"]?.let { runCatching { it.jsonPrimitive.longOrNull }.getOrNull() }))
         } catch (_: TimeoutCancellationException) {
             failed(p, "Site-ul nu a răspuns.")

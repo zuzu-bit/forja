@@ -17,7 +17,7 @@ test('route guard: only the ten site sections go to site-api; the worker wires i
   assert(src.indexOf('isSiteApi(path)') > 0 && src.indexOf('isSiteApi(path)') < src.indexOf("if (path.startsWith('/insights/api/')) return await handleInsights"), 'site sections are routed before the older insights handler');
   const health = /path === '\/health'\) return reply\((\{[^}]+\})\)/.exec(src)[1];
   const flags = Function('return ' + health)();
-  assert.deepEqual(flags, { ok: true, service: 'forja-insights', version: 19, mirror: 1, organizer_jobs: 4, journey: 1, explore_sync: 2, map3d: 1, content_ai: 2, visual_ui: 1, sleep_audio: 1, lost_phone: 2, partners: 1, contacts: 2, social: 1,
+  assert.deepEqual(flags, { ok: true, service: 'forja-insights', version: 20, mirror: 1, screen_mirror: 1, organizer_jobs: 4, journey: 1, explore_sync: 2, map3d: 1, content_ai: 2, visual_ui: 1, sleep_audio: 1, lost_phone: 2, partners: 1, contacts: 2, social: 1,
     organizer_modes: 1, files_sync: 1, cleanup_schedule: 1, background_audio: 1, organizer: 1, site_sections: 1, inventory_runs: 1, music_summary: 1 });
   const toml = await readFile(new URL('./wrangler.insights.toml', import.meta.url), 'utf8');
   assert.match(toml, /\[\[r2_buckets\]\]\s*\nbinding = "SLEEP"\s*\nbucket_name = "forja-sleep"/);

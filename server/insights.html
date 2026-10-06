@@ -938,6 +938,38 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
  .account{gap:12px}
  .account .btn .ic{display:none}
 }
+
+/* ── ECRAN · telefonul, pe viu (5.1): cadrul în stânga, cartea telefonului + tastele + consola în dreapta ── */
+.ecran-layout{display:grid;grid-template-columns:minmax(260px,380px) minmax(0,1fr);gap:18px;align-items:start}
+.ecran-phone{position:relative;margin:0;aspect-ratio:9/19.5;max-height:calc(100svh - 190px);min-height:420px;border-radius:22px;border:1px solid var(--stroke3);background:#0D0D10;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.45),inset 0 0 0 6px #141517;touch-action:none;user-select:none;cursor:crosshair}
+.ecran-phone.live{border-color:rgba(47,190,113,.45)}
+.ecran-img{display:block;width:100%;height:100%;object-fit:contain;background:#000;pointer-events:none}
+.ecran-idle{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;text-align:center}
+.ecran-idle .state-title{font-size:22px}
+.ecran-idle .state-text{max-width:28ch}
+.ecran-ripple{position:absolute;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;border:2px solid var(--amber);pointer-events:none;opacity:0}
+.ecran-ripple.go{animation:ecran-ripple .45s ease-out both}
+@keyframes ecran-ripple{0%{transform:scale(.4);opacity:.9}100%{transform:scale(1.6);opacity:0}}
+.ecran-panel{display:flex;flex-direction:column;gap:12px;min-width:0}
+.ecran-card{padding:16px}
+.ecran-keys{display:flex;flex-wrap:wrap;gap:8px}
+.ecran-row{display:flex;gap:8px;align-items:stretch}
+.ecran-row .field{min-height:40px;padding:8px 12px;font-size:14px}
+.ecran-row .btn{height:40px;padding:0 14px;white-space:nowrap}
+.ecran-console{display:flex;flex-direction:column;border:1px solid var(--stroke2);border-radius:var(--r-card);background:#0D0D0F;overflow:hidden}
+.ecran-out{margin:0;padding:12px 14px;height:260px;overflow:auto;font:500 12.5px/1.5 var(--mono);color:#D9D7D2;white-space:pre-wrap;word-break:break-word}
+.ecran-out .in{color:var(--amber)}
+.ecran-out.ecran-snippet{height:auto;border:1px solid var(--stroke2);border-radius:var(--r-btn);margin:10px 0}
+.ecran-cmdline{display:flex;align-items:center;margin:0;border-top:1px solid var(--stroke2)}
+.ecran-prompt{padding:0 0 0 14px;color:var(--amber);font:700 13px/1 var(--mono)}
+.ecran-cmd{flex:1;min-width:0;height:44px;padding:0 12px;border:0;outline:0;background:transparent;color:var(--text);font:500 13px/1 var(--mono)}
+.ecran-cmd:focus{box-shadow:inset 0 -2px 0 var(--olive2)}
+.ic.rot-up{transform:rotate(90deg)}.ic.rot-down{transform:rotate(-90deg)}
+@media (max-width:1023px){
+ .ecran-layout{grid-template-columns:1fr}
+ .ecran-phone{max-height:62svh;min-height:300px;margin:0 auto;width:min(100%,360px);aspect-ratio:9/18}
+ .ecran-out{height:200px}
+}
 @media (prefers-reduced-motion:reduce){
  *,*::before,*::after{animation:none!important;transition:none!important}
 }
@@ -994,6 +1026,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   <section id="s-muzica" class="section" aria-labelledby="t-muzica" hidden></section>
   <section id="s-paza" class="section" aria-labelledby="t-paza" hidden></section>
   <section id="s-concentrare" class="section" aria-labelledby="t-concentrare" hidden></section>
+  <section id="s-ecran" class="section" aria-labelledby="t-ecran" hidden></section>
   <section id="s-cont" class="section" aria-labelledby="t-cont" hidden></section>
  </div>
  <nav id="tabbar" class="tabbar" aria-label="Secțiuni principale"><div id="tabbar-items" class="tabbar-items"></div></nav>

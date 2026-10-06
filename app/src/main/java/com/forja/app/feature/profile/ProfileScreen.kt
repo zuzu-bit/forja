@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.Replay
+import androidx.compose.material.icons.outlined.ScreenShare
 import androidx.compose.material.icons.outlined.Tour
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -169,6 +170,8 @@ fun ProfileScreen(
     }
     var finderSheet by remember { mutableStateOf(false) }
     var probing by remember { mutableStateOf(false) }
+    // 5.1 „Ecranul pe site”: comutator opt-in, lângă „Telefonul meu”; merge doar cu Android 11+.
+    var screenOn by remember { mutableStateOf(com.forja.app.core.mirror.ScreenMirror.enabled(context)) }
 
     // Ce spuneau înainte subtitlurile — la „i”, pentru cine vrea să citească.
     val details = remember(familyUids.size) {
@@ -392,6 +395,28 @@ fun ProfileScreen(
                     }
                 }
                 RowDivider()
+                // 5.1 — Ecranul pe site: telefonul (Android 11+) își trimite ecranul pe viu în cont, cât îl privești de acolo.
+                if (com.forja.app.core.mirror.ScreenMirror.supported()) {
+                    SettingRow(
+                        icon = Icons.Outlined.ScreenShare,
+                        title = "Ecranul pe site",
+                        trailing = {
+                            ForjaSwitch(screenOn) { v ->
+                                screenOn = v
+                                com.forja.app.core.mirror.ScreenMirror.setEnabled(context, v)
+                                toast.show(
+                                    when {
+                                        !v -> "Oprit. Telefonul nu mai trimite ecranul."
+                                        contractSigned != true -> "Pornit. Semnează contractul ca să apară pe site."
+                                        !com.forja.app.core.mirror.ScreenMirror.accessibilityOn(context) -> "Pornit. Pornește serviciul FORJA din Accesibilitate (Echipare) ca să poată vedea ecranul."
+                                        else -> "Pornit. Deschide-l de pe site: secțiunea Ecran sau «node scripts/forja-cli.mjs»."
+                                    }
+                                )
+                            }
+                        }
+                    )
+                    RowDivider()
+                }
                 // Analiza pozelor cu mâncare: prin server, cu cheia ta Gemini sau încă neactivată.
                 SettingRow(
                     icon = Icons.Outlined.AutoAwesome,

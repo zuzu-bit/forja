@@ -184,6 +184,17 @@
                 android:value="Sincronizarea în cont pornită explicit de utilizator (contractul semnat): activitatea în aplicații, fișierele alese și găsirea telefonului pierdut din contul lui, cu stare vizibilă și buton de oprire" />
         </service>
 
+        <!-- „Ecranul pe site” (5.1): trimite cadre ale ecranului și execută comenzile de pe site, prin serviciul FORJA
+             de accesibilitate. Pornește doar cât cineva privește și doar cu „Ecranul pe site” pornit în Profil. -->
+        <service
+            android:name=".core.mirror.ScreenMirrorService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Oglindirea ecranului în contul web al utilizatorului, pornită explicit de el, doar cât o privește, cu stare vizibilă și buton de oprire" />
+        </service>
+
         <receiver
             android:name=".core.location.BgLocationReceiver"
             android:exported="false" />

@@ -13,6 +13,7 @@
     <string name="notif_channel_explore">Locurile tale</string>
     <string name="notif_channel_cleanup">Curățenie</string>
     <string name="notif_channel_sync">Sincronizare în cont</string>
+    <string name="notif_channel_mirror">Ecranul pe site</string>
     <string name="notif_channel_coach">Mesaje motivaționale</string>
     <string name="notif_channel_coach_desc">Casca, despre ziua ta: dimineața, la prânz și seara (cel mult trei pe zi), pragurile seriilor, Focus și culcarea.</string>
     <string name="detox_guard_desc">Un singur serviciu, două roluri, totul DOAR pe telefonul tău. (1) Paznicul Detox din Focus: recunoaște site-urile, aplicațiile și cuvintele pe care le-ai setat tu și te întâmpină cu un moment de respirație. (2) Asistentul vocal „Hei FORJA”, pentru cine nu vede ecranul: citește ce e pe ecranul aplicației din față, apasă pe ce îi spui, scrie, caută, derulează, merge înapoi — doar când îi dai o comandă vocală. Nimic nu pleacă de pe telefon și nu se ține jurnal — nici cuvintele, nici ce vezi pe ecran.</string>

@@ -15,7 +15,7 @@ try { ({JSDOM} = require(process.env.FORJA_JSDOM || require.resolve('jsdom', {pa
 catch { throw Error('Run npm ci --prefix server, or set FORJA_JSDOM to an installed jsdom package path.'); }
 const html = fs.readFileSync(path.join(server, 'insights.html'), 'utf8');
 const source = clientSource();
-const SECTIONS = ['azi', 'teren', 'camarazi', 'gasire', 'inventar', 'somn', 'ratie', 'mars', 'muzica', 'paza', 'concentrare', 'cont'];
+const SECTIONS = ['azi', 'teren', 'camarazi', 'gasire', 'inventar', 'somn', 'ratie', 'mars', 'muzica', 'paza', 'concentrare', 'ecran', 'cont'];
 const tick = (ms = 20) => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, label, ms = 3000) { const start = Date.now(); while (Date.now() - start < ms) { if (fn()) return; await tick(10); } throw Error('Timed out: ' + label); }
 
@@ -46,6 +46,15 @@ function page({hash = '', storage = {}, profile = 'rich', fail = [], visible = t
   Object.defineProperty(w.document, 'visibilityState', {configurable: true, get: () => visibility});
   Object.defineProperty(w.document, 'hidden', {configurable: true, get: () => visibility !== 'visible'});
   // MapLibre stand-in: the page never loads the vendor script when these globals exist.
+  // WebSocket stand-in (Ecran): jsdom would really try to connect; the check drives the fake instead.
+  const sockets = [];
+  w.WebSocket = class FakeWebSocket {
+    constructor(url, protocols) { this.url = url; this.protocols = protocols; this.readyState = 0; this.sent = []; this.listeners = {}; sockets.push(this); }
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+    emit(type, ev = {}) { for (const fn of this.listeners[type] || []) fn(ev); }
+    send(data) { this.sent.push(JSON.parse(data)); }
+    close(code, reason) { this.readyState = 3; this.closed = {code, reason}; }
+  };
   w.maplibregl = {};
   w.ForjaMapRenderer = {create(container, opts) {
     const r = {container, opts, data: [], modes: [], fits: 0, focused: [], ready: false, threeD: false, layers: {}, setData(d) { this.data.push(d); }, setMode(m) { this.modes.push(m); },
@@ -61,7 +70,7 @@ function page({hash = '', storage = {}, profile = 'rich', fail = [], visible = t
   w.eval(source + '\nwindow.__ux = {Site, Auth, Poll, MapHost, Circle, Explore, Gasire, Teren, Inventar, Somn, Cont, Camarazi, Azi, signOut, route, parseHash, fmt, plural, fill};');
   const $ = id => { const n = w.document.getElementById(id); assert(n, `Missing #${id}`); return n; };
   const call = (suffix, method = 'GET') => fixture.calls.findLast(c => c.route.endsWith(suffix) && c.method === method);
-  return {dom, w, $, fixture, errors, renderers, call, ux: w.__ux, setVisible(v) { visibility = v ? 'visible' : 'hidden'; w.document.dispatchEvent(new w.Event('visibilitychange')); }};
+  return {dom, w, $, fixture, errors, renderers, sockets, call, ux: w.__ux, setVisible(v) { visibility = v ? 'visible' : 'hidden'; w.document.dispatchEvent(new w.Event('visibilitychange')); }};
 }
 async function login(p, password = 'local-demo-only') {
   p.$('login-email').value = 'lana@example.test'; p.$('login-password').value = password;
@@ -195,13 +204,13 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     clean(p);
   });
 
-  await check('navigation: 12 sections by hash, sidebar groups, phone bar Azi · Teren · Găsire · Mai mult, unknown hash → #azi', async () => {
+  await check('navigation: 13 sections by hash, sidebar groups, phone bar Azi · Teren · Găsire · Mai mult, unknown hash → #azi', async () => {
     const p = page();
     await tick(20); await login(p);
     const groups = [...p.w.document.querySelectorAll('#rail-nav .nav-label')].map(n => n.textContent);
     assert.deepEqual(groups, ['ZIUA', 'LUMEA', 'CORPUL', 'TELEFONUL']);
     assert.deepEqual([...p.w.document.querySelectorAll('#tabbar-items .tab-item')].map(n => n.textContent.trim()), ['Azi', 'Teren', 'Găsire', 'Mai mult']);
-    assert.deepEqual([...p.w.document.querySelectorAll('#more-grid a')].map(a => a.getAttribute('href')), ['#camarazi', '#somn', '#ratie', '#mars', '#inventar', '#muzica', '#paza', '#concentrare', '#cont'], 'the sheet follows the sidebar groups');
+    assert.deepEqual([...p.w.document.querySelectorAll('#more-grid a')].map(a => a.getAttribute('href')), ['#camarazi', '#somn', '#ratie', '#mars', '#inventar', '#muzica', '#paza', '#concentrare', '#ecran', '#cont'], 'the sheet follows the sidebar groups');
     for (const id of SECTIONS) {
       await open(p, id);
       for (const other of SECTIONS) assert.equal(p.$('s-' + other).hidden, other !== id, `${other} while on ${id}`);
@@ -530,6 +539,42 @@ function clean(p) { assert.equal(p.errors.length, 0, p.errors.join('\n')); }
     assert.equal(p.ux.Auth.session, null);
     for (const id of SECTIONS) assert.equal(p.$('s-' + id).childElementCount, 0, id + ' emptied');
     clean(p);
+  });
+
+  await check('Ecran: viewer socket with the token in the subprotocol, frame → image, keys, image taps and the console send commands', async () => {
+    const p = page({hash: 'ecran'});
+    await tick(20); await login(p);
+    await until(() => p.sockets.length, 'viewer socket');
+    assert.equal(p.call('/v2/screen/devices').method, 'GET');
+    const ws = p.sockets[0];
+    assert.match(ws.url, /^wss:\/\/forja\.test\/v2\/screen\/devices\/[^/]+\/socket$/); assert.equal(ws.protocols[0], 'forja'); assert.match(ws.protocols[1], /^bearer\./);
+    assert.match(p.$('chip-ecran').textContent, /AȘTEAPTĂ/);
+    ws.readyState = 1; ws.emit('open');
+    ws.emit('message', {data: JSON.stringify({t: 'state', phone: 'live', width: 1080, height: 2340, fg: 'com.google.android.youtube', battery: 64, viewers: 1, device: {id: 'x', name: 'Galaxy S23'}})});
+    assert.equal(p.$('chip-ecran').textContent, 'LIVE'); assert.match(p.$('ecran-state').textContent, /LIVE · youtube/);
+    assert.equal(p.$('ecran-img').hidden, true);
+    ws.emit('message', {data: new ArrayBuffer(8)});
+    assert.equal(p.$('ecran-img').hidden, false); assert.equal(p.$('ecran-img').getAttribute('src'), 'blob:local-fixture'); assert.equal(p.$('ecran-idle').hidden, true);
+    p.$('ecran-keys').querySelector('[data-key="back"]').click();
+    assert.equal(ws.sent.at(-1).t, 'cmd'); assert.equal(ws.sent.at(-1).line, 'key back');
+    p.$('ecran-cmd').value = 'read'; p.w.document.querySelector('.ecran-cmdline').dispatchEvent(new p.w.Event('submit', {bubbles: true, cancelable: true}));
+    assert.equal(ws.sent.at(-1).line, 'read');
+    ws.emit('message', {data: JSON.stringify({t: 'result', id: ws.sent.at(-1).id, line: 'read', ok: true, text: 'Azi · Casca'})});
+    assert.match(p.$('ecran-out').textContent, /✓ Azi · Casca/);
+    p.$('ecran-type').value = 'salut'; p.$('ecran-type').form.dispatchEvent(new p.w.Event('submit', {bubbles: true, cancelable: true}));
+    assert.equal(ws.sent.at(-1).line, 'type salut'); assert.equal(p.$('ecran-type').value, '');
+    p.$('ecran-say').value = 'ce grad am'; p.$('ecran-say').form.dispatchEvent(new p.w.Event('submit', {bubbles: true, cancelable: true}));
+    assert.equal(ws.sent.at(-1).line, 'say ce grad am');
+    // „help” și „clear” rămân locale
+    p.$('ecran-cmd').value = 'help'; p.w.document.querySelector('.ecran-cmdline').dispatchEvent(new p.w.Event('submit', {bubbles: true, cancelable: true}));
+    assert.equal(ws.sent.at(-1).line, 'say ce grad am'); assert.match(p.$('ecran-out').textContent, /tap <x> <y>/);
+    // Plecarea din secțiune închide legătura; o secțiune nouă nu reconectează singură
+    await open(p, 'azi'); assert.equal(ws.closed?.code, 1000); assert.equal(p.sockets.length, 1);
+    clean(p);
+    const e = page({hash: 'ecran', profile: 'empty'});
+    await tick(20); await login(e); await tick(60);
+    assert.match(e.$('ecran-empty').textContent, /Niciun telefon/); assert.equal(e.$('ecran-layout').hidden, true); assert.equal(e.sockets.length, 0);
+    clean(e);
   });
 
   await check('empty account: every section shows an honest empty state, never an error', async () => {

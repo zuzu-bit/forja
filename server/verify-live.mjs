@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
-// Verificarea publicării site-ului FORJA 4.4 (forja-insights, /health version 19, DESIGN-4.4 §3.5).
+// Verificarea publicării site-ului FORJA 5.1 (forja-insights, /health version 20; DESIGN-4.4 §3.5, DESIGN-5.1 §3).
 const site = 'https://forja-insights.forja-22e7ea2d.workers.dev';
-const flags = { organizer_jobs: 4, journey: 1, explore_sync: 2, map3d: 1, content_ai: 2, sleep_audio: 1, visual_ui: 1, files_sync: 1, cleanup_schedule: 1, background_audio: 1, organizer: 1, organizer_modes: 1, social: 1, partners: 1, contacts: 2, lost_phone: 2, site_sections: 1, inventory_runs: 1, music_summary: 1 };
+const flags = { organizer_jobs: 4, journey: 1, explore_sync: 2, map3d: 1, content_ai: 2, sleep_audio: 1, visual_ui: 1, files_sync: 1, cleanup_schedule: 1, background_audio: 1, organizer: 1, organizer_modes: 1, social: 1, partners: 1, contacts: 2, lost_phone: 2, site_sections: 1, inventory_runs: 1, music_summary: 1, screen_mirror: 1 };
 const sha = value => createHash('sha256').update(value).digest('hex');
 async function get(path) {
   return fetch(site + path, { cache: 'no-store', signal: AbortSignal.timeout(20000) });
@@ -13,7 +13,7 @@ async function health() {
   if (!r.ok) throw Error('Site indisponibil: HTTP ' + r.status);
   const h = await r.json();
   if (h.service !== 'forja-insights' || !Number.isInteger(h.version)) throw Error('Adresa nu răspunde ca site FORJA.');
-  if (h.version > 19) throw Error('Site-ul este mai nou decât acest pachet. Publicarea a fost oprită.');
+  if (h.version > 20) throw Error('Site-ul este mai nou decât acest pachet. Publicarea a fost oprită.');
   return h;
 }
 if (process.argv.includes('--before')) {
@@ -22,7 +22,7 @@ if (process.argv.includes('--before')) {
 } else {
   const html = await readFile(new URL('./insights.html', import.meta.url), 'utf8');
   // Aceeași listă și ordine ca CLIENT_FILES din site-static.mjs și clients din scripts/ux-fixture.cjs.
-  const scripts = ['site-core.js.txt', 'site-mascot.js.txt', 'files-preview.js.txt', 'site-azi.js.txt', 'site-teren.js.txt', 'site-camarazi.js.txt', 'site-gasire.js.txt', 'site-inventar.js.txt', 'site-somn.js.txt', 'site-ratie.js.txt', 'site-mars.js.txt', 'site-muzica.js.txt', 'site-paza.js.txt', 'site-concentrare.js.txt', 'site-cont.js.txt', 'site-boot.js.txt'];
+  const scripts = ['site-core.js.txt', 'site-mascot.js.txt', 'files-preview.js.txt', 'site-azi.js.txt', 'site-teren.js.txt', 'site-camarazi.js.txt', 'site-gasire.js.txt', 'site-inventar.js.txt', 'site-somn.js.txt', 'site-ratie.js.txt', 'site-mars.js.txt', 'site-muzica.js.txt', 'site-paza.js.txt', 'site-concentrare.js.txt', 'site-ecran.js.txt', 'site-cont.js.txt', 'site-boot.js.txt'];
   const js = (await Promise.all(scripts.map(p => readFile(new URL(p, import.meta.url), 'utf8')))).join('\n');
   const assets = [['/insights/map-renderer.js', 'map-renderer.js.txt'], ['/insights/maplibre.js', 'vendor/maplibre-5.10.0.js.txt'], ['/insights/maplibre.css', 'vendor/maplibre-5.10.0.css.txt']];
   const fonts = ['barlowc-500', 'barlowc-600', 'barlowc-700', 'hanken-var', 'jbmono-var'];
@@ -30,7 +30,7 @@ if (process.argv.includes('--before')) {
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
       const h = await health();
-      if (h.version !== 19 || Object.entries(flags).some(([k, v]) => h[k] !== v)) throw Error('Versiunea sau funcțiile online nu corespund actualizării.');
+      if (h.version !== 20 || Object.entries(flags).some(([k, v]) => h[k] !== v)) throw Error('Versiunea sau funcțiile online nu corespund actualizării.');
       const page = await get('/insights');
       const client = await get('/insights/app.js');
       if (!page.ok || !client.ok || sha(await page.text()) !== sha(html) || sha(await client.text()) !== sha(js)) throw Error('Pagina sau interfața online diferă de fișierele verificate.');

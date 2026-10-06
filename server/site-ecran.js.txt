@@ -1,0 +1,229 @@
+// ECRAN · Telefonul, pe viu (FORJA 5.1, server/screen-mirror.mjs + SCREEN_MIRROR.md): cadrele ecranului vin pe WebSocket prin
+// aplicație (serviciul FORJA din Accesibilitate), atingerile și glisările se dau direct pe imagine, iar consola are aceeași
+// gramatică ca terminalul `forja` (tap, swipe, key, type, open, say, read, apps, shot, scroll, info — și sintaxa adb).
+// Nimic nu se păstrează: cadrele trăiesc doar cât e deschisă legătura; telefonul arată o notificare cât e privit.
+const ECRAN_KEYS = [['back', 'Înapoi', 'back'], ['home', 'Acasă', 'grid'], ['recents', 'Recente', 'copy'], ['notifications', 'Notificări', 'bell']];
+const Ecran = {
+  devices: null, device: null, body: null, ws: null, state: null, frameUrl: null, frames: 0, seq: 0, pending: new Map(), history: [], hi: 0, retry: null, help: null,
+  els: {},
+  mount(body) {
+    Ecran.body = body;
+    const e = Ecran.els;
+    e.img = h('img', {class: 'ecran-img', id: 'ecran-img', alt: 'Ecranul telefonului', draggable: 'false', hidden: true});
+    e.idle = h('div', {class: 'ecran-idle', id: 'ecran-idle'}, mascot({size: 96, state: 'thinking', hat: 'helmet'}), h('p', {class: 'state-title', text: 'Aștept telefonul.'}), h('p', {class: 'state-text', id: 'ecran-idle-text', text: 'Se conectează la următoarea bătaie, de obicei sub un minut.'}));
+    e.ripple = h('i', {class: 'ecran-ripple', hidden: true});
+    e.phone = h('figure', {class: 'ecran-phone', id: 'ecran-phone', 'aria-label': 'Ecranul telefonului; o atingere aici ajunge pe telefon'}, e.img, e.idle, e.ripple);
+    e.stateLine = h('p', {class: 'device-state', id: 'ecran-state'}, h('i', {class: 'dot off'}), h('span', {text: 'Se conectează…'}));
+    e.meta = h('div', {class: 'device-meta', id: 'ecran-meta'});
+    e.card = h('article', {class: 'card device ecran-card', id: 'ecran-card'});
+    e.out = h('pre', {class: 'ecran-out', id: 'ecran-out', 'aria-live': 'polite', text: 'Consola FORJA. Scrie „help” și apasă Enter.\n'});
+    e.cmd = h('input', {class: 'ecran-cmd', id: 'ecran-cmd', autocomplete: 'off', spellcheck: 'false', placeholder: 'tap 0.5 0.3 · say ce grad am · read', 'aria-label': 'Comandă pentru telefon'});
+    e.cmd.addEventListener('keydown', ev => {
+      if (ev.key === 'ArrowUp') { if (Ecran.hi > 0) { Ecran.hi--; e.cmd.value = Ecran.history[Ecran.hi]; } ev.preventDefault(); }
+      else if (ev.key === 'ArrowDown') { if (Ecran.hi < Ecran.history.length - 1) { Ecran.hi++; e.cmd.value = Ecran.history[Ecran.hi]; } else { Ecran.hi = Ecran.history.length; e.cmd.value = ''; } ev.preventDefault(); }
+    });
+    const form = h('form', {class: 'ecran-cmdline', onsubmit: ev => { ev.preventDefault(); const line = e.cmd.value.trim(); if (!line) return; e.cmd.value = ''; Ecran.history.push(line); Ecran.hi = Ecran.history.length; Ecran.console(line); }}, h('span', {class: 'ecran-prompt', text: '>'}), e.cmd);
+    e.typeInput = h('input', {class: 'field', id: 'ecran-type', autocomplete: 'off', placeholder: 'Scrie pe telefon…', 'aria-label': 'Text de scris pe telefon'});
+    e.sayInput = h('input', {class: 'field', id: 'ecran-say', autocomplete: 'off', placeholder: 'Spune-i Căștii… (ca „Hei FORJA”)', 'aria-label': 'Comandă vocală'});
+    const typeForm = h('form', {class: 'ecran-row', onsubmit: ev => { ev.preventDefault(); const t = e.typeInput.value; if (!t.trim()) return; e.typeInput.value = ''; Ecran.send('type ' + t); }}, e.typeInput, h('button', {type: 'submit', class: 'btn btn-secondary'}, 'Scrie'));
+    const sayForm = h('form', {class: 'ecran-row', onsubmit: ev => { ev.preventDefault(); const t = e.sayInput.value; if (!t.trim()) return; e.sayInput.value = ''; Ecran.send('say ' + t); }}, e.sayInput, h('button', {type: 'submit', class: 'btn btn-secondary'}, 'Spune'));
+    e.keys = h('div', {class: 'ecran-keys', id: 'ecran-keys'},
+      ...ECRAN_KEYS.map(([name, label, ic]) => h('button', {type: 'button', class: 'chip-btn', dataset: {key: name}, onclick: () => Ecran.send('key ' + name)}, icon(ic, 14), h('span', {text: label}))),
+      h('button', {type: 'button', class: 'chip-btn', onclick: () => Ecran.send('scroll up')}, icon('back', 14, 'rot-up'), h('span', {text: 'Sus'})),
+      h('button', {type: 'button', class: 'chip-btn', onclick: () => Ecran.send('scroll down')}, icon('back', 14, 'rot-down'), h('span', {text: 'Jos'})),
+      h('button', {type: 'button', class: 'chip-btn', onclick: () => Ecran.send('read')}, icon('eye', 14), h('span', {text: 'Citește'})),
+      h('button', {type: 'button', class: 'chip-btn', onclick: () => Ecran.send('apps')}, icon('grid', 14), h('span', {text: 'Aplicații'})),
+      h('button', {type: 'button', class: 'chip-btn', onclick: () => Ecran.send('shot')}, icon('photo', 14), h('span', {text: 'Cadru'})),
+      h('button', {type: 'button', class: 'chip-btn', onclick: () => Ecran.send('info')}, icon('info', 14), h('span', {text: 'Info'})));
+    e.panel = h('div', {class: 'ecran-panel', id: 'ecran-panel'}, e.card, e.keys, typeForm, sayForm, h('div', {class: 'ecran-console', id: 'ecran-console'}, e.out, form));
+    e.layout = h('div', {class: 'ecran-layout', id: 'ecran-layout'}, e.phone, e.panel);
+    e.empty = h('div', {id: 'ecran-empty', hidden: true});
+    body.append(e.empty, e.layout);
+    // Atingerea și glisarea pe imagine: fracții din ecran (telefonul le așază pe mărimea lui reală).
+    let down = null;
+    const at = ev => { const r = e.img.getBoundingClientRect(); if (!r.width || !r.height) return null; return {x: Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)), px: ev.clientX - r.left, py: ev.clientY - r.top}; };
+    e.phone.addEventListener('pointerdown', ev => { if (e.img.hidden) return; down = at(ev); if (down) { down.t = Date.now(); try { e.phone.setPointerCapture(ev.pointerId); } catch { /* fără captură */ } } });
+    e.phone.addEventListener('pointerup', ev => {
+      if (!down || e.img.hidden) { down = null; return; }
+      const up = at(ev); const d0 = down; down = null;
+      if (!up) return;
+      const dist = Math.hypot(up.px - d0.px, up.py - d0.py);
+      const f = v => v.toFixed(3);
+      if (dist < 12) { Ecran.ripple(d0.px, d0.py); Ecran.send('tap ' + f(d0.x) + ' ' + f(d0.y)); }
+      else { Ecran.ripple(up.px, up.py); Ecran.send('swipe ' + f(d0.x) + ' ' + f(d0.y) + ' ' + f(up.x) + ' ' + f(up.y) + ' ' + Math.min(5000, Math.max(80, Math.round(Date.now() - d0.t)))); }
+    });
+    e.phone.addEventListener('pointercancel', () => { down = null; });
+  },
+  ownChip: true,
+  enter(detail) {
+    Ecran.wanted = detail || Ecran.wanted || '';
+    Poll.every('ecran:devices', 30000, () => Ecran.load(), true);
+  },
+  leave() { Poll.stop('ecran:devices'); Ecran.disconnect(); },
+  async load() {
+    if (Site.current !== 'ecran') return;
+    let data;
+    try { data = await api('/v2/screen/devices'); }
+    catch (err) { if (err?.name === 'AbortError') return; if (!Ecran.devices) { fill(Ecran.els.empty, errorState(err?.message, () => Ecran.load())); Ecran.els.empty.hidden = false; Ecran.els.layout.hidden = true; } else toast(err?.message || 'Actualizarea nu a reușit.'); return; }
+    Ecran.devices = Array.isArray(data?.devices) ? data.devices : [];
+    Ecran.help = Array.isArray(data?.help) ? data.help : null;
+    if (!Ecran.devices.length) {
+      Ecran.disconnect();
+      setChip('ecran', {state: 'off'}, 'FĂRĂ TELEFON');
+      const signed = Site.links?.cont?.state === 'on';
+      fill(Ecran.els.empty, emptyState('Niciun telefon în gardă.', signed ? 'Deschide FORJA → Profil → Telefonul meu → Probă.' : 'Semnează contractul în FORJA. Telefonul apare aici singur.', null, 'idle'));
+      Ecran.els.empty.hidden = false; Ecran.els.layout.hidden = true;
+      return;
+    }
+    Ecran.els.empty.hidden = true; Ecran.els.layout.hidden = false;
+    const d = Ecran.devices.find(x => x.id === Ecran.wanted) || Ecran.devices.find(x => x.name && x.name.toLowerCase() === String(Ecran.wanted).toLowerCase()) || Ecran.devices[0];
+    const changed = !Ecran.device || Ecran.device.id !== d.id;
+    Ecran.device = d;
+    Ecran.renderCard();
+    if (changed) { Ecran.disconnect(); Ecran.connect(); }
+    else if (!Ecran.ws) Ecran.connect();
+  },
+  /** Starea afișată: ce zice legătura (live / waiting / off) peste ce știe lista (capabilitatea trimisă în bătaie). */
+  view() {
+    const d = Ecran.device, s = Ecran.state, cap = d?.capability, phone = s?.phone || d?.screen?.phone || 'off';
+    if (cap && cap.supported === false) return {tone: 'ember', line: 'ANDROID 11 SAU MAI NOU', chip: 'FĂRĂ ECRAN', sub: 'Telefonul nu poate trimite ecranul: cere Android 11.'};
+    if (cap && cap.enabled === false && phone !== 'live') return {tone: 'ember', line: 'OPRIT ÎN PROFIL', chip: 'OPRIT', sub: 'Pornește „Ecranul pe site” în FORJA → Profil → Telefonul meu.'};
+    if (phone === 'live') return {tone: 'live', line: 'LIVE' + (s?.fg ? ' · ' + appWord(s.fg) : ''), chip: 'LIVE'};
+    if (phone === 'waiting' || Ecran.ws) return {tone: 'warn', line: 'AȘTEPT TELEFONUL', chip: 'AȘTEAPTĂ', sub: d?.online ? 'Se conectează la următoarea bătaie, de obicei sub un minut.' : 'Telefonul e tăcut: descărcat, închis sau fără internet.'};
+    return {tone: 'off', line: 'FĂRĂ LEGĂTURĂ', chip: 'OPRIT', sub: 'Legătura se deschide când privești.'};
+  },
+  renderCard() {
+    const d = Ecran.device; if (!d) return;
+    const v = Ecran.view(), s = Ecran.state, e = Ecran.els;
+    setChip('ecran', {state: v.tone === 'off' ? 'off' : v.tone === 'warn' || v.tone === 'ember' ? 'stale' : 'on', lastAt: s?.frame_at || d.seen_at}, v.chip);
+    const meta = [];
+    if (s?.width && s?.height) meta.push(h('span', null, icon('phone', 14), s.width + '×' + s.height));
+    if (num(s?.battery) !== null) meta.push(h('span', {class: s.battery <= 15 ? 'low' : ''}, icon('battery', 14), fmt.int(s.battery) + '%'));
+    if (s?.viewers > 1) meta.push(h('span', null, icon('eye', 14), plural(s.viewers, 'privitor', 'privitori')));
+    if (Ecran.frames) meta.push(h('span', null, icon('photo', 14), plural(Ecran.frames, 'cadru', 'cadre')));
+    fill(e.card,
+      h('div', {class: 'device-head'}, h('span', {class: 'device-ic'}, icon('phone', 22)), h('span', {class: 'device-name', text: d.name || 'Telefonul meu'}),
+        Ecran.devices.length > 1 ? h('button', {type: 'button', class: 'icon-btn', 'aria-label': 'Alt telefon', onclick: () => Ecran.pick()}, icon('more', 20)) : null),
+      h('p', {class: 'device-state', id: 'ecran-state'}, h('i', {class: 'dot ' + (v.tone === 'off' ? 'off' : v.tone === 'warn' ? 'stale' : v.tone === 'ember' ? 'ember' : 'on') + (v.tone === 'live' ? ' pulse' : '')}), h('span', {text: v.line})),
+      v.sub ? h('p', {class: 'device-sub', text: v.sub}) : null,
+      meta.length ? h('div', {class: 'device-meta'}, meta) : null,
+      h('div', {class: 'device-actions'},
+        v.tone === 'live' || Ecran.ws ? btn('Oprește', () => Ecran.end(), 'btn btn-danger', 'stop') : btn('Conectează', () => Ecran.connect(), 'btn', 'play'),
+        btn('În terminal', () => Ecran.terminalSheet(), 'btn btn-secondary', 'key')));
+    e.idle.hidden = v.tone === 'live' && !e.img.hidden;
+    $('ecran-idle-text').textContent = v.sub || (v.tone === 'live' ? 'Primul cadru vine imediat.' : 'Se conectează la următoarea bătaie, de obicei sub un minut.');
+    e.phone.classList.toggle('live', v.tone === 'live');
+  },
+  pick() {
+    const ref = sheet('Care telefon?', h('div', {class: 'menu-list'}, ...Ecran.devices.map(d => h('button', {type: 'button', class: 'menu-row', onclick: () => { ref.close(); Ecran.wanted = d.id; Ecran.load(); }}, icon('phone', 18), h('span', {text: d.name + (d.online ? ' · în gardă' : ' · tăcut')})))), {stamp: 'ECRAN'});
+  },
+  terminalSheet() {
+    const d = Ecran.device;
+    sheet('Din terminal', h('div', {class: 'sheet-text'},
+      h('p', {text: 'Aceleași comenzi, din orice command prompt (Node 22), și pentru scripturi sau un agent:'}),
+      h('pre', {class: 'ecran-out ecran-snippet', text: 'node scripts/forja-cli.mjs login\nnode scripts/forja-cli.mjs devices\nnode scripts/forja-cli.mjs use "' + (d?.name || 'Telefonul meu') + '"\nnode scripts/forja-cli.mjs shot ecran.jpg\nnode scripts/forja-cli.mjs read\nnode scripts/forja-cli.mjs tap 0.5 0.3\nnode scripts/forja-cli.mjs shell input keyevent KEYCODE_BACK\nnode scripts/forja-cli.mjs sh'}),
+      h('p', {class: 'muted', text: 'Scriptul e în repo, la scripts/forja-cli.mjs; „forja help” arată tot.'})), {stamp: 'ECRAN'});
+  },
+  async connect() {
+    if (Ecran.ws || !Ecran.device || Site.current !== 'ecran') return;
+    clearTimeout(Ecran.retry); Ecran.retry = null;
+    let token;
+    try { token = await Auth.token(); } catch (err) { if (err?.name !== 'AbortError') toast(err.message); return; }
+    if (Site.current !== 'ecran' || Ecran.ws) return;
+    const url = location.origin.replace(/^http/, 'ws') + '/v2/screen/devices/' + encodeURIComponent(Ecran.device.id) + '/socket';
+    let ws;
+    try { ws = new WebSocket(url, ['forja', 'bearer.' + token]); } catch { Ecran.print('Browserul nu poate deschide legătura.'); return; }
+    try { ws.binaryType = 'arraybuffer'; } catch { /* implicit */ }
+    Ecran.ws = ws;
+    Ecran.renderCard();
+    ws.addEventListener('open', () => { if (Ecran.ws === ws) Ecran.print('Legătura e deschisă.'); });
+    ws.addEventListener('message', ev => { if (Ecran.ws === ws) Ecran.message(ev.data); });
+    ws.addEventListener('close', ev => {
+      if (Ecran.ws !== ws) return;
+      Ecran.ws = null; Ecran.state = null;
+      if (Site.current !== 'ecran') return;
+      Ecran.print(ev.code === 4000 ? 'Legătura s-a închis.' : ev.code === 4429 ? 'Prea mulți privitori.' : 'Legătura s-a întrerupt. Încerc din nou…');
+      Ecran.renderCard();
+      if (ev.code !== 4000) Ecran.retry = setTimeout(() => Ecran.connect(), 3000);
+    });
+    ws.addEventListener('error', () => { /* close urmează */ });
+  },
+  disconnect() {
+    clearTimeout(Ecran.retry); Ecran.retry = null;
+    const ws = Ecran.ws; Ecran.ws = null; Ecran.state = null;
+    if (ws) { try { ws.close(1000, 'bye'); } catch { /* deja închis */ } }
+    for (const [, p] of Ecran.pending) clearTimeout(p.timer);
+    Ecran.pending.clear();
+  },
+  async end() {
+    const d = Ecran.device; if (!d) return;
+    try { await api('/v2/screen/devices/' + encodeURIComponent(d.id) + '/session', {method: 'DELETE'}); toast('Oprit. Telefonul nu mai trimite ecranul.', true); }
+    catch (err) { if (err?.name !== 'AbortError') toast(err.message); }
+    Ecran.disconnect(); Ecran.frames = 0; Ecran.showFrame(null); Ecran.renderCard();
+  },
+  message(data) {
+    if (typeof data === 'string') {
+      let m = null; try { m = JSON.parse(data); } catch { return; }
+      if (!m || typeof m !== 'object') return;
+      if (m.t === 'state') { const was = Ecran.state?.phone; Ecran.state = m; Ecran.renderCard(); if (m.phone === 'live' && was !== 'live') Ecran.print('Telefonul e conectat.'); if (m.phone !== 'live' && was === 'live') Ecran.print('Telefonul s-a deconectat.'); return; }
+      if (m.t === 'result') { const p = Ecran.pending.get(m.id); if (p) { clearTimeout(p.timer); Ecran.pending.delete(m.id); } Ecran.result(m); return; }
+      if (m.t === 'error') { Ecran.print('✗ ' + (m.message || 'eroare')); return; }
+      return;
+    }
+    Ecran.showFrame(data);
+  },
+  showFrame(buf) {
+    const e = Ecran.els;
+    if (!buf) { e.img.hidden = true; e.img.removeAttribute('src'); if (Ecran.frameUrl) { try { URL.revokeObjectURL(Ecran.frameUrl); } catch { /* nimic */ } Ecran.frameUrl = null; } e.idle.hidden = false; return; }
+    const url = URL.createObjectURL(new Blob([buf]));
+    const old = Ecran.frameUrl; Ecran.frameUrl = url;
+    e.img.src = url; e.img.hidden = false; e.idle.hidden = true;
+    if (old) { try { URL.revokeObjectURL(old); } catch { /* nimic */ } }
+    Ecran.frames++;
+    if (Ecran.frames === 1 || Ecran.frames % 20 === 0) Ecran.renderCard();
+  },
+  ripple(px, py) {
+    const r = Ecran.els.ripple; r.hidden = false; r.style.left = px + 'px'; r.style.top = py + 'px'; r.classList.remove('go'); void r.offsetWidth; r.classList.add('go');
+    clearTimeout(Ecran.rippleTimer); Ecran.rippleTimer = setTimeout(() => { r.hidden = true; }, 500);
+  },
+  /** O comandă trimisă pe legătură (butoane, imagine, consolă); fără legătură, pe HTTP (care cheamă telefonul). */
+  send(line) {
+    const ws = Ecran.ws;
+    Ecran.print('> ' + line, 'in');
+    if (ws && ws.readyState === 1) {
+      const id = 'c' + (++Ecran.seq);
+      const timer = setTimeout(() => { if (Ecran.pending.delete(id)) Ecran.print('✗ Telefonul nu a răspuns în 20 s.'); }, 20000);
+      Ecran.pending.set(id, {line, timer});
+      try { ws.send(JSON.stringify({t: 'cmd', id, line})); } catch { Ecran.print('✗ Legătura s-a rupt.'); }
+      return;
+    }
+    const d = Ecran.device; if (!d) return;
+    api('/v2/screen/devices/' + encodeURIComponent(d.id) + '/command', {method: 'POST', body: {line}})
+      .then(r => Ecran.result(r))
+      .catch(err => { if (err?.name === 'AbortError') return; Ecran.print('✗ ' + (err.message || 'nu a mers')); if (err.status === 409) { Ecran.state = {t: 'state', phone: 'waiting'}; Ecran.renderCard(); if (!Ecran.ws) Ecran.connect(); } });
+  },
+  /** Rândurile consolei: „help” și „clear” sunt locale; restul pleacă la telefon. */
+  console(line) {
+    const v = line.split(/\s+/)[0].toLowerCase();
+    if (v === 'help' || v === 'ajutor' || v === '?') { Ecran.print((Ecran.help || ['tap <x> <y>', 'swipe <x1> <y1> <x2> <y2> [ms]', 'key back|home|recents', 'type <text>', 'open <aplicație>', 'say <comandă>', 'read', 'apps', 'shot', 'scroll up|down', 'info']).map(x => '  ' + x).join('\n') + '\n  clear · help'); return; }
+    if (v === 'clear' || v === 'cls') { Ecran.els.out.textContent = ''; return; }
+    Ecran.send(line);
+  },
+  result(r) {
+    let text = (r.ok ? '✓ ' : '✗ ') + (r.text || (r.ok ? 'gata' : 'nu a mers'));
+    if (r.data?.apps) text += '\n' + r.data.apps.map(a => '  ' + String(a.label || '').padEnd(26) + ' ' + (a.pkg || '')).join('\n');
+    if (r.data?.info) text += '\n' + Object.entries(r.data.info).map(([k, v]) => '  ' + String(k).padEnd(10) + ' ' + String(v)).join('\n');
+    Ecran.print(text);
+  },
+  print(text, cls = '') {
+    const out = Ecran.els.out; if (!out) return;
+    const line = h('span', {class: cls, text: text + '\n'});
+    out.append(line);
+    while (out.childNodes.length > 400) out.removeChild(out.firstChild);
+    out.scrollTop = out.scrollHeight;
+  },
+  reset() { Ecran.disconnect(); Ecran.devices = null; Ecran.device = null; Ecran.frames = 0; Ecran.wanted = ''; if (Ecran.els.img) Ecran.showFrame(null); }
+};
+/** Numele aplicației din față, din pachet („com.google.android.youtube” → „youtube”). */
+function appWord(pkg) { const p = String(pkg || ''); if (/^com\.forja\.app/.test(p)) return 'FORJA'; const parts = p.split('.'); return (parts[parts.length - 1] || p).slice(0, 24); }
+Site.register('ecran', Ecran);

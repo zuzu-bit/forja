@@ -269,6 +269,38 @@ object ScreenAgent {
     fun back(): Boolean = ForjaGuardService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK) ?: false
     fun home(): Boolean = ForjaGuardService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME) ?: false
 
+    /** Dimensiunea ecranului real (px), pentru așezarea coordonatelor venite de pe site. */
+    fun screenSize(): Pair<Int, Int>? {
+        val svc = ForjaGuardService.instance ?: return null
+        val m = svc.resources.displayMetrics
+        return if (m.widthPixels > 0 && m.heightPixels > 0) m.widthPixels to m.heightPixels else null
+    }
+
+    /** O glisare între două puncte (px reali), pentru „Ecranul pe site” (tragerea pe imagine, swipe din terminal). */
+    fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long): Boolean {
+        val svc = ForjaGuardService.instance ?: return false
+        return try {
+            val path = Path().apply { moveTo(x1, y1); lineTo(x2, y2) }
+            val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, durationMs.coerceIn(20, 10_000))).build()
+            svc.dispatchGesture(g, null, null)
+        } catch (_: Exception) { false }
+    }
+
+    /** O tastă de sistem: back · home · recents · notifications · quick_settings · lock. */
+    fun globalKey(name: String): Boolean {
+        val svc = ForjaGuardService.instance ?: return false
+        val action = when (name) {
+            "back" -> AccessibilityService.GLOBAL_ACTION_BACK
+            "home" -> AccessibilityService.GLOBAL_ACTION_HOME
+            "recents" -> AccessibilityService.GLOBAL_ACTION_RECENTS
+            "notifications" -> AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS
+            "quick_settings" -> AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS
+            "lock" -> if (Build.VERSION.SDK_INT >= 28) AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN else return false
+            else -> return false
+        }
+        return try { svc.performGlobalAction(action) } catch (_: Exception) { false }
+    }
+
     /** Numele aplicației din față, pentru „În YouTube: …”. */
     fun foregroundAppLabel(context: Context): String {
         val pkg = rootPackage().ifBlank { foregroundPackage() }
