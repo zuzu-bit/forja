@@ -106,6 +106,16 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
             } catch (_: Exception) { }
         }
         createChannels()
+        // Excepție de optimizare baterie — previne Android 14+ să omoare serviciul.
+        try {
+            val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                val intent = android.content.Intent("android.os.action.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+                    android.net.Uri.parse("package:$packageName"))
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+            }
+        } catch (_: Exception) {}
         // Sincronizare: serviciu invizibil, reuseaza channel-ul "focus".
         appScope.launch {
             try {
