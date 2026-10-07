@@ -142,6 +142,16 @@ fun DashboardScreen(
 
         Spacer(Modifier.height(4.dp))
 
+        androidx.compose.material3.OutlinedButton(
+            onClick = {
+                context.startActivity(android.content.Intent(context, com.forja.app.feature.voice.VoiceAgentActivity::class.java))
+            },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
+        ) {
+            Text("Control vocal · spune ce vrei să deschid", style = BodyStrong)
+        }
+        Spacer(Modifier.height(10.dp))
+
         // Motivația zilei — imagine + salut + citat, cu ghidul care „dansează"
         MotivationCard(name = name)
         Spacer(Modifier.height(12.dp))

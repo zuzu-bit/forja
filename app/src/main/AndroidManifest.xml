@@ -31,6 +31,13 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <queries>
+        <package android:name="com.google.android.youtube" />
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -52,6 +59,7 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.Forja">
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/voice_shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -66,6 +74,39 @@
             android:taskAffinity="com.forja.app.focusblock"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.Forja" />
+
+        <activity
+            android:name=".feature.voice.VoiceAgentActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Forja" />
+
+        <service
+            android:name=".core.voice.VoiceAgentService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <service
+            android:name=".core.voice.ui.ForjaVoiceAccessibilityService"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:label="@string/voice_accessibility_label">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/forja_voice_config" />
+        </service>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.voice.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/voice_file_paths" />
+        </provider>
 
         <service
             android:name=".core.location.GoTrackService"
