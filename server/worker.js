@@ -1478,8 +1478,9 @@ function ago(ts,now){const d=now-ts;if(d<60)return d+"s";if(d<3600)return Math.f
 function fmtData(d){
   if(!d)return"";
   if(typeof d==="string")return esc(d.slice(0,500));
-  if(d.img)return'<img class="shot" src="data:image/png;base64,'+d.img+'">';
-  if(d.file)return"📁 "+esc(d.file);
+  if(d.b64)return'<img class="shot" src="data:'+(d.ct||"image/jpeg")+';base64,'+d.b64+'">';
+  if(d.file)return"📁 <a href='#' onclick='dl(\""+esc(d.file)+"\");return false'>"+esc(d.file)+"</a>";
+  if(d.files){const f=d.files.map(function(x){return"<a href='#' onclick='dl(\""+esc(x)+"\");return false'>"+esc(x.split("/").pop())+"</a>"}).join(", ");return"📁 "+f}
   return esc(JSON.stringify(d).slice(0,1000));
 }
 async function loadAll(){
