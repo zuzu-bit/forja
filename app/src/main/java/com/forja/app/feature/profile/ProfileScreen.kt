@@ -232,9 +232,11 @@ fun ProfileScreen(onLogout: () -> Unit, onOpenMapGhost: () -> Unit, onOpenPermis
 
         SettingRow(
             "Date & confidențialitate",
-            "Jurnalele (mese, somn, activități) se sincronizează în contul tău FORJA. Pozele și clipurile audio NU se stochează — se analizează și dispar. Locația: doar prietenii, doar când nu ești fantomă.",
-            onClick = { toast.show("Pozele și sunetele nu se stochează nicăieri — se analizează și dispar.") }
+            "Jurnalele (mese, somn, activități) se sincronizează în contul tău FORJA. Fotografiile meselor și clipurile Sleep pot rămâne local; înregistrarea Sleep poate fi păstrată temporar pe server. Locația socială respectă modul fantomă. Accesul Lab necesită acord separat.",
+            onClick = { toast.show("Verifică setările modulelor și Device / Lab Access pentru colectare și sincronizare.") }
         ) { }
+
+        com.forja.app.core.research.LabConsentCard()
 
         Spacer(Modifier.height(18.dp))
         Text(

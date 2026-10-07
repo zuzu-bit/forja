@@ -3,6 +3,8 @@
 // lor de cont FORJA (Firebase), iar serverul analizează cu AI-ul companiei.
 
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { handleResearch } from "./research.js";
+export { ResearchRegistry, ResearchDevice } from "./research.js";
 
 const FIREBASE_PROJECT = "forja-65093";
 const JWKS = createRemoteJWKSet(
@@ -21,6 +23,22 @@ async function requireUser(request) {
   } catch (_) {
     return null;
   }
+}
+
+// Research carries verified custom claims; ordinary profile fields never grant lab roles.
+async function requireResearchActor(request) {
+  const auth = request.headers.get("Authorization") || "";
+  if (!auth.startsWith("Bearer ")) return null;
+  try {
+    const { payload } = await jwtVerify(auth.slice(7), JWKS, {
+      algorithms: ["RS256"], issuer: `https://securetoken.google.com/${FIREBASE_PROJECT}`, audience: FIREBASE_PROJECT,
+    });
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof payload.sub !== "string" || !payload.sub.length || payload.sub.length > 128 ||
+        !Number.isInteger(payload.exp) || payload.exp <= now || !Number.isInteger(payload.iat) || payload.iat > now + 60 ||
+        !Number.isInteger(payload.auth_time) || payload.auth_time > now + 60 || payload.auth_time < 0) return null;
+    return { uid: payload.sub, labOrganiser: payload.labOrganiser === true, tokenExpiresAt: payload.exp * 1000 };
+  } catch (_) { return null; }
 }
 
 function json(data, status = 200) {
@@ -774,6 +792,9 @@ function adminPage() {
 }
 
 async function route(request, env, url) {
+    if (url.pathname === "/research" || url.pathname === "/research/cli.js" || url.pathname.startsWith("/v1/research/")) {
+      return handleResearch(request, env, requireResearchActor);
+    }
     if (request.method === "GET" && url.pathname === "/") {
       return json({
         ok: true,

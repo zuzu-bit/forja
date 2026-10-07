@@ -21,6 +21,9 @@ import com.forja.app.ForjaApp
 import com.forja.app.MainActivity
 import com.forja.app.core.data.db.SleepEventEntity
 import com.forja.app.core.data.db.SleepSessionEntity
+import com.forja.app.core.research.recordLabEvent
+import com.forja.app.core.research.captureLabDevice
+import com.forja.app.core.research.recordLabEventForDevice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,7 +42,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * Somn à la Sleep as Android — totul LOCAL, nimic în cloud:
+ * Somn à la Sleep as Android, cu jurnal local și analiza/sincronizarea FORJA existentă:
  * · microfonul detectează sforăit/vorbit și salvează clipuri de 5s pe telefon
  * · accelerometrul numără mișcările → cicluri de somn (hipnogramă estimată)
  * · alarma deșteaptă: sună în fereastra de somn ușor, nu în mijlocul somnului profund
@@ -109,6 +112,7 @@ class SleepTrackService : Service(), SensorEventListener {
         val app = ForjaApp.from(this)
         app.presence.manualState = "sleep"
         app.auth.currentUid?.let { app.presence.publishState(it, "sleep") }
+        val labDeviceId = app.captureLabDevice("SLEEP")
         sessionStartAt = System.currentTimeMillis()
         scope.launch {
             val existing = app.db.sleepDao().activeSessionOnce()
@@ -116,6 +120,8 @@ class SleepTrackService : Service(), SensorEventListener {
                 SleepSessionEntity(startAt = sessionStartAt)
             )
             if (existing != null) sessionStartAt = existing.startAt
+            app.recordLabEventForDevice(labDeviceId, "SLEEP", if (existing == null) "sleep_started" else "sleep_resumed",
+                System.currentTimeMillis(), "sleepSessionId" to sessionId, "startAt" to sessionStartAt)
             // Înregistrarea completă a nopții (AAC) — pornită după ce știm sesiunea.
             try {
                 val dir = File(filesDir, "sleep_full").apply { mkdirs() }
@@ -281,6 +287,7 @@ class SleepTrackService : Service(), SensorEventListener {
     /** Sforăit — sigur pe telefon, fără server, fără transcriere. */
     private fun saveSnore(at: Long, durationS: Int, intensity: Int) {
         val app = ForjaApp.from(this)
+        val labDeviceId = app.captureLabDevice("SLEEP")
         val (_, path) = snapshotClip()
         scope.launch {
             app.db.sleepDao().insertEvent(
@@ -289,13 +296,20 @@ class SleepTrackService : Service(), SensorEventListener {
                     durationS = durationS, intensity = intensity, clipPath = path, transcript = null
                 )
             )
+            app.recordLabEventForDevice(labDeviceId, "SLEEP", "sleep_audio_event", at,
+                "sleepSessionId" to sessionId, "classification" to "snore",
+                "durationS" to durationS, "intensity" to intensity, "originalOnDevice" to (path != null))
         }
     }
 
     /** Vorbit — serverul (Whisper) confirmă vorbirea REALĂ; altfel rămâne „Sunet", nu inventăm. */
     private fun saveTalk(at: Long, intensity: Int) {
         val app = ForjaApp.from(this)
+        val labDeviceId = app.captureLabDevice("SLEEP")
         val (wavBytes, path) = snapshotClip()
+        app.recordLabEventForDevice(labDeviceId, "SLEEP", "sleep_audio_event", at,
+            "sleepSessionId" to sessionId, "classification" to "sound",
+            "durationS" to 5, "intensity" to intensity, "originalOnDevice" to (path != null))
         scope.launch {
             var type = "sound"
             var transcript: String? = null
@@ -312,6 +326,9 @@ class SleepTrackService : Service(), SensorEventListener {
                     durationS = 5, intensity = intensity, clipPath = path, transcript = transcript
                 )
             )
+            app.recordLabEventForDevice(labDeviceId, "SLEEP", "sleep_audio_classified", at,
+                "sleepSessionId" to sessionId, "classification" to type,
+                "durationS" to 5, "intensity" to intensity, "transcript" to transcript)
         }
     }
 
@@ -361,6 +378,8 @@ class SleepTrackService : Service(), SensorEventListener {
     }
 
     private fun fireAlarm() {
+        ForjaApp.from(this).recordLabEvent("SLEEP", "wake_event", System.currentTimeMillis(),
+            "sleepSessionId" to sessionId, "reason" to "smart_alarm")
         val i = Intent(this, AlarmActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -397,8 +416,11 @@ class SleepTrackService : Service(), SensorEventListener {
         val app = ForjaApp.from(this)
         app.presence.manualState = null
         app.auth.currentUid?.let { app.presence.publishState(it, "idle") }
+        val labDeviceId = app.captureLabDevice("SLEEP")
         val moves = movements
         val moveTimes = movementTimes.toList()
+        app.recordLabEvent("SLEEP", "sleep_finished", System.currentTimeMillis(),
+            "sleepSessionId" to sessionId, "movements" to moves)
         scope.launch {
             val dao = app.db.sleepDao()
             dao.activeSessionOnce()?.let { s ->
@@ -444,6 +466,12 @@ class SleepTrackService : Service(), SensorEventListener {
                     summary = summary, recordedUntil = recordedUntil
                 )
                 dao.update(updated)
+                app.recordLabEventForDevice(labDeviceId, "SLEEP", "sleep_report", end,
+                    "sleepSessionId" to s.id, "startAt" to s.startAt, "endAt" to end,
+                    "score" to score, "deepMin" to deep, "lightMin" to light, "remMin" to rem,
+                    "movements" to moves, "snoreEvents" to snoreCount,
+                    "talkEvents" to talkCount, "soundEvents" to events.count { it.type == "sound" },
+                    "summary" to summary, "phases" to phases, "estimated" to true)
                 // Raportul urcă în baza companiei — cifrele + rezumatul, nu audio-ul brut.
                 try {
                     com.forja.app.core.data.CloudSync.sleep(
@@ -511,6 +539,8 @@ class SleepTrackService : Service(), SensorEventListener {
             lastMovementAt = now
             movements++
             movementTimes.add(now)
+            ForjaApp.from(this).recordLabEvent("SLEEP", "sleep_movement", now,
+                "sleepSessionId" to sessionId, "movements" to movements, "delta" to delta.toDouble())
             if (movementTimes.size > 2000) movementTimes.removeAt(0)
         }
     }
@@ -524,7 +554,7 @@ class SleepTrackService : Service(), SensorEventListener {
         return NotificationCompat.Builder(this, "sleep")
             .setSmallIcon(android.R.drawable.star_on)
             .setContentTitle("FORJA veghează somnul")
-            .setContentText("Sunet + mișcare, analizate local. Nimic nu pleacă de pe telefon.")
+            .setContentText("Sunet + mișcare. Analiză și sincronizare conform setărilor FORJA.")
             .setOngoing(true)
             .setContentIntent(pi)
             .build()

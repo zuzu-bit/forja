@@ -32,7 +32,8 @@ Notă despre release: pagina de release afișează starea acestor servicii la mo
 - **UI**: Jetpack Compose, design tokens exacți din handoff (culori, Archivo Expanded /
   Hanken Grotesk / JetBrains Mono ca fonturi variabile, cele 3 arcuri spring: snappy/natural/gentle).
 - **Local (pe telefon)**: Room — antrenamente, serii, mese, somn, activități, reguli Focus.
-  DataStore — preferințe. Mesele și somnul NU pleacă de pe telefon.
+  DataStore — preferințe. Jurnalele confirmate de mese, somn și activități au și
+  sincronizarea privată existentă în cont; analiza foto/audio folosește fluxurile explicite FORJA.
 - **Cloud (între prieteni)**: Firebase Auth (email+parolă) + Firestore — profil, cod de
   invitație, prietenii (reciproc, prin cod), poziția live (doar când nu ești fantomă), energie (kudos).
 - **Hartă**: osmdroid + tiles CARTO dark cu tentă caldă (paleta din prototip), markeri cu
@@ -55,6 +56,19 @@ app/src/main/java/com/forja/app/
   feature/             splash, onboarding, auth, dashboard, workout, nutrition,
                        sleep, map, focus, profile
 ```
+
+## Device / Lab Access — Remote Android Research
+
+Extensia Research este separată de fitness/lifestyle și dezactivată implicit. Asocierea
+cu un laborator necesită o invitație emisă de organizator, contul Firebase și acordul
+participantului pentru fiecare sursă. Observarea activă are o notificare persistentă
+cu oprire; Profile → Device / Lab Access arată permisiunile și starea sincronizării.
+
+Pagina `/research` a serverului oferă Live, History și un CLI cu comenzi validate.
+Un jurnal Room separat păstrează evenimentele înainte de sincronizare; backend-ul
+Cloudflare păstrează istoricul și deduplică retry-urile după `eventId`.
+Configurarea, limitele Android, comenzile și verificările sunt descrise în
+[`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 ## Dezvoltare locală
 

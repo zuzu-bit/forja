@@ -8,6 +8,8 @@ import com.forja.app.core.data.db.ExerciseEntity
 import com.forja.app.core.data.db.PlanEntity
 import com.forja.app.core.data.db.SetLogEntity
 import com.forja.app.core.data.db.WorkoutSessionEntity
+import com.forja.app.core.research.captureLabDevice
+import com.forja.app.core.research.recordLabEventForDevice
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -90,10 +92,13 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
             exPos = fromExercise.coerceIn(0, exs.size - 1),
             startedAt = System.currentTimeMillis()
         )
+        val labDeviceId = forja.captureLabDevice("ACTIVITY")
         viewModelScope.launch {
             sessionId = dao.insertSession(
                 WorkoutSessionEntity(planId = plan.id, planName = plan.name, startedAt = System.currentTimeMillis())
             )
+            forja.recordLabEventForDevice(labDeviceId, "ACTIVITY", "workout_started", _live.value.startedAt,
+                "workoutId" to sessionId, "planId" to plan.id, "planName" to plan.name)
         }
     }
 
@@ -109,6 +114,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     fun finishSet() {
         val s = _live.value
         val ex = s.current ?: return
+        val labDeviceId = forja.captureLabDevice("ACTIVITY")
         viewModelScope.launch {
             dao.insertSetLog(
                 SetLogEntity(
@@ -116,6 +122,9 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                     setNo = s.setNo, reps = ex.reps, load = ex.load, at = System.currentTimeMillis()
                 )
             )
+            forja.recordLabEventForDevice(labDeviceId, "ACTIVITY", "workout_set_completed", System.currentTimeMillis(),
+                "workoutId" to sessionId, "exerciseId" to ex.id, "exerciseName" to ex.name,
+                "setNo" to s.setNo, "reps" to ex.reps, "load" to ex.load)
         }
         val done = s.totalSetsDone + 1
         if (s.setNo < ex.sets) {
@@ -168,6 +177,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
             )
             toast("Exercițiu terminat. Urmează: ${next.name}.")
         } else {
+            val labDeviceId = forja.captureLabDevice("ACTIVITY")
             val durS = (System.currentTimeMillis() - s.startedAt) / 1000
             val min = durS / 60
             val sec = durS % 60
@@ -176,6 +186,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
             viewModelScope.launch {
                 dao.session(sessionId)?.let {
                     dao.updateSession(it.copy(endedAt = System.currentTimeMillis(), totalSets = done))
+                    forja.recordLabEventForDevice(labDeviceId, "ACTIVITY", "workout_finished", System.currentTimeMillis(),
+                        "workoutId" to sessionId, "totalSets" to done, "durationS" to durS)
                 }
             }
         }
@@ -184,10 +196,14 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     fun endEarly() {
         restJob?.cancel()
         val s = _live.value
+        val labDeviceId = forja.captureLabDevice("ACTIVITY")
         if (s.totalSetsDone > 0) {
             viewModelScope.launch {
                 dao.session(sessionId)?.let {
                     dao.updateSession(it.copy(endedAt = System.currentTimeMillis(), totalSets = s.totalSetsDone))
+                    forja.recordLabEventForDevice(labDeviceId, "ACTIVITY", "workout_finished", System.currentTimeMillis(),
+                        "workoutId" to sessionId, "totalSets" to s.totalSetsDone,
+                        "endedEarly" to true, "durationS" to ((System.currentTimeMillis() - s.startedAt) / 1000))
                 }
             }
         }

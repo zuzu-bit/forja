@@ -38,6 +38,7 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
     lateinit var foodApi: OpenFoodFacts
     lateinit var geminiFood: GeminiFood
     lateinit var forjaApi: ForjaApi
+    lateinit var labResearch: com.forja.app.core.research.LabController
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
@@ -55,6 +56,7 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         foodApi = OpenFoodFacts()
         geminiFood = GeminiFood()
         forjaApi = ForjaApi()
+        labResearch = com.forja.app.core.research.LabController(this, appScope)
 
         // Locația în fundal (dacă utilizatorul a activat-o și permisiunea există).
         com.forja.app.core.location.BgLocation.registerIfReady(this)

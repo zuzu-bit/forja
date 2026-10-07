@@ -7,6 +7,10 @@ import com.forja.app.ForjaApp
 import com.forja.app.core.data.db.MealEntity
 import com.forja.app.core.network.FoodProduct
 import com.forja.app.core.util.Fmt
+import com.forja.app.core.research.recordLabEvent
+import com.forja.app.core.research.recordLabMeal
+import com.forja.app.core.research.captureLabDevice
+import com.forja.app.core.research.recordLabEventForDevice
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -59,6 +63,7 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
     /** Cod de bare scanat → valori exacte din OpenFoodFacts. */
     fun onBarcode(code: String) {
         if (_lookupBusy.value || _pending.value != null) return
+        forja.recordLabEvent("NUTRITION", "barcode_scanned", System.currentTimeMillis(), "barcode" to code)
         _lookupBusy.value = true
         _lookupError.value = null
         viewModelScope.launch {
@@ -97,6 +102,7 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
     /** Salvează cu porția aleasă + sincronizează în baza companiei. */
     fun confirmPending(mealType: Int, grams: Int) {
         val p = _pending.value ?: return
+        val labDeviceId = forja.captureLabDevice("NUTRITION")
         val f = grams / 100.0
         viewModelScope.launch {
             val meal = MealEntity(
@@ -115,12 +121,16 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
             )
             val id = dao.insert(meal)
             com.forja.app.core.data.CloudSync.meal(forja.auth.currentUid, meal.copy(id = id))
+            forja.recordLabMeal(meal.copy(id = id), labDeviceId)
+            forja.recordLabEventForDevice(labDeviceId, "NUTRITION", "product_added", meal.at,
+                "mealId" to id, "name" to meal.name, "barcode" to meal.barcode, "grams" to grams)
             _pending.value = null
         }
     }
 
     /** Intrare manuală simplă — onestă: sursă MANUAL. */
     fun addManual(mealType: Int, name: String, kcal: Int, protein: Int, carbs: Int, fat: Int, grams: Int) {
+        val labDeviceId = forja.captureLabDevice("NUTRITION")
         viewModelScope.launch {
             val meal = MealEntity(
                 epochDay = Fmt.epochDay(), mealType = mealType, name = name,
@@ -129,13 +139,16 @@ class NutritionViewModel(app: Application) : AndroidViewModel(app) {
             )
             val id = dao.insert(meal)
             com.forja.app.core.data.CloudSync.meal(forja.auth.currentUid, meal.copy(id = id))
+            forja.recordLabMeal(meal.copy(id = id), labDeviceId)
         }
     }
 
     fun deleteMeal(id: Long) {
+        val labDeviceId = forja.captureLabDevice("NUTRITION")
         viewModelScope.launch {
             dao.delete(id)
             com.forja.app.core.data.CloudSync.deleteMeal(forja.auth.currentUid, id)
+            forja.recordLabEventForDevice(labDeviceId, "NUTRITION", "meal_deleted", System.currentTimeMillis(), "mealId" to id)
         }
     }
 }

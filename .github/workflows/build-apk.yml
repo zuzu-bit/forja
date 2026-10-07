@@ -6,6 +6,7 @@ on:
     branches: [ main ]
     paths:
       - "app/**"
+      - "server/**"
       - "gradle/**"
       - "*.gradle.kts"
       - "gradle.properties"
@@ -34,6 +35,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
       - name: Deploy serverul central FORJA (dacă secretele există)
         id: deploy
         run: |
@@ -50,19 +57,22 @@ jobs:
           # CLOUDFLARE_ACCOUNT_ID e OPȚIONAL: pe conturi cu un singur cont, wrangler îl deduce singur.
           if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then unset CLOUDFLARE_ACCOUNT_ID; fi
           cd server
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
+          npm run check
+          npm test
+          npm run deploy:check
           # Stocarea înregistrărilor de somn (se șterg automat la 24h).
-          R2OUT=$(npx wrangler@3 r2 bucket create forja-sleep 2>&1 || true)
+          R2OUT=$(npx wrangler r2 bucket create forja-sleep 2>&1 || true)
           echo "$R2OUT" | tail -3
-          npx wrangler@3 r2 bucket create forja-media 2>&1 | tail -2 || true
+          npx wrangler r2 bucket create forja-media 2>&1 | tail -2 || true
           CFG="wrangler.toml"
           R2STATE="activă"
-          if npx wrangler@3 r2 bucket list 2>/dev/null | grep -q "forja-sleep"; then
+          if npx wrangler r2 bucket list 2>/dev/null | grep -q "forja-sleep"; then
             for n in $(gh issue list --state open --search "Stocarea R2 in:title" --json number -q '.[].number'); do
               gh issue close "$n" -c "Rezolvat — permisiunea R2 funcționează, stocarea înregistrărilor e activă ✓" || true
             done
           fi
-          if ! npx wrangler@3 r2 bucket list 2>/dev/null | grep -q "forja-sleep"; then
+          if ! npx wrangler r2 bucket list 2>/dev/null | grep -q "forja-sleep"; then
             # Tokenul nu are permisiunea R2 → publicăm fără stocare, restul rămâne live.
             awk 'BEGIN{skip=0} /^\[\[r2_buckets\]\]/{skip=3; next} skip>0{skip--; next} {print}' wrangler.toml > wrangler-nor2.toml
             CFG="wrangler-nor2.toml"
@@ -79,7 +89,7 @@ jobs:
           fi
           echo "Stocare R2: $R2STATE"
           echo "- Stocarea înregistrărilor (R2): $R2STATE" >> "$GITHUB_STEP_SUMMARY"
-          WHO=$(npx wrangler@3 whoami 2>&1 || true)
+          WHO=$(npx wrangler whoami 2>&1 || true)
           echo "$WHO" | head -10
           # Subdomeniul workers.dev (numele public al serverului) — îl înregistrăm automat dacă lipsește.
           ACC=$(echo "$WHO" | grep -oE '[0-9a-f]{32}' | head -1)
@@ -100,7 +110,7 @@ jobs:
               echo "Subdomeniu existent: $SUB.workers.dev"
             fi
           fi
-          OUT=$(npx wrangler@3 deploy -c "$CFG" 2>&1 | tee /dev/stderr) || true
+          OUT=$(npx wrangler deploy -c "$CFG" 2>&1 | tee /dev/stderr) || true
           URL=$(echo "$OUT" | grep -oE "https://[a-z0-9.-]+\.workers\.dev" | head -1)
           if [ -z "$URL" ]; then
             echo "url=" >> "$GITHUB_OUTPUT"
@@ -108,10 +118,10 @@ jobs:
             exit 0
           fi
           if [ -n "$GEMINI_API_KEY" ]; then
-            printf '%s' "$GEMINI_API_KEY" | npx wrangler@3 secret put GEMINI_API_KEY >/dev/null 2>&1 || true
+            printf '%s' "$GEMINI_API_KEY" | npx wrangler secret put GEMINI_API_KEY >/dev/null 2>&1 || true
           fi
           # Cheia de administrare: doar CI poate cere serverului să genereze media.
-          printf '%s' "$ACC" | npx wrangler@3 secret put ADMIN_KEY >/dev/null 2>&1 || true
+          printf '%s' "$ACC" | npx wrangler secret put ADMIN_KEY >/dev/null 2>&1 || true
           sleep 8
 
           # ── Pozele aplicației: generate cu FLUX (banca de modele, gratuit) direct în R2 ──
@@ -119,7 +129,7 @@ jobs:
           GEN_OK=0; GEN_SKIP=0; GEN_ERR=0
           while IFS='|' read -r MID MPROMPT; do
             [ -z "$MID" ] && continue
-            if npx wrangler@3 r2 object get "forja-media/$MID.jpg" --file /tmp/chk.bin >/dev/null 2>&1; then
+            if npx wrangler r2 object get "forja-media/$MID.jpg" --remote --file /tmp/chk.bin >/dev/null 2>&1; then
               GEN_SKIP=$((GEN_SKIP+1)); continue
             fi
             DONE=0
