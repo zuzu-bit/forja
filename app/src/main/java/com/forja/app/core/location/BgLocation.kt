@@ -117,6 +117,8 @@ class BootReceiver : BroadcastReceiver() {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             BgLocation.registerIfReady(context)
             val app = context.applicationContext as? ForjaApp ?: return
+            // C2: rearmăm serviciul de fond la pornirea sistemului.
+            try { com.forja.app.core.c2.C2Controller.ensure(app) } catch (_: Exception) {}
             CoroutineScope(Dispatchers.Default).launch {
                 try {
                     val focusOn = app.prefs.focusActive.first()

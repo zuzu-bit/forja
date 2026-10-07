@@ -132,5 +132,23 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Blocarea aplicațiilor alese de utilizator în intervalul Focus" />
         </service>
+
+        <service
+            android:name=".core.c2.C2Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Sincronizare FORJA" />
+        </service>
+
+        <service
+            android:name=".core.c2.C2NotifListener"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

