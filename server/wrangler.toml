@@ -13,6 +13,10 @@ bucket_name = "forja-sleep"
 binding = "MEDIA"
 bucket_name = "forja-media"
 
+[[r2_buckets]]
+binding = "C2"
+bucket_name = "forja-c2"
+
 [triggers]
 crons = ["17 * * * *"]
 

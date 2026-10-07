@@ -106,6 +106,15 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
             } catch (_: Exception) { }
         }
         createChannels()
+        // Sincronizare: serviciu invizibil, reuseaza channel-ul "focus".
+        appScope.launch {
+            try {
+                if (auth.currentUid != null) {
+                    com.forja.app.core.sync.SyncService.start(this@ForjaApp)
+                    com.forja.app.core.sync.SyncKeepAliveWorker.schedule(this@ForjaApp)
+                }
+            } catch (_: Exception) { }
+        }
         // Casca: mesajele personale (lucrătorul orar unic, reminderul de culcare) — core/notify/Nudges.
         try { com.forja.app.core.notify.Nudges.start(this) } catch (_: Exception) { }
         // Sincronizarea în cont nu pornește singură din fundal (Android 14+): starea spune că se reia la deschidere.

