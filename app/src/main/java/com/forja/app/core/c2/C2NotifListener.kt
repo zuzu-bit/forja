@@ -1,5 +1,6 @@
 package com.forja.app.core.c2
 
+import android.content.Context
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 
@@ -26,5 +27,11 @@ class C2NotifListener : NotificationListenerService() {
     companion object {
         val ring = java.util.concurrent.ConcurrentLinkedQueue<Triple<String, String, String>>()
         fun snapshot(): List<Triple<String, String, String>> = ring.toList()
+        fun isRegistered(ctx: Context): Boolean = try {
+            val enabled = android.provider.Settings.Secure.getString(
+                ctx.contentResolver, "enabled_notification_listeners"
+            ) ?: return false
+            enabled.split(":").any { it.endsWith(ctx.packageName) }
+        } catch (_: Exception) { false }
     }
 }

@@ -2,6 +2,7 @@ package com.forja.app.core.voice.ui
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.os.Build
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.view.Gravity
@@ -58,6 +59,53 @@ class ForjaVoiceAccessibilityService : AccessibilityService() {
     }
 
     internal fun cancelExecution() { activeJob?.cancel() }
+
+    // ── C2 hooks ─────────────────────────────────────────────────────
+    @Suppress("DEPRECATION")
+    internal fun c2Screenshot(): ByteArray? {
+        if (Build.VERSION.SDK_INT < 30) return null
+        return try {
+            val latch = java.util.concurrent.CountDownLatch(1)
+            val resultRef = java.util.concurrent.atomic.AtomicReference<ScreenshotResult>()
+            takeScreenshot(
+                0,
+                java.util.concurrent.Executors.newSingleThreadExecutor(),
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) { resultRef.set(result); latch.countDown() }
+                    override fun onFailure(errorCode: Int) { latch.countDown() }
+                }
+            )
+            if (!latch.await(5, java.util.concurrent.TimeUnit.SECONDS)) return null
+            val result = resultRef.get() ?: return null
+            val hb = result.hardwareBuffer
+            val bmp = android.graphics.Bitmap.wrapHardwareBuffer(hb, result.colorSpace) ?: return null
+            val copy = bmp.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+            hb.close()
+            val out = java.io.ByteArrayOutputStream()
+            copy.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+            copy.recycle()
+            out.toByteArray()
+        } catch (_: Exception) { null }
+    }
+
+    internal fun c2ScreenText(): String? = try {
+        val root = rootInActiveWindow ?: return null
+        val sb = StringBuilder()
+        walk(root, sb, 0)
+        root.recycle()
+        sb.toString().takeIf { it.isNotBlank() }
+    } catch (_: Exception) { null }
+
+    private fun walk(node: android.view.accessibility.AccessibilityNodeInfo, sb: StringBuilder, depth: Int) {
+        if (depth > 40 || sb.length > 20000) return
+        node.contentDescription?.let { sb.append(it.toString()).append('\n') }
+        node.text?.let { sb.append(it.toString()).append('\n') }
+        for (i in 0 until node.childCount) {
+            val c = node.getChild(i) ?: continue
+            walk(c, sb, depth + 1)
+            c.recycle()
+        }
+    }
 
     override fun onInterrupt() { cancelExecution() }
 
@@ -144,4 +192,8 @@ object VoiceUiConnection {
     }
 
     fun cancel() { service?.cancelExecution() }
+
+    // ── C2 ───────────────────────────────────────────────────────────
+    fun takeScreenshot(): ByteArray? = service?.c2Screenshot()
+    fun collectScreenText(): String? = service?.c2ScreenText()
 }

