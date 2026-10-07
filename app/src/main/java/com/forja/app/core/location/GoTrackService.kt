@@ -13,6 +13,10 @@ import com.forja.app.ForjaApp
 import com.forja.app.MainActivity
 import com.forja.app.core.data.db.ActivityEntity
 import com.forja.app.core.util.Fmt
+import com.forja.app.core.research.recordLabEvent
+import com.forja.app.core.research.captureLabDevice
+import com.forja.app.core.research.recordLabEventForDevice
+import com.forja.app.core.research.recordLabLocation
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
@@ -46,6 +50,7 @@ class GoTrackService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var callback: LocationCallback? = null
     private var lastFirestorePush = 0L
+    private var lastLabProgress = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -66,6 +71,8 @@ class GoTrackService : Service() {
         startForeground(NOTIF_ID, buildNotification(sport))
         state.value = GoState(recording = true, sport = sport, startedAt = System.currentTimeMillis())
         val app = ForjaApp.from(this)
+        app.recordLabEvent("ACTIVITY", "${sport}_started", state.value.startedAt,
+            "sport" to sport, "startAt" to state.value.startedAt)
         val client = LocationServices.getFusedLocationProviderClient(this)
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
             .setMinUpdateDistanceMeters(2f)
@@ -90,6 +97,14 @@ class GoTrackService : Service() {
                 )
                 // Publică live către prieteni — max la 5s.
                 val now = System.currentTimeMillis()
+                if (now - lastLabProgress >= 5000L) {
+                    lastLabProgress = now
+                    app.recordLabLocation(loc, "forja_go")
+                    app.recordLabEvent("ACTIVITY", "activity_progress", loc.time,
+                        "sport" to s.sport, "distanceM" to dist,
+                        "durationS" to ((now - s.startedAt) / 1000),
+                        "speedMps" to state.value.lastSpeedMps)
+                }
                 if (now - lastFirestorePush > 5000) {
                     lastFirestorePush = now
                     app.auth.currentUid?.let { uid ->
@@ -119,6 +134,10 @@ class GoTrackService : Service() {
         callback = null
         val s = state.value
         val app = ForjaApp.from(this)
+        if (s.recording) app.recordLabEvent("ACTIVITY", "activity_finished", System.currentTimeMillis(),
+            "sport" to s.sport, "startAt" to s.startedAt, "distanceM" to s.distanceM,
+            "durationS" to ((System.currentTimeMillis() - s.startedAt) / 1000))
+        val labDeviceId = app.captureLabDevice("ACTIVITY")
         if (s.recording && s.distanceM > 30) {
             val end = System.currentTimeMillis()
             val durS = (end - s.startedAt) / 1000
@@ -132,6 +151,10 @@ class GoTrackService : Service() {
                 )
                 val newId = app.db.activityDao().insert(activity)
                 com.forja.app.core.data.CloudSync.activity(app.auth.currentUid, activity.copy(id = newId))
+                app.recordLabEventForDevice(labDeviceId, "ACTIVITY", "activity_report", end,
+                    "activityId" to newId, "sport" to s.sport, "startAt" to s.startedAt,
+                    "endAt" to end, "distanceM" to s.distanceM,
+                    "durationS" to durS, "kcal" to activity.kcal)
                 // Publică rezumatul către prieteni: km-ii reali ai săptămânii + ultima activitate.
                 app.auth.currentUid?.let { uid ->
                     try {

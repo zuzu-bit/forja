@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Only four API-compatibility errors verified in the unmodified fitness sources.
+     New Research issues and all warnings remain visible. -->
+<issues format="6" by="lint 8.7.3" type="baseline" client="gradle" dependencies="false" name="AGP (8.7.3)" variant="all" version="8.7.3">
+    <issue
+        id="NewApi"
+        message="Call requires API level 27 (current min is 26): `android.app.Activity#setShowWhenLocked`"
+        errorLine1="        setShowWhenLocked(true)"
+        errorLine2="        ~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/forja/app/core/sleep/AlarmActivity.kt" line="43" column="9" />
+    </issue>
+    <issue
+        id="NewApi"
+        message="Call requires API level 27 (current min is 26): `android.app.Activity#setTurnScreenOn`"
+        errorLine1="        setTurnScreenOn(true)"
+        errorLine2="        ~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/forja/app/core/sleep/AlarmActivity.kt" line="44" column="9" />
+    </issue>
+    <issue
+        id="NewApi"
+        message="Call requires API level 27 (current min is 26): `android.app.Activity#setShowWhenLocked`"
+        errorLine1="        setShowWhenLocked(true)"
+        errorLine2="        ~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/forja/app/core/detox/DetoxBlockActivity.kt" line="38" column="9" />
+    </issue>
+    <issue
+        id="NewApi"
+        message="Call requires API level 29 (current min is 26): `android.app.AppOpsManager#unsafeCheckOpNoThrow`"
+        errorLine1="            val mode = appOps.unsafeCheckOpNoThrow("
+        errorLine2="                              ~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/forja/app/core/focus/FocusMonitorService.kt" line="177" column="31" />
+    </issue>
+</issues>

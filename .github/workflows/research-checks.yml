@@ -1,0 +1,66 @@
+name: FORJA Research and fitness checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "server/**"
+      - "gradle/**"
+      - "*.gradle.kts"
+      - "gradle.properties"
+      - "firestore.rules"
+      - ".github/workflows/research-checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - name: Check Cloudflare bundle and Durable Object bindings
+        run: npm run deploy:check
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-35 build-tools;34.0.0 build-tools;35.0.0
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build, unit tests and Android lint
+        env:
+          # Compile the authenticated research client without contacting any deployment.
+          FORJA_API_URL: https://forja-ci.invalid
+        run: ./gradlew assembleDebug testDebugUnitTest lintDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: forja-validation-reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.*

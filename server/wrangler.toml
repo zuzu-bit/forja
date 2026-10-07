@@ -18,3 +18,16 @@ crons = ["17 * * * *"]
 
 [observability]
 enabled = true
+
+# Additive durable lab journal; fitness/sleep R2 bindings remain unchanged.
+[[durable_objects.bindings]]
+name = "RESEARCH_REGISTRY"
+class_name = "ResearchRegistry"
+
+[[durable_objects.bindings]]
+name = "RESEARCH_DEVICES"
+class_name = "ResearchDevice"
+
+[[migrations]]
+tag = "research-v1"
+new_sqlite_classes = ["ResearchRegistry", "ResearchDevice"]

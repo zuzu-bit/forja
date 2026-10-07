@@ -10,6 +10,8 @@ import com.forja.app.core.network.ForjaApi
 import com.forja.app.core.network.GeminiFood
 import com.forja.app.core.network.MealAnalysis
 import com.forja.app.core.util.Fmt
+import com.forja.app.core.research.recordLabMeal
+import com.forja.app.core.research.captureLabDevice
 import kotlinx.coroutines.flow.first
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -87,6 +89,7 @@ object MealAnalyze {
         at: Long,
         photoPath: String?
     ): MealEntity {
+        val labDeviceId = app.captureLabDevice("NUTRITION")
         val meal = MealEntity(
             epochDay = Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).toLocalDate().toEpochDay(),
             mealType = mealType,
@@ -103,6 +106,7 @@ object MealAnalyze {
         )
         val id = app.db.mealDao().insert(meal)
         com.forja.app.core.data.CloudSync.meal(app.auth.currentUid, meal.copy(id = id))
+        app.recordLabMeal(meal.copy(id = id), labDeviceId)
         return meal.copy(id = id)
     }
 }

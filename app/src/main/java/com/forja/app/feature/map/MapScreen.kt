@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.forja.app.ForjaApp
+import com.forja.app.core.research.recordLabLocation
 import com.forja.app.core.data.Friend
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
@@ -223,6 +224,7 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
             val cb = object : LocationCallback() {
                 override fun onLocationResult(result: LocationResult) {
                     val loc = result.lastLocation ?: return
+                    app.recordLabLocation(loc, "forja_map")
                     val map = mapRef.value ?: return
                     val p = GeoPoint(loc.latitude, loc.longitude)
                     val existing = myMarker.value

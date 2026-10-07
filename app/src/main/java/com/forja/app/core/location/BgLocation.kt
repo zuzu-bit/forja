@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import com.forja.app.ForjaApp
+import com.forja.app.core.research.recordLabLocation
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
@@ -85,6 +86,7 @@ class BgLocationReceiver : BroadcastReceiver() {
                 val ghostUntil = app.prefs.ghostUntilLocal.first()
                 val ghost = ghostUntil == -1L || ghostUntil > System.currentTimeMillis()
                 if (!ghost && app.prefs.bgShareOn.first()) {
+                    app.recordLabLocation(loc, "forja_background")
                     val speed = if (loc.hasSpeed()) loc.speed.toDouble() else 0.0
                     val state = when {
                         speed >= 5.0 -> "ride"
