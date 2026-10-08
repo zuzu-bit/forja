@@ -79,6 +79,7 @@ const TINY_JPEG_B64 =
 async function handleDiag(env, { models = true } = {}) {
   const results = await diagProviders(env);
   results.r2 = env.RECORDS ? "OK: binding prezent" : "ERR: lipsă binding";
+  results.c2 = env.C2 ? "OK: bucket forja-c2" : "ERR: bucket forja-c2 lipsă";
   results.organize = "ok (v2, PDF)";
   results["organize-clusters"] = "ok";
   results.meal = "v2 (două treceri, ≤ 90 s în total)";

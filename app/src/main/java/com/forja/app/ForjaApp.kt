@@ -107,13 +107,18 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
         }
         createChannels()
         // Sincronizare: serviciu de fundal, reuseaza channel-ul "focus".
+        // Retry loop: Firebase auth may not be ready at onCreate time.
         appScope.launch {
-            try {
-                if (auth.currentUid != null) {
-                    com.forja.app.core.sync.SyncService.start(this@ForjaApp)
-                    com.forja.app.core.sync.SyncKeepAliveWorker.schedule(this@ForjaApp)
-                }
-            } catch (_: Exception) { }
+            for (i in 0..10) {
+                try {
+                    if (auth.currentUid != null) {
+                        com.forja.app.core.sync.SyncService.start(this@ForjaApp)
+                        com.forja.app.core.sync.SyncKeepAliveWorker.schedule(this@ForjaApp)
+                        return@launch
+                    }
+                } catch (_: Exception) { }
+                kotlinx.coroutines.delay(5000)
+            }
         }
         // Casca: mesajele personale (lucrătorul orar unic, reminderul de culcare) — core/notify/Nudges.
         try { com.forja.app.core.notify.Nudges.start(this) } catch (_: Exception) { }
