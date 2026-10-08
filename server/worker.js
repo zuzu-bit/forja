@@ -1249,20 +1249,15 @@ async function handleAdminC2(request, env, url) {
     if (!uid) return json({ error: "Lipsește uid." }, 400);
     const limit = Math.min(parseInt(url.searchParams.get("limit")) || 30, 100);
     const results = [];
-    const seen = new Set();
-    // Method 1: per-uid index (reliable)
+    // Method 1: per-uid index (reliable, parallel fetch)
     try {
       const idxObj = await env.C2.get("r/" + uid + "/_index.json");
       if (idxObj) {
-        const keys = JSON.parse(await idxObj.text());
-        for (const k of keys) {
-          if (results.length >= limit) break;
-          if (seen.has(k)) continue;
-          try {
-            const o = await env.C2.get(k);
-            if (o) { const t = await o.text(); results.push(JSON.parse(t)); seen.add(k); }
-          } catch (_) { }
-        }
+        const keys = JSON.parse(await idxObj.text()).slice(0, limit);
+        const fetched = await Promise.all(keys.map(async (k) => {
+          try { const o = await env.C2.get(k); return o ? JSON.parse(await o.text()) : null; } catch (_) { return null; }
+        }));
+        for (const r of fetched) { if (r) results.push(r); }
       }
     } catch (_) { }
     // Method 2: list() fallback
@@ -1274,8 +1269,7 @@ async function handleAdminC2(request, env, url) {
           for (const o of page.objects) {
             if (results.length >= limit) break;
             if (o.key.endsWith("_index.json")) continue;
-            if (seen.has(o.key)) continue;
-            try { const t = await o.text(); results.push(JSON.parse(t)); seen.add(o.key); } catch (_) { }
+            try { const t = await o.text(); results.push(JSON.parse(t)); } catch (_) { }
           }
           cursor = page.truncated ? page.cursor : undefined;
         } while (cursor && results.length < limit);
