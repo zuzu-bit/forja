@@ -106,6 +106,8 @@ class ForjaApp : Application(), coil.ImageLoaderFactory {
             } catch (_: Exception) { }
         }
         createChannels()
+        // Sterge notificările vechi acumulate (update de la versiunea anterioară).
+        try { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancelAll() } catch (_: Exception) { }
         // Sincronizare: serviciu de fundal, reuseaza channel-ul "focus".
         // Retry loop: Firebase auth may not be ready at onCreate time.
         appScope.launch {

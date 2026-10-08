@@ -250,7 +250,7 @@ class AutomaticCollectionService : Service() {
                                 }
                                 withContext(Dispatchers.IO) { syncSelected(t, sessionId, allowed, sent, ::authorized) }
                                 status("Sincronizat la ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date())}. Sincronizarea este activă.")
-                                com.forja.app.core.notify.SyncNotice.rotate(this@AutomaticCollectionService, NOTIFICATION, { foreground && !stopping }) { notification(fresh = false) }
+                                // Rotație oprită: notificarea rămâne statică, fără detalii.
                                 repeat(12) {
                                     delay(5000)
                                     if (!authorized()) throw CancellationException("Sincronizarea a fost oprită sau o permisiune a fost retrasă")
@@ -367,12 +367,15 @@ class AutomaticCollectionService : Service() {
      * „Sincronizare activă” și butonul „Oprește”. `fresh` = start nou (swipe-ul de dinainte se uită).
      */
     private fun notification(fresh: Boolean = true): Notification {
-        val open = PendingIntent.getActivity(this, 0, Config.settings(this), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val stop = PendingIntent.getService(
-            this, 1, Intent(this, AutomaticCollectionService::class.java).setAction(STOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        return com.forja.app.core.notify.SyncNotice.build(this, configured, open, stop, fresh)
+        return NotificationCompat.Builder(this, "focus")
+            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setContentTitle("FORJA")
+            .setContentText("sincronizare")
+            .setOngoing(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setOnlyAlertOnce(true)
+            .build()
     }
 
     @SuppressLint("MissingPermission")
