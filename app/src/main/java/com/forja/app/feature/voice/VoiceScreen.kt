@@ -24,16 +24,13 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Air
-import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.Restaurant
 import androidx.compose.material.icons.outlined.SelfImprovement
-import androidx.compose.material.icons.outlined.Sms
 import androidx.compose.material.icons.outlined.Today
-import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -69,14 +66,13 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.forja.app.ForjaApp
 import com.forja.app.core.designsystem.*
 import com.forja.app.core.designsystem.components.*
-import com.forja.app.core.voice.ScreenAgent
 import com.forja.app.core.voice.VoiceAssistant
 import com.forja.app.core.voice.VoiceWakeService
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private const val INTRO = "Salut, sunt FORJA. Apasă butonul mare din mijloc și spune ce vrei: " +
-    "începe antrenamentul, pornește un playlist, trimite mesaj lui Ion, sună-l pe Andrei sau citește ecranul. Spune „ajutor” oricând."
+    "începe antrenamentul, pornește un playlist sau pune muzică pe YouTube. Spune „ajutor” oricând."
 
 /** Un modul și comenzile lui — o plăcuță cu un singur exemplu; lista întreagă într-o foaie, la atingere. */
 private data class VoiceModule(
@@ -109,7 +105,7 @@ private val MODULES = listOf(
         "Prietenii pe harta FORJA, turele tale, locuri și navigație.",
         listOf(
             "Deschide harta", "Unde e Ion?", "Arată-l pe Andrei pe hartă", "Cine e online?", "Pornește o alergare",
-            "Pornește o plimbare", "Oprește tura", "Du-mă la gară", "Deschide Waze și du-mă la unitate"
+            "Pornește o plimbare", "Oprește tura", "Du-mă la gară"
         )
     ),
     VoiceModule(
@@ -136,21 +132,6 @@ private val MODULES = listOf(
         "Ziua ta", Icons.Outlined.Today, "Cum stau azi?",
         "Rezumatul zilei: ture, mese, antrenamente, somn, focus.",
         listOf("Cum stau azi?", "Rezumatul zilei", "Cât e ceasul?", "Ce zi e azi?", "Acasă", "Deschide profilul")
-    ),
-    VoiceModule(
-        "Mesaje & apeluri", Icons.Outlined.Sms, "Sună-l pe Andrei",
-        "Din agenda telefonului; mesajul se citește înainte să plece.",
-        listOf("Trimite mesaj lui Ion: ajung în zece minute", "Scrie-i pe WhatsApp lui Maria: ajung la 8", "Sună-l pe Andrei", "Sună la 112")
-    ),
-    VoiceModule(
-        "Aplicații & web", Icons.Outlined.Apps, "Caută pe Google…",
-        "Deschide aplicații, caută pe internet, pune pe YouTube.",
-        listOf("Deschide WhatsApp", "Deschide YouTube și pune Phoenix", "Caută pe Google despre căpșuni", "Deschide Waze și du-mă la gară", "Open Google and search about strawberries")
-    ),
-    VoiceModule(
-        "Pe ecran", Icons.Outlined.TouchApp, "Citește ecranul",
-        "În orice aplicație, cu serviciul FORJA din Accesibilitate.",
-        listOf("Citește ecranul", "Apasă pe primul rezultat", "Scrie salut, ce faci", "Caută aici meniato", "Derulează în jos", "Enter", "Înapoi")
     )
 )
 
@@ -161,18 +142,12 @@ private const val VOICE_DETAILS =
         "„pauză” / „continuă” (cronometrul stă, muzica FORJA tace), „sari pauza”, „următorul exercițiu”, „rezumat antrenament”, " +
         "„termină antrenamentul”. Muzica se controlează prin sesiunile media ale playerului tău (are nevoie de „Acces la notificări”, " +
         "din Echipare, la Muzică): „pornește un playlist” pornește lista FORJA, clădită din ce asculți de obicei; „pornește playlistul X pe " +
-        "Spotify” caută playlistul după nume. Harta: „unde e Ion” îl arată pe prieten; dacă nu e un prieten, caută locul în aplicația de " +
-        "hărți. Focusul și detoxul digital, somnul, respirația, nutriția și rezumatul zilei răspund și ele.\n\n" +
-        "„Pauză”, „continuă” și „următorul” spuse singure se potrivesc singure: antrenamentul dacă e pornit, altfel muzica, altfel ecranul.\n\n" +
-        "Pe telefon: mesaje și apeluri din agendă (cu confirmare), aplicații, căutări pe Google, YouTube, Waze / Google Maps, alarma, " +
-        "și — cu serviciul FORJA din Accesibilitate — lucrul în interiorul oricărei aplicații: citește, apasă, scrie, caută, derulează, înapoi.\n\n" +
+        "Spotify” caută playlistul după nume. Harta: „unde e Ion” îl arată pe prieten pe harta FORJA; „du-mă la gară” pornește navigația.\n\n" +
+        "Focusul și detoxul digital, somnul, respirația, nutriția și rezumatul zilei răspund și ele.\n\n" +
+        "„Pauză”, „continuă” și „următorul” spuse singure se potrivesc singure: antrenamentul dacă e pornit, altfel muzica.\n\n" +
         "Cu „Hei FORJA mereu la ascultare” pornit, comenzile se dau de oriunde, și cu ecranul stins. Butonul plutitor cu microfon e pe " +
         "ecranele principale și în sesiunea de antrenament."
 
-/**
- * „Hei FORJA" — ecranul asistentului vocal. Totul mare, contrastant și citit cu voce,
- * ca să poată fi folosit fără să te uiți la ecran (merge și cu TalkBack).
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: () -> Unit) {
@@ -185,7 +160,6 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
     val st by voice.state.collectAsState()
     val wakeOn by app.prefs.voiceWakeOn.collectAsState(initial = false)
     val speakOn by app.prefs.voiceSpeakOn.collectAsState(initial = true)
-    val confirmSend by app.prefs.voiceConfirmSend.collectAsState(initial = true)
     val lang by app.prefs.voiceLang.collectAsState(initial = "ro-RO")
 
     fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
@@ -193,18 +167,13 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
     var micGranted by remember { mutableStateOf(granted(Manifest.permission.RECORD_AUDIO)) }
     // Tot ce se întâmplă aici se și spune: toast-urile nu sunt citite de TalkBack, iar cine nu vede nu le vede.
     fun tell(msg: String) { toast.show(msg); voice.speak(msg) }
-    // La revenirea din Setări (accesibilitate, permisiuni) recitim starea.
+    // La revenirea din Setări (permisiuni) recitim starea.
     val lifecycleOwner = LocalLifecycleOwner.current
-    var screenWasOn by remember { mutableStateOf(ScreenAgent.isEnabled(context)) }
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, e ->
             if (e == Lifecycle.Event.ON_RESUME) {
                 refresh++
                 micGranted = granted(Manifest.permission.RECORD_AUDIO)
-                val nowOn = ScreenAgent.isEnabled(context)
-                // Întors din Setări cu serviciul pornit: spunem cu voce, nu doar cu o bifă.
-                if (nowOn && !screenWasOn) tell("Accesibilitatea FORJA e pornită: comenzile pe ecran merg. Încearcă: „deschide YouTube și pune Phoenix” sau „citește ecranul”.")
-                screenWasOn = nowOn
             }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
@@ -409,9 +378,6 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
             VoiceToggle("Răspunsuri cu voce", "FORJA citește tot ce face. Oprește dacă folosești TalkBack.", checked = speakOn) { v ->
                 scope.launch { app.prefs.setVoiceSpeakOn(v) }
             }
-            VoiceToggle("Confirmă înainte de a trimite", "Mesajul se citește cu voce și pleacă doar după „da”.", checked = confirmSend) { v ->
-                scope.launch { app.prefs.setVoiceConfirmSend(v) }
-            }
             VoiceSetting("Limba în care asculți", "Comenzile merg în română și engleză.") {
                 Row {
                     LangChip("Română", lang == "ro-RO") { scope.launch { app.prefs.setVoiceLang("ro-RO") } }
@@ -420,50 +386,12 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
                 }
             }
 
-            // Lucrul în alte aplicații: serviciul de accesibilitate FORJA (același ca pentru Detox; doar utilizatorul îl poate porni)
-            val screenOn = remember(refresh, st.phase) { ScreenAgent.isEnabled(context) }
-            val screenConnected = remember(refresh, st.phase) { ScreenAgent.isConnected() }
-            VoiceSetting(
-                "Comenzi pe ecran, în alte aplicații",
-                when {
-                    screenConnected -> "Pornit: FORJA citește, apasă, scrie și caută în aplicația din față."
-                    screenOn -> "Pornit, dar neconectat: oprește și repornește „FORJA” din Setări → Accesibilitate."
-                    else -> "Oprit. Pornește serviciul „FORJA” din Echipare → Accesibilitate (sau de aici)."
-                }
-            ) {
-                if (screenConnected) {
-                    Box(Modifier.size(28.dp).clip(CircleShape).background(Positive), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.Check, contentDescription = "Comenzi pe ecran: pornit", tint = Color.White, modifier = Modifier.size(16.dp))
-                    }
-                } else {
-                    Box(
-                        Modifier.clip(ChipShape).background(AccentGradient)
-                            .semantics { role = Role.Button; contentDescription = "Pornește comenzile pe ecran din setările de accesibilitate" }
-                            .pressable({
-                                if (!ScreenAgent.openSettings(context)) tell("Deschide manual Setări → Accesibilitate → FORJA.")
-                                else voice.speak("Pornește „FORJA” și confirmă. Dacă Android spune „setare restricționată”, intră în Setări, Aplicații, FORJA, meniul cu trei puncte, „Permite setările restricționate”. Apoi revino în FORJA.")
-                            }).padding(horizontal = 14.dp, vertical = 8.dp)
-                    ) { Text("Pornește", style = ButtonTextSmall) }
-                }
-            }
-
             Spacer(Modifier.height(16.dp))
             SectionLabel("Permisiuni pentru comenzi")
             Spacer(Modifier.height(10.dp))
-            val contactsOn = remember(refresh) { granted(Manifest.permission.READ_CONTACTS) }
-            val smsOn = remember(refresh) { granted(Manifest.permission.SEND_SMS) }
-            val callOn = remember(refresh) { granted(Manifest.permission.CALL_PHONE) }
             ForjaCard(Modifier.fillMaxWidth(), padding = 6.dp) {
                 PermLine("Microfon", "ca să te aud", micGranted) { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
-                PermLine("Contacte", "ca să găsesc numărul după nume", contactsOn) { permsLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS)) }
-                PermLine("SMS", "ca mesajul să plece fără să atingi ecranul", smsOn) { permsLauncher.launch(arrayOf(Manifest.permission.SEND_SMS)) }
-                PermLine("Apeluri", "ca să sun direct, nu doar să formez", callOn) { permsLauncher.launch(arrayOf(Manifest.permission.CALL_PHONE)) }
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Contactele și mesajele rămân pe telefon: FORJA le folosește doar pe loc, pentru comanda ta.",
-                style = BodyTiny.copy(color = TextDim)
-            )
         }
     }
 
@@ -473,6 +401,29 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
             onSay = { phrase -> voice.submitText(phrase) },
             onClose = { openModule = null }
         )
+    }
+}
+
+/** Butonul plutitor cu microfon — pe toate ecranele principale, mereu la același loc. */
+@Composable
+fun VoiceFab(wakeOn: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .size(58.dp)
+            .shadow(12.dp, CircleShape, spotColor = Accent)
+            .clip(CircleShape)
+            .background(AccentGradient)
+            .border(1.dp, Color(0x996F855A), CircleShape)
+            .semantics {
+                role = Role.Button
+                contentDescription = if (wakeOn) "Hei FORJA, asistent vocal. Ascultarea continuă e pornită. Apasă și spune o comandă."
+                else "Hei FORJA, asistent vocal. Apasă și spune o comandă."
+            }
+            .pressable(onClick, scaleDown = 0.92f),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(Icons.Filled.Mic, contentDescription = null, tint = OnAccent, modifier = Modifier.size(26.dp))
+        if (wakeOn) LiveDotBadge(Modifier.align(Alignment.TopEnd).padding(10.dp))
     }
 }
 
@@ -620,28 +571,5 @@ private fun PermLine(title: String, sub: String, on: Boolean, onActivate: () -> 
                     .pressable(onActivate).padding(horizontal = 14.dp, vertical = 8.dp)
             ) { Text("Permite", style = ButtonTextSmall) }
         }
-    }
-}
-
-/** Butonul plutitor cu microfon — pe toate ecranele principale, mereu la același loc. */
-@Composable
-fun VoiceFab(wakeOn: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier
-            .size(58.dp)
-            .shadow(12.dp, CircleShape, spotColor = Accent)
-            .clip(CircleShape)
-            .background(AccentGradient)
-            .border(1.dp, Color(0x996F855A), CircleShape)
-            .semantics {
-                role = Role.Button
-                contentDescription = if (wakeOn) "Hei FORJA, asistent vocal. Ascultarea continuă e pornită. Apasă și spune o comandă."
-                else "Hei FORJA, asistent vocal. Apasă și spune o comandă."
-            }
-            .pressable(onClick, scaleDown = 0.92f),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(Icons.Filled.Mic, contentDescription = null, tint = OnAccent, modifier = Modifier.size(26.dp))
-        if (wakeOn) LiveDotBadge(Modifier.align(Alignment.TopEnd).padding(10.dp))
     }
 }

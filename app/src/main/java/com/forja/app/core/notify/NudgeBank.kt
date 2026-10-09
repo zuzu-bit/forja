@@ -231,12 +231,12 @@ object NudgeBank {
         Template("9.1", SleepReport, "Raportul tău e gata.", "Ai dormit {somn_h}, estimat. Cea mai bună noapte a săptămânii.", Happy) {
             it.sleep?.let { s -> s.minutes >= 420 && s.bestOfWeek } == true
         },
-        Template("9.2", SleepReport, "Noapte plină: {somn_h}.", "Estimat din sunet și mișcare. Ai muniție pentru toată ziua.", Happy) { (it.sleep?.minutes ?: 0) >= 420 },
+        Template("9.2", SleepReport, "Noapte plină: {somn_h}.", "Estimat din mișcare. Ai muniție pentru toată ziua.", Happy) { (it.sleep?.minutes ?: 0) >= 420 },
         Template("9.3", SleepReport, "Ai prins somn adânc.", "{profund} de somn profund, estimat. Vezi tot pe cronologia nopții.", Thinking) { (it.sleep?.deepMin ?: 0) >= 60 },
-        Template("9.4", SleepReport, "Raportul e gata, parțial.", "Am ascultat {acoperire}. E o estimare, nu un cântar.", Thinking) {
+        Template("9.4", SleepReport, "Raportul e gata, parțial.", "Am analizat {acoperire}. E o estimare, nu un cântar.", Thinking) {
             it.sleep?.let { s -> s.totalMin > 0 && s.coverageMin * 10 < s.totalMin * 8 } == true
         },
-        Template("9.5", SleepReport, "Ceva s-a auzit azi-noapte.", "Am notat {evenimente|moment|momente}, estimat din sunet. Le asculți fix cum au sunat.", Wink),
+        Template("9.5", SleepReport, "Noapte liniștită.", "Totul arată bine. Ai muniție pentru toată ziua.", Wink),
         Template("9.6", SleepReport, "Noaptea a fost scurtă.", "{somn_h}, estimat. Fără reproș; diseară recuperezi o parte.", Talking) { (it.sleep?.minutes ?: Int.MAX_VALUE) < 360 },
         Template("9.7", SleepReport, "Raportul nopții e gata.", "Somn estimat: {somn_h}. Un minut de citit, apoi ziua.", Talking, reserve = true),
         Template("9.0", SleepReport, "Raportul nopții e gata.", "Cronologia nopții te așteaptă la Somn. Totul e estimat din sunet și mișcare.", Talking, reserve = true)
