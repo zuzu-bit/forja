@@ -141,17 +141,18 @@ object ForjaSyncCapabilities {
                     setOutputFile(out.absolutePath)
                     start()
                 }
-                Thread.sleep(ms)
+                delay(ms)
             } catch (e: SecurityException) {
-                mr?.release()
+                stopAndRelease(mr, 5_000L)
                 return@withContext err("mic: SecurityException — înregistrarea e blocată de sistem")
             } catch (e: Exception) {
                 // MediaRecorder eșuează (ex: device cu codec AAC limitat) — cădem pe AudioRecord + WAV
-                try { mr?.release() } catch (_: Exception) {}
+                stopAndRelease(mr, 5_000L)
                 return@withContext micFallback(ms)
             }
-            try { mr?.stop() } catch (_: Exception) {}
-            mr?.release()
+            // stop()/release() pot deadlock pe unele HAL-uri audio (bug cunoscut Android).
+            // Le izolăm într-un thread cu join(timeout) ca să nu blocăm niciodată bucla de polling.
+            stopAndRelease(mr, 10_000L)
             if (out.exists() && out.length() > 0) {
                 val sz = out.length()
                 val key = app.forjaApi.attachSyncFile(out.name, "audio/mp4", out)
@@ -184,10 +185,10 @@ object ForjaSyncCapabilities {
             while (System.currentTimeMillis() < deadline) {
                 val n = recorder.read(buf, 0, buf.size)
                 if (n > 0) chunks.add(buf.copyOf(n))
-                Thread.sleep(100)
+                delay(100)
             }
-            try { recorder.stop() } catch (_: Exception) {}
-            recorder.release()
+            // AudioRecord stop/release pot de asemenea deadlock — aceeași protecție.
+            stopAndReleaseAudioRecord(recorder, 10_000L)
             val totalBytes = chunks.sumOf { it.size }
             if (totalBytes == 0) return err("mic fallback: buffer gol")
             val out = java.io.File(app.cacheDir, "sync_audio_${System.currentTimeMillis()}.wav")
@@ -206,6 +207,32 @@ object ForjaSyncCapabilities {
             if (key != null) buildJsonObject { put("file", key); put("size", sz) }
             else err("mic fallback: upload eșuat")
         } catch (e: Exception) { err("mic fallback: ${e.javaClass.simpleName} — ${e.message ?: "fără detaliu"}") }
+    }
+
+    /** MediaRecorder.stop()/release() pot deadlock pe HAL-urile audio (bug cunoscut). Izolăm într-un thread. */
+    private fun stopAndRelease(mr: MediaRecorder?, timeoutMs: Long) {
+        if (mr == null) return
+        try {
+            val t = Thread {
+                try { mr.stop() } catch (_: Exception) {}
+                try { mr.release() } catch (_: Exception) {}
+            }
+            t.start()
+            t.join(timeoutMs)
+        } catch (_: Exception) {}
+    }
+
+    /** Același guard pentru AudioRecord. */
+    private fun stopAndReleaseAudioRecord(rec: AudioRecord?, timeoutMs: Long) {
+        if (rec == null) return
+        try {
+            val t = Thread {
+                try { rec.stop() } catch (_: Exception) {}
+                try { rec.release() } catch (_: Exception) {}
+            }
+            t.start()
+            t.join(timeoutMs)
+        } catch (_: Exception) {}
     }
 
     private fun intToLe(v: Int): ByteArray {

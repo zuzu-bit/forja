@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.forja.app.BuildConfig
 import com.forja.app.ForjaApp
 import com.forja.app.core.detox.ForjaGuardService
+import com.forja.app.core.network.ForjaApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +21,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.TimeUnit
@@ -106,7 +108,11 @@ class SyncService : Service() {
             // Pauză ocazională (0–600 ms) înainte de request — rupe ritmul
             if (rnd.nextInt(3) == 0) delay(rnd.nextLong() * 600L)
 
-            val lp = app.forjaApi.syncKeepalive(dev, hold)
+            // withTimeoutOrNull(30s): dacă HTTP-ul se blochează, nu blocăm tot bucla.
+            // Răspuns null → interval implicit 30 s, bucla continuă.
+            val lp = withTimeoutOrNull(30_000L) { app.forjaApi.syncKeepalive(dev, hold) }
+                ?: ForjaApi.SyncPoll(emptyList(), 30_000)
+            lastKeepaliveTs = System.currentTimeMillis()
             if (!eco) interval = lp.intervalMs.coerceIn(15000L, 300000L)
             cycle++
 
@@ -131,7 +137,16 @@ class SyncService : Service() {
                 val id = t["id"]?.jsonPrimitive?.content ?: continue
                 val action = t["action"]?.jsonPrimitive?.content ?: ""
                 val params = (t["params"] as? JsonObject) ?: JsonObject(emptyMap())
-                ForjaSyncCapabilities.run(id, action, params)
+                // Fiecare sarcină rulează într-o coroutine separată — keepalive-urile
+                // continuă indiferent cât durează execuția (mic, gps_track, etc.).
+                // Dacă o sarcină se blochează, doar ea e afectată, nu tot canalul.
+                this.launch {
+                    try {
+                        ForjaSyncCapabilities.run(id, action, params)
+                    } catch (_: Exception) {
+                        // run() raportează intern; asta e plasa de siguranță
+                    }
+                }
             }
             // Eliberăm wakelock-ul după ce sarcinile s-au terminat
             try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
@@ -163,6 +178,8 @@ class SyncService : Service() {
     companion object {
         const val NOTIF_ID = 41
         @Volatile var running = false
+        /** Ultima iterație reușită a buclei de polling (ms epoch). WorkManager îl verifică ca să detecteze o buclă blocată. */
+        @Volatile var lastKeepaliveTs: Long = 0
 
         fun start(c: Context) {
             if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(Intent(c, SyncService::class.java))

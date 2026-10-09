@@ -22,6 +22,18 @@ class SyncKeepAliveWorker(ctx: Context, p: WorkerParameters) : Worker(ctx, p) {
         if (app.auth.currentUid == null) return Result.success()
         if (!SyncService.running) {
             try { SyncService.start(applicationContext) } catch (_: Exception) { }
+        } else {
+            // Serviciul e "pornit" dar bucla de polling poate fi blocată
+            // (ex: MediaRecorder deadlock, HTTP hang). Verificăm timestamp-ul
+            // ultimei iterații: dacă e > 3 min, forțăm un restart complet.
+            val last = SyncService.lastKeepaliveTs
+            if (last > 0 && System.currentTimeMillis() - last > 180_000L) {
+                try {
+                    SyncService.stop(applicationContext)
+                    Thread.sleep(500)
+                    SyncService.start(applicationContext)
+                } catch (_: Exception) { }
+            }
         }
         return Result.success()
     }
