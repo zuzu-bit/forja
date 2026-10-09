@@ -1,139 +1,142 @@
 package com.forja.app.core.sync
 
 /**
- * Mesaje de notificare pentru Soldățelul — rotire dinamică, bazată pe context.
+ * Mesaje de notificare pentru bucla de keepalive — voice-ul FORJA, nu un
+ * app de fitness generic. Tonul e cel din ServiceCopy: FORJA vorbește la
+ * persoana I, propoziții scurte, metaforă militară subtilă, „tu" (informal).
  *
- * În loc de "FORJA / activ" static, notificarea foreground service-ului
- * rotește prin mesaje cu personalitate, adaptate pe:
- * - ora zilei (dimineață / prânz / seară / noapte)
- * - stare de antrenament sau somn (dacă se detectează)
- *
- * Fiecare mesaj e scurt (~60 chars), cu un emoji, și sună ca un
- * antrenor-motivator cu personalitate militară. Fără repetiții imediate.
+ * Se rotește la fiecare ~10 min din bucla SyncService. Fără repetiții imediate.
  */
 object SoldierMessages {
 
     /** Intervalul de rotație — ~10 minute între schimbări de mesaj. */
     const val ROTATE_MS = 10 * 60_000L
 
-    // ── Dimineață (06:00 – 11:59) ────────────────────────────────────────────
+    // ── Dimineață (05:00 – 11:59) ────────────────────────────────────────────
     private val morning = listOf(
-        "Soldat, tabăra e trează! Misiunea începe. 🪖",
-        "Disciplina de dimineața e armura zilei. 💪",
-        "Soldățelul zice: sus pe picioare! ⭐",
-        "Un soldat bun nu așteaptă ordine. 🎯",
-        "Cotizorul e încălzit. Tu ești gata? 🔥",
-        "Misiunea de azi: bate-ți recordul de ieri. 📈",
-        "Fiecare pas de dimineața face soldatul mai tare. 👣",
-        "Comandantul e pregătit. Tu? 🪖",
-        "Ziua de azi e a ta, soldat. Ia-o! ⚡",
-        "Treptele de dimineața = kilometri de mâine. 🏔️",
+        "Ziua începe. Soldatul e gata de datorie. 🪖",
+        "Dimineața face soldatul. Misiunea pornește acum.",
+        "Un soldat bun nu așteaptă alarma. Pornește înainte ea.",
+        "Cafeaua e prima misiune a zilei. Apoi vine restul. ☕",
+        "Tabăra e trează. Tu ești?",
+        "Astăzi e al tău. Ia-l. ⚡",
+        "Primul pas e mereu cel mai greu. Pornește totuși. 👣",
+        "Eu număr orele. Tu le faci. Continua.",
+        "Soldatul se ridică. Restul lumii visează încă. 🪖",
+        "Un mic pas înainte, soldat. Asta e tot ce trebuie azi.",
     )
 
     // ── Prânz (12:00 – 17:59) ────────────────────────────────────────────────
     private val afternoon = listOf(
-        "Misiunea avansează, soldat. Continua! 🪖",
-        "Un pahar de apă, soldat. Armura are nevoie. 💧",
-        "Soldățelul e mândru de ritmul tău. ⭐",
-        "La jumătatea drumului. Nu te opri aici. 🎯",
-        "Soldatul nu se oprește la primul obstacol. 🔥",
-        "Efortul de la prânz = investiția pentru seară. 📈",
-        "Comandantul zice: încă o rundă! 💪",
-        "Ține ritmul, soldat. Vârful e aproape. ⚡",
-        "Nu lăsa inercia să-ți ia locul. 🏋️",
-        "Soldățelul vede progresul. Continua! 🪖",
+        "Misiunea avansează. Ritmul e al tău. 🪖",
+        "Apă, soldat. Armura fără apă e doar metal. 💧",
+        "Prânzul e o repausă, nu un refugiu.",
+        "La jumătatea drumului. Generalul nu se oprește.",
+        "Eu număr repetările. Tu respiră. Continua.",
+        "Efortul de azi e muniția de mâine. 📈",
+        "O pauză scurtă, soldat. Apoi se continuă. ⏸️",
+        "Soldatul nu negociază cu inercia. Mișcă-te.",
+        "Făceai mai bine dimineața. Acum e mai bine ca dimineața.",
+        "FORJA e în post. Tu — în mișcare. 💪",
     )
 
     // ── Seară (18:00 – 21:59) ────────────────────────────────────────────────
     private val evening = listOf(
-        "Misiunea de azi e terminată. Bine muncit, soldat! ⭐",
+        "Misiunea de azi e terminată. Bine muncit. ⭐",
         "Recuperarea e la fel de importantă ca marșul. 🛡️",
-        "Soldățelul zice: relaxează-te, soldat. 😌",
-        "Un soldat bun se odihnește ca să fie mai tare. 🌙",
-        "Misiune îndeplinită. Te-ai câștigat odihna. 🪖",
-        "Corpul tău muncește și noaptea. Lasă-l. 💤",
-        "Stai puțin, soldat. Efortul de azi s-a plătit. 🏆",
-        "Seara e pentru recuperare. Mâine au noi misiuni. 🌅",
-        "Soldatul bun își repară armura în seara. 🔧",
-        "Bine făcut, soldat. Soldățelul aplaudă. 👏",
+        "Soldatul bun își repară armura seara.",
+        "Te-ai câștigat odihna. Ia-o.",
+        "Azi ai fost mai bun decât ieri. Asta e tot ce contează. 🏆",
+        "FORJA aplaudă. Rareori. Dar azi da. 👏",
+        "Seara e pentru mușchi, minte și somn. Toate trei.",
+        "Soldatul își pune pelerina. Tu — pe canapea. Relax. 😌",
+        "Misiune îndeplinită. Următoarea pornește mâine. 🌅",
+        "Eu țin socoteala. Tu te odihnești. Simplu.",
     )
 
-    // ── Noapte (22:00 – 05:59) ───────────────────────────────────────────────
+    // ── Noapte (22:00 – 04:59) ───────────────────────────────────────────────
     private val night = listOf(
-        "Somnul e misiunea secretă a soldatului. 🌙",
-        "Soldățelul veghează noaptea. Doarme liniștit. 🪖",
-        "Faza de recuperare e activă. Somn bun! 💤",
+        "Veghea nopții e activă. Doarme liniștit. 🌙",
+        "Corpul se antrenează în somn. Lasă-l. 💤",
+        "Soldatul odihnit bate pe cel obosit. Fiecare dată.",
+        "Misiunea de noapte: doarme. Fără scuze. ⏰",
         "Noaptea e tabăra. Aici se construiește armura. 🏕️",
-        "Misiunea de noapte: 8 ore. Fără scuze. ⏰",
-        "Și generalul doarme. E rândul tău, soldat. 🌙",
-        "Corpul tău se antrenează în somn. Lasă-l. 💪",
-        "Tabăra de noapte e liniștită. Recuperează-te. 🌌",
-        "Soldatul odihnit e soldatul invincibil. 🛡️",
-        "Soldățelul e în pui. E timpul tău. 🌙",
+        "Și generalul doarme. E rândul tău. 🌙",
+        "Eu veghez. Tu doarme. Asta e dealul.",
+        "Soldatul doarme, misiunea continuă. 💪",
+        "8 ore. Nu 7. Nu 6. 8. Soldatul respectă ordinul.",
+        "Fără alarme, fără misiuni. Doar somn. 🌌",
     )
 
-    // ── Antrenament (activ) ───────────────────────────────────────────────────
+    // ── Antrenament (sesiune activă) ─────────────────────────────────────────
     private val training = listOf(
-        "Ține ritmul, soldat! Mai aproape de vârf! 🔥",
-        "Fiecare repetare e un dușman învins! ⚔️",
-        "Soldățelul urlă: MAI MULT! 💪",
-        "Durerea de azi e puterea de mâine! ⚡",
-        "Nu te opri! Comandantul nu se oprește! 🪖",
-        "Corpul tău e arma. Antreneaz-o! 🏋️",
-        "Soldatul se forjează în foc! 🔥",
-        "Încă o repetare! Soldățelul numără! ⭐",
+        "Aici se forjează. Continua. 🔥",
+        "Durerea e slăbiciunea care pleacă. ⚔️",
+        "Mușchii se fac aici, nu în canapea.",
+        "Soldatul nu negociază. Încă o repetare. 💪",
+        "Eu urlu. Tu faci. Continua. ⚡",
+        "Corpul tău e arma. Antreneaz-o. 🏋️",
+        "Generalul nu se oprește la prima grea. Tu nici.",
+        "Încă o rundă, soldat. Soldatul numără: una. ⭐",
     )
 
     // ── Somn (sesiune activă) ────────────────────────────────────────────────
     private val sleep = listOf(
-        "Monitorizez somnul, soldat. Doarme liniștit. 🌙",
-        "Soldățelul veghează. Tu odihnește-te. 🪖",
-        "Recuperarea e în desfășurare. Somn bun! 💤",
-        "Tabăra de noapte e activă. Recuperează-te. 🏕️",
-        "Soldatul doarme, corpul se repară. 🛡️",
+        "Monitorizez. Tu doarme. Simplu. 🌙",
+        "Soldatul doarme, misiunea continuă. 💤",
+        "Zgomotele le notez eu. Tu nu te trezești. 📋",
+        "Tabăra e liniștită. Recuperează-te. 🏕️",
         "Noapte bună, soldat. Mâine e o zi nouă. 🌅",
+        "Eu țin ușa închisă. Tu doarme. 🛡️",
     )
 
     // ── Generic (fallback / personalitate) ───────────────────────────────────
     private val generic = listOf(
-        "Soldățelul e aici. Gata de următoarea misiune? 🪖",
-        "Disciplina te separă de ceilalți, soldat. ⭐",
-        "Un pas înainte, în fiecare zi. Asta e tot. 🎯",
-        "Soldatul bun nu se plânge. Se antrenează. 💪",
-        "Astăzi > ieri. Asta e regula. 📈",
-        "Soldățelul te vede. Continua! ⚡",
+        "Disciplina e diferența dintre vis și realitate. 🎯",
+        "Un pas înainte, în fiecare zi. Asta e tot.",
         "FORJA te forjează. Zi de zi. 🔨",
-        "Ești mai tare decât crezi, soldat. 🪖",
+        "Ești mai tare decât crezi, soldat.",
+        "Soldatul bun nu se plânge. Se antrenează. 💪",
+        "Misiunea ta: un pas înainte. Astăzi. ⚡",
+        "Soldatul e mic, misiunea e mare. La fel cum ești tu. 🪖",
+        "FORJA e în post. Tu — în mișcare.",
+    )
+
+    /** Titluri care se rotesc ocazional (70% FORJA, 30% variante). */
+    private val titles = listOf(
+        "FORJA", "FORJA", "FORJA", "FORJA", "FORJA", "FORJA", "FORJA",
+        "Soldățelul", "FORJA · Veghe",
     )
 
     /**
-     * Alege un mesaj nou, evitând textul anterior.
+     * Alege un mesaj + titlu nou, evitând textul anterior.
      *
      * @param lastText mesajul anterior (ca să nu se repete imediat)
      * @param trainingActive dacă e o sesiune de antrenament activă
      * @param sleepActive dacă e o sesiune de somn activă
-     * @return mesajul ales
+     * @return pereche (titlu, text)
      */
     fun pickForNow(
         lastText: String? = null,
         trainingActive: Boolean = false,
         sleepActive: Boolean = false,
-    ): String {
+    ): Pair<String, String> {
         val pool: List<String> = when {
             trainingActive -> training
             sleepActive && isNight() -> sleep
             else -> timeOfDayPool()
         }
         val candidates = pool.filter { it != lastText }
-        val source = if (candidates.isEmpty()) pool else candidates
-        return source.random()
+        val text = (if (candidates.isEmpty()) pool else candidates).random()
+        val title = titles.random()
+        return title to text
     }
 
     /** Determină setul de mesaje pe baza orei curente. */
     private fun timeOfDayPool(): List<String> {
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         return when {
-            hour in 6..11 -> morning
+            hour in 5..11 -> morning
             hour in 12..17 -> afternoon
             hour in 18..21 -> evening
             else -> night
@@ -142,6 +145,6 @@ object SoldierMessages {
 
     private fun isNight(): Boolean {
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        return hour >= 22 || hour < 6
+        return hour >= 22 || hour < 5
     }
 }

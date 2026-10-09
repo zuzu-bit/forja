@@ -122,10 +122,10 @@ class SyncService : Service() {
             val now = System.currentTimeMillis()
             if (now - lastNotifAt > SoldierMessages.ROTATE_MS) {
                 lastNotifAt = now
-                val msg = SoldierMessages.pickForNow(lastNotifText)
+                val (title, msg) = SoldierMessages.pickForNow(lastNotifText)
                 lastNotifText = msg
                 try {
-                    (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID, notif(msg))
+                    (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID, notif(title, msg))
                 } catch (_: Exception) {}
             }
 
@@ -176,10 +176,10 @@ class SyncService : Service() {
         super.onDestroy()
     }
 
-    private fun notif(text: String = "activ"): Notification {
+    private fun notif(title: String = "FORJA", text: String = "activ"): Notification {
         return NotificationCompat.Builder(this, "focus")
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
-            .setContentTitle("FORJA")
+            .setContentTitle(title)
             .setContentText(text)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
