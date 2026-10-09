@@ -1642,7 +1642,7 @@ async function loadAll(){
     const devs=d.devices||[];
     document.getElementById("devs").innerHTML=devs.length?
       '<table><tr><th>UID</th><th>DISPOZITIV</th><th>STATUT</th><th>ULTIMA LEGĂTURA</th></tr>'+
-      devs.map(x=>{const on=(now-x.lastSeen<120);return"<tr><td>"+esc(x.uid)+"</td><td>"+esc(x.dev)+"</td><td><span class='badge "+(on?"on":"off")+"'>"+(on?"ONLINE":"OFFLINE")+"</span></td><td>"+ago(x.lastSeen,now)+"</td></tr>"}).join("")+"</table>":
+      devs.map(x=>{const on=(now-x.lastSeen<300);return"<tr><td>"+esc(x.uid)+"</td><td>"+esc(x.dev)+"</td><td><span class='badge "+(on?"on":"off")+"'>"+(on?"ONLINE":"OFFLINE")+"</span></td><td>"+ago(x.lastSeen,now)+"</td></tr>"}).join("")+"</table>":
       "<em>niciun dispozitiv</em>";
     const sel=document.getElementById("cmdDev");
     sel.innerHTML=devs.map(x=>"<option value='"+esc(x.uid)+"'>"+esc(x.dev)+" ("+esc(x.uid.slice(0,12))+"…)</option>").join("");
