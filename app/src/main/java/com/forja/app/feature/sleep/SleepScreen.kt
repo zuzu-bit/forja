@@ -22,9 +22,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,6 +38,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -84,6 +91,7 @@ private const val SOMN_DETAILS =
         "Dacă sforăitul revine des, vorbește cu un medic — ai istoricul aici."
 
 /** Somn à la Sleep as Android: microfon local, hipnogramă pe cicluri, alarmă deșteaptă. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SleepScreen() {
     val context = LocalContext.current
@@ -195,6 +203,7 @@ fun SleepScreen() {
 
     // Raportul ultimei nopți de pe disc: manifestul bucăților, cronologia serverului, stadiile, starea urcării.
     val report = rememberNightReport(app, last, refresh)
+    var showNightDetails by rememberSaveable(last?.id) { mutableStateOf(false) }
     val nightChunks = report.manifest?.chunks ?: emptyList()
     val nightPlayer = remember(last?.id, nightChunks) { ChunkPlayer(context, app, last?.id ?: 0L, nightChunks, scope, toast) }
     DisposableEffect(nightPlayer) { onDispose { nightPlayer.release() } }
@@ -545,31 +554,47 @@ fun SleepScreen() {
 
             Spacer(Modifier.height(20.dp))
 
-            // Rezumatul de dimineață — AI, două propoziții din cifre reale.
-            if (!last?.summary.isNullOrBlank()) {
+            // Starea audio rămâne vizibilă; detaliile sunt la o atingere distanță.
+            last?.let { session ->
                 ForjaCard(
                     Modifier.fillMaxWidth().padding(horizontal = 20.dp),
                     fill = SleepCard, stroke = SleepStroke
                 ) {
-                    SectionLabel("Rezumatul dimineții", color = SleepTextDim)
-                    Spacer(Modifier.height(6.dp))
-                    Text(last!!.summary, style = Body.copy(color = TextPrimary, fontSize = 14.sp, lineHeight = 19.sp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Audio · ultima noapte", style = BodyStrong)
+                            Text(
+                                when {
+                                    report.legacy -> "Înregistrare veche · doar redare."
+                                    !app.forjaApi.available -> "Server indisponibil în această versiune."
+                                    report.progress?.done == true -> "Procesarea înregistrării s-a încheiat · vezi detaliile."
+                                    report.uploadState.isNotBlank() -> report.uploadState
+                                    session.recordedUntil > 0L -> "Se verifică înregistrarea și încărcarea pe server…"
+                                    else -> "Fără înregistrare audio."
+                                },
+                                style = BodySmall.copy(color = SleepTextDim)
+                            )
+                            if (nightPlayer.playing || nightPlayer.preparing) {
+                                Text(
+                                    if (nightPlayer.playing) "Redare audio în curs" else "Se pregătește redarea…",
+                                    style = BodyTiny.copy(color = SleepRem)
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = { showNightDetails = true },
+                            modifier = Modifier.semantics {
+                                contentDescription = "Deschide rezumatul, înregistrarea și setările nopții"
+                            }
+                        ) {
+                            Box(
+                                Modifier.size(28.dp).border(1.dp, SleepRem, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) { Text("!", style = BodyStrong.copy(color = SleepRem, fontSize = 20.sp)) }
+                        }
+                    }
                 }
                 Spacer(Modifier.height(20.dp))
-            }
-
-            // Noaptea, ascultată — cronologia serverului, cu dovezi (8 s în jurul fiecărui moment).
-            last?.let { s ->
-                NightListenedSection(session = s, app = app, report = report, player = nightPlayer, onChanged = { refresh++ })
-                Spacer(Modifier.height(20.dp))
-            }
-
-            // Înregistrarea completă a nopții — pe telefon 24 h, pe server 7 zile, apoi dispare.
-            last?.let { s ->
-                if (s.recordedUntil > System.currentTimeMillis() && nightChunks.isNotEmpty()) {
-                    NightRecordingCard(session = s, app = app, report = report, player = nightPlayer)
-                    Spacer(Modifier.height(20.dp))
-                }
             }
 
             // Hipnograma — ciclurile nopții
@@ -743,6 +768,54 @@ fun SleepScreen() {
             }
         }
     }
+
+    if (showNightDetails && last != null) {
+        ModalBottomSheet(
+            onDismissRequest = { showNightDetails = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = SleepBg,
+            shape = SheetShape
+        ) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 28.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Detaliile nopții", style = TitleModule, modifier = Modifier.weight(1f))
+                    SecondaryButton("Închide", onClick = { showNightDetails = false }, padV = 8.dp)
+                }
+                Spacer(Modifier.height(16.dp))
+                // Rezumatul de dimineață — AI, două propoziții din cifre reale.
+                if (!last?.summary.isNullOrBlank()) {
+                    ForjaCard(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                        fill = SleepCard, stroke = SleepStroke
+                    ) {
+                        SectionLabel("Rezumatul dimineții", color = SleepTextDim)
+                        Spacer(Modifier.height(6.dp))
+                        Text(last!!.summary, style = Body.copy(color = TextPrimary, fontSize = 14.sp, lineHeight = 19.sp))
+                    }
+                    Spacer(Modifier.height(20.dp))
+                }
+
+                // Noaptea, ascultată — cronologia serverului, cu dovezi (8 s în jurul fiecărui moment).
+                last?.let { s ->
+                    NightListenedSection(session = s, app = app, report = report, player = nightPlayer, onChanged = { refresh++ })
+                    Spacer(Modifier.height(20.dp))
+                }
+
+                // Înregistrarea completă a nopții — pe telefon 24 h, pe server 7 zile, apoi dispare.
+                last?.let { s ->
+                    if (s.recordedUntil > System.currentTimeMillis() && nightChunks.isNotEmpty()) {
+                        NightRecordingCard(session = s, app = app, report = report, player = nightPlayer)
+                        Spacer(Modifier.height(20.dp))
+                    }
+                }
+
+            }
+        }
+    }
+
 }
 
 /** Un rând din „Nopțile tale”: data, durata, scorul și numărul de sforăituri. */
