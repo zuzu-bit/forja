@@ -69,10 +69,12 @@ test('statistici: fraze (max 6), tuse, zgomote; acoperire „N min din M analiza
   assert.equal(timelineStats([], { maxPhrases: 2 }).phrases.length, 0);
 });
 
-test('normalizeChunk: index întreg 0–999, from ≥ 0, dur în (0, 35 min]', () => {
+test('normalizeChunk: index întreg 0–99999, from ≥ 0, dur în (0, 35 min]', () => {
   assert.deepEqual(normalizeChunk({ index: '2', from: '1000', dur: '60000' }), { index: 2, from: 1000, dur: 60000 });
+  assert.deepEqual(normalizeChunk({ index: 2880, from: 28_800_000, dur: 10_000 }), { index: 2880, from: 28_800_000, dur: 10_000 });
   assert.equal(normalizeChunk({ index: -1, from: 0, dur: 1000 }), null);
   assert.equal(normalizeChunk({ index: 1.5, from: 0, dur: 1000 }), null);
+  assert.equal(normalizeChunk({ index: 100_000, from: 0, dur: 1000 }), null);
   assert.equal(normalizeChunk({ index: 1, from: 0, dur: 0 }), null);
   assert.equal(normalizeChunk({ index: 1, from: 0, dur: 36 * MIN }), null);
   assert.equal(normalizeChunk({ index: 1, from: -5, dur: 1000 }), null);

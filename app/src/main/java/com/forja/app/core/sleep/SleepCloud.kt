@@ -90,7 +90,7 @@ object SleepCloud {
             chunks = chunks, uploaded = p?.uploaded?.size ?: 0, rejected = p?.rejected?.size ?: 0,
             analyzeRequested = (p?.analyzeRequestedAt ?: 0L) > 0L, done = p?.done == true,
             attempts = p?.attempts ?: 0, maxAttempts = SleepUpload.MAX_ATTEMPTS, lastError = p?.lastError ?: "",
-            cellular = SleepUpload.cellularAllowed(app), started = p != null
+            cellular = true, started = p != null
         )
         return SleepNightDoc.Audio(chunks, p?.uploaded?.size ?: 0, state, p?.lastError ?: "", m?.startedAt ?: 0L, recordedUntil)
     }

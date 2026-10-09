@@ -27,6 +27,7 @@ import com.forja.app.ForjaApp
 import com.forja.app.MainActivity
 import com.forja.app.core.data.db.SleepEventEntity
 import com.forja.app.core.data.db.SleepSessionEntity
+import com.forja.app.core.network.SleepApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -47,7 +48,7 @@ import kotlin.math.sqrt
 /**
  * Somn à la Sleep as Android:
  * · microfonul detectează sforăit/vorbit și salvează clipuri de 5s pe telefon (clasificate live pe server)
- * · toată noaptea se înregistrează în bucăți de ~30 min (AAC) și urcă dimineața pe server, pe Wi-Fi,
+ * · toată noaptea se înregistrează în bucăți de 10 s (AAC) și urcă în timp real pe server, pe orice rețea,
  *   pentru cronologia „Noaptea, ascultată” ([SleepUpload])
  * · accelerometrul numără mișcările → stadii estimate ([SleepStaging]) → hipnogramă
  * · alarma deșteaptă: sună în fereastra de somn ușor, nu în mijlocul somnului profund
@@ -91,6 +92,7 @@ class SleepTrackService : Service(), SensorEventListener {
     private var sessionStartAt: Long = 0
     @Volatile private var alarmFired = false
     private var alarmJob: Job? = null
+    private var uploadRetryJob: Job? = null
     /** Amânare: după „Încă 10 minute” alarma revine la această oră (0 = fără amânare). */
     @Volatile private var snoozeUntil = 0L
     // Pentru site (SleepNightDoc.Alarm / SoundUse): ce a făcut alarma și ce sunete au cântat în veghe.
@@ -249,7 +251,7 @@ class SleepTrackService : Service(), SensorEventListener {
                 } else null
                 SleepCloud.started(app.auth.currentUid, sessionId, sessionStartAt, alarm, SleepCloud.bedtime(app))
             } catch (_: Exception) { }
-            // Înregistrarea completă a nopții (AAC, bucăți de ~30 min) — pornită după ce știm sesiunea.
+            // Înregistrarea completă a nopții (AAC, bucăți de 10 s) — pornită după ce știm sesiunea.
             try {
                 val root = File(filesDir, "sleep_full").apply { mkdirs() }
                 cleanupRecordings(root)
@@ -258,7 +260,14 @@ class SleepTrackService : Service(), SensorEventListener {
                     if (System.currentTimeMillis() - it.lastModified() > 7 * 24 * 3600_000L) it.delete()
                 }
                 if (micType) {
-                    fullRecorder = AacRecorder(sampleRate, AacRecorder.sessionDir(filesDir, sessionId), sessionId)
+                    fullRecorder = AacRecorder(
+                        sampleRate,
+                        AacRecorder.sessionDir(filesDir, sessionId),
+                        sessionId,
+                        chunkMs = AacRecorder.REALTIME_CHUNK_MS,
+                        onChunkClosed = { chunk, file -> uploadChunkRealtime(sessionId, chunk, file) }
+                    )
+                    startUploadRetry()
                 }
             } catch (_: Exception) { }
         }
@@ -619,6 +628,56 @@ class SleepTrackService : Service(), SensorEventListener {
         }
     }
 
+    /** Urcă o bucată tocmai închisă; echemanul vine de pe firul closer (nu blochează). */
+    private fun uploadChunkRealtime(sessionId: Long, chunk: AacRecorder.Chunk, file: File) {
+        if (!running) return
+        scope.launch {
+            try {
+                val app = ForjaApp.from(this@SleepTrackService)
+                val api = SleepApi.get(app.forjaApi)
+                if (!api.available) return@launch
+                val dir = AacRecorder.sessionDir(filesDir, sessionId)
+                val p = SleepUpload.loadProgress(dir) ?: SleepUpload.Progress()
+                if (chunk.index in p.uploaded || chunk.index in p.rejected) return@launch
+                when (val r = api.uploadChunk(sessionId, chunk, file)) {
+                    is SleepApi.Upload.Ok -> SleepUpload.saveProgress(dir, p.copy(uploaded = p.uploaded + chunk.index))
+                    is SleepApi.Upload.Rejected -> SleepUpload.saveProgress(dir, p.copy(rejected = p.rejected + chunk.index))
+                    is SleepApi.Upload.Retry -> { }
+                }
+            } catch (_: Exception) { }
+        }
+    }
+
+    /** La 60 s: reia bucățile rămase (offline, retry) — rețeaua revine, urcarea continuă. */
+    private fun startUploadRetry() {
+        uploadRetryJob?.cancel()
+        uploadRetryJob = scope.launch {
+            while (isActive && running) {
+                delay(60_000L)
+                if (!running) break
+                try {
+                    val app = ForjaApp.from(this@SleepTrackService)
+                    val api = SleepApi.get(app.forjaApi)
+                    if (!api.available) continue
+                    val dir = AacRecorder.sessionDir(filesDir, sessionId)
+                    val manifest = AacRecorder.manifestFor(filesDir, sessionId, sessionStartAt) ?: continue
+                    var p = SleepUpload.loadProgress(dir) ?: SleepUpload.Progress()
+                    for (c in manifest.chunks) {
+                        if (c.dur <= 0L) continue
+                        if (c.index in p.uploaded || c.index in p.rejected) continue
+                        val f = AacRecorder.chunkFile(filesDir, sessionId, c)
+                        if (!f.exists() || f.length() <= 0L) continue
+                        when (val r = api.uploadChunk(sessionId, c, f)) {
+                            is SleepApi.Upload.Ok -> { p = p.copy(uploaded = p.uploaded + c.index); SleepUpload.saveProgress(dir, p) }
+                            is SleepApi.Upload.Rejected -> { p = p.copy(rejected = p.rejected + c.index); SleepUpload.saveProgress(dir, p) }
+                            is SleepApi.Upload.Retry -> break
+                        }
+                    }
+                } catch (_: Exception) { }
+            }
+        }
+    }
+
     private fun finishSession() {
         running = false
         finishing = true
@@ -627,6 +686,7 @@ class SleepTrackService : Service(), SensorEventListener {
         AlarmRinger.stop()
         cancelAlarmNotification()
         alarmJob?.cancel()
+        uploadRetryJob?.cancel()
         val sounds = soundUses()
         soundJob?.cancel()
         val alarmOut = if (alarmTarget > 0L) SleepNightDoc.Alarm(true, alarmTarget, alarmWindowMin, alarmFiredAt, alarmReason, snoozes) else null
@@ -779,6 +839,7 @@ class SleepTrackService : Service(), SensorEventListener {
             audioRecord?.stop()
             audioRecord?.release()
         } catch (_: Exception) { }
+        uploadRetryJob?.cancel()
         // Plasă de siguranță (finishSession n-a apucat): închiderea durează secunde — nu pe firul principal.
         fullRecorder?.let { r -> fullRecorder = null; Thread({ try { r.stop() } catch (_: Exception) { } }, "forja-aac-stop").start() }
         scope.cancel()

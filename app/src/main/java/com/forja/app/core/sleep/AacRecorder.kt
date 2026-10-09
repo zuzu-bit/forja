@@ -35,7 +35,8 @@ class AacRecorder(
     private val sampleRate: Int,
     private val dir: File,
     private val sessionId: Long,
-    private val chunkMs: Long = DEFAULT_CHUNK_MS
+    private val chunkMs: Long = DEFAULT_CHUNK_MS,
+    private val onChunkClosed: ((Chunk, File) -> Unit)? = null
 ) {
     /** O bucată de înregistrare: `from`/`dur` în ms față de începutul audio-ului (nu al sesiunii). */
     @Serializable
@@ -102,8 +103,10 @@ class AacRecorder(
         segment = Segment(old.index + 1, totalSamples)
         closer.execute {
             old.close()
-            chunks += old.toChunk()
+            val c = old.toChunk()
+            chunks += c
             writeManifest(closed = false)
+            onChunkClosed?.invoke(c, old.file)
         }
     }
 
@@ -114,12 +117,17 @@ class AacRecorder(
     fun stop() {
         val seg = synchronized(this) { val s = segment; segment = null; s }   // de aici, feed() nu mai scrie nimic
         if (seg != null) try { seg.close() } catch (_: Exception) { }
+        var lastChunk: Chunk? = null
         try {
             closer.submit {
-                if (seg != null) { if (seg.samples > 0) chunks += seg.toChunk() else seg.file.delete() }
+                if (seg != null) {
+                    if (seg.samples > 0) lastChunk = seg.toChunk().also { chunks += it }
+                    else seg.file.delete()
+                }
                 writeManifest(closed = true)
             }.get(15, TimeUnit.SECONDS)
         } catch (_: Exception) { }
+        lastChunk?.let { onChunkClosed?.invoke(it, seg!!.file) }
         closer.shutdown()
     }
 
@@ -255,6 +263,8 @@ class AacRecorder(
 
     companion object {
         const val DEFAULT_CHUNK_MS = 30L * 60_000L
+        /** Bucăți de 10 s pentru urcarea în timp real. */
+        const val REALTIME_CHUNK_MS = 10_000L
         const val MANIFEST = "chunks.json"
         private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
 

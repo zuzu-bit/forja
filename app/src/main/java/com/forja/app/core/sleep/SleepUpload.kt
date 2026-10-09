@@ -31,13 +31,11 @@ import java.util.concurrent.TimeUnit
  *  4. `timeline.json` salvat + rezumatul de dimineață refăcut cu cronologia + Firestore + notificare
  *     „Raportul nopții e gata” pe canalul „sleep” existent.
  *
- * Constrângeri: Wi-Fi (implicit) sau orice rețea dacă „și pe date mobile” e pornit; baterie ≥ 15 %
+ * Constrângeri: orice rețea conectată (Wi-Fi sau date mobile); baterie ≥ 15 %
  * (constrângerea sistemului + verificare explicită). Clipurile de 5 s rămân locale și clasificate live, ca înainte.
  */
 object SleepUpload {
     const val TAG = "sleep_upload"
-    private const val PREFS = "forja_sleep"
-    private const val KEY_CELLULAR = "sleep_upload_cellular"
     private const val KEY_DATA_SESSION = "session"
     const val NOTIF_ID = com.forja.app.core.notify.NotifIds.SLEEP_REPORT
     const val PROGRESS_FILE = "upload.json"
@@ -69,19 +67,10 @@ object SleepUpload {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
 
-    // ───────────── preferința „și pe date mobile” (SharedPreferences proprii; Prefs.kt rămâne neatins) ─────────────
-
-    fun cellularAllowed(context: Context): Boolean =
-        try { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_CELLULAR, false) } catch (_: Exception) { false }
-
-    fun setCellularAllowed(context: Context, on: Boolean) {
-        try { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_CELLULAR, on).apply() } catch (_: Exception) { }
-    }
-
     // ───────────── programare ─────────────
 
-    private fun constraints(context: Context) = Constraints.Builder()
-        .setRequiredNetworkType(if (cellularAllowed(context)) NetworkType.CONNECTED else NetworkType.UNMETERED)
+    private fun constraints() = Constraints.Builder()
+        .setRequiredNetworkType(NetworkType.CONNECTED)
         .setRequiresBatteryNotLow(true)
         .build()
 
@@ -89,7 +78,7 @@ object SleepUpload {
     fun schedule(context: Context, sessionId: Long, replace: Boolean = false) {
         val req = OneTimeWorkRequestBuilder<SleepUploadWorker>()
             .setInputData(workDataOf(KEY_DATA_SESSION to sessionId))
-            .setConstraints(constraints(context))
+            .setConstraints(constraints())
             .setBackoffCriteria(BackoffPolicy.LINEAR, 1, TimeUnit.MINUTES)
             .addTag(TAG)
             .build()
@@ -98,13 +87,6 @@ object SleepUpload {
             if (replace) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
             req
         )
-    }
-
-    /** După schimbarea opțiunii de rețea: reprogramăm cu noile constrângeri (dacă mai e ceva de făcut). */
-    fun reschedule(context: Context, sessionId: Long) {
-        val p = loadProgress(AacRecorder.sessionDir(context.filesDir, sessionId))
-        if (p?.done == true) return
-        schedule(context, sessionId, replace = true)
     }
 
     fun loadProgress(dir: File): Progress? = try {
@@ -119,25 +101,6 @@ object SleepUpload {
         } catch (_: Exception) { }
     }
 
-    /** Starea urcării, în cuvinte scurte, pentru ecranul de somn. */
-    fun describe(context: Context, sessionId: Long): String {
-        val dir = AacRecorder.sessionDir(context.filesDir, sessionId)
-        val m = AacRecorder.manifestFor(context.filesDir, sessionId, 0L)
-        val p = loadProgress(dir)
-        return when {
-            m == null -> "Nu există înregistrare pentru noaptea asta."
-            p == null -> if (cellularAllowed(context)) "Urcarea pornește când ai net." else "Urcarea pornește pe Wi-Fi."
-            p.done -> ""
-            p.attempts >= MAX_ATTEMPTS -> "Urcarea a renunțat după $MAX_ATTEMPTS de încercări."
-            p.uploaded.size + p.rejected.size < m.chunks.size ->
-                "Urcat ${p.uploaded.size} din ${m.chunks.size} bucăți" + (if (cellularAllowed(context)) "." else " (pe Wi-Fi).")
-            p.analyzeRequestedAt > 0L && p.analyzedMin > 0 ->
-                "Serverul ascultă noaptea, bucată cu bucată: ${hm(p.analyzedMin)} din ${hm((m.chunks.sumOf { it.dur } / 60_000L).toInt())} până acum."
-            p.analyzeRequestedAt > 0L -> "Serverul ascultă noaptea, bucată cu bucată (câteva minute pe bucată)."
-            else -> "Bucățile au urcat. Urmează analiza."
-        }
-    }
-
     /**
      * Procentul bateriei; când sistemul nu-l poate da (`Int.MIN_VALUE`, 0 = necunoscut) răspundem 100, ca să nu
      * blocăm urcarea la nesfârșit cu „baterie sub 15 %” — constrângerea WorkManager acoperă oricum bateria slabă.
@@ -147,8 +110,6 @@ object SleepUpload {
         val v = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         if (v == Int.MIN_VALUE || v <= 0) 100 else v.coerceIn(0, 100)
     } catch (_: Exception) { 100 }
-
-    fun hm(min: Int): String = if (min >= 60) "${min / 60} h ${"%02d".format(min % 60)} min" else "$min min"
 
     /**
      * „Raportul nopții e gata” — Casca (core/notify, contextul SleepReport): canalul „sleep”, mereu „estimat”,
@@ -212,7 +173,7 @@ class SleepUploadWorker(
         val sessionMs = findSession(app, sessionId)?.let { s -> s.endAt?.let { it - s.startAt } }?.takeIf { it > 0L }
         var timeline: SleepTimeline? = null
         if (p.analyzeRequestedAt == 0L) {
-            timeline = api.analyze(sessionId, sent, manifest.startedAt, sessionMs) ?: run {
+            timeline = api.analyzeBatched(sessionId, sent, manifest.startedAt, sessionMs) ?: run {
                 SleepUpload.saveProgress(dir, p.copy(lastError = "analiza nu a putut fi cerută"))
                 return Result.retry()
             }

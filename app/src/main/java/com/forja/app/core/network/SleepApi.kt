@@ -165,6 +165,20 @@ class SleepApi(private val api: ForjaApi) {
     }
 
     /**
+     * Analiza în loturi de [ANALYZE_BATCH_SIZE] bucăți (limita serverului per POST).
+     * Serverul acumulează bucățile în stare și procesează secvențial — mai multe POST-uri
+     * alimentează aceeași rulare de analiză.
+     */
+    suspend fun analyzeBatched(sessionId: Long, chunks: List<AacRecorder.Chunk>, startedAt: Long, sessionMs: Long? = null): SleepTimeline? {
+        if (chunks.size <= ANALYZE_BATCH_SIZE) return analyze(sessionId, chunks, startedAt, sessionMs)
+        var last: SleepTimeline? = null
+        for (batch in chunks.chunked(ANALYZE_BATCH_SIZE)) {
+            last = analyze(sessionId, batch, startedAt, sessionMs) ?: last
+        }
+        return last
+    }
+
+    /**
      * Rezumatul de dimineață cu cronologia: cifrele nopții + statistici + până la 6 citate EXACTE, în forma
      * pe care o citește serverul (`timelineDigest`: `coverage{analyzedMs,totalMs}`, `stats{snoreMinutes,
      * snoreEpisodes, longestSnore{from,to}, talkEvents, coughs, phrases[{at,text}]}`, `tzOffsetMin`); timpii
@@ -221,6 +235,8 @@ class SleepApi(private val api: ForjaApi) {
 
     companion object {
         const val MAX_CHUNK_BYTES = 25L * 1024 * 1024
+        /** Limita serverului pe cerere de analiză (`ANALYZE_MAX_CHUNKS`). */
+        const val ANALYZE_BATCH_SIZE = 48
 
         @Volatile private var cached: SleepApi? = null
         /** O singură instanță per proces (clienții OkHttp sunt scumpi). */

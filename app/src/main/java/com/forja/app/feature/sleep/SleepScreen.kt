@@ -860,8 +860,7 @@ private data class NightReport(
     val manifest: AacRecorder.Manifest? = null,
     val timeline: SleepTimeline? = null,
     val progress: SleepUpload.Progress? = null,
-    val staging: SleepStaging.Result? = null,
-    val uploadState: String = ""
+    val staging: SleepStaging.Result? = null
 ) {
     /** Sesiune veche: un singur fișier `.m4a`, fără manifest (dur necunoscut) — doar redare, fără urcare/cronologie. */
     val legacy: Boolean get() = manifest?.let { it.chunks.size == 1 && it.chunks[0].dur == 0L } == true
@@ -881,13 +880,12 @@ private fun rememberNightReport(app: ForjaApp, session: SleepSessionEntity?, ref
                     manifest = AacRecorder.manifestFor(context.filesDir, s.id, s.startAt),
                     timeline = SleepTimeline.load(dir),
                     progress = SleepUpload.loadProgress(dir),
-                    staging = File(dir, SleepTrackService.STAGING_FILE).takeIf { it.exists() }?.let { SleepStaging.fromJson(it.readText()) },
-                    uploadState = SleepUpload.describe(context, s.id)
+                    staging = File(dir, SleepTrackService.STAGING_FILE).takeIf { it.exists() }?.let { SleepStaging.fromJson(it.readText()) }
                 )
             }
             report = r
             // Nu la nesfârșit: sesiunile vechi n-au ce aștepta, iar o noapte fără progres scris la câteva minute după
-            // STOP ori așteaptă Wi-Fi (WorkManager o pornește el), ori n-a fost programată — revenirea în ecran recitește.
+            // STOP ori așteaptă rețeaua (WorkManager o pornește el), ori n-a fost programată — revenirea în ecran recitește.
             val endedAgo = System.currentTimeMillis() - (s.endAt ?: s.startAt)
             val pending = r.manifest != null && !r.legacy && r.progress?.done != true && app.forjaApi.available &&
                 (r.progress != null || endedAgo < 5 * 60_000L)

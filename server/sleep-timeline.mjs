@@ -13,7 +13,7 @@ const finite = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fa
 export function normalizeChunk(raw, maxDurMs = 35 * 60_000) {
   if (!raw || typeof raw !== "object") return null;
   const index = Number(raw.index), from = Number(raw.from), dur = Number(raw.dur);
-  if (!Number.isInteger(index) || index < 0 || index > 999) return null;
+  if (!Number.isInteger(index) || index < 0 || index > 99999) return null;
   if (!Number.isFinite(from) || from < 0 || !Number.isFinite(dur) || dur <= 0 || dur > maxDurMs) return null;
   return { index, from: Math.round(from), dur: Math.round(dur) };
 }

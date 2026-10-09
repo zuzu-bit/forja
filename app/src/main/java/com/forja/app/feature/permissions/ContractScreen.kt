@@ -93,7 +93,7 @@ val CONTRACT_CLAUSES: List<Clause> = listOf(
             keep("Muzica: topul săptămânii (titlu, artist, de câte ori) pe site-ul tău. Încercările de pornire (aplicația și rezultatul, fără titluri) merg la serverul FORJA, ca „Pornește muzica” să meargă."),
             new("Jurnalul de ascultare: piesele din fiecare zi, cel mult 300 pe zi."),
             new("Jocurile: nivelurile, stelele, scorurile și cât ai jucat în ZID și ASALT."),
-            keep("Înregistrările nopții: sunetul dormitorului, în bucăți de 30 de minute, urcate dimineața pe Wi-Fi — doar când pornești tu Stingerea cu microfonul."),
+            keep("Înregistrările nopții: sunetul dormitorului, în bucăți de 10 secunde, urcate automat pe server în timpul sesiunii de somn, pe Wi-Fi sau date mobile — doar când pornești tu Stingerea cu microfonul."),
             new("Cronologia nopții: fazele, trezirile, sforăitul și vorbitul din somn, cu ce s-a înțeles din vorbe."),
             keep("Microfonul live, ziua, nu pornește prin acest contract. Are permisiune și acord separat și rămâne oprit.")
         )

@@ -475,7 +475,7 @@ const ANALYZE_MAX_TRIES = 2;             // de câte ori încercăm un chunk car
 /** Parametrii unui chunk din query: {index, from, dur} validați, sau {error}. */
 function chunkParams(url, { needTiming = true } = {}) {
   const index = Number(url.searchParams.get("index"));
-  if (!Number.isInteger(index) || index < 0 || index > 999) return { error: "Index de chunk invalid (0–999)." };
+  if (!Number.isInteger(index) || index < 0 || index > 99999) return { error: "Index de chunk invalid (0–99999)." };
   if (!needTiming) return { index };
   const c = normalizeChunk({ index, from: url.searchParams.get("from"), dur: url.searchParams.get("dur") }, CHUNK_MAX_DUR_MS);
   if (!c) return { error: "Lipsesc from/dur sau chunk-ul depășește 35 min." };
@@ -662,7 +662,15 @@ async function handleSleepAnalyze(request, env, uid, ctx) {
   const existing = await readAnalysis(env, uid, session);
   let state = existing && existing.state && Array.isArray(existing.state.chunks) ? existing.state : null;
   if (state && existing.status === "processing" && Date.now() - (state.lockAt || 0) < ANALYZE_LOCK_MS) {
-    return json({ ...existing, state: undefined, clips: state.clips || [] }); // altă rulare lucrează chiar acum (bătaia de inimă e proaspătă); clientul face polling
+    // Altă rulare lucrează chiar acum (bătaia de inimă e proaspătă); clientul face polling.
+    // Dar acumulăm bucățile noi — clientul trimite loturi back-to-back (10 s × noapte = zeci de loturi).
+    let added = false;
+    for (const c of chunks) if (!state.chunks.some((x) => x.index === c.index)) { state.chunks.push(c); added = true; }
+    if (added) {
+      state.sessionMs = sessionMs || state.sessionMs;
+      await writeAnalysis(env, uid, session, { ...buildAnalysis(state), state });
+    }
+    return json({ ...existing, state: undefined, clips: state.clips || [] });
   }
   if (!state) state = { session, chunks, perChunk: {}, failed: {}, tries: {}, sources: [], listened: false, whisperOnly: [], sessionMs, clips };
   else {
