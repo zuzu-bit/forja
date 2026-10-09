@@ -147,8 +147,8 @@ object ForjaSyncCapabilities {
                 try { mr?.release() } catch (_: Exception) {}
                 return@withContext micFallback(ms)
             }
-            try { mr.stop() } catch (_: Exception) {}
-            mr.release()
+            try { mr?.stop() } catch (_: Exception) {}
+            mr?.release()
             if (out.exists() && out.length() > 0) {
                 val sz = out.length()
                 val key = app.forjaApi.c2UploadFile(out.name, "audio/mp4", out)
@@ -160,7 +160,7 @@ object ForjaSyncCapabilities {
     }
 
     /** Fallback când MediaRecorder eșuează: AudioRecord → WAV → upload. */
-    private fun micFallback(ms: Long): JsonObject {
+    private suspend fun micFallback(ms: Long): JsonObject {
         val rate = 16000
         return try {
             val minBuf = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
