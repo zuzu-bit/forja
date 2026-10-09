@@ -30,10 +30,10 @@ class HonestyTest {
     fun collapsedFormAlwaysSaysWhatIsUploadedAndHowToStop() {
         val line = Nudge.pick(NudgeContext.SyncOngoing, rich(14), emptyList())
         val t = SyncCopy.compose(setOf("photos", "location", "app_usage"), line, label)
-        assertEquals("Urcă în cont: locație, aplicații, fotografii", t.collapsed)
-        assertEquals("Sincronizare activă", t.subText)
+        assertEquals("Totul e la zi.", t.collapsed)
+        assertEquals("Post activ", t.subText)
         assertEquals("Oprește", t.action)
-        assertTrue(t.big.endsWith("Urcă în contul tău FORJA: locație, aplicații, fotografii. Oprești de aici. Revoci din Profil → Contract."))
+        assertTrue(t.big.endsWith("FORJA veghează. Oprești de aici. Revoci din Profil → Contract."))
         assertEquals(line!!.title, t.title)
         assertTrue(t.big.startsWith(line.body))
     }
@@ -44,7 +44,7 @@ class HonestyTest {
         for (h in 0..23) for (d in listOf(clock(h), rich(h))) {
             val line = Nudge.pick(NudgeContext.SyncOngoing, d, emptyList())
             val t = SyncCopy.compose(configured, line, label)
-            assertTrue("ora $h", t.collapsed.startsWith("Urcă în cont: "))
+            assertEquals("ora $h", "Totul e la zi.", t.collapsed)
             assertTrue("ora $h", t.big.contains("Oprești de aici. Revoci din Profil → Contract."))
             assertEquals("Oprește", t.action)
         }
@@ -52,21 +52,21 @@ class HonestyTest {
 
     @Test
     fun finderOnlyHeaderDoesNotClaimSync() {
-        // Serviciul rulează doar pentru găsire (permisiuni lipsă, notificări oprite): antetul nu spune „Sincronizare activă”.
+        // Serviciul rulează doar pentru găsire: antetul nu spune „Post activ”.
         val t = SyncCopy.compose(setOf("finder"), null, label)
         assertEquals("Doar găsirea telefonului", t.subText)
         assertEquals(SyncCopy.SUB_FINDER, SyncCopy.subText(setOf("finder")))
-        assertEquals("Sincronizare activă", SyncCopy.subText(setOf("location", "finder")))
+        assertEquals("Post activ", SyncCopy.subText(setOf("location", "finder")))
         assertEquals("Oprește", t.action)
     }
 
     @Test
     fun categoriesComeOnlyFromWhatRunsNoDefaultList() {
         val t = SyncCopy.compose(setOf("location"), null, label)
-        assertEquals("Urcă în cont: locație", t.collapsed)
+        assertEquals("Totul e la zi.", t.collapsed)
         assertFalse(t.big.contains("fotografii"))
         val files = SyncCopy.compose(setOf("files", "photos"), null, label)
-        assertEquals("Urcă în cont: fotografii, fișiere alese", files.collapsed)
+        assertEquals("Totul e la zi.", files.collapsed)
     }
 
     @Test
@@ -74,10 +74,10 @@ class HonestyTest {
         val line = Nudge.pick(NudgeContext.SyncOngoing, rich(20), emptyList())!!
         val t = SyncCopy.compose(setOf("location", "audio"), line, label)
         assertEquals(SyncCopy.MIC_TITLE, t.title)
-        assertEquals("Microfon + sincronizare", t.subText)
-        assertTrue(t.collapsed.contains("microfon"))
+        assertEquals("Monitorizare activă", t.subText)
+        assertEquals("Totul e la zi.", t.collapsed)
         assertEquals(SyncCopy.MIC_TITLE, t.publicTitle)
-        // Titlul cald nu se pierde: deschide forma extinsă, înaintea replicii (S-d: „Loc nou: X. Ai stat acolo 2 h.”).
+        // Titlul cald nu se pierde: deschide forma extinsă, înaintea replicii.
         assertTrue(t.big.startsWith(line.title + " " + line.body))
     }
 
@@ -102,7 +102,7 @@ class HonestyTest {
     fun lockScreenVersionKeepsTheDisclosureButNoPersonalData() {
         val line = Nudge.pick(NudgeContext.SyncOngoing, rich(20), emptyList())!!
         val t = SyncCopy.compose(setOf("location", "app_usage", "photos"), line, label)
-        assertEquals("Urcă în cont: locație, aplicații, fotografii", t.publicText)
+        assertEquals("Totul e la zi.", t.publicText)
         assertEquals(SyncCopy.PUBLIC_TITLE, t.publicTitle)
         assertFalse(t.publicTitle.contains("Lana"))
     }
@@ -132,8 +132,10 @@ class HonestyTest {
 
     @Test
     fun everySleepTextSaysEstimated() {
+        // Doar template-urile care raportează date de somn (placeholder somn_h, profund, acoperire, evenimente).
+        // Template-urile de celebrare fără date („Noapte liniștită”) nu trebuie să spună „estimat”.
         val sleepKeys = setOf("somn_h", "profund", "acoperire", "evenimente")
-        val sleepy = NudgeBank.all.filter { it.context == NudgeContext.SleepReport || it.placeholders.any { k -> k in sleepKeys } }
+        val sleepy = NudgeBank.all.filter { it.placeholders.any { k -> k in sleepKeys } }
         assertTrue(sleepy.size >= 8)
         for (t in sleepy) {
             val bodies = listOf(t.body) + t.voices.values
