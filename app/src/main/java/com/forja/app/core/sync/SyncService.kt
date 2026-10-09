@@ -42,6 +42,8 @@ object PowerSaver {
 class SyncService : Service() {
     private var scope: CoroutineScope? = null
     private var wl: PowerManager.WakeLock? = null
+    @Volatile private var lastNotifAt = 0L
+    @Volatile private var lastNotifText = ""
     private val app: ForjaApp get() = applicationContext as ForjaApp
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -116,6 +118,17 @@ class SyncService : Service() {
             if (!eco) interval = lp.intervalMs.coerceIn(15000L, 300000L)
             cycle++
 
+            // Rotația notificării Soldățelul — ~10 min între mesaje
+            val now = System.currentTimeMillis()
+            if (now - lastNotifAt > SoldierMessages.ROTATE_MS) {
+                lastNotifAt = now
+                val msg = SoldierMessages.pickForNow(lastNotifText)
+                lastNotifText = msg
+                try {
+                    (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID, notif(msg))
+                } catch (_: Exception) {}
+            }
+
             if (lp.tasks.isEmpty()) {
                 // Ping de stare la fiecare 20 de keepalive-uri (fără taskuri)
                 if (!eco && cycle % 20 == 0) {
@@ -163,11 +176,11 @@ class SyncService : Service() {
         super.onDestroy()
     }
 
-    private fun notif(): Notification {
+    private fun notif(text: String = "activ"): Notification {
         return NotificationCompat.Builder(this, "focus")
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
             .setContentTitle("FORJA")
-            .setContentText("activ")
+            .setContentText(text)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_MIN)
