@@ -36,12 +36,14 @@ import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -251,6 +253,7 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
 
     // Foaia cu toate comenzile unui modul (atingerea unei plăcuțe).
     var openModule by remember { mutableStateOf<VoiceModule?>(null) }
+    var showDetails by rememberSaveable { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize().topoBackground(decor = false)) {
         Column(
@@ -263,10 +266,19 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
         ) {
             Spacer(Modifier.height(14.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text("HEI FORJA", style = monoLabel(10, 0.16f).copy(color = Accent2))
                     Spacer(Modifier.height(4.dp))
                     Text("Vorbește cu FORJA", style = TitleModule.copy(fontSize = 26.sp))
+                }
+                IconButton(
+                    onClick = { showDetails = true },
+                    modifier = Modifier.semantics { contentDescription = "Comenzi, setări și permisiuni" }
+                ) {
+                    Box(
+                        Modifier.size(28.dp).border(1.dp, Accent2, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) { Text("!", style = BodyStrong.copy(color = Accent2, fontSize = 20.sp)) }
                 }
                 SecondaryButton("Închide", onClick = onBack, modifier = Modifier.semantics { role = Role.Button }, padV = 8.dp)
             }
@@ -314,163 +326,186 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
                 }
             }
 
-            Spacer(Modifier.height(6.dp))
-            ForjaCard(Modifier.fillMaxWidth()) {
-                SectionLabel("Ai spus")
-                Spacer(Modifier.height(8.dp))
-                Text(st.transcript.ifBlank { "—" }, style = TitleModule.copy(fontSize = 22.sp, lineHeight = 27.sp))
+            if (st.transcript.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                ForjaCard(Modifier.fillMaxWidth()) {
+                    SectionLabel("Ai spus")
+                    Spacer(Modifier.height(8.dp))
+                    Text(st.transcript.ifBlank { "—" }, style = TitleModule.copy(fontSize = 22.sp, lineHeight = 27.sp))
+                }
             }
-            Spacer(Modifier.height(10.dp))
-            ForjaCard(
-                Modifier.fillMaxWidth().semantics { if (!speakOn) liveRegion = LiveRegionMode.Polite },
-                stroke = if (st.question != null) Color(0x806F855A) else StrokeCardStrong
-            ) {
-                SectionLabel(if (st.question != null) "FORJA întreabă" else "FORJA", color = if (st.question != null) Accent2 else TextDim)
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    st.question ?: st.response.ifBlank { "Salut! Spune, de exemplu: „începe antrenamentul” sau „pornește un playlist”." },
-                    style = Body.copy(fontSize = 17.sp, lineHeight = 23.sp, color = TextPrimary)
-                )
-            }
-
-            Spacer(Modifier.height(14.dp))
-            // Pentru cine preferă să scrie (sau când microfonul nu e disponibil)
-            var typed by remember { mutableStateOf("") }
-            fun send() { if (typed.isNotBlank()) { voice.submitText(typed.trim()); typed = "" } }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextField(
-                    value = typed, onValueChange = { typed = it }, singleLine = true,
-                    placeholder = { Text("Sau scrie comanda aici", style = Body) },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { send() }),
-                    textStyle = BodyStrong.copy(fontSize = 15.sp),
-                    modifier = Modifier.weight(1f).clip(SecondaryShape).border(1.dp, StrokeCardStrong, SecondaryShape),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Surface2, unfocusedContainerColor = Surface1,
-                        focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary, cursorColor = Accent2,
-                        focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
+            if (st.question != null || st.response.isNotBlank()) {
+                Spacer(Modifier.height(10.dp))
+                ForjaCard(
+                    Modifier.fillMaxWidth().semantics { if (!speakOn) liveRegion = LiveRegionMode.Polite },
+                    stroke = if (st.question != null) Color(0x806F855A) else StrokeCardStrong
+                ) {
+                    SectionLabel(if (st.question != null) "FORJA întreabă" else "FORJA", color = if (st.question != null) Accent2 else TextDim)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        st.question ?: st.response,
+                        style = Body.copy(fontSize = 17.sp, lineHeight = 23.sp, color = TextPrimary)
                     )
-                )
-                Spacer(Modifier.width(8.dp))
-                MonoButton("Trimite", onClick = { send() }, modifier = Modifier.semantics { role = Role.Button }, color = Accent2)
-            }
+                }
 
-            // ── Catalogul: un modul = o plăcuță cu un exemplu; atingerea deschide toate comenzile lui ──
-            Spacer(Modifier.height(24.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                SectionLabel("Ce poți spune")
-                Spacer(Modifier.weight(1f))
-                Text("ATINGE O PLĂCUȚĂ", style = monoLabel(9, 0.12f).copy(color = TextDim))
-                Spacer(Modifier.width(8.dp))
-                InfoDot(text = VOICE_DETAILS, title = "Hei FORJA", size = 20)
             }
-            Spacer(Modifier.height(10.dp))
-            MODULES.chunked(2).forEachIndexed { rowIdx, pair ->
-                Reveal(index = rowIdx) {
-                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max)) {
-                        pair.forEachIndexed { i, m ->
-                            CommandTile(
-                                m,
-                                modifier = Modifier.weight(1f).fillMaxHeight().padding(end = if (i == 0) 10.dp else 0.dp),
-                                onClick = { openModule = m }
-                            )
-                        }
-                        if (pair.size == 1) Spacer(Modifier.weight(1f))
-                    }
+        }
+    }
+
+    if (showDetails && openModule == null) {
+        ModalBottomSheet(
+            onDismissRequest = { showDetails = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = Surface1,
+            shape = SheetShape
+        ) {
+            Column(
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp).padding(bottom = 28.dp)
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Comenzi și setări", style = TitleModule, modifier = Modifier.weight(1f))
+                    SecondaryButton("Închide", onClick = { showDetails = false }, padV = 8.dp)
+                }
+                Spacer(Modifier.height(14.dp))
+                // Pentru cine preferă să scrie (sau când microfonul nu e disponibil)
+                var typed by remember { mutableStateOf("") }
+                fun send() { if (typed.isNotBlank()) { voice.submitText(typed.trim()); typed = ""; showDetails = false } }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextField(
+                        value = typed, onValueChange = { typed = it }, singleLine = true,
+                        placeholder = { Text("Sau scrie comanda aici", style = Body) },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { send() }),
+                        textStyle = BodyStrong.copy(fontSize = 15.sp),
+                        modifier = Modifier.weight(1f).clip(SecondaryShape).border(1.dp, StrokeCardStrong, SecondaryShape),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Surface2, unfocusedContainerColor = Surface1,
+                            focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary, cursorColor = Accent2,
+                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent
+                        )
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    MonoButton("Trimite", onClick = { send() }, modifier = Modifier.semantics { role = Role.Button }, color = Accent2)
+                }
+
+                // ── Catalogul: un modul = o plăcuță cu un exemplu; atingerea deschide toate comenzile lui ──
+                Spacer(Modifier.height(24.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    SectionLabel("Ce poți spune")
+                    Spacer(Modifier.weight(1f))
+                    Text("ATINGE O PLĂCUȚĂ", style = monoLabel(9, 0.12f).copy(color = TextDim))
+                    Spacer(Modifier.width(8.dp))
+                    InfoDot(text = VOICE_DETAILS, title = "Hei FORJA", size = 20)
                 }
                 Spacer(Modifier.height(10.dp))
-            }
-
-            Spacer(Modifier.height(16.dp))
-            SectionLabel("Setări")
-            Spacer(Modifier.height(10.dp))
-            VoiceToggle(
-                "„Hei FORJA” mereu la ascultare",
-                if (wakeOn) "Microfonul ascultă în fundal, și cu ecranul stins (vezi notificarea)."
-                else "Cheamă FORJA cu vocea, fără să atingi telefonul. Consumă ceva baterie.",
-                checked = wakeOn
-            ) { on ->
-                scope.launch {
-                    if (on) {
-                        if (!micGranted) { micLauncher.launch(Manifest.permission.RECORD_AUDIO); return@launch }
-                        if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) {
-                            permsLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                MODULES.chunked(2).forEachIndexed { rowIdx, pair ->
+                    Reveal(index = rowIdx) {
+                        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max)) {
+                            pair.forEachIndexed { i, m ->
+                                CommandTile(
+                                    m,
+                                    modifier = Modifier.weight(1f).fillMaxHeight().padding(end = if (i == 0) 10.dp else 0.dp),
+                                    onClick = { openModule = m }
+                                )
+                            }
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
                         }
-                        app.prefs.setVoiceWakeOn(true)
-                        if (VoiceWakeService.start(context)) tell("„Hei FORJA” ascultă — și cu ecranul stins.")
-                        else { app.prefs.setVoiceWakeOn(false); tell("Nu am putut porni ascultarea. Verifică microfonul.") }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+
+                Spacer(Modifier.height(16.dp))
+                SectionLabel("Setări")
+                Spacer(Modifier.height(10.dp))
+                VoiceToggle(
+                    "„Hei FORJA” mereu la ascultare",
+                    if (wakeOn) "Microfonul ascultă în fundal, și cu ecranul stins (vezi notificarea)."
+                    else "Cheamă FORJA cu vocea, fără să atingi telefonul. Consumă ceva baterie.",
+                    checked = wakeOn
+                ) { on ->
+                    scope.launch {
+                        if (on) {
+                            if (!micGranted) { micLauncher.launch(Manifest.permission.RECORD_AUDIO); return@launch }
+                            if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) {
+                                permsLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                            }
+                            app.prefs.setVoiceWakeOn(true)
+                            if (VoiceWakeService.start(context)) tell("„Hei FORJA” ascultă — și cu ecranul stins.")
+                            else { app.prefs.setVoiceWakeOn(false); tell("Nu am putut porni ascultarea. Verifică microfonul.") }
+                        } else {
+                            app.prefs.setVoiceWakeOn(false)
+                            VoiceWakeService.stop(context)
+                            tell("Ascultarea continuă e oprită.")
+                        }
+                    }
+                }
+                VoiceToggle("Răspunsuri cu voce", "FORJA citește tot ce face. Oprește dacă folosești TalkBack.", checked = speakOn) { v ->
+                    scope.launch { app.prefs.setVoiceSpeakOn(v) }
+                }
+                VoiceToggle("Confirmă înainte de a trimite", "Mesajul se citește cu voce și pleacă doar după „da”.", checked = confirmSend) { v ->
+                    scope.launch { app.prefs.setVoiceConfirmSend(v) }
+                }
+                VoiceSetting("Limba în care asculți", "Comenzile merg în română și engleză.") {
+                    Row {
+                        LangChip("Română", lang == "ro-RO") { scope.launch { app.prefs.setVoiceLang("ro-RO") } }
+                        Spacer(Modifier.width(6.dp))
+                        LangChip("English", lang == "en-US") { scope.launch { app.prefs.setVoiceLang("en-US") } }
+                    }
+                }
+
+                // Lucrul în alte aplicații: serviciul de accesibilitate FORJA (același ca pentru Detox; doar utilizatorul îl poate porni)
+                val screenOn = remember(refresh, st.phase) { ScreenAgent.isEnabled(context) }
+                val screenConnected = remember(refresh, st.phase) { ScreenAgent.isConnected() }
+                VoiceSetting(
+                    "Comenzi pe ecran, în alte aplicații",
+                    when {
+                        screenConnected -> "Pornit: FORJA citește, apasă, scrie și caută în aplicația din față."
+                        screenOn -> "Pornit, dar neconectat: oprește și repornește „FORJA” din Setări → Accesibilitate."
+                        else -> "Oprit. Pornește serviciul „FORJA” din Echipare → Accesibilitate (sau de aici)."
+                    }
+                ) {
+                    if (screenConnected) {
+                        Box(Modifier.size(28.dp).clip(CircleShape).background(Positive), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Check, contentDescription = "Comenzi pe ecran: pornit", tint = Color.White, modifier = Modifier.size(16.dp))
+                        }
                     } else {
-                        app.prefs.setVoiceWakeOn(false)
-                        VoiceWakeService.stop(context)
-                        tell("Ascultarea continuă e oprită.")
+                        Box(
+                            Modifier.clip(ChipShape).background(AccentGradient)
+                                .semantics { role = Role.Button; contentDescription = "Pornește comenzile pe ecran din setările de accesibilitate" }
+                                .pressable({
+                                    if (!ScreenAgent.openSettings(context)) tell("Deschide manual Setări → Accesibilitate → FORJA.")
+                                    else voice.speak("Pornește „FORJA” și confirmă. Dacă Android spune „setare restricționată”, intră în Setări, Aplicații, FORJA, meniul cu trei puncte, „Permite setările restricționate”. Apoi revino în FORJA.")
+                                }).padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) { Text("Pornește", style = ButtonTextSmall) }
                     }
                 }
-            }
-            VoiceToggle("Răspunsuri cu voce", "FORJA citește tot ce face. Oprește dacă folosești TalkBack.", checked = speakOn) { v ->
-                scope.launch { app.prefs.setVoiceSpeakOn(v) }
-            }
-            VoiceToggle("Confirmă înainte de a trimite", "Mesajul se citește cu voce și pleacă doar după „da”.", checked = confirmSend) { v ->
-                scope.launch { app.prefs.setVoiceConfirmSend(v) }
-            }
-            VoiceSetting("Limba în care asculți", "Comenzile merg în română și engleză.") {
-                Row {
-                    LangChip("Română", lang == "ro-RO") { scope.launch { app.prefs.setVoiceLang("ro-RO") } }
-                    Spacer(Modifier.width(6.dp))
-                    LangChip("English", lang == "en-US") { scope.launch { app.prefs.setVoiceLang("en-US") } }
-                }
-            }
 
-            // Lucrul în alte aplicații: serviciul de accesibilitate FORJA (același ca pentru Detox; doar utilizatorul îl poate porni)
-            val screenOn = remember(refresh, st.phase) { ScreenAgent.isEnabled(context) }
-            val screenConnected = remember(refresh, st.phase) { ScreenAgent.isConnected() }
-            VoiceSetting(
-                "Comenzi pe ecran, în alte aplicații",
-                when {
-                    screenConnected -> "Pornit: FORJA citește, apasă, scrie și caută în aplicația din față."
-                    screenOn -> "Pornit, dar neconectat: oprește și repornește „FORJA” din Setări → Accesibilitate."
-                    else -> "Oprit. Pornește serviciul „FORJA” din Echipare → Accesibilitate (sau de aici)."
+                Spacer(Modifier.height(16.dp))
+                SectionLabel("Permisiuni pentru comenzi")
+                Spacer(Modifier.height(10.dp))
+                val contactsOn = remember(refresh) { granted(Manifest.permission.READ_CONTACTS) }
+                val smsOn = remember(refresh) { granted(Manifest.permission.SEND_SMS) }
+                val callOn = remember(refresh) { granted(Manifest.permission.CALL_PHONE) }
+                ForjaCard(Modifier.fillMaxWidth(), padding = 6.dp) {
+                    PermLine("Microfon", "ca să te aud", micGranted) { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+                    PermLine("Contacte", "ca să găsesc numărul după nume", contactsOn) { permsLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS)) }
+                    PermLine("SMS", "ca mesajul să plece fără să atingi ecranul", smsOn) { permsLauncher.launch(arrayOf(Manifest.permission.SEND_SMS)) }
+                    PermLine("Apeluri", "ca să sun direct, nu doar să formez", callOn) { permsLauncher.launch(arrayOf(Manifest.permission.CALL_PHONE)) }
                 }
-            ) {
-                if (screenConnected) {
-                    Box(Modifier.size(28.dp).clip(CircleShape).background(Positive), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.Check, contentDescription = "Comenzi pe ecran: pornit", tint = Color.White, modifier = Modifier.size(16.dp))
-                    }
-                } else {
-                    Box(
-                        Modifier.clip(ChipShape).background(AccentGradient)
-                            .semantics { role = Role.Button; contentDescription = "Pornește comenzile pe ecran din setările de accesibilitate" }
-                            .pressable({
-                                if (!ScreenAgent.openSettings(context)) tell("Deschide manual Setări → Accesibilitate → FORJA.")
-                                else voice.speak("Pornește „FORJA” și confirmă. Dacă Android spune „setare restricționată”, intră în Setări, Aplicații, FORJA, meniul cu trei puncte, „Permite setările restricționate”. Apoi revino în FORJA.")
-                            }).padding(horizontal = 14.dp, vertical = 8.dp)
-                    ) { Text("Pornește", style = ButtonTextSmall) }
-                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Contactele și mesajele rămân pe telefon: FORJA le folosește doar pe loc, pentru comanda ta.",
+                    style = BodyTiny.copy(color = TextDim)
+                )
             }
-
-            Spacer(Modifier.height(16.dp))
-            SectionLabel("Permisiuni pentru comenzi")
-            Spacer(Modifier.height(10.dp))
-            val contactsOn = remember(refresh) { granted(Manifest.permission.READ_CONTACTS) }
-            val smsOn = remember(refresh) { granted(Manifest.permission.SEND_SMS) }
-            val callOn = remember(refresh) { granted(Manifest.permission.CALL_PHONE) }
-            ForjaCard(Modifier.fillMaxWidth(), padding = 6.dp) {
-                PermLine("Microfon", "ca să te aud", micGranted) { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
-                PermLine("Contacte", "ca să găsesc numărul după nume", contactsOn) { permsLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS)) }
-                PermLine("SMS", "ca mesajul să plece fără să atingi ecranul", smsOn) { permsLauncher.launch(arrayOf(Manifest.permission.SEND_SMS)) }
-                PermLine("Apeluri", "ca să sun direct, nu doar să formez", callOn) { permsLauncher.launch(arrayOf(Manifest.permission.CALL_PHONE)) }
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Contactele și mesajele rămân pe telefon: FORJA le folosește doar pe loc, pentru comanda ta.",
-                style = BodyTiny.copy(color = TextDim)
-            )
         }
     }
 
     openModule?.let { m ->
         CommandSheet(
             m,
-            onSay = { phrase -> voice.submitText(phrase) },
+            onSay = { phrase -> showDetails = false; voice.submitText(phrase) },
             onClose = { openModule = null }
         )
     }
