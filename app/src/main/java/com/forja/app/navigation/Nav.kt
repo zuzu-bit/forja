@@ -22,6 +22,7 @@ object Route {
     const val WAIT_ASALT = "inventory_asalt"     // „Cât aștepți” · ASALT (nicovala și scânteia, 4.4)
     const val WAIT_MUSIC = "inventory_music"     // „Cât aștepți” · Muzică (S3c)
     const val PERMISSIONS = "permissions"
+    const val SETUP = "setup"
     const val VOICE = "voice"                // „Hei FORJA" — asistentul vocal (4.6)
     const val SOLDIER = "soldier"            // „Casca în uniformă" — grade, misiuni, garderobă (5.0)
     const val CONTRACT = "contract"

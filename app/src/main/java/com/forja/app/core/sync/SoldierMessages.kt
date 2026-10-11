@@ -44,7 +44,7 @@ object SoldierMessages {
         "O pauză scurtă, soldat. Apoi se continuă. ⏸️",
         "Soldatul nu negociază cu inercia. Mișcă-te.",
         "FORJA e în post. Tu — în mișcare. 💪",
-        "Un pahar de apă. Acum. Nu „mai târziu". 💧",
+        "Un pahar de apă. Acum. Nu „mai târziu\". 💧",
         "Mușchii se antrenează și la pahar de apă. Hidratează-te.",
         "Ochii de la ecran, soldat. 20 de secunde, la fereastră. 👁️",
         "Ritmul se ține cu pași mici, nu cu sprinturi. 🪖",
@@ -116,7 +116,7 @@ object SoldierMessages {
         "Un singur ecran, un singur scop. Continua. ⚔️",
         "FORJA vede doar ce aplicație e deschisă. Restul — al tău.",
         "Concentrarea e armura, soldat. Nu o lăsa spartă. 🪖",
-        "Fără notificări. Fără „doar un minut". Tu și treaba. ⚡",
+        "Fără notificări. Fără „doar un minut\". Tu și treaba. ⚡",
         "Paznicul nu clipi. Tu nici. Continua. 👁️",
         "Distragerea a fost blocată. Înnapoi la misiune. 🪖",
     )

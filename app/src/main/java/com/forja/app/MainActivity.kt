@@ -205,6 +205,7 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             open()
         }
     }
+    val setupVersion by app.prefs.setupVersion.collectAsState(initial = 0)
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
 
@@ -455,7 +456,12 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 popEnterTransition = riseEnter, popExitTransition = fadeExit
             ) {
                 AuthScreens(startInLogin = true, onAuthed = {
-                    claimThenOpen { nav.navigate(Route.DASHBOARD) { popUpTo(Route.LOGIN) { inclusive = true } } }
+                    claimThenOpen {
+                        val needsSetup = setupVersion < Prefs.SETUP_VERSION
+                        nav.navigate(if (needsSetup) Route.SETUP else Route.DASHBOARD) {
+                            popUpTo(Route.LOGIN) { inclusive = true }
+                        }
+                    }
                 })
             }
             composable(
@@ -464,7 +470,12 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 popEnterTransition = riseEnter, popExitTransition = fadeExit
             ) {
                 AuthScreens(startInLogin = false, onAuthed = {
-                    claimThenOpen { nav.navigate(Route.DASHBOARD) { popUpTo(Route.REGISTER) { inclusive = true } } }
+                    claimThenOpen {
+                        val needsSetup = setupVersion < Prefs.SETUP_VERSION
+                        nav.navigate(if (needsSetup) Route.SETUP else Route.DASHBOARD) {
+                            popUpTo(Route.REGISTER) { inclusive = true }
+                        }
+                    }
                 })
             }
             composable(
@@ -473,13 +484,6 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 // „Azi” e ancora: la întoarcere apare doar prin fade, sub ecranul care pleacă.
                 popEnterTransition = { if (reduced) fadeIn(snap()) else fadeIn(tween(260)) }
             ) {
-                // „Echipare”: o singură dată pentru fiecare versiune (bifele noi — baterie, alarmă — merită încă o trecere).
-                LaunchedEffect(Unit) {
-                    if (app.prefs.gearSeenVersion.first() < Prefs.GEAR_VERSION) {
-                        app.prefs.setGearSeen()
-                        nav.navigate(Route.PERMISSIONS) { launchSingleTop = true }
-                    }
-                }
                 DashboardScreen(
                     onOpenModule = { r -> nav.navigate(r) },
                     onOpenProfile = { nav.navigate(Route.PROFILE) },
@@ -581,6 +585,19 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                     onBack = { nav.popBackStack() },
                     onOpenContract = { nav.navigate(Route.CONTRACT) { launchSingleTop = true } }
                 )
+            }
+            // Onboarding de setup: 8 etape ghidate de mascota FORJA (permisiuni + demonstrații).
+            composable(
+                Route.SETUP,
+                enterTransition = riseEnter, exitTransition = fadeExit,
+                popEnterTransition = riseEnter, popExitTransition = fadeExit
+            ) {
+                com.forja.app.feature.onboarding.SetupOnboardingScreen(onFinished = {
+                    navScope.launch {
+                        app.prefs.setSetupDone()
+                        nav.navigate(Route.DASHBOARD) { popUpTo(Route.SETUP) { inclusive = true } }
+                    }
+                })
             }
             // Contractul de securitate — un singur acord; se recitește și se revocă din Profil.
             composable(
@@ -689,7 +706,7 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
         // Pastila globală a inventarului: oriunde, cât timp rularea e activă (nu pe ecranele Inventarului, unde
         // progresul e deja pe ecran, și nu în modurile „Cât aștepți”, care o au în antet); la final: „Gata” + toast.
         val inventoryRoutes = setOf(Route.CLEANUP, Route.WAIT_ZID, Route.WAIT_ASALT, Route.WAIT_MUSIC)
-        val noPillRoutes = setOf(Route.ONBOARDING, Route.LOGIN, Route.REGISTER, Route.SCANNER, Route.MEAL_CAMERA)
+        val noPillRoutes = setOf(Route.ONBOARDING, Route.LOGIN, Route.REGISTER, Route.SCANNER, Route.MEAL_CAMERA, Route.SETUP)
         // În jocuri toastul ar acoperi antetul și rândurile de sus ale tablei: acolo pastila din antet devine „Gata”,
         // iar pauza și finalul arată „Dosarele sunt gata”. Vibrația de final rămâne pe orice rută.
         val noToastRoutes = setOf(Route.CLEANUP, Route.WAIT_ZID, Route.WAIT_ASALT)

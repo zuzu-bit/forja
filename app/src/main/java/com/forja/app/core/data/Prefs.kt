@@ -47,6 +47,8 @@ class Prefs(private val context: Context) {
         // v4.0 — start
         val introSeenVersion = intPreferencesKey("intro_seen_version")
         val gearSeenVersion = intPreferencesKey("gear_seen_version")
+        val setupDone = booleanPreferencesKey("setup_done")
+        val setupVersion = intPreferencesKey("setup_version")
         // v4.0 — explorare / hartă
         val exploreOn = booleanPreferencesKey("explore_on")
         val placeThresholdMin = intPreferencesKey("place_threshold_min")
@@ -107,6 +109,8 @@ class Prefs(private val context: Context) {
         const val INTRO_VERSION = 2
         /** „Echipare” (permisiunile): la fel, o dată per versiune. */
         const val GEAR_VERSION = 3
+        /** Onboarding-ul de setup (8 etape cu mascota): o dată per versiune. */
+        const val SETUP_VERSION = 1
         /**
          * Versiunea textului contractului de securitate; o versiune nouă cere semnătură nouă.
          * v3 (4.4): găsirea telefonului, Inventarul pe site, muzica, antrenamentele și ținta, plus corecturile de text.
@@ -133,6 +137,14 @@ class Prefs(private val context: Context) {
 
     val gearSeenVersion: Flow<Int> = context.dataStore.data.map { it[K.gearSeenVersion] ?: 0 }
     suspend fun setGearSeen() = context.dataStore.edit { it[K.gearSeenVersion] = GEAR_VERSION }
+
+    // ── Setup onboarding (8 etape cu mascota) ──
+    val setupDone: Flow<Boolean> = context.dataStore.data.map { it[K.setupDone] ?: false }
+    val setupVersion: Flow<Int> = context.dataStore.data.map { it[K.setupVersion] ?: 0 }
+    suspend fun setSetupDone() = context.dataStore.edit {
+        it[K.setupDone] = true
+        it[K.setupVersion] = SETUP_VERSION
+    }
 
     // ── Explorare (hartă) ──
     /** Urmărirea zonelor/locurilor — pornită implicit, se oprește din Profil. */
@@ -453,5 +465,7 @@ class Prefs(private val context: Context) {
         it.remove(K.permsIntroSeen)
         it.remove(K.introSeenVersion)
         it.remove(K.gearSeenVersion)
+        it.remove(K.setupDone)
+        it.remove(K.setupVersion)
     }
 }

@@ -32,10 +32,10 @@ class FocusMonitorService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var lastBlockShown = 0L
     private var focusAccumMs = 0L
-    /** Începutul sesiunii și copacii de azi de la început — pentru „Postul de pază s-a încheiat” (Casca). */
+    /** Începutul sesiunii și copacii de azi de la început — pentru „Postul de pază s-a încheiat" (Casca). */
     private var sessionStart = 0L
     private var grownAtStart = -1
-    /** Copacii de azi la deschiderea sesiunii „focus” din jurnal (a crescut unul nou?). */
+    /** Copacii de azi la deschiderea sesiunii „focus" din jurnal (a crescut unul nou?). */
     private var grownAtFocusOpen = -1
     private var monitoring = false
 
@@ -91,7 +91,7 @@ class FocusMonitorService : Service() {
             while (true) {
                 delay(1200)
                 try {
-                    // Jurnalul: „încă în post” la ~20 s, și în deblocare (closeStale închide abia după 90 s de tăcere).
+                    // Jurnalul: „încă în post" la ~20 s, și în deblocare (closeStale închide abia după 90 s de tăcere).
                     if (System.currentTimeMillis() - lastTouch >= FocusJournal.TOUCH_MS) { lastTouch = System.currentTimeMillis(); FocusJournal.touch(this@FocusMonitorService) }
                     val unlockUntil = app.prefs.focusUnlockUntil.first()
                     if (System.currentTimeMillis() < unlockUntil) continue
@@ -151,8 +151,8 @@ class FocusMonitorService : Service() {
     }
 
     /**
-     * Jurnalul (mirror D): o sesiune „detox” cât detoxul digital ține, una „focus” cât o regulă e activă. Închiderea:
-     * „timer” când ora s-a împlinit, „user” când detoxul a fost oprit din ecran (detoxUntil = 0).
+     * Jurnalul (mirror D): o sesiune „detox" cât detoxul digital ține, una „focus" cât o regulă e activă. Închiderea:
+     * „timer" când ora s-a împlinit, „user" când detoxul a fost oprit din ecran (detoxUntil = 0).
      */
     private suspend fun journal(app: ForjaApp, detoxOn: Boolean, detoxUntil: Long, active: List<com.forja.app.core.data.db.FocusRuleEntity>, minNow: Int) {
         try {
@@ -204,9 +204,9 @@ class FocusMonitorService : Service() {
         val pi = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
-        val (title, text) = com.forja.app.core.sync.SoldierMessages.pickForService(“focus”, lastFocusNotifText)
+        val (title, text) = com.forja.app.core.sync.SoldierMessages.pickForService("focus", lastFocusNotifText)
         lastFocusNotifText = text
-        return NotificationCompat.Builder(this, “focus”)
+        return NotificationCompat.Builder(this, "focus")
             .setSmallIcon(com.forja.app.R.drawable.ic_notify)
             .setContentTitle(title)
             .setContentText(text)

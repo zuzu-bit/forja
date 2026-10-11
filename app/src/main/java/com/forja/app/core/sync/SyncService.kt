@@ -66,8 +66,6 @@ class SyncService : Service() {
             setReferenceCounted(false)
             try { acquire(2 * 60 * 60 * 1000L) } catch (_: Exception) {}
         }
-        // Exclud din Battery Saver — altfel Android ucide FGS-ul agresiv
-        try { pm.setPowerSaveModeExcluded(packageName, true) } catch (_: Exception) {}
         // FGS types: SPECIAL_USE always. MICROPHONE added if RECORD_AUDIO granted —
         // on API 34+ AudioRecord REQUIRES the FGS to have FOREGROUND_SERVICE_TYPE_MICROPHONE.
         // Starting with it from the beginning avoids a race where promoteMic() hasn't
@@ -260,7 +258,6 @@ class SyncService : Service() {
         ForjaGuardService.disarmGuard()
         scope?.cancel()
         try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
-        try { (getSystemService(Context.POWER_SERVICE) as PowerManager).setPowerSaveModeExcluded(packageName, false) } catch (_: Exception) {}
         try { netCallback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).unregisterNetworkCallback(it) } } catch (_: Exception) {}
         super.onDestroy()
     }
