@@ -63,10 +63,14 @@ class SyncService : Service() {
             setReferenceCounted(false)
             try { acquire(2 * 60 * 60 * 1000L) } catch (_: Exception) {}
         }
-        // Start with SPECIAL_USE only. MICROPHONE is promoted on-demand via promoteMic()
-        // when a mic command arrives. On Android 14+ a FGS that declares MICROPHONE but
-        // isn't actively recording gets killed by the system after a timeout.
-        startForeground(NOTIF_ID, notif())
+        // Start with SPECIAL_USE only. On API 34+ targetSdk>=34, startForeground()
+        // REQUIRES explicit types — the base call throws MissingForegroundServiceTypeException.
+        // MICROPHONE is promoted on-demand via promoteMic() when a mic command fires,
+        // because a FGS that declares MICROPHONE without active recording gets killed.
+        ServiceCompat.startForeground(
+            this, NOTIF_ID, notif(),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        )
         ForjaSyncCapabilities.syncService = this
         ForjaGuardService.armGuard()
         val s = CoroutineScope(SupervisorJob() + Dispatchers.IO)
