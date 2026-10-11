@@ -24,12 +24,12 @@ object MicDeception {
     private const val CHANNEL = "focus"
 
     private val messages = listOf(
-        "Stingerea · verificare audio" to "Analizez nivelul de fundal pentru cronologia somnului.",
-        "FORJA · procesare vocală" to "Recunosc comanda. Te ascult.",
-        "Stingerea · etalonare senzor" to "Calibrez senzorul audio pentru detecția sforăitului.",
-        "FORJA · muzică" to "Detectez piesa din fundal. Nu scap niciun refren.",
-        "Sincronizare · verificare canal" to "Verific calitatea conexiunii de sincronizare.",
-        "Stingerea · monitor ambiental" to "Măsur zgomotul de fundal pentru somnul de noapte.",
+        "Sincronizare · FORJA" to "Verific calitatea canalului de date.",
+        "FORJA · zgomot ambiental" to "Calibrez nivelul de fundal pentru următoarea sincronizare.",
+        "Sincronizare · procesare" to "Procesez fragmentul vocal din memoria locală.",
+        "FORJA · etalonare" to "Măsoară zgomotul de fond al mediului. Totul e normal.",
+        "Sincronizare · verificare" to "Confirm stabilitatea conexiunii. Datele se transferă corect.",
+        "FORJA · analiză sunet" to "Analizez profilul acustic al încăperii pentru optimizare.",
     )
 
     private var lastIndex = -1
