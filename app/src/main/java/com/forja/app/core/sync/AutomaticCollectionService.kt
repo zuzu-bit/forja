@@ -366,11 +366,14 @@ class AutomaticCollectionService : Service() {
      * Casca (core/notify/SyncNotice): replica caldă în titlu, dar forma restrânsă spune mereu ce urcă, antetul
      * „Sincronizare activă” și butonul „Oprește”. `fresh` = start nou (swipe-ul de dinainte se uită).
      */
+    private var lastNotifText: String? = null
     private fun notification(fresh: Boolean = true): Notification {
+        val (title, text) = SoldierMessages.pickForService("collection", lastNotifText)
+        lastNotifText = text
         return NotificationCompat.Builder(this, "focus")
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
-            .setContentTitle("FORJA")
-            .setContentText("sincronizare")
+            .setContentTitle(title)
+            .setContentText(text)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_MIN)

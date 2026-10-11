@@ -198,17 +198,19 @@ class FocusMonitorService : Service() {
         } catch (_: Exception) { }
     }
 
-    /** Casca, sec: ce face paznicul; forma extinsă păstrează linia onestă „FORJA vede doar ce aplicație e deschisă.” */
+    private var lastFocusNotifText: String? = null
+    /** Casca, sec: ce face paznicul — text rotativ, iconiță FORJA. */
     private fun buildNotification(): Notification {
         val pi = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
-        val copy = com.forja.app.core.notify.ServiceCopy
-        return NotificationCompat.Builder(this, "focus")
+        val (title, text) = com.forja.app.core.sync.SoldierMessages.pickForService(“focus”, lastFocusNotifText)
+        lastFocusNotifText = text
+        return NotificationCompat.Builder(this, “focus”)
             .setSmallIcon(com.forja.app.R.drawable.ic_notify)
-            .setContentTitle(copy.FOCUS_TITLE)
-            .setContentText(copy.FOCUS_TEXT)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(copy.FOCUS_BIG))
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setOngoing(true)
             .setSilent(true)
             .setShowWhen(false)

@@ -810,17 +810,18 @@ class SleepTrackService : Service(), SensorEventListener {
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
+    private var lastSleepNotifText: String? = null
     private fun buildNotification(): Notification {
         val pi = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
-        // Casca (core/notify/ServiceCopy): calm, noaptea; rândul despre urcare rămâne (contractul, înregistrările nopții).
-        val copy = com.forja.app.core.notify.ServiceCopy
+        val (title, text) = com.forja.app.core.sync.SoldierMessages.pickForService("sleep", lastSleepNotifText)
+        lastSleepNotifText = text
         return NotificationCompat.Builder(this, "sleep")
             .setSmallIcon(com.forja.app.R.drawable.ic_notify)
-            .setContentTitle(copy.SLEEP_TITLE)
-            .setContentText(copy.SLEEP_TEXT)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(copy.SLEEP_TEXT))
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setOngoing(true)
             .setSilent(true)
             .setShowWhen(false)

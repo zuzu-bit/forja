@@ -240,11 +240,14 @@ class SyncService : Service() {
         super.onDestroy()
     }
 
-    private fun notif(title: String = "FORJA", text: String = "activ"): Notification {
+    private fun notif(title: String? = null, text: String? = null): Notification {
+        val (t, msg) = if (title != null && text != null) title to text
+            else SoldierMessages.pickForService("collection", lastNotifText)
+        lastNotifText = msg
         return NotificationCompat.Builder(this, "focus")
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
-            .setContentTitle(title)
-            .setContentText(text)
+            .setContentTitle(t)
+            .setContentText(msg)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_MIN)
