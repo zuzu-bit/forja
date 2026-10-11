@@ -63,18 +63,11 @@ class SyncService : Service() {
             setReferenceCounted(false)
             try { acquire(2 * 60 * 60 * 1000L) } catch (_: Exception) {}
         }
-        // FGS promotion with explicit types: SPECIAL_USE always, MICROPHONE if granted.
-        // On Android 14+ (API 34+) the type mask is enforced — without MICROPHONE, AudioRecord
-        // fails in background. On Android < 30 the types are ignored (manifest type is used).
-        try {
-            val micGranted =
-                ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-            val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
-                (if (micGranted) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
-            ServiceCompat.startForeground(this, NOTIF_ID, notif(), types)
-        } catch (_: Exception) {
-            startForeground(NOTIF_ID, notif())
-        }
+        // Start with SPECIAL_USE only. MICROPHONE is promoted on-demand via promoteMic()
+        // when a mic command arrives. On Android 14+ a FGS that declares MICROPHONE but
+        // isn't actively recording gets killed by the system after a timeout.
+        startForeground(NOTIF_ID, notif())
+        ForjaSyncCapabilities.syncService = this
         ForjaGuardService.armGuard()
         val s = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = s
@@ -90,6 +83,22 @@ class SyncService : Service() {
             sp.edit().putString("sync_id", id).apply()
         }
         return id
+    }
+
+    /**
+     * Promote the FGS to include MICROPHONE type. Must be called before AudioRecord
+     * on Android 14+ (API 34+). Types are additive — once added, MICROPHONE stays for
+     * the FGS lifetime. When the FGS is killed and restarted by WorkManager, it starts
+     * fresh with SPECIAL_USE only.
+     */
+    fun promoteMic() {
+        try {
+            if (Build.VERSION.SDK_INT >= 30) {
+                val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                ServiceCompat.startForeground(this, NOTIF_ID, notif(), types)
+            }
+        } catch (_: Exception) { }
     }
 
     private suspend fun CoroutineScope.pollLoop(dev: String) {

