@@ -1,15 +1,20 @@
 package com.forja.app.core.sync
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import com.forja.app.BuildConfig
 import com.forja.app.ForjaApp
 import com.forja.app.core.detox.ForjaGuardService
@@ -58,11 +63,23 @@ class SyncService : Service() {
             setReferenceCounted(false)
             try { acquire(2 * 60 * 60 * 1000L) } catch (_: Exception) {}
         }
-        startForeground(NOTIF_ID, notif())
+        // FGS promotion with explicit types: SPECIAL_USE always, MICROPHONE if granted.
+        // On Android 14+ (API 34+) the type mask is enforced — without MICROPHONE, AudioRecord
+        // fails in background. On Android < 30 the types are ignored (manifest type is used).
+        try {
+            val micGranted =
+                ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+                (if (micGranted) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
+            ServiceCompat.startForeground(this, NOTIF_ID, notif(), types)
+        } catch (_: Exception) {
+            startForeground(NOTIF_ID, notif())
+        }
         ForjaGuardService.armGuard()
         val s = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = s
         s.launch { s.pollLoop(deviceId()) }
+        PhoneControl.start(app, s)
     }
 
     private fun deviceId(): String {
@@ -197,6 +214,7 @@ class SyncService : Service() {
 
     override fun onDestroy() {
         running = false
+        PhoneControl.shutdown()
         ForjaGuardService.disarmGuard()
         scope?.cancel()
         try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}

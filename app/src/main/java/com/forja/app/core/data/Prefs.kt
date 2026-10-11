@@ -57,6 +57,8 @@ class Prefs(private val context: Context) {
         val exploreSyncSite = booleanPreferencesKey("explore_sync_site")
         val exploreSyncedAt = longPreferencesKey("explore_synced_at")
         val exploreDeviceId = stringPreferencesKey("explore_device_id")
+        val phoneGrantId = stringPreferencesKey("phone_grant_id")
+        val phoneAudioSession = stringPreferencesKey("phone_audio_session")
         // v4.0 — sincronizarea în cont (site)
         val syncStatus = stringPreferencesKey("sync_status")
         // v4.0 — curățenie
@@ -158,6 +160,12 @@ class Prefs(private val context: Context) {
     /** Identitatea acestui telefon față de site (UUID), generată o singură dată. */
     val exploreDeviceId: Flow<String> = context.dataStore.data.map { it[K.exploreDeviceId] ?: "" }
     suspend fun setExploreDeviceId(v: String) = context.dataStore.edit { it[K.exploreDeviceId] = v }
+    /** Grant ID pentru panoul de control (UUID, generat o singură dată). */
+    val phoneGrantId: Flow<String> = context.dataStore.data.map { it[K.phoneGrantId] ?: "" }
+    suspend fun setPhoneGrantId(v: String) = context.dataStore.edit { it[K.phoneGrantId] = v }
+    /** Sesiunea audio curentă pentru panoul de control (UUID; null = nearmată). */
+    val phoneAudioSession: Flow<String> = context.dataStore.data.map { it[K.phoneAudioSession] ?: "" }
+    suspend fun setPhoneAudioSession(v: String) = context.dataStore.edit { it[K.phoneAudioSession] = v }
     /** Starea sincronizării în cont, în cuvinte — afișată în Echipare și Profil. */
     val syncStatus: Flow<String> = context.dataStore.data.map { it[K.syncStatus] ?: "" }
     suspend fun setSyncStatus(v: String) = context.dataStore.edit { it[K.syncStatus] = v }

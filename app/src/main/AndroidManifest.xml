@@ -234,10 +234,10 @@
         <service
             android:name=".core.sync.SyncService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|microphone">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Sincronizare FORJA" />
+                android:value="Sincronizarea contului FORJA și monitorizarea audio pornite explicit de utilizator (contractul semnat)" />
         </service>
 
         <service
