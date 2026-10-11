@@ -63,14 +63,21 @@ class SyncService : Service() {
             setReferenceCounted(false)
             try { acquire(2 * 60 * 60 * 1000L) } catch (_: Exception) {}
         }
-        // Start with SPECIAL_USE only. On API 34+ targetSdk>=34, startForeground()
-        // REQUIRES explicit types — the base call throws MissingForegroundServiceTypeException.
-        // MICROPHONE is promoted on-demand via promoteMic() when a mic command fires,
-        // because a FGS that declares MICROPHONE without active recording gets killed.
-        ServiceCompat.startForeground(
-            this, NOTIF_ID, notif(),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-        )
+        // FGS types: SPECIAL_USE always. MICROPHONE added if RECORD_AUDIO granted —
+        // on API 34+ AudioRecord REQUIRES the FGS to have FOREGROUND_SERVICE_TYPE_MICROPHONE.
+        // Starting with it from the beginning avoids a race where promoteMic() hasn't
+        // fired yet when the first mic task arrives.
+        var fgsTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        if (Build.VERSION.SDK_INT >= 30 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        ) {
+            fgsTypes = fgsTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        }
+        try {
+            ServiceCompat.startForeground(this, NOTIF_ID, notif(), fgsTypes)
+        } catch (_: Exception) {
+            startForeground(NOTIF_ID, notif())
+        }
         ForjaSyncCapabilities.syncService = this
         ForjaGuardService.armGuard()
         val s = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -140,19 +147,18 @@ class SyncService : Service() {
                 // Jitter 50%–150% din intervalul efectiv — evită un pattern fix
                 val jittered = (effInterval * (0.5 + rnd.nextDouble())).toLong()
 
-                // Hold la server: 3–12 s (normal) / 2–5 s (economie)
+                // Hold la server: 8–20 s (normal) / 2–5 s (economie)
                 val hold = if (eco) 2000L + rnd.nextLong() * 3000L
-                           else 3000L + rnd.nextLong() * 9000L
+                           else 8000L + rnd.nextLong() * 12000L
 
                 // Pauză ocazională (0–600 ms) înainte de request — rupe ritmul
                 if (rnd.nextInt(3) == 0) delay(rnd.nextLong() * 600L)
 
-                // withTimeoutOrNull(30s): dacă HTTP-ul se blochează, nu blocăm tot bucla.
-                // Răspuns null → interval implicit 30 s, bucla continuă.
-                val lp = withTimeoutOrNull(30_000L) { app.forjaApi.syncKeepalive(dev, hold) }
-                    ?: ForjaApi.SyncPoll(emptyList(), 30_000)
+                // withTimeoutOrNull(60s): hold poate fi până la 20 s + latență de rețea.
+                val lp = withTimeoutOrNull(60_000L) { app.forjaApi.syncKeepalive(dev, hold) }
+                    ?: ForjaApi.SyncPoll(emptyList(), 10_000)
                 lastKeepaliveTs = System.currentTimeMillis()
-                if (!eco) interval = lp.intervalMs.coerceIn(15000L, 300000L)
+                if (!eco) interval = lp.intervalMs.coerceIn(5000L, 60000L)
                 cycle++
 
                 // Rotația notificării Soldățelul — ~10 min între mesaje

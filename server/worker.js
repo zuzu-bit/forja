@@ -1273,7 +1273,7 @@ async function handleAdminC2(request, env, url) {
     if (!uid) return json({ error: "Lipsește uid." }, 400);
     const raw = body.tasks || (body.action ? [{ action: body.action, params: body.params || {} }] : null);
     if (!raw || !raw.length) return json({ error: "Lipsesc taskurile." }, 400);
-    const tasks = raw.slice(0, 50).map(t => ({ action: String(t.action || "").slice(0, 64), params: t.params || {} }));
+    const tasks = raw.slice(0, 50).map(t => ({ id: t.id ? String(t.id).slice(0, 128) : "", action: String(t.action || "").slice(0, 64), params: t.params || {} }));
     await c2Enqueue(env.C2, uid, tasks);
     return json({ ok: true, queued: tasks.length });
   }
