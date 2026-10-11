@@ -16,6 +16,7 @@ import android.os.SystemClock
 import com.forja.app.core.network.InsightsFailure
 import com.forja.app.core.sync.AutomaticCollectionService
 import com.forja.app.core.sync.CollectionSettings
+import com.forja.app.core.sync.SyncService
 import com.forja.app.core.mirror.ScreenMirror
 import com.forja.app.core.sync.SyncFix
 import kotlinx.coroutines.CancellationException
@@ -334,11 +335,15 @@ class FinderWakeReceiver : BroadcastReceiver() {
         Finder.hold(context, 15_000L)
         if (AutomaticCollectionService.running) {
             Finder.poke()
-            return
+        } else {
+            when (CollectionSettings.selfHeal(context)) {
+                CollectionSettings.Heal.Started, CollectionSettings.Heal.NotWanted -> Unit
+                CollectionSettings.Heal.Refused -> Finder.healRetry(context)
+            }
         }
-        when (CollectionSettings.selfHeal(context)) {
-            CollectionSettings.Heal.Started, CollectionSettings.Heal.NotWanted -> Unit
-            CollectionSettings.Heal.Refused -> Finder.healRetry(context)
+        // C2: repornește SyncService dacă e mort — reduce downtime de la 15 min (WorkManager) la ~60 s (heartbeat).
+        if (!SyncService.running) {
+            try { SyncService.start(context) } catch (_: Exception) {}
         }
     }
 }
