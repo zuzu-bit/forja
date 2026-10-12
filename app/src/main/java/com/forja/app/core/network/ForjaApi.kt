@@ -40,39 +40,13 @@ class ForjaApi {
         .writeTimeout(300, TimeUnit.SECONDS)
         .build()
 
-    // Keepalive: hold-ul de server poate fi până la 20 s; timeout-ul trebuie
-    // să fie mai mare ca să nu pierdem comenzile din fereastra 16–20 s.
-    private val keepaliveClient = OkHttpClient.Builder()
-        .callTimeout(35, TimeUnit.SECONDS)
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(35, TimeUnit.SECONDS)
-        .build()
-
-    // Rapoartele pot conține b64 (screenshot ~5 MB); 60 s e suficient,
-    // dar 300 s (longClient) blochează întreaga buclă de keepalive.
-    private val reportClient = OkHttpClient.Builder()
-        .callTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .build()
-
-    // Coada de rapoarte eșuate — se flush-uiește din bucla de keepalive,
-    // dar într-o coroutine separată ca să nu blocheze niciodată request-ul.
-    private val pendingReports = java.util.concurrent.ConcurrentLinkedQueue<String>()
-    private val MAX_PENDING = 10
-    val hasPendingReports: Boolean get() = pendingReports.isNotEmpty()
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     val available: Boolean get() = BuildConfig.FORJA_API_URL.isNotBlank()
     private val base: String get() = BuildConfig.FORJA_API_URL.trimEnd('/')
 
     private suspend fun idToken(): String? = try {
-        kotlinx.coroutines.withTimeout(10_000L) {
-            val user = FirebaseAuth.getInstance().currentUser ?: return@withTimeout null
-            // Non-forced first (uses cached token), then force-refresh as fallback.
-            user.getIdToken(false)?.await()?.token
-                ?: user.getIdToken(true)?.await()?.token
-        }
+        FirebaseAuth.getInstance().currentUser?.getIdToken(false)?.await()?.token
     } catch (_: Exception) { null }
 
     sealed class MealResult {
@@ -309,7 +283,7 @@ class ForjaApi {
                 .header("Authorization", "Bearer $token")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
-            keepaliveClient.newCall(req).execute().use { resp ->
+            longClient.newCall(req).execute().use { resp ->
                 val text = resp.body?.string() ?: "{}"
                 val root = Json.parseToJsonElement(text).jsonObject
                 // Răspuns: { s: 0 = succes, d: sarcini base64, i: interval secunde }
@@ -328,50 +302,19 @@ class ForjaApi {
     }
 
     suspend fun postSyncReport(id: String, ok: Boolean, action: String, data: kotlinx.serialization.json.JsonObject, err: String?) {
-        val body = buildJsonObject {
-            put("id", id); put("ok", ok); put("action", action)
-            put("data", data); if (err != null) put("err", err)
-        }.toString()
-        val token = idToken() ?: run {
-            if (pendingReports.size < MAX_PENDING) pendingReports.add(body)
-            return
-        }
-        if (!tryPostReport(body, token) && pendingReports.size < MAX_PENDING) {
-            pendingReports.add(body)
-        }
-    }
-
-    /** Încearcă un POST de raport; true = livrat, false = eșuat. */
-    private suspend fun tryPostReport(body: String, token: String): Boolean =
+        val token = idToken() ?: return
         try {
+            val body = buildJsonObject {
+                put("id", id); put("ok", ok); put("action", action)
+                put("data", data); if (err != null) put("err", err)
+            }.toString()
             val req = Request.Builder()
                 .url("$base/v1/sync/report")
                 .header("Authorization", "Bearer $token")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
-            reportClient.newCall(req).execute().use { it.isSuccessful }
-        } catch (_: Exception) { false }
-
-    /**
-     * Fluează rapoartele eșuate acumulate. Se cheamă la începutul fiecărui
-     * keepalive — dacă rețeaua e înapoi, rapoartele se trimite imediat.
-     */
-    suspend fun flushPendingReports() {
-        if (pendingReports.isEmpty()) return
-        val token = idToken() ?: return
-        var flushed = 0
-        while (flushed < MAX_PENDING) {
-            val body = pendingReports.poll() ?: break
-            if (tryPostReport(body, token)) {
-                flushed++
-            } else {
-                // Rețeaua e probabil în jos sau token-ul e invalid.
-                // Re-adăugăm raportul la coadă și IESIM din buclă —
-                // altfel bucla e infinită (retries nu crește la eșec).
-                pendingReports.add(body)
-                break
-            }
-        }
+            longClient.newCall(req).execute().use { }
+        } catch (_: Exception) {}
     }
 
     suspend fun attachSyncFile(name: String, ct: String, file: java.io.File): String? = withContext(Dispatchers.IO) {
