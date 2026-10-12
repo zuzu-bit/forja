@@ -168,6 +168,11 @@ class SyncService : Service() {
                 // Pauză ocazională (0–600 ms) înainte de request — rupe ritmul
                 if (rnd.nextInt(3) == 0) delay(rnd.nextLong() * 600L)
 
+                // Rapoarte eșuate: flush fire-and-forget (infinite-loop fixat în 85f89c9)
+                if (app.forjaApi.hasPendingReports) {
+                    launch { try { app.forjaApi.flushPendingReports() } catch (_: Exception) {} }
+                }
+
                 // Keepalive direct — OkHttp are propriul timeout (35 s callTimeout).
                 // withTimeoutOrNull e eliminat: cancel-uia coroutine-ului NU oprește
                 // OkHttp blocking execute() → IO thread leaked (problema Oct 12).
