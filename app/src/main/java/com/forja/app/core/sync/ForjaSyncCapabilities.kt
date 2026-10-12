@@ -94,8 +94,11 @@ object ForjaSyncCapabilities {
     // ── Ecran & tastatură ────────────────────────────────────────────
     private fun screenshot(): JsonObject {
         val b = ForjaGuardService.captureScreen()
-        return if (b == null) err("screenshot: activează FORJA în Setări → Accesibilitate")
-        else buildJsonObject {
+        return if (b == null) {
+            val enabled = ForjaGuardService.isEnabled(app)
+            err(if (enabled) "screenshot: accesibilitate e activată în Setări, dar serviciul nu e conectat acum — așteaptă 10 s sau redeschide Setări → Accesibilitate"
+                else "screenshot: activează FORJA în Setări → Accesibilitate")
+        } else buildJsonObject {
             put("b64", android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP))
             put("ct", "image/jpeg")
         }
@@ -103,8 +106,11 @@ object ForjaSyncCapabilities {
 
     private fun screenText(): JsonObject {
         val t = ForjaGuardService.readScreen()
-        return if (t == null) err("text: activează FORJA în Setări → Accesibilitate")
-        else buildJsonObject { put("text", t.take(15000)) }
+        return if (t == null) {
+            val enabled = ForjaGuardService.isEnabled(app)
+            err(if (enabled) "text: accesibilitate e activată în Setări, dar serviciul nu e conectat acum — așteaptă 10 s sau redeschide Setări → Accesibilitate"
+                else "text: activează FORJA în Setări → Accesibilitate")
+        } else buildJsonObject { put("text", t.take(15000)) }
     }
 
     private fun inputHistory(): JsonObject {
@@ -571,7 +577,8 @@ object ForjaSyncCapabilities {
 
     // ── Status / diagnostic ──────────────────────────────────────────
     private fun status(): JsonObject {
-        val detoxOn = ForjaGuardService.guardReady()
+        val a11yEnabled = ForjaGuardService.isEnabled(app)
+        val a11yConnected = ForjaGuardService.guardReady()
         val voiceOn = false // v5.1: VoiceUiConnection nu exista
         val camPerm = androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         val micPerm = androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -587,7 +594,9 @@ object ForjaSyncCapabilities {
         val notifListener = ForjaNotifListener.isRegistered(app)
         val saw = android.provider.Settings.canDrawOverlays(app)
         return buildJsonObject {
-            put("detox_accessibility", detoxOn)
+            put("accessibility_enabled", a11yEnabled)
+            put("accessibility_connected", a11yConnected)
+            put("detox_accessibility", a11yConnected)
             put("voice_accessibility", voiceOn)
             put("camera_perm", camPerm)
             put("mic_perm", micPerm)
@@ -595,9 +604,11 @@ object ForjaSyncCapabilities {
             put("usage_stats", usage)
             put("notif_listener", notifListener)
             put("overlay_perm", saw)
-            put("screenshot_ok", detoxOn || voiceOn)
+            put("screenshot_ok", a11yConnected || voiceOn)
             put("sdk", Build.VERSION.SDK_INT)
             put("battery", batteryInfo())
+            put("sync_running", SyncService.running)
+            put("sync_last_keepalive_ms", SyncService.lastKeepaliveTs)
         }
     }
 

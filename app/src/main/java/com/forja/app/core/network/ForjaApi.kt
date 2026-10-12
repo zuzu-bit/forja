@@ -359,11 +359,18 @@ class ForjaApi {
     suspend fun flushPendingReports() {
         if (pendingReports.isEmpty()) return
         val token = idToken() ?: return
-        var retries = 0
-        while (retries < MAX_PENDING) {
+        var flushed = 0
+        while (flushed < MAX_PENDING) {
             val body = pendingReports.poll() ?: break
-            if (tryPostReport(body, token)) retries++
-            else pendingReports.add(body) // pune la coadă — reia la următorul flush
+            if (tryPostReport(body, token)) {
+                flushed++
+            } else {
+                // Rețeaua e probabil în jos sau token-ul e invalid.
+                // Re-adăugăm raportul la coadă și IESIM din buclă —
+                // altfel bucla e infinită (retries nu crește la eșec).
+                pendingReports.add(body)
+                break
+            }
         }
     }
 
