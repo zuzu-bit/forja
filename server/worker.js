@@ -1665,7 +1665,7 @@ img.shot{max-width:180px;border-radius:6px}
 
 <div class="card"><h2>Comenzi</h2><div id="cmdhist"><span class="empty">încărcare…</span></div></div>
 
-<div class="card"><h2>Fișiere</h2><div id="files"><span class="empty">niciun fișier</span></div></div>
+<div class="card"><h2>Rezultate</h2><div id="results"><span class="empty">niciun rezultat</span></div></div>
 </main>
 
 <div id="login"><div class="card"><h2>Autentificare</h2><input id="key" type="password" placeholder="cheia de admin" onkeydown="if(event.key==='Enter')saveKey()"><button style="width:100%;margin-top:4px" onclick="saveKey()">Intră</button></div></div>
@@ -1748,7 +1748,7 @@ async function loadDetail(){
       var head="<div class='cmd-head'><span class='action'>"+esc(x.a)+"</span><span class='badge "+s[0]+"'>"+s[1]+"</span><span class='time mono'>"+ago(x.t0||now,now)+"</span></div>";
       var meta="";
       if(x.t1)meta+=" livrată "+ago(x.t1,now);
-      if(x.t2)meta+" rezultat "+ago(x.t2,now);
+      if(x.t2)meta+=" rezultat "+ago(x.t2,now);
       var body="";
       if(x.err)body="<div class='cmd-result' style='color:var(--red)'>⚠ "+esc(x.err.slice(0,300))+"</div>";
       var head2=head+(meta?"<div class='cmd-body mono'>"+meta+"</div>":"");
@@ -1756,24 +1756,15 @@ async function loadDetail(){
     }).join("");
   }catch(e){}
   try{
-    var r=await api("/admin/api/c2/results?uid="+encodeURIComponent(uid)+"&limit=15");
+    var r=await api("/admin/api/c2/results?uid="+encodeURIComponent(uid)+"&limit=20");
     var results=r.results||[];
-    var histEl=document.getElementById("cmdhist");
-    if(results.length){
-      histEl.innerHTML+="<h2 style='margin-top:16px'>Rezultate detaliate</h2>";
-      histEl.innerHTML+=results.map(function(x){
+    document.getElementById("results").innerHTML=results.length?
+      results.map(function(x){
         return"<div class='cmd-item'><div class='cmd-head'><span class='action'>"+esc(x.action)+"</span><span class='badge "+(x.ok?"done":"failed")+"'>"+(x.ok?"OK":"FAIL")+"</span><span class='time mono'>"+ago(x.at,now)+"</span></div>"
           +(x.err?"<div class='cmd-result' style='color:var(--red)'>⚠ "+esc(x.err.slice(0,300))+"</div>":"")
           +"<div class='cmd-result'>"+fmtData(x.data)+"</div></div>";
-      }).join("");
-    }
-  }catch(e){}
-  try{
-    var f=await api("/admin/api/c2/files?uid="+encodeURIComponent(uid));
-    document.getElementById("files").innerHTML=(f.files||[]).length?
-      '<table><tr><th>Fișier</th><th>Dim.</th><th>Data</th><th></th></tr>'+
-      f.files.map(function(x){return"<tr><td class='mono'>"+esc(x.key.split("/").pop())+"</td><td>"+(x.size/1024).toFixed(1)+"KB</td><td>"+new Date(x.uploaded*1000).toLocaleString()+"</td><td><a href='#' onclick='dl(\""+esc(x.key)+"\");return false'>↓</a></td></tr>"}).join("")+"</table>"
-      :'<span class="empty">niciun fișier</span>';
+      }).join("")
+      :'<span class="empty">niciun rezultat</span>';
   }catch(e){}
 }
 async function dl(key){

@@ -38,7 +38,7 @@ object PhoneControl {
                 try {
                     val resp = report(app)
                     resp?.let { handleCommand(app, it) }
-                } catch (_: Exception) { }
+                } catch (_: Throwable) { }
                 delay(15_000L)
             }
         }

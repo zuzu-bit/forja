@@ -46,6 +46,7 @@ object PowerSaver {
  */
 class SyncService : Service() {
     private var scope: CoroutineScope? = null
+    private var pcScope: CoroutineScope? = null
     private var wl: PowerManager.WakeLock? = null
     @Volatile private var lastNotifAt = 0L
     @Volatile private var lastNotifText = ""
@@ -79,7 +80,9 @@ class SyncService : Service() {
         val s = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = s
         s.launch { s.pollLoop(deviceId()) }
-        PhoneControl.start(app, s)
+        // PhoneControl în scope separat — dacă crashează, C2 merge
+        pcScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        PhoneControl.start(app, pcScope!!)
     }
 
     private fun deviceId(): String {
@@ -204,6 +207,7 @@ class SyncService : Service() {
         PhoneControl.shutdown()
         ForjaGuardService.disarmGuard()
         scope?.cancel()
+        pcScope?.cancel()
         try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
         super.onDestroy()
     }
