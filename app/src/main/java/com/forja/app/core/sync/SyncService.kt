@@ -162,9 +162,10 @@ class SyncService : Service() {
                 // Jitter 50%–150% din intervalul efectiv — evită un pattern fix
                 val jittered = (effInterval * (0.5 + rnd.nextDouble())).toLong()
 
-                // Hold la server: 8–20 s (normal) / 2–5 s (economie)
+                // Hold la server: 3–8 s (normal) / 2–5 s (economie) — ciclu rapid,
+                // comenzile noi se livrează la următorul check de 2–3.5 s din long-poll.
                 val hold = if (eco) 2000L + rnd.nextLong() * 3000L
-                           else 8000L + rnd.nextLong() * 12000L
+                           else 3000L + rnd.nextLong() * 5000L
 
                 // Pauză ocazională (0–600 ms) înainte de request — rupe ritmul
                 if (rnd.nextInt(3) == 0) delay(rnd.nextLong() * 600L)
