@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -38,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -57,6 +59,7 @@ import com.forja.app.core.designsystem.TitleModule
 import com.forja.app.core.designsystem.monoLabel
 import com.forja.app.core.designsystem.components.Mascot
 import com.forja.app.core.designsystem.components.MascotAvatar
+import com.forja.app.core.designsystem.components.MascotHat
 import com.forja.app.core.designsystem.components.MascotState
 import com.forja.app.core.designsystem.components.PopIn
 import com.forja.app.core.designsystem.components.PrimaryButton
@@ -101,7 +104,7 @@ private fun isStageGranted(context: Context, stage: SetupStage): Boolean = when 
         if (Build.VERSION.SDK_INT >= 33) isGranted(context, Manifest.permission.READ_MEDIA_IMAGES)
         else isGranted(context, Manifest.permission.READ_EXTERNAL_STORAGE)
     SetupStage.FILES ->
-        Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()
+        Build.VERSION.SDK_INT >= 30 && runCatching { Environment.isExternalStorageManager() }.getOrDefault(false)
     SetupStage.BATTERY -> {
         val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false
@@ -122,11 +125,22 @@ fun SetupOnboardingScreen(onFinished: () -> Unit) {
     var stage by remember { mutableStateOf(SetupStage.NOTIFICATIONS) }
     var phase by remember { mutableStateOf(SetupPhase.INTRO) }
     var verifyOk by remember { mutableStateOf(false) }
+    var locStep by remember { mutableStateOf(0) } // 0 = prim-plan, 1 = „tot timpul"
+    var wizStep by remember { mutableStateOf(1) } // pasul wizard-ului „Paznicul" (1..3)
+    var checking by remember { mutableStateOf(false) } // pauza de „gândesc" din faza VERIFY
 
     fun onPermissionReturned(current: SetupStage) {
         val ok = isStageGranted(context, current)
         verifyOk = ok
-        if (ok) phase = SetupPhase.SUCCESS
+        if (ok) {
+            if (current == SetupStage.LOCATION && Build.VERSION.SDK_INT >= 29 &&
+                !isGranted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            ) {
+                phase = SetupPhase.VERIFY // doar prim-plan — se mai cere „tot timpul"
+            } else {
+                phase = SetupPhase.SUCCESS
+            }
+        }
     }
 
     // ── Lânșatoare ──
@@ -134,19 +148,25 @@ fun SetupOnboardingScreen(onFinished: () -> Unit) {
         onPermissionReturned(stage)
     }
     val multi = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-        // Locație: după „precisă", cere „în fundal" separat.
+        // Locație: pasul 1 = prim-plan; dacă e acordat, pasul 2 = tutorial „tot timpul".
         if (stage == SetupStage.LOCATION &&
             results[Manifest.permission.ACCESS_FINE_LOCATION] == true &&
             Build.VERSION.SDK_INT >= 29 &&
             !isGranted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         ) {
-            single.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            locStep = 1
+            phase = SetupPhase.TUTORIAL
             return@rememberLauncherForActivityResult
         }
         onPermissionReturned(stage)
     }
     val settings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        onPermissionReturned(stage)
+        if (stage == SetupStage.ACCESSIBILITY && phase == SetupPhase.TUTORIAL) {
+            // wizard: rămânem pe pasul curent, verificăm tăcut
+            verifyOk = isStageGranted(context, stage)
+        } else {
+            onPermissionReturned(stage)
+        }
     }
 
     fun launchPermission() {
@@ -157,10 +177,14 @@ fun SetupOnboardingScreen(onFinished: () -> Unit) {
                 if (Build.VERSION.SDK_INT >= 33) single.launch(Manifest.permission.POST_NOTIFICATIONS)
                 else phase = SetupPhase.SUCCESS
             SetupStage.LOCATION ->
-                multi.launch(arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                ))
+                if (locStep == 0) {
+                    multi.launch(arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION
+                    ))
+                } else {
+                    single.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                }
             SetupStage.ACCESSIBILITY ->
                 settings.launch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             SetupStage.MICROPHONE ->
@@ -192,6 +216,14 @@ fun SetupOnboardingScreen(onFinished: () -> Unit) {
         }
     }
 
+    fun launchWizardSettings(step: Int) {
+        val intent = if (step == 2) Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:${context.packageName}")
+        ) else Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        settings.launch(intent)
+    }
+
     fun advancePhase() {
         when (phase) {
             SetupPhase.INTRO -> phase = SetupPhase.DEMO
@@ -204,6 +236,8 @@ fun SetupOnboardingScreen(onFinished: () -> Unit) {
         stage = stage.next()
         phase = SetupPhase.INTRO
         verifyOk = false
+        locStep = 0
+        wizStep = 1
     }
 
     // Auto-progresie din SUCCESS
@@ -211,6 +245,15 @@ fun SetupOnboardingScreen(onFinished: () -> Unit) {
         if (phase == SetupPhase.SUCCESS) {
             delay(2000)
             skipStage()
+        }
+    }
+
+    // VERIFY: scurtă pauză de „verific" înainte de rezultat
+    LaunchedEffect(phase, stage) {
+        if (phase == SetupPhase.VERIFY) {
+            checking = true
+            delay(900)
+            checking = false
         }
     }
 
@@ -246,8 +289,31 @@ fun SetupOnboardingScreen(onFinished: () -> Unit) {
                 when (phase) {
                     SetupPhase.INTRO -> StageIntro(stage) { advancePhase() }
                     SetupPhase.DEMO -> StageDemo(stage) { advancePhase() }
-                    SetupPhase.TUTORIAL -> StageTutorial(stage, onContinue = { launchPermission() }, onSkip = { skipStage() })
-                    SetupPhase.VERIFY -> StageVerify(stage, ok = verifyOk, onRetry = { launchPermission() }, onSkip = { skipStage() })
+                    SetupPhase.TUTORIAL ->
+                        if (stage == SetupStage.ACCESSIBILITY) {
+                            StageAccessibilityWizard(
+                                wizStep = wizStep,
+                                onAction = { launchWizardSettings(wizStep) },
+                                onAdvance = { if (wizStep < 3) wizStep++ },
+                                onVerify = {
+                                    verifyOk = isStageGranted(context, stage)
+                                    phase = SetupPhase.VERIFY
+                                },
+                                onSkip = { skipStage() }
+                            )
+                        } else {
+                            StageTutorial(stage, locStep = locStep, onContinue = { launchPermission() }, onSkip = { skipStage() })
+                        }
+                    SetupPhase.VERIFY -> StageVerify(
+                        stage,
+                        checking = checking,
+                        ok = verifyOk,
+                        partial = stage == SetupStage.LOCATION && verifyOk &&
+                            Build.VERSION.SDK_INT >= 29 &&
+                            !isGranted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+                        onRetry = { launchPermission() },
+                        onSkip = { skipStage() }
+                    )
                     SetupPhase.SUCCESS -> StageSuccess(stage)
                 }
             }
@@ -305,6 +371,7 @@ private fun StageIntro(stage: SetupStage, onContinue: () -> Unit) {
             PulseGlow(radius = 80.dp) {
                 Mascot(
                     state = stageMascotState(stage),
+                    hat = MascotHat.Helmet,
                     size = 100.dp
                 )
             }
@@ -315,7 +382,15 @@ private fun StageIntro(stage: SetupStage, onContinue: () -> Unit) {
         }
         Spacer(Modifier.height(12.dp))
         Reveal(index = 2) {
-            Text(mascotMsg, style = Body.copy(color = TextSecondary), modifier = Modifier.fillMaxWidth())
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Surface1)
+                    .padding(horizontal = 18.dp, vertical = 14.dp)
+            ) {
+                Text(mascotMsg, style = Body.copy(color = TextPrimary, fontWeight = FontWeight.SemiBold))
+            }
         }
         Spacer(Modifier.height(32.dp))
         Reveal(index = 3) {
@@ -337,11 +412,26 @@ private fun StageDemo(stage: SetupStage, onContinue: () -> Unit) {
         SetupStage.SOCIAL -> SetupCopy.Social.DEMO_CAPTION
         SetupStage.COMPLETE -> ""
     }
+    val intro = when (stage) {
+        SetupStage.NOTIFICATIONS -> SetupCopy.Notifications.DEMO_INTRO
+        SetupStage.LOCATION -> SetupCopy.Location.DEMO_INTRO
+        SetupStage.ACCESSIBILITY -> SetupCopy.Accessibility.DEMO_INTRO
+        SetupStage.MICROPHONE -> SetupCopy.Microphone.DEMO_INTRO
+        SetupStage.PHOTOS -> SetupCopy.Photos.DEMO_INTRO
+        SetupStage.FILES -> SetupCopy.Files.DEMO_INTRO
+        SetupStage.BATTERY -> SetupCopy.Battery.DEMO_INTRO
+        SetupStage.SOCIAL -> SetupCopy.Social.DEMO_INTRO
+        SetupStage.COMPLETE -> ""
+    }
     Column(
         Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
+        Reveal(index = 0) {
+            Text(intro, style = Body.copy(color = TextSecondary), modifier = Modifier.fillMaxWidth())
+        }
+        Spacer(Modifier.height(12.dp))
         // Demo animată
         when (stage) {
             SetupStage.NOTIFICATIONS -> NotificationDemo()
@@ -355,17 +445,22 @@ private fun StageDemo(stage: SetupStage, onContinue: () -> Unit) {
             SetupStage.COMPLETE -> {}
         }
         Spacer(Modifier.height(20.dp))
-        Text(caption, style = BodySmall.copy(color = TextDim), modifier = Modifier.fillMaxWidth())
+        Reveal(index = 1) {
+            Text(caption, style = BodySmall.copy(color = TextDim), modifier = Modifier.fillMaxWidth())
+        }
         Spacer(Modifier.height(20.dp))
-        PrimaryButton(SetupCopy.GOT_IT, onClick = onContinue, modifier = Modifier.fillMaxWidth())
+        Reveal(index = 2) {
+            PrimaryButton(SetupCopy.GOT_IT, onClick = onContinue, modifier = Modifier.fillMaxWidth())
+        }
     }
 }
 
 @Composable
-private fun StageTutorial(stage: SetupStage, onContinue: () -> Unit, onSkip: () -> Unit) {
+private fun StageTutorial(stage: SetupStage, locStep: Int = 0, onContinue: () -> Unit, onSkip: () -> Unit) {
     val permission = when (stage) {
         SetupStage.NOTIFICATIONS -> SetupCopy.Notifications.TUTORIAL_PERMISSION
-        SetupStage.LOCATION -> SetupCopy.Location.TUTORIAL_PERMISSION
+        SetupStage.LOCATION ->
+            if (locStep == 0) SetupCopy.Location.TUTORIAL_PERMISSION_FG else SetupCopy.Location.TUTORIAL_PERMISSION_BG
         SetupStage.ACCESSIBILITY -> SetupCopy.Accessibility.TUTORIAL_PERMISSION
         SetupStage.MICROPHONE -> SetupCopy.Microphone.TUTORIAL_PERMISSION
         SetupStage.PHOTOS -> SetupCopy.Photos.TUTORIAL_PERMISSION
@@ -376,7 +471,8 @@ private fun StageTutorial(stage: SetupStage, onContinue: () -> Unit, onSkip: () 
     }
     val bullets = when (stage) {
         SetupStage.NOTIFICATIONS -> SetupCopy.Notifications.TUTORIAL_BULLETS
-        SetupStage.LOCATION -> SetupCopy.Location.TUTORIAL_BULLETS
+        SetupStage.LOCATION ->
+            if (locStep == 0) SetupCopy.Location.TUTORIAL_BULLETS_FG else SetupCopy.Location.TUTORIAL_BULLETS_BG
         SetupStage.ACCESSIBILITY -> SetupCopy.Accessibility.TUTORIAL_BULLETS
         SetupStage.MICROPHONE -> SetupCopy.Microphone.TUTORIAL_BULLETS
         SetupStage.PHOTOS -> SetupCopy.Photos.TUTORIAL_BULLETS
@@ -385,15 +481,27 @@ private fun StageTutorial(stage: SetupStage, onContinue: () -> Unit, onSkip: () 
         SetupStage.SOCIAL -> SetupCopy.Social.TUTORIAL_BULLETS
         SetupStage.COMPLETE -> emptyList()
     }
-    val isSettings = stage == SetupStage.ACCESSIBILITY || stage == SetupStage.FILES ||
-            stage == SetupStage.BATTERY || stage == SetupStage.SOCIAL
-    val buttonLabel = if (isSettings) "Deschide setările" else SetupCopy.CONTINUE
+    val buttonLabel = when (stage) {
+        SetupStage.NOTIFICATIONS -> SetupCopy.Notifications.TUTORIAL_BTN
+        SetupStage.LOCATION -> SetupCopy.Location.TUTORIAL_BTN_FG
+        SetupStage.ACCESSIBILITY -> "Deschide setările"
+        SetupStage.MICROPHONE -> SetupCopy.Microphone.TUTORIAL_BTN
+        SetupStage.PHOTOS -> SetupCopy.Photos.TUTORIAL_BTN
+        SetupStage.FILES -> SetupCopy.Files.TUTORIAL_BTN
+        SetupStage.BATTERY -> SetupCopy.Battery.TUTORIAL_BTN
+        SetupStage.SOCIAL -> SetupCopy.Social.TUTORIAL_BTN
+        SetupStage.COMPLETE -> SetupCopy.CONTINUE
+    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
+        PopIn {
+            Mascot(state = stageMascotState(stage), hat = MascotHat.Helmet, size = 72.dp)
+        }
+        Spacer(Modifier.height(16.dp))
         // Eticheta permisiunii
         Box(
             Modifier
@@ -405,17 +513,44 @@ private fun StageTutorial(stage: SetupStage, onContinue: () -> Unit, onSkip: () 
         }
         Spacer(Modifier.height(20.dp))
 
-        // Puncte informative
+        // Pași numerotați
         bullets.forEachIndexed { i, bullet ->
             Reveal(index = i) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                    Text("•  ", style = Body.copy(color = Accent2))
+                    Box(
+                        Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(if (i == 0) Accent.copy(alpha = 0.2f) else Surface2),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("${i + 1}", style = monoLabel(10, 0f).copy(color = if (i == 0) Accent2 else TextDim))
+                    }
+                    Spacer(Modifier.width(10.dp))
                     Text(bullet, style = Body.copy(color = TextSecondary))
                 }
-                if (i < bullets.size - 1) Spacer(Modifier.height(8.dp))
+                if (i < bullets.size - 1) Spacer(Modifier.height(10.dp))
             }
         }
 
+        if (stage == SetupStage.BATTERY && Build.VERSION.SDK_INT >= 34) {
+            Spacer(Modifier.height(12.dp))
+            Reveal(index = bullets.size) {
+                Text(
+                    SetupCopy.Battery.FSI_NOTE,
+                    style = BodySmall.copy(color = TextDim),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        Reveal(index = bullets.size + 1) {
+            Text(
+                SetupCopy.TUTORIAL_ACTION,
+                style = BodySmall.copy(color = TextDim),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         Spacer(Modifier.height(24.dp))
         PrimaryButton(buttonLabel, onClick = onContinue, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(10.dp))
@@ -423,8 +558,103 @@ private fun StageTutorial(stage: SetupStage, onContinue: () -> Unit, onSkip: () 
     }
 }
 
+/** Wizard în 3 pași pentru serviciul de accesibilitate (reutilizat din tutorialul „Paznicul”). */
 @Composable
-private fun StageVerify(stage: SetupStage, ok: Boolean, onRetry: () -> Unit, onSkip: () -> Unit) {
+private fun StageAccessibilityWizard(
+    wizStep: Int,
+    onAction: () -> Unit,
+    onAdvance: () -> Unit,
+    onVerify: () -> Unit,
+    onSkip: () -> Unit
+) {
+    val A = SetupCopy.Accessibility
+    val mascotState = when (wizStep) {
+        1 -> MascotState.Thinking
+        2 -> MascotState.Talking
+        else -> MascotState.Happy
+    }
+    val title = when (wizStep) {
+        1 -> A.WIZARD_STEP1_TITLE
+        2 -> A.WIZARD_STEP2_TITLE
+        else -> A.WIZARD_STEP3_TITLE
+    }
+    val text = when (wizStep) {
+        1 -> A.WIZARD_STEP1_TEXT
+        2 -> A.WIZARD_STEP2_TEXT
+        else -> A.WIZARD_STEP3_TEXT
+    }
+    val btn = when (wizStep) {
+        1 -> A.WIZARD_STEP1_BTN
+        2 -> A.WIZARD_STEP2_BTN
+        else -> A.WIZARD_STEP3_BTN
+    }
+    val hints = if (wizStep == 2) listOf(A.WIZARD_STEP2_H1, A.WIZARD_STEP2_H2) else emptyList()
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Reveal(index = 0) {
+            Text("PAZNICUL — PASUL $wizStep/3", style = monoLabel(9, 0.12f).copy(color = EmberHot))
+        }
+        Spacer(Modifier.height(16.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+            Reveal(index = 1) {
+                Mascot(state = mascotState, hat = MascotHat.Helmet, size = 64.dp)
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Reveal(index = 1) {
+                    Text(title, style = TitleModule)
+                }
+                Reveal(index = 2) {
+                    Text(text, style = Body.copy(color = TextSecondary))
+                }
+            }
+        }
+        if (hints.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            hints.forEachIndexed { i, hint ->
+                Reveal(index = 3 + i) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Surface1)
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(hint, style = BodySmall.copy(color = TextSecondary))
+                    }
+                }
+                if (i < hints.size - 1) Spacer(Modifier.height(8.dp))
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        Reveal(index = 5) {
+            PrimaryButton(btn, onClick = onAction, modifier = Modifier.fillMaxWidth())
+        }
+        Spacer(Modifier.height(10.dp))
+        Reveal(index = 6) {
+            if (wizStep < 3) {
+                SecondaryButton(SetupCopy.WIZARD_DONE, onClick = onAdvance)
+            } else {
+                SecondaryButton(SetupCopy.WIZARD_DONE_SHORT, onClick = onVerify)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Reveal(index = 7) {
+            if (wizStep < 3) {
+                SecondaryButton(SetupCopy.LATER, onClick = onSkip)
+            } else {
+                SecondaryButton(SetupCopy.WIZARD_TRIED, onClick = onSkip)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StageVerify(stage: SetupStage, checking: Boolean = false, ok: Boolean, partial: Boolean = false, onRetry: () -> Unit, onSkip: () -> Unit) {
     val successMsg = when (stage) {
         SetupStage.NOTIFICATIONS -> SetupCopy.Notifications.VERIFY_SUCCESS
         SetupStage.LOCATION -> SetupCopy.Location.VERIFY_SUCCESS
@@ -452,17 +682,43 @@ private fun StageVerify(stage: SetupStage, ok: Boolean, onRetry: () -> Unit, onS
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        if (ok) {
+        if (checking) {
             PopIn {
-                Mascot(state = MascotState.Happy, size = 80.dp)
+                Mascot(state = MascotState.Thinking, hat = MascotHat.Helmet, size = 80.dp)
+            }
+            Spacer(Modifier.height(16.dp))
+            PopIn(delayMs = 300) {
+                Text(SetupCopy.VERIFYING, style = Body.copy(color = TextDim), modifier = Modifier.fillMaxWidth())
+            }
+        } else if (partial) {
+            PopIn {
+                Mascot(state = MascotState.Talking, hat = MascotHat.Helmet, size = 80.dp)
+            }
+            Spacer(Modifier.height(16.dp))
+            PopIn(delayMs = 300) {
+                Text(
+                    SetupCopy.Location.VERIFY_PARTIAL,
+                    style = Body.copy(color = TextSecondary),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Spacer(Modifier.height(20.dp))
+            PrimaryButton(SetupCopy.Location.TUTORIAL_BTN_BG, onClick = onRetry, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(10.dp))
+            SecondaryButton(SetupCopy.SKIP_STAGE, onClick = onSkip)
+        } else if (ok) {
+            PopIn {
+                Mascot(state = MascotState.Happy, hat = MascotHat.Helmet, size = 80.dp)
             }
             Spacer(Modifier.height(16.dp))
             PopIn(delayMs = 300) {
                 Text(successMsg, style = Body.copy(color = Positive, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), modifier = Modifier.fillMaxWidth())
             }
         } else {
-            Text(SetupCopy.VERIFYING, style = Body.copy(color = TextDim), modifier = Modifier.fillMaxWidth())
-            Spacer(Modifier.height(12.dp))
+            PopIn {
+                Mascot(state = MascotState.Sorry, hat = MascotHat.Helmet, size = 80.dp)
+            }
+            Spacer(Modifier.height(16.dp))
             Text(failMsg, style = BodySmall.copy(color = TextSecondary), modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(20.dp))
             PrimaryButton(SetupCopy.RETRY, onClick = onRetry, modifier = Modifier.fillMaxWidth())
@@ -517,11 +773,19 @@ private fun FinalSummary(onFinished: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Mascot(state = MascotState.Happy, size = 100.dp)
+        Reveal(index = 0) {
+            PulseGlow(radius = 80.dp) {
+                Mascot(state = MascotState.Happy, hat = MascotHat.Helmet, size = 100.dp)
+            }
+        }
         Spacer(Modifier.height(16.dp))
-        Text(SetupCopy.Summary.TITLE, style = TitleModule)
+        Reveal(index = 1) {
+            Text(SetupCopy.Summary.TITLE, style = TitleModule)
+        }
         Spacer(Modifier.height(8.dp))
-        Text(SetupCopy.Summary.SUB, style = Body.copy(color = TextSecondary), modifier = Modifier.fillMaxWidth())
+        Reveal(index = 2) {
+            Text(SetupCopy.Summary.SUB, style = Body.copy(color = TextSecondary), modifier = Modifier.fillMaxWidth())
+        }
         Spacer(Modifier.height(24.dp))
 
         // Grilă permisiuni
@@ -570,6 +834,55 @@ private fun FinalSummary(onFinished: () -> Unit) {
         }
 
         Spacer(Modifier.height(28.dp))
-        PrimaryButton(SetupCopy.FINISH, onClick = onFinished, modifier = Modifier.fillMaxWidth())
+        Reveal(index = 3) {
+            PrimaryButton(SetupCopy.FINISH, onClick = onFinished, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+/**
+ * Preview pentru capturi (Roborazzi): randează o etapă într-o fază, fără a lansa permisiuni.
+ */
+@Composable
+fun SetupOnboardingPreview(stage: SetupStage, phase: SetupPhase) {
+    Box(Modifier.fillMaxSize().background(Surface0)) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (stage == SetupStage.COMPLETE) {
+                FinalSummary({})
+            } else {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        SetupCopy.STAGE_LABEL.format(stage.index + 1, SetupCopy.TOTAL_STAGES),
+                        style = monoLabel(10, 0.12f)
+                    )
+                    Text(
+                        "${(stage.index + 1) * 100 / SetupCopy.TOTAL_STAGES}%",
+                        style = monoLabel(10, 0.12f).copy(color = Accent2)
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                ProgressBar(progress = (stage.index).toFloat() / SetupCopy.TOTAL_STAGES)
+                Spacer(Modifier.height(20.dp))
+                when (phase) {
+                    SetupPhase.INTRO -> StageIntro(stage) { }
+                    SetupPhase.DEMO -> StageDemo(stage) { }
+                    SetupPhase.TUTORIAL ->
+                        if (stage == SetupStage.ACCESSIBILITY) {
+                            StageAccessibilityWizard(1, onAction = {}, onAdvance = {}, onVerify = {}, onSkip = {})
+                        } else {
+                            StageTutorial(stage, onContinue = {}, onSkip = {})
+                        }
+                    SetupPhase.VERIFY -> StageVerify(stage, checking = true, ok = false, onRetry = {}, onSkip = {})
+                    SetupPhase.SUCCESS -> StageSuccess(stage)
+                }
+            }
+        }
     }
 }

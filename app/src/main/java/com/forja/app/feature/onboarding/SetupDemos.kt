@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -52,7 +54,10 @@ import com.forja.app.core.designsystem.Surface2
 import com.forja.app.core.designsystem.TextDim
 import com.forja.app.core.designsystem.TextPrimary
 import com.forja.app.core.designsystem.monoLabel
+import com.forja.app.core.designsystem.components.Mascot
 import com.forja.app.core.designsystem.components.MascotAvatar
+import com.forja.app.core.designsystem.components.MascotHat
+import com.forja.app.core.designsystem.components.MascotState
 import com.forja.app.core.designsystem.components.PopIn
 import com.forja.app.core.designsystem.components.ProgressBar
 import kotlinx.coroutines.delay
@@ -66,7 +71,7 @@ import kotlin.math.sin
 @Composable
 fun NotificationDemo(modifier: Modifier = Modifier) {
     val items = remember {
-        listOf("Apă, soldat.", "Timp de pauză. O ia cu cap.", "Streak-ul tău e aproape!")
+        listOf("Apă, soldat.", "Timp de pauză. O iei cu cap.", "Seria ta e aproape!")
     }
     var shown by remember { mutableIntStateOf(0) }
     val reduced = LocalReducedMotion.current
@@ -95,7 +100,7 @@ fun NotificationDemo(modifier: Modifier = Modifier) {
                             .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        MascotAvatar(size = 32.dp)
+                        Mascot(state = MascotState.Talking, hat = MascotHat.Helmet, size = 34.dp)
                         Spacer(Modifier.width(10.dp))
                         Text(msg, style = BodySmall.copy(color = TextPrimary))
                     }
@@ -112,14 +117,22 @@ fun NotificationDemo(modifier: Modifier = Modifier) {
 @Composable
 fun CityMapDemo(modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
-    val transition = rememberInfiniteTransition(label = "city")
-    val progress by transition.animateFloat(
+    val transition = if (reduced) null else rememberInfiniteTransition(label = "city")
+    val idle = remember { mutableStateOf(0f) }
+    val progress by (transition?.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(6000, easing = LinearEasing)), label = "walk"
-    )
+    ) ?: idle)
     val p = if (reduced) 0.7f else progress
     val discovered = (p * 25f).toInt().coerceIn(0, 25)
+    // poziția Casca pe grilă (același calcul ca în canvas, dar în dp)
+    val cellDp = 180f / 5.4f
+    val gapDp = cellDp * 0.12f
+    val dotIdx = (p * 25f).toInt().coerceIn(0, 24)
+    val markerX = (dotIdx % 5) * (cellDp + gapDp) + gapDp / 2f + cellDp / 2f - 7f
+    val markerY = (dotIdx / 5) * (cellDp + gapDp) + gapDp / 2f + cellDp / 2f - 7f
     Column(modifier, verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(180.dp), contentAlignment = Alignment.TopStart) {
         Canvas(Modifier.size(180.dp)) {
             val cell = size.width / 5.4f
             val gap = cell * 0.12f
@@ -135,12 +148,8 @@ fun CityMapDemo(modifier: Modifier = Modifier) {
                     cornerRadius = CornerRadius(cell * 0.2f)
                 )
             }
-            val dotIdx = (p * 25f).toInt().coerceIn(0, 24)
-            val dx = dotIdx % 5
-            val dy = dotIdx / 5
-            val dotX = dx * (cell + gap) + gap / 2 + cell / 2
-            val dotY = dy * (cell + gap) + gap / 2 + cell / 2
-            drawCircle(Color(0xFFFFB35C), radius = cell * 0.22f, center = Offset(dotX, dotY))
+        }
+            MascotAvatar(hat = MascotHat.Helmet, size = 14.dp, modifier = Modifier.offset(markerX.dp, markerY.dp))
         }
         Spacer(Modifier.height(12.dp))
         Text("${discovered}/25 zone descoperite", style = monoLabel(11, 0.1f).copy(color = TextDim))
@@ -154,11 +163,12 @@ fun CityMapDemo(modifier: Modifier = Modifier) {
 @Composable
 fun DetoxDemo(modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
-    val transition = rememberInfiniteTransition(label = "detox")
-    val swap by transition.animateFloat(
+    val transition = if (reduced) null else rememberInfiniteTransition(label = "detox")
+    val idle = remember { mutableStateOf(0f) }
+    val swap by (transition?.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(4000, easing = LinearEasing)), label = "swap"
-    )
+    ) ?: idle)
     val appIndex = if (reduced) 0 else ((swap * 3).toInt() % 3)
     val appIcons = remember { listOf("📱", "🎮", "📸") }
     Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -171,7 +181,9 @@ fun DetoxDemo(modifier: Modifier = Modifier) {
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(appIcons[appIndex], fontSize = 32.sp)
+                Mascot(state = MascotState.Angry, hat = MascotHat.Helmet, size = 28.dp)
+                Spacer(Modifier.height(4.dp))
+                Text(appIcons[appIndex], fontSize = 18.sp)
                 Spacer(Modifier.height(4.dp))
                 Text("distragere", style = monoLabel(9, 0.08f).copy(color = TextDim))
             }
@@ -185,7 +197,9 @@ fun DetoxDemo(modifier: Modifier = Modifier) {
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("📖", fontSize = 32.sp)
+                Mascot(state = MascotState.Happy, hat = MascotHat.Helmet, size = 28.dp)
+                Spacer(Modifier.height(4.dp))
+                Text("📖", fontSize = 18.sp)
                 Spacer(Modifier.height(4.dp))
                 Text("concentrare", style = monoLabel(9, 0.08f).copy(color = Accent2))
             }
@@ -200,11 +214,12 @@ fun DetoxDemo(modifier: Modifier = Modifier) {
 @Composable
 fun SleepDemo(modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
-    val transition = rememberInfiniteTransition(label = "sleep")
-    val wave by transition.animateFloat(
+    val transition = if (reduced) null else rememberInfiniteTransition(label = "sleep")
+    val idle = remember { mutableStateOf(0f) }
+    val wave by (transition?.animateFloat(
         initialValue = 0f, targetValue = 2f * PI.toFloat(),
         animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing)), label = "wave"
-    )
+    ) ?: idle)
     Box(
         modifier
             .fillMaxWidth()
@@ -214,11 +229,15 @@ fun SleepDemo(modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                Modifier.size(28.dp).clip(CircleShape).background(Color(0xFFFFE39A).copy(alpha = 0.6f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(Modifier.size(16.dp).clip(CircleShape).background(SleepBg))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(24.dp).clip(CircleShape).background(Color(0xFFFFE39A).copy(alpha = 0.6f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(Modifier.size(13.dp).clip(CircleShape).background(SleepBg))
+                }
+                Spacer(Modifier.width(8.dp))
+                Mascot(state = MascotState.Idle, hat = MascotHat.Helmet, size = 26.dp)
             }
             Spacer(Modifier.height(10.dp))
             Canvas(Modifier.size(width = 160.dp, height = 40.dp)) {
@@ -233,7 +252,7 @@ fun SleepDemo(modifier: Modifier = Modifier) {
                 drawPath(path, color = Color(0xFF9DBFE8), style = Stroke(width = 2f, cap = StrokeCap.Round))
             }
             Spacer(Modifier.height(10.dp))
-            Text("7h 20m somn · 3 sforăit · 1 vorbit", style = BodySmall.copy(color = Color(0xFF7E93AC)))
+            Text("7h 20m somn · 3 sforăituri · 1 vorbire", style = BodySmall.copy(color = Color(0xFF7E93AC)))
         }
     }
 }
@@ -245,14 +264,17 @@ fun SleepDemo(modifier: Modifier = Modifier) {
 @Composable
 fun JournalDemo(modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
-    val transition = rememberInfiniteTransition(label = "journal")
-    val p by transition.animateFloat(
+    val transition = if (reduced) null else rememberInfiniteTransition(label = "journal")
+    val idle = remember { mutableStateOf(0f) }
+    val p by (transition?.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(5000, easing = LinearEasing)), label = "fill"
-    )
+    ) ?: idle)
     val v = if (reduced) 0.8f else p
     val captions = remember { listOf("12 mar", "15 mar", "18 mar") }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Mascot(state = MascotState.Wink, hat = MascotHat.Helmet, size = 32.dp)
+        Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             captions.forEachIndexed { i, date ->
                 val visible = v > (i + 1) / 3.8f
@@ -290,11 +312,12 @@ fun JournalDemo(modifier: Modifier = Modifier) {
 @Composable
 fun FolderDemo(modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
-    val transition = rememberInfiniteTransition(label = "folder")
-    val p by transition.animateFloat(
+    val transition = if (reduced) null else rememberInfiniteTransition(label = "folder")
+    val idle = remember { mutableStateOf(0f) }
+    val p by (transition?.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(5000, easing = LinearEasing)), label = "sort"
-    )
+    ) ?: idle)
     val v = if (reduced) 0.8f else p
     val folders = remember { listOf("Poze", "Documente", "Alte") }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -334,11 +357,12 @@ fun FolderDemo(modifier: Modifier = Modifier) {
 @Composable
 fun BatteryDemo(modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
-    val transition = rememberInfiniteTransition(label = "battery")
-    val p by transition.animateFloat(
+    val transition = if (reduced) null else rememberInfiniteTransition(label = "battery")
+    val idle = remember { mutableStateOf(0f) }
+    val p by (transition?.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(6000, easing = LinearEasing)), label = "walk"
-    )
+    ) ?: idle)
     val v = if (reduced) 0.6f else p
     val sunUp = if (v > 0.7f) (v - 0.7f) / 0.3f else 0f
     Box(
@@ -399,20 +423,21 @@ fun BatteryDemo(modifier: Modifier = Modifier) {
 @Composable
 fun SocialDemo(modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
-    val transition = rememberInfiniteTransition(label = "social")
-    val ping by transition.animateFloat(
+    val transition = if (reduced) null else rememberInfiniteTransition(label = "social")
+    val idle = remember { mutableStateOf(0f) }
+    val ping by (transition?.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(3000, easing = LinearEasing)), label = "ping"
-    )
-    val note by transition.animateFloat(
+    ) ?: idle)
+    val note by (transition?.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing), repeatMode = RepeatMode.Reverse), label = "note"
-    )
+    ) ?: idle)
     val pv = if (reduced) 0.5f else ping
     val nv = if (reduced) 0.5f else note
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            MascotAvatar(size = 48.dp)
+            Mascot(state = MascotState.Happy, hat = MascotHat.Helmet, size = 44.dp)
             Spacer(Modifier.width(8.dp))
             Box(
                 Modifier
@@ -422,7 +447,7 @@ fun SocialDemo(modifier: Modifier = Modifier) {
                     .graphicsLayer { scaleX = pv },
             )
             Spacer(Modifier.width(8.dp))
-            MascotAvatar(size = 48.dp)
+            Mascot(state = MascotState.Wink, hat = MascotHat.Helmet, size = 44.dp)
             Spacer(Modifier.width(8.dp))
             Text(
                 "♪",
