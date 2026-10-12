@@ -53,6 +53,7 @@ import com.forja.app.core.voice.VoiceWakeService
 import com.forja.app.feature.auth.AuthScreens
 import com.forja.app.feature.dashboard.DashboardScreen
 import com.forja.app.feature.focus.FocusScreen
+import com.forja.app.core.location.GoTrackService
 import com.forja.app.feature.map.MapScreen
 import com.forja.app.feature.nutrition.NutritionScreen
 import com.forja.app.feature.nutrition.ScannerScreen
@@ -686,8 +687,10 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
         }
         // „Hei FORJA": microfonul plutitor — o atingere, un bip, și spui comanda — de pe orice ecran principal
         // și din sesiunea live de antrenament („pauză”, „am terminat seria”, „următorul exercițiu”).
+        // Dispare în timpul sesiunii GO: STOP-ul și consola de tracking au prioritate.
+        val goState by GoTrackService.state.collectAsState()
         AnimatedVisibility(
-            visible = tabsVisible || route == Route.WORKOUT_LIVE,
+            visible = (tabsVisible || route == Route.WORKOUT_LIVE) && !goState.recording,
             modifier = Modifier.align(Alignment.BottomEnd),
             enter = fadeIn(), exit = fadeOut()
         ) {
