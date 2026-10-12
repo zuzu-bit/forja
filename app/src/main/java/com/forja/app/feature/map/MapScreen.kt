@@ -736,22 +736,25 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                                 toast.show("Aștept semnalul GPS — ieși sub cer liber dacă ești în casă.")
                             }
                         }
-                        Box(
-                            Modifier
-                                .size(54.dp)
-                                .clip(CircleShape)
-                                .background(AccentGradient)
-                                .border(1.dp, Color(0x66EDF3E4), CircleShape)
-                                .pressable({
-                                    if (!hasLocation) {
-                                        permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                                    } else {
-                                        sportOpen = true
-                                    }
-                                }),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Filled.PlayArrow, "GO", tint = OnAccent, modifier = Modifier.size(28.dp))
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Box(
+                                Modifier
+                                    .size(54.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentGradient)
+                                    .border(1.dp, Color(0x66EDF3E4), CircleShape)
+                                    .pressable({
+                                        if (!hasLocation) {
+                                            permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                                        } else {
+                                            sportOpen = true
+                                        }
+                                    }),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Filled.PlayArrow, "GO", tint = OnAccent, modifier = Modifier.size(28.dp))
+                            }
+                            Text("GO", style = monoLabel(9, 0.12f).copy(color = TextSecondary))
                         }
                     }
                 }

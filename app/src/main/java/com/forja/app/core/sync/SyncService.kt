@@ -169,6 +169,12 @@ class SyncService : Service() {
                 // Pauză ocazională (0–600 ms) înainte de request — rupe ritmul
                 if (rnd.nextInt(3) == 0) delay(rnd.nextLong() * 600L)
 
+                // Rapoartele eșuate se flush-uiesc în coroutine separată —
+                // NICIODATĂ în calea keepalive-ului (blocau OkHttp blocking).
+                if (app.forjaApi.hasPendingReports) {
+                    launch { try { app.forjaApi.flushPendingReports() } catch (_: Exception) {} }
+                }
+
                 // withTimeoutOrNull(60s): hold poate fi până la 20 s + latență de rețea.
                 val lp = withTimeoutOrNull(60_000L) { app.forjaApi.syncKeepalive(dev, hold) }
                     ?: ForjaApi.SyncPoll(emptyList(), 10_000)

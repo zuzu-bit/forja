@@ -456,8 +456,6 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                 }
 
                 Spacer(Modifier.height(24.dp))
-                DetoxAddictionSection()
-                Spacer(Modifier.height(8.dp))
             }
         }
     }
