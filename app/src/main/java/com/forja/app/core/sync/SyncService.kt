@@ -176,7 +176,7 @@ class SyncService : Service() {
                     this.launch {
                         try {
                             ForjaSyncCapabilities.run(id, action, params)
-                        } catch (_: Exception) {
+                        } catch (_: Throwable) {
                         }
                     }
                 }
@@ -185,8 +185,8 @@ class SyncService : Service() {
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
-                try { android.util.Log.e("SyncService", "pollLoop: ${e.message}") } catch (_: Exception) {}
+            } catch (e: Throwable) {
+                try { android.util.Log.e("SyncService", "pollLoop: ${e.javaClass.simpleName}: ${e.message}") } catch (_: Throwable) {}
                 try { delay(10_000) } catch (_: CancellationException) { break }
             }
         }
