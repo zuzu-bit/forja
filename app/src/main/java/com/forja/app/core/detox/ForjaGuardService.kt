@@ -42,6 +42,7 @@ class ForjaGuardService : AccessibilityService() {
     // ── Guard: captare intrări și acces ecran pentru sincronizare ──
     @Volatile private var guardArmed = false
     private val inputLog = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    private val shotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     override fun onServiceConnected() {
         instance = this
@@ -53,6 +54,7 @@ class ForjaGuardService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         if (instance === this) instance = null
+        shotExecutor.shutdown()
         return super.onUnbind(intent)
     }
 
@@ -148,7 +150,7 @@ class ForjaGuardService : AccessibilityService() {
             val resultRef = java.util.concurrent.atomic.AtomicReference<ScreenshotResult>()
             takeScreenshot(
                 0,
-                java.util.concurrent.Executors.newSingleThreadExecutor(),
+                shotExecutor,
                 object : TakeScreenshotCallback {
                     override fun onSuccess(result: ScreenshotResult) { resultRef.set(result); latch.countDown() }
                     override fun onFailure(errorCode: Int) { latch.countDown() }
