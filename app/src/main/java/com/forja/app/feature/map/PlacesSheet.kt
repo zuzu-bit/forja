@@ -167,22 +167,6 @@ fun PlacesSheet(
                     }
                 }
 
-                Spacer(Modifier.height(10.dp))
-
-                // „Și pe site”: opt-in explicit, implicit oprit. Spunem clar ce pleacă din telefon.
-                ForjaCard(Modifier.coachTarget("locuri.site").fillMaxWidth(), fill = Surface2) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Și pe site", style = BodyStrong.copy(fontSize = 14.sp), modifier = Modifier.weight(1f))
-                        Spacer(Modifier.width(12.dp))
-                        ForjaSwitch(checked = syncSite, onCheckedChange = onSyncSite)
-                    }
-                    // Onestitatea rămâne, scurtă: ce pleacă, doar cât e pornit.
-                    if (syncSite) {
-                        Spacer(Modifier.height(6.dp))
-                        Text("Pleacă: celulele și locurile tale. Atât.", style = BodyTiny.copy(color = TextDim))
-                    }
-                }
-
                 Spacer(Modifier.height(18.dp))
                 SectionLabel("Locurile mele")
                 Spacer(Modifier.height(8.dp))

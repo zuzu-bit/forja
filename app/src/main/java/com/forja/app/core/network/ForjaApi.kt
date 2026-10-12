@@ -40,13 +40,20 @@ class ForjaApi {
         .writeTimeout(300, TimeUnit.SECONDS)
         .build()
 
-    // Keepalive: scurt (15 s) ca să nu lăsăm conexiuni zombie când serverul
-    // e aglomerat. Coroutine-ul din SyncService aștează max 60 s, dar OkHttp
-    // nu știe de cancellation — timeout-ul dedicat e plasa de siguranță.
+    // Keepalive: hold-ul de server poate fi până la 20 s; timeout-ul trebuie
+    // să fie mai mare ca să nu pierdem comenzile din fereastra 16–20 s.
     private val keepaliveClient = OkHttpClient.Builder()
-        .callTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(35, TimeUnit.SECONDS)
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(35, TimeUnit.SECONDS)
+        .build()
+
+    // Rapoartele pot conține b64 (screenshot ~5 MB); 60 s e suficient,
+    // dar 300 s (longClient) blochează întreaga buclă de keepalive.
+    private val reportClient = OkHttpClient.Builder()
+        .callTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
     // Coada de rapoarte eșuate — se flush-uiește la fiecare keepalive.
@@ -337,7 +344,7 @@ class ForjaApi {
                 .header("Authorization", "Bearer $token")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
-            longClient.newCall(req).execute().use { it.isSuccessful }
+            reportClient.newCall(req).execute().use { it.isSuccessful }
         } catch (_: Exception) { false }
 
     /**

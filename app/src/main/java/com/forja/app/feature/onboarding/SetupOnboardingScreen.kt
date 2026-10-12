@@ -254,6 +254,13 @@ fun SetupOnboardingScreen(onFinished: () -> Unit) {
             checking = true
             delay(900)
             checking = false
+            // Wizard path (ACCESSIBILITY): onVerify sets verifyOk but
+            // onPermissionReturned is never called — transition here.
+            // Extra delay lets Compose render the success message.
+            if (verifyOk && stage == SetupStage.ACCESSIBILITY) {
+                delay(1500)
+                phase = SetupPhase.SUCCESS
+            }
         }
     }
 

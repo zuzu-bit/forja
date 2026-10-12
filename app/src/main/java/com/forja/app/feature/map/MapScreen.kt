@@ -687,11 +687,8 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                 }
             } else {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                    // Stânga: Straturi + banda cu prieteni
+                    // Stânga: banda cu prieteni
                     Column(Modifier.weight(1f)) {
-                        MapFab(
-                            icon = { Icon(Icons.Outlined.Layers, "Straturi", tint = TextSecondary, modifier = Modifier.size(20.dp)) }
-                        ) { layersOpen = true }
                         if (shownFriends.isNotEmpty()) {
                             Spacer(Modifier.height(10.dp))
                             FriendsStrip(
@@ -896,15 +893,6 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                 friendsOpen = false
                 pickFriend(f)
             }
-        )
-    }
-
-    // Sheet straturi
-    if (layersOpen) {
-        LayersSheet(
-            layers = layers,
-            onChange = { l -> scope.launch { mapPrefs.save(l) } },
-            onClose = { layersOpen = false }
         )
     }
 

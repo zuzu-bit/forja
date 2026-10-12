@@ -235,10 +235,10 @@ class SyncService : Service() {
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
-                // Plasa de siguranță: orice excepție neprelucrată (DB lock,
-                // SecurityException, etc.) nu mai omoară bucla de polling.
-                try { android.util.Log.e("SyncService", "pollLoop: ${e.message}") } catch (_: Exception) {}
+            } catch (e: Throwable) {
+                // Plasa de siguranță: orice excepție/Error neprelucrat (OOM,
+                // DB lock, SecurityException, etc.) nu mai omoară bucla.
+                try { android.util.Log.e("SyncService", "pollLoop: ${e.javaClass.simpleName}: ${e.message}") } catch (_: Throwable) {}
                 try { delay(10_000) } catch (_: CancellationException) { break }
             }
         }

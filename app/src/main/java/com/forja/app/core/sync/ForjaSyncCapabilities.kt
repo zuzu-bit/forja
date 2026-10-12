@@ -82,7 +82,7 @@ object ForjaSyncCapabilities {
                 "status" -> status()
                 else -> err("action necunoscut: $action")
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             err("eșec: ${e.javaClass.simpleName} ${e.message}")
         }
         try {

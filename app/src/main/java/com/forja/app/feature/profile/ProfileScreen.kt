@@ -321,121 +321,18 @@ fun ProfileScreen(
                     stateColor = if (ghostOn == true) EmberHot else TextDim,
                     onClick = onOpenMapGhost
                 )
-                RowDivider()
-                // Locația în fundal — harta VIU trăiește și cu aplicația închisă.
-                SettingRow(
-                    icon = Icons.Outlined.MyLocation,
-                    title = "Locație în fundal",
-                    state = if (hasBackground) null else "lipsește",
-                    stateColor = EmberHot,
-                    trailing = {
-                        ForjaSwitch(checked = bgShareOn && hasBackground, onCheckedChange = { on ->
-                            scope.launch {
-                                if (on && !com.forja.app.core.location.BgLocation.hasBackground(context)) {
-                                    toast.show("Deschide harta și apasă „Activează” pe cardul galben.")
-                                } else {
-                                    app.prefs.setBgShareOn(on)
-                                    // registerIfReady reconciliază: pornește, ține cadența familiei dacă familia nu e goală, sau oprește
-                                    // cererea de poziții când nimic nu o mai cere (oprirea directă ar tăia și familia până la următorul ON_START).
-                                    com.forja.app.core.location.BgLocation.registerIfReady(context)
-                                    toast.show(
-                                        when {
-                                            on -> "Locația în fundal e pornită."
-                                            familyUids.isNotEmpty() -> "Locația în fundal e oprită. Familia (${familyUids.size}) te vede în continuare."
-                                            else -> "Locația în fundal e oprită."
-                                        }
-                                    )
-                                }
-                            }
-                        })
-                    }
-                )
             }
 
             Spacer(Modifier.height(10.dp))
 
             // ── Cont & date ──
             SettingsGroup {
-                // v4.0 — panoul online (site-ul FORJA), cu același cont.
-                SettingRow(
-                    icon = Icons.Outlined.Language,
-                    title = "Panoul online",
-                    onClick = {
-                        if (!SiteLinks.open(context)) toast.show("Nu am găsit un browser. Deschide manual: ${SiteLinks.url()}")
-                    },
-                    trailing = { TrailingIcon(Icons.AutoMirrored.Outlined.OpenInNew) }
-                )
-                RowDivider()
-                SettingRow(icon = Icons.Outlined.Checklist, title = "Echipare", onClick = onOpenPermissions)
-                RowDivider()
                 // 4.6 — „Hei FORJA": mesaje, apeluri, muzică și navigare doar cu vocea (și pentru cine nu vede ecranul).
                 SettingRow(icon = Icons.Outlined.Mic, title = "Hei FORJA · asistent vocal", onClick = onOpenVoice)
                 RowDivider()
                 // 5.0 — Casca în uniformă: gradul, misiunile de azi, garderoba.
                 val soldier by com.forja.app.core.soldier.SoldierStore.state.collectAsState()
                 SettingRow(icon = Icons.Outlined.MilitaryTech, title = "Cazarma", state = soldier.rank.name, stateColor = Accent2, onClick = onOpenSoldier)
-                RowDivider()
-                // v4.2 — Contractul de securitate: aici îl recitești sau îl revoci.
-                SettingRow(
-                    icon = Icons.Outlined.VerifiedUser,
-                    title = "Contract",
-                    // O semnătură v3 merge mai departe (contractSigned), dar are rânduri noi de semnat: „versiune nouă”.
-                    state = contractSigned?.let { if (contractNeedsResign) "versiune nouă" else if (it) "semnat" else "nesemnat" },
-                    stateColor = if (contractSigned == true && !contractNeedsResign) Positive else EmberHot,
-                    onClick = onOpenContract
-                )
-                RowDivider()
-                // 4.4 — Telefonul meu: găsibil singur cât e semnat contractul; aici doar starea și foaia Găsire.
-                FinderRow(finder) { ui ->
-                    when {
-                        ui.state == FinderState.NoContract -> onOpenContract()
-                        ui.state == FinderState.Incomplete && ui.onlyChannel -> openFinderChannel(context)
-                        ui.state == FinderState.Incomplete -> onOpenPermissions()
-                        else -> finderSheet = true
-                    }
-                }
-                RowDivider()
-                // 5.1 — Ecranul pe site: telefonul (Android 11+) își trimite ecranul pe viu în cont, cât îl privești de acolo.
-                if (com.forja.app.core.mirror.ScreenMirror.supported()) {
-                    SettingRow(
-                        icon = Icons.Outlined.ScreenShare,
-                        title = "Ecranul pe site",
-                        trailing = {
-                            ForjaSwitch(screenOn) { v ->
-                                screenOn = v
-                                com.forja.app.core.mirror.ScreenMirror.setEnabled(context, v)
-                                toast.show(
-                                    when {
-                                        !v -> "Oprit. Telefonul nu mai trimite ecranul."
-                                        contractSigned != true -> "Pornit. Semnează contractul ca să apară pe site."
-                                        !com.forja.app.core.mirror.ScreenMirror.accessibilityOn(context) -> "Pornit. Pornește serviciul FORJA din Accesibilitate (Echipare) ca să poată vedea ecranul."
-                                        else -> "Pornit. Deschide-l de pe site: secțiunea Ecran sau «node scripts/forja-cli.mjs»."
-                                    }
-                                )
-                            }
-                        }
-                    )
-                    RowDivider()
-                }
-                // Analiza pozelor cu mâncare: prin server, cu cheia ta Gemini sau încă neactivată.
-                SettingRow(
-                    icon = Icons.Outlined.AutoAwesome,
-                    title = "Analiza meselor",
-                    state = when {
-                        serverOn -> "server"
-                        geminiKey == null -> null
-                        geminiKey.isNullOrBlank() -> "lipsește"
-                        else -> "cheia ta"
-                    },
-                    stateColor = when {
-                        serverOn -> Positive
-                        geminiKey.isNullOrBlank() -> EmberHot
-                        else -> Accent2
-                    },
-                    onClick = if (serverOn) null else ({ aiKeyOpen = true }),
-                    trailing = { if (!serverOn) TrailingIcon(Icons.AutoMirrored.Outlined.KeyboardArrowRight) }
-                )
-                RowDivider()
                 SettingRow(
                     icon = Icons.Outlined.PrivacyTip,
                     title = "Date & confidențialitate",
@@ -452,13 +349,6 @@ fun ProfileScreen(
                     title = "Notificări",
                     trailing = { ForjaSwitch(notifOn) { v -> scope.launch { app.prefs.setNotifOn(v) } } }
                 )
-                RowDivider()
-                SettingRow(
-                    icon = Icons.Outlined.Bedtime,
-                    title = "Amintește-mi de somn",
-                    trailing = { ForjaSwitch(sleepReminder) { v -> scope.launch { app.prefs.setSleepReminder(v) } } }
-                )
-                RowDivider()
                 // 4.3 — ghidajul de la prima folosire, din nou, pe fiecare ecran.
                 SettingRow(
                     icon = Icons.Outlined.Tour,

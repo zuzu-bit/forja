@@ -135,7 +135,8 @@ class ExploreTracker(private val app: ForjaApp) {
         mutex.withLock {
             if (!app.prefs.exploreOn.first()) return
             // Din mașină nu cucerești teritorii: peste 12 m/s ignorăm celula (GO rămâne valid — sportul e ales explicit).
-            if (source == "go" || speedMps <= MAX_CONQUER_SPEED) touchCell(lat, lng, speedMps, atMs, source)
+            // Sub MIN_MOVE_SPEED (drift GPS / stat pe loc) nu se cucerește nimic.
+            if (source == "go" || (speedMps >= MIN_MOVE_SPEED && speedMps <= MAX_CONQUER_SPEED)) touchCell(lat, lng, speedMps, atMs, source)
             dwell(lat, lng, speedMps, atMs, source)
         }
     }
@@ -360,6 +361,7 @@ class ExploreTracker(private val app: ForjaApp) {
         const val MIN_GAP_MS = 5_000L
         const val PLACE_SYNC_MS = 5 * 60_000L
         /** Peste 12 m/s (43 km/h) ești în mașină — nu cucerești teritorii. */
+        const val MIN_MOVE_SPEED = 0.3f  // ~1 km/h — sub atât e drift GPS, nu mișcare
         const val MAX_CONQUER_SPEED = 12f
         const val RUN_SPEED = 2.2f
         const val RIDE_SPEED = 6f
