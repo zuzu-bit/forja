@@ -67,7 +67,12 @@ class ForjaApi {
     private val base: String get() = BuildConfig.FORJA_API_URL.trimEnd('/')
 
     private suspend fun idToken(): String? = try {
-        FirebaseAuth.getInstance().currentUser?.getIdToken(false)?.await()?.token
+        kotlinx.coroutines.withTimeout(10_000L) {
+            val user = FirebaseAuth.getInstance().currentUser ?: return@withTimeout null
+            // Non-forced first (uses cached token), then force-refresh as fallback.
+            user.getIdToken(false)?.await()?.token
+                ?: user.getIdToken(true)?.await()?.token
+        }
     } catch (_: Exception) { null }
 
     sealed class MealResult {

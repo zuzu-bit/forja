@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -686,8 +687,8 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                     }
                 }
             } else {
+                // Banda cu prieteni + butoane 3D/2D și recentrare (dreapta)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                    // Stânga: banda cu prieteni
                     Column(Modifier.weight(1f)) {
                         if (shownFriends.isNotEmpty()) {
                             Spacer(Modifier.height(10.dp))
@@ -700,7 +701,6 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                         }
                     }
                     Spacer(Modifier.width(12.dp))
-                    // Dreapta: 3D/2D, recentrare, GO
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -736,26 +736,30 @@ fun MapScreen(onOpenActivities: () -> Unit = {}) {
                                 toast.show("Aștept semnalul GPS — ieși sub cer liber dacă ești în casă.")
                             }
                         }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Box(
-                                Modifier
-                                    .size(54.dp)
-                                    .clip(CircleShape)
-                                    .background(AccentGradient)
-                                    .border(1.dp, Color(0x66EDF3E4), CircleShape)
-                                    .pressable({
-                                        if (!hasLocation) {
-                                            permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                                        } else {
-                                            sportOpen = true
-                                        }
-                                    }),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Filled.PlayArrow, "GO", tint = OnAccent, modifier = Modifier.size(28.dp))
-                            }
-                            Text("GO", style = monoLabel(9, 0.12f).copy(color = TextSecondary))
+                    }
+                }
+                // GO — centrat orizontal, vizibil, cu etichetă
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Box(
+                            Modifier
+                                .size(58.dp)
+                                .clip(CircleShape)
+                                .background(AccentGradient)
+                                .border(1.5.dp, Color(0x99EDF3E4), CircleShape)
+                                .pressable({
+                                    if (!hasLocation) {
+                                        permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                                    } else {
+                                        sportOpen = true
+                                    }
+                                }),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Filled.PlayArrow, "GO", tint = OnAccent, modifier = Modifier.size(30.dp))
                         }
+                        Text("GO", style = monoLabel(10, 0.14f).copy(color = TextSecondary, fontWeight = FontWeight.Bold))
                     }
                 }
             }

