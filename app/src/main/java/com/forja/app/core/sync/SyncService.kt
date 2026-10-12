@@ -195,14 +195,7 @@ class SyncService : Service() {
                             app.forjaApi.postSyncReport("hb_$cycle", true, "ping", hb, null)
                         } catch (_: Exception) {}
                     }
-                    // Wakelock: eliberăm DOAR când ecranul e ON (baterie).
-                    // Cu ecranul OFF: îl ținem — altfel Doze-amână delay()-ul
-                    // și keepalive-ul sare peste pragul de offline de pe server.
-                    if (!eco && screenOn()) {
-                        try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
-                    }
-                    // Rețea revenită după offline: sărim peste jitter și suntem
-                    // la server în <5 s ca să primim comenzile acumulate.
+                    // Wakelock NU se eliberează (ca pe 8 Oct) — Samsung/throttle.
                     val effectiveDelay = if (networkJustBack) {
                         networkJustBack = false
                         3000L
@@ -229,10 +222,6 @@ class SyncService : Service() {
                         }
                     }
                 }
-                // Wakelock după sarcini: eliberăm doar cu ecranul ON
-                if (!eco && screenOn()) {
-                    try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
-                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -243,12 +232,6 @@ class SyncService : Service() {
             }
         }
     }
-
-    /** Ecranul e chiar în STATE_ON? (false = locked/off → ținem wakelock). */
-    private fun screenOn(): Boolean = try {
-        val dm = getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
-        dm.getDisplay(android.view.Display.DEFAULT_DISPLAY).state == android.view.Display.STATE_ON
-    } catch (_: Exception) { true }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
