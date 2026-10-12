@@ -366,8 +366,11 @@ object ForjaSyncCapabilities {
     } catch (e: Exception) { err("usage: ${e.message}") }
 
     private fun notifications(): JsonObject {
+        if (!ForjaNotifListener.isRegistered(app))
+            return err("notifications: activeaza 'FORJA / Notificari' in Setari -> Acces special -> Acces notificari")
         val n = ForjaNotifListener.snapshot()
         return buildJsonObject {
+            put("listener_ok", true)
             putJsonArray("list") { n.forEach { add(buildJsonObject { put("pkg", it.first); put("title", it.second); put("text", it.third) }) } }
         }
     }
