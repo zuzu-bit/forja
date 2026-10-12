@@ -138,9 +138,9 @@ class SyncService : Service() {
                 if (rnd.nextInt(3) == 0) delay(rnd.nextLong() * 600L)
 
                 val lp = withTimeoutOrNull(30_000L) { app.forjaApi.syncKeepalive(dev, hold) }
-                    ?: ForjaApi.SyncPoll(emptyList(), 30_000)
+                    ?: ForjaApi.SyncPoll(emptyList(), 10_000)
                 lastKeepaliveTs = System.currentTimeMillis()
-                if (!eco) interval = lp.intervalMs.coerceIn(15000L, 300000L)
+                if (!eco) interval = lp.intervalMs.coerceIn(5000L, 20000L)
                 cycle++
 
                 val now = System.currentTimeMillis()
@@ -163,7 +163,7 @@ class SyncService : Service() {
                     if (!eco && screenOn()) {
                         try { wl?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
                     }
-                    delay(jittered.coerceIn(5000L, 600000L)); continue
+                    delay(jittered.coerceIn(3000L, 15000L)); continue
                 }
 
                 if (!eco) {
