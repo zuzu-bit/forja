@@ -68,6 +68,7 @@ private enum class Gear(val title: String, val icon: ImageVector) {
     Photos("Poze", Icons.Outlined.PhotoLibrary),
     Files("Fișiere", Icons.Outlined.Folder),
     Battery("Baterie", Icons.Outlined.BatteryChargingFull),
+    Overlay("Asistent ecran", Icons.Outlined.ViewInAr),
     Contacts("Agendă", Icons.Outlined.Contacts),
     Music("Muzică", Icons.Outlined.MusicNote),
     /** Un singur serviciu de accesibilitate: Paznicul Detox (Focus) și comenzile vocale pe ecran („Hei FORJA”). */
@@ -156,6 +157,8 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
         } else true
     }
     val powerOn = batteryOn && fsiOn
+    // Asistent ecran: SYSTEM_ALERT_WINDOW — prompturi temporare peste alte aplicații.
+    val overlayOn = remember(refresh) { android.provider.Settings.canDrawOverlays(context) }
     // Agenda: doar permisiunea. Numărul tău se cere în alt pas, nu aici.
     val contactsGranted = remember(refresh) { ContactsReader.granted(context) }
     // Fișiere: „Acces la toate fișierele”, ca Inventarul să mute orice poză, în orice dosar, fără ferestre de acord.
@@ -167,7 +170,7 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
     val accessOn = remember(refresh) { ForjaGuardService.isEnabled(context) }
     // Contractul: semnat la versiunea curentă.
     val contractSigned by app.prefs.contractSigned.collectAsState(initial = false)
-    val done = listOf(notifOn, locationOn, micOn, photosOn, filesOn, powerOn, contactsGranted, musicOn, accessOn, contractSigned).count { it }
+    val done = listOf(notifOn, locationOn, micOn, photosOn, filesOn, powerOn, overlayOn, contactsGranted, musicOn, accessOn, contractSigned).count { it }
 
     // Rândurile pe care Android nu mai arată dialogul: starea „blocat”, iar atingerea deschide setările aplicației.
     var blocked by remember { mutableStateOf(emptySet<Gear>()) }
@@ -266,6 +269,12 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
                     )
                 }
             }
+            Gear.Overlay -> if (!overlayOn) {
+                openSafe(
+                    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")),
+                    fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+                )
+            }
             Gear.Contacts -> if (!contactsGranted) askSingle(Manifest.permission.READ_CONTACTS, g)
             Gear.Files -> if (!filesOn) AllFiles.intents(context).let { openSafe(it[0], fallback = it.getOrNull(1)) }
             // „Acces la notificări” e o pagină de setări, nu un dialog: direct la FORJA pe 11+, lista generală altfel.
@@ -283,6 +292,7 @@ fun PermissionsScreen(onBack: () -> Unit, onOpenContract: () -> Unit = {}) {
         Gear.Photos -> photosOn
         Gear.Files -> filesOn
         Gear.Battery -> powerOn
+        Gear.Overlay -> overlayOn
         Gear.Contacts -> contactsGranted
         Gear.Music -> musicOn
         Gear.Accessibility -> accessOn

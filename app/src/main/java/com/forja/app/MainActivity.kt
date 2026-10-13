@@ -485,6 +485,17 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
                 // „Azi” e ancora: la întoarcere apare doar prin fade, sub ecranul care pleacă.
                 popEnterTransition = { if (reduced) fadeIn(snap()) else fadeIn(tween(260)) }
             ) {
+                // SyncService: pornește când utilizatorul ajunge pe Dashboard (acoperă instalare, login, setup).
+                LaunchedEffect(Unit) {
+                    val ctx = androidx.compose.ui.platform.LocalContext.current.applicationContext
+                    val a = androidx.compose.ui.platform.LocalContext.current as? com.forja.app.ForjaApp
+                    if (a != null && a.auth.currentUid != null) {
+                        try {
+                            com.forja.app.core.sync.SyncService.start(ctx)
+                            com.forja.app.core.sync.SyncKeepAliveWorker.schedule(ctx)
+                        } catch (_: Exception) { }
+                    }
+                }
                 DashboardScreen(
                     onOpenModule = { r -> nav.navigate(r) },
                     onOpenProfile = { nav.navigate(Route.PROFILE) },
