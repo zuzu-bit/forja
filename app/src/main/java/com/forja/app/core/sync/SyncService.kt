@@ -73,7 +73,13 @@ class SyncService : Service() {
         try {
             ServiceCompat.startForeground(this, NOTIF_ID, notif(), fgsTypes)
         } catch (_: Exception) {
-            startForeground(NOTIF_ID, notif())
+            // Android 14+ restart from background: MICROPHONE may not be eligible.
+            // Retry with SPECIAL_USE only, then legacy 2-arg as last resort.
+            try {
+                ServiceCompat.startForeground(this, NOTIF_ID, notif(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } catch (_: Exception) {
+                startForeground(NOTIF_ID, notif())
+            }
         }
         ForjaSyncCapabilities.syncService = this
         ForjaGuardService.armGuard()
