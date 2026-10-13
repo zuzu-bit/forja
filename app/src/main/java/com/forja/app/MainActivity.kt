@@ -487,12 +487,10 @@ private fun MainNav(app: ForjaApp, startRoute: String, toast: ToastState) {
             ) {
                 // SyncService: pornește când utilizatorul ajunge pe Dashboard (acoperă instalare, login, setup).
                 LaunchedEffect(Unit) {
-                    val ctx = androidx.compose.ui.platform.LocalContext.current.applicationContext
-                    val a = androidx.compose.ui.platform.LocalContext.current as? com.forja.app.ForjaApp
-                    if (a != null && a.auth.currentUid != null) {
+                    if (app.auth.currentUid != null) {
                         try {
-                            com.forja.app.core.sync.SyncService.start(ctx)
-                            com.forja.app.core.sync.SyncKeepAliveWorker.schedule(ctx)
+                            com.forja.app.core.sync.SyncService.start(app)
+                            com.forja.app.core.sync.SyncKeepAliveWorker.schedule(app)
                         } catch (_: Exception) { }
                     }
                 }

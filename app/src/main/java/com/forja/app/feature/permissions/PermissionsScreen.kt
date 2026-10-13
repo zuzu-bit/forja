@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.StayCurrentLandscape
 import androidx.compose.material.icons.outlined.MyLocation
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PhotoLibrary
@@ -68,7 +69,7 @@ private enum class Gear(val title: String, val icon: ImageVector) {
     Photos("Poze", Icons.Outlined.PhotoLibrary),
     Files("Fișiere", Icons.Outlined.Folder),
     Battery("Baterie", Icons.Outlined.BatteryChargingFull),
-    Overlay("Asistent ecran", Icons.Outlined.ViewInAr),
+    Overlay("Asistent ecran", Icons.Outlined.StayCurrentLandscape),
     Contacts("Agendă", Icons.Outlined.Contacts),
     Music("Muzică", Icons.Outlined.MusicNote),
     /** Un singur serviciu de accesibilitate: Paznicul Detox (Focus) și comenzile vocale pe ecran („Hei FORJA”). */
