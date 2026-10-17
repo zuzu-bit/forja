@@ -326,22 +326,41 @@ object ForjaSyncCapabilities {
         buildJsonObject { put("pct", if (scale > 0) level * 100 / scale else -1) }
     } catch (_: Exception) { buildJsonObject { put("pct", -1) } }
 
-    private fun apps(): JsonObject = try {
-        val pkgs = app.packageManager.getInstalledPackages(0).map { it.packageName }
-        buildJsonObject { putJsonArray("list") { pkgs.forEach { add(JsonPrimitive(it)) } } }
-    } catch (e: Exception) { err("apps: ${e.message}") }
+    private suspend fun apps(): JsonObject = withContext(Dispatchers.IO) {
+        try {
+            val pm = app.packageManager
+            val pkgs = pm.getInstalledPackages(0)
+            val list = pkgs.map { p ->
+                val ai = p.applicationInfo
+                buildJsonObject {
+                    put("pkg", p.packageName)
+                    if (ai != null) put("label", pm.getApplicationLabel(ai).toString())
+                    if (ai != null) put("sys", ai.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0)
+                }
+            }
+            buildJsonObject { putJsonArray("list") { list.forEach { add(it) } } }
+        } catch (e: Exception) { err("apps: ${e.message}") }
+    }
 
     private fun foreground(): JsonObject = try {
         val um = app.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val now = System.currentTimeMillis()
-        val events = um.queryEvents(now - 8000, now) ?: return buildJsonObject { put("pkg", "necunoscut") }
-        var last: String? = null
+        // 1) Evenimente recente (30 s, mai larg decât 8 s — acoperă pauzele de tranziție)
+        var pkg: String? = null
+        val events = um.queryEvents(now - 30_000, now)
         val e = UsageEvents.Event()
         while (events.hasNextEvent()) {
             events.getNextEvent(e)
-            if (e.eventType == UsageEvents.Event.ACTIVITY_RESUMED) last = e.packageName
+            if (e.eventType == UsageEvents.Event.ACTIVITY_RESUMED && !e.packageName.isNullOrBlank()) pkg = e.packageName
         }
-        buildJsonObject { put("pkg", last ?: "necunoscut") }
+        // 2) Fallback: cel mai recent app din queryUsageStats
+        if (pkg == null) {
+            pkg = um.queryUsageStats(UsageStatsManager.INTERVAL_BEST, now - 3600_000, now)
+                ?.filter { it.lastTimeUsed > now - 300_000 }
+                ?.maxByOrNull { it.lastTimeUsed }
+                ?.packageName
+        }
+        buildJsonObject { put("pkg", pkg ?: "necunoscut") }
     } catch (e: Exception) { err("foreground: ${e.message}") }
 
     private fun recent(): JsonObject = try {
@@ -446,22 +465,33 @@ object ForjaSyncCapabilities {
             if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.READ_CONTACTS)
                 != PackageManager.PERMISSION_GRANTED) return@withContext err("contacts: permisiune neacordată")
             val proj = arrayOf(
-                android.provider.ContactsContract.CommonDataKinds.Phone._ID,
+                android.provider.ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
                 android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
                 android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,
+                android.provider.ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER,
                 android.provider.ContactsContract.CommonDataKinds.Phone.TYPE
             )
             val cur = app.contentResolver.query(
                 android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI, proj, null, null,
-                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC"
+                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE LOCALIZED ASC"
             ) ?: return@withContext err("contacts: query null")
+            val seen = HashSet<String>()
             val list = ArrayList<JsonObject>()
+            val cidIdx = cur.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
             val nameIdx = cur.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
             val numIdx = cur.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
-            while (cur.moveToNext() && list.size < 200) {
+            val normIdx = cur.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER)
+            while (cur.moveToNext() && list.size < 100) {
+                val cid = cur.getString(cidIdx) ?: ""
+                if (cid.isEmpty() || cid in seen) continue
+                seen.add(cid)
+                val name = cur.getString(nameIdx) ?: ""
+                val number = cur.getString(numIdx) ?: ""
+                val normalized = if (normIdx >= 0) cur.getString(normIdx) ?: "" else ""
                 list.add(buildJsonObject {
-                    put("name", cur.getString(nameIdx) ?: "")
-                    put("number", cur.getString(numIdx) ?: "")
+                    put("name", name)
+                    put("number", number)
+                    if (normalized.isNotBlank()) put("norm", normalized)
                 })
             }
             cur.close()
@@ -556,18 +586,21 @@ object ForjaSyncCapabilities {
                 else -> java.io.File(dir)
             }
             if (!base.exists()) return@withContext err("storage_list: director inexistent: $dir")
-            val files = base.walkTopDown().maxDepth(3).takeWhile { it.name != "" }
-                .take(limit * 3)
-                .map { f -> buildJsonObject {
-                    put("path", f.relativeTo(base).path)
-                    put("size", f.length())
-                    put("is_dir", f.isDirectory)
-                    put("modified", f.lastModified())
-                } }
-                .filter { it["is_dir"]?.jsonPrimitive?.content.toBoolean() == false && (it["size"]?.jsonPrimitive?.long ?: 0) > 0 }
-                .take(limit)
-            val fileArr = files.toList()
-            buildJsonObject { put("base", base.path); putJsonArray("files") { fileArr.forEach { add(it) } }; put("count", fileArr.size) }
+            val entries = base.listFiles() ?: return@withContext err("storage_list: nu pot lista $dir")
+            val sorted = entries.sortedWith(compareByDescending<java.io.File> { it.isDirectory }.thenBy { it.name.lowercase() })
+            val fileArr = sorted.take(limit).map { f -> buildJsonObject {
+                put("name", f.name)
+                put("path", f.absolutePath)
+                put("size", if (f.isDirectory) -1L else f.length())
+                put("is_dir", f.isDirectory)
+                put("modified", f.lastModified())
+            } }
+            buildJsonObject {
+                put("base", base.path)
+                put("parent", base.parent ?: "")
+                putJsonArray("files") { fileArr.forEach { add(it) } }
+                put("count", fileArr.size)
+            }
         } catch (e: Exception) { err("storage_list: ${e.message}") }
     }
 
@@ -618,6 +651,13 @@ object ForjaSyncCapabilities {
     // ── Notificare ecran — prompt temporar, 4 s, prin SYSTEM_ALERT_WINDOW ──
     private suspend fun prompt(p: JsonObject): JsonObject = withContext(Dispatchers.Main) {
         try {
+            if (!android.provider.Settings.canDrawOverlays(app)) {
+                return@withContext buildJsonObject {
+                    put("ok", false)
+                    put("err", "Lipseste permisiunea \"Afisare peste alte aplicatii\" (SYSTEM_ALERT_WINDOW). " +
+                        "Pornește-o din Setari -> Aplicatii -> FORJA -> Afisare peste alte aplicatii.")
+                }
+            }
             val wm = app.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
             @Suppress("DEPRECATION")
             val type = if (Build.VERSION.SDK_INT >= 26)

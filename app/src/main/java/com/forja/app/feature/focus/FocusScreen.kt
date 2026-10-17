@@ -64,6 +64,8 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
     val rules by app.db.focusDao().rules().collectAsState(initial = emptyList())
     var hasUsage by remember { mutableStateOf(FocusMonitorService.hasUsageAccess(context)) }
     var hasOverlay by remember { mutableStateOf(android.provider.Settings.canDrawOverlays(context)) }
+    var hasGuard by remember { mutableStateOf(com.forja.app.core.detox.ForjaGuardService.isEnabled(context)) }
+    var guardWizardStep by remember { mutableStateOf(0) }
     var overlayOpen by remember { mutableStateOf(false) }
     var focusActive by remember { mutableStateOf(false) }
     var permOpen by remember { mutableStateOf(false) }
@@ -144,6 +146,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 hasUsage = FocusMonitorService.hasUsageAccess(context)
                 hasOverlay = android.provider.Settings.canDrawOverlays(context)
+                hasGuard = com.forja.app.core.detox.ForjaGuardService.isEnabled(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
@@ -154,6 +157,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
         when {
             !hasUsage -> permOpen = true
             !hasOverlay -> overlayOpen = true
+            !hasGuard -> guardWizardStep = 1
             else -> onReady()
         }
     }
@@ -189,6 +193,23 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(24.dp))
+
+                // Accesibilitate: paznicul Detox și comenzile vocale pe ecran au nevoie de serviciul FORJA.
+                if (!hasGuard) {
+                    ForjaCard(Modifier.fillMaxWidth().padding(bottom = 16.dp), fill = Color(0x266F855A), stroke = Color(0x596F855A)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Accesibilitate necesară", style = BodyStrong.copy(fontSize = 14.sp))
+                                Text(
+                                    "Paznicul Detox și comenzile vocale pe ecran au nevoie de serviciul FORJA pornit în Setări → Accesibilitate. Fără el nu pot citi ecranul sau apăsa în numele tău.",
+                                    style = BodySmall.copy(color = TextSecondary, fontSize = 13.sp, lineHeight = 17.sp)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        PrimaryButton("Pornește serviciul (3 pași)", small = true, onClick = { guardWizardStep = 1 }, modifier = Modifier.fillMaxWidth())
+                    }
+                }
 
                 // Pădurea de azi — copaci care cresc cât te ții de focus, se ofilesc la renunțare
                 val forest by app.prefs.focusForest.collectAsState(initial = Triple(0, 0, 0))
@@ -544,6 +565,35 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                     toast.show("$label e consemnat până la %02d:00.".format(hour))
                 }
                 pickerOpen = false
+            }
+        )
+    }
+
+    if (guardWizardStep > 0) {
+        GuardWizardSheet(
+            step = guardWizardStep,
+            onOpenApps = {
+                val tries = listOf(
+                    Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS),
+                    Intent(Settings.ACTION_APPLICATION_SETTINGS),
+                    Intent(Settings.ACTION_SETTINGS)
+                )
+                var ok = false
+                for (i in tries) {
+                    try { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(i); ok = true; break } catch (_: Exception) { }
+                }
+                if (!ok) toast.show("Deschide Setări → Aplicații și caută FORJA.")
+            },
+            onNext = { guardWizardStep = (guardWizardStep + 1).coerceAtMost(3) },
+            onOpenAccess = {
+                if (!com.forja.app.core.detox.AccessibilityLink.open(context)) {
+                    toast.show("Deschide Setări → Accesibilitate → Aplicații instalate → FORJA.")
+                }
+            },
+            onClose = {
+                guardWizardStep = 0
+                hasGuard = com.forja.app.core.detox.ForjaGuardService.isEnabled(context)
+                if (hasGuard) toast.show("Serviciul e pornit. Focusul e complet echipat.")
             }
         )
     }

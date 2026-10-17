@@ -196,7 +196,7 @@ data class Step(
 /** Semnul de pe disc: lista FORJA, Melodii apreciate, nimic. */
 enum class Badge { NONE, FORJA, LIKED }
 
-enum class FailReason { NO_PLAYER, REFUSED, TIMEOUT }
+enum class FailReason { NO_PLAYER, REFUSED, TIMEOUT, PERMISSION }
 
 /** Starea vizibilă a pornirii (ecranul Muzică, discul din Antrenament). */
 sealed interface StartState {

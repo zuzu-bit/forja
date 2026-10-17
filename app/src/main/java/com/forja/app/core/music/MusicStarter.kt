@@ -403,6 +403,11 @@ object MusicStarter {
         val tapAt = if (tap) calledAt else null
         Music.ensureStarted(app)
         Music.onMain {
+            if (!access(app)) {
+                _state.value = StartState.Failed(FailReason.PERMISSION, null)
+                _notice.value = "Muzica are nevoie de \"Acces la notificari\". Deschide Echipare -> Muzica pentru a-l activa."
+                return@onMain
+            }
             // O pornire nouă vine dintr-o atingere în FORJA: un salt de dinainte rămas deschis s-a încheiat (s-a întors ea,
             // prea repede ca procesul să fi trecut prin fundal) — altfel o reușită de acum l-ar raporta drept „auto”.
             if (hops.open && hostVisible()) hops.settle(SystemClock.elapsedRealtime())?.let { logRet(it) }
