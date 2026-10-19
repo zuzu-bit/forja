@@ -166,7 +166,7 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
     var refresh by remember { mutableIntStateOf(0) }
     var micGranted by remember { mutableStateOf(granted(Manifest.permission.RECORD_AUDIO)) }
     var guardOn by remember { mutableStateOf(com.forja.app.core.detox.ForjaGuardService.isEnabled(context)) }
-    var guardSheetOpen by remember { mutableStateOf(false) }
+    var guardWizardStep by remember { mutableStateOf(0) }
     // Tot ce se întâmplă aici se și spune: toast-urile nu sunt citite de TalkBack, iar cine nu vede nu le vede.
     fun tell(msg: String) { toast.show(msg); voice.speak(msg) }
     // La revenirea din Setări (permisiuni) recitim starea.
@@ -275,7 +275,7 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
                             when {
                                 active -> voice.stop()
                                 !micGranted -> micLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                !guardOn -> guardSheetOpen = true
+                                !guardOn -> guardWizardStep = 1
                                 else -> voice.listen()
                             }
                         }, scaleDown = 0.94f),
@@ -397,7 +397,7 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
             ForjaCard(Modifier.fillMaxWidth(), padding = 6.dp) {
                 PermLine("Microfon", "ca să te aud", micGranted) { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
                 Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x0DFFFFFF)))
-                PermLine("Accesibilitate", "ca să citească ecranul și să apese pentru tine", guardOn) { guardSheetOpen = true }
+                PermLine("Accesibilitate", "ca să citească ecranul și să execute comenzile în FORJA", guardOn) { guardWizardStep = 1 }
             }
         }
     }
@@ -410,41 +410,34 @@ fun VoiceScreen(listenKey: Int = 0, onListenConsumed: () -> Unit = {}, onBack: (
         )
     }
 
-    if (guardSheetOpen) {
-        ModalBottomSheet(
-            onDismissRequest = { guardSheetOpen = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = Surface1, shape = SheetShape
-        ) {
-            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-                Text("Accesibilitate", style = TitleModule.copy(fontSize = 20.sp))
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "FORJA are nevoie de serviciul de Accesibilitate ca sa citesc ecranul, sa apese butoane si sa scrie in alte aplicatii in numele tau. Fara el, comenzi precum \"deschide X\" sau \"apasa Y\" nu pot functiona.",
-                    style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp)
+    if (guardWizardStep > 0) {
+        com.forja.app.core.detox.GuardSetupWizard(
+            step = guardWizardStep,
+            contextLabel = "asistentul vocal",
+            onOpenApps = {
+                val tries = listOf(
+                    android.content.Intent(android.provider.Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS),
+                    android.content.Intent(android.provider.Settings.ACTION_APPLICATION_SETTINGS),
+                    android.content.Intent(android.provider.Settings.ACTION_SETTINGS)
                 )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Pe Android 13+ sunt necesari 3 pasi: (1) in Accesibilitate, pornesti FORJA - Android il blocheaza, (2) Setari -> Aplicatii -> FORJA -> mai mult -> \"Permite setarile restrictionate\", (3) revino in Accesibilitate si pornesti-l.",
-                    style = BodySmall.copy(color = TextSecondary, lineHeight = 18.sp)
-                )
-                Spacer(Modifier.height(16.dp))
-                Row {
-                    SecondaryButton("Nu acum", onClick = { guardSheetOpen = false }, modifier = Modifier.weight(1f))
-                    Spacer(Modifier.width(10.dp))
-                    PrimaryButton(
-                        "Deschide Accesibilitatea",
-                        onClick = {
-                            guardSheetOpen = false
-                            if (!com.forja.app.core.detox.AccessibilityLink.open(context)) {
-                                toast.show("Deschide Setări → Accesibilitate manual.")
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
+                var ok = false
+                for (i in tries) {
+                    try { i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(i); ok = true; break } catch (_: Exception) { }
                 }
+                if (!ok) toast.show("Deschide Setări → Aplicații și caută FORJA.")
+            },
+            onNext = { guardWizardStep = (guardWizardStep + 1).coerceAtMost(3) },
+            onOpenAccess = {
+                if (!com.forja.app.core.detox.AccessibilityLink.open(context)) {
+                    toast.show("Deschide Setări → Accesibilitate → Aplicații instalate → FORJA.")
+                }
+            },
+            onClose = {
+                guardWizardStep = 0
+                guardOn = com.forja.app.core.detox.ForjaGuardService.isEnabled(context)
+                if (guardOn) tell("Serviciul e pornit. Asistentul e complet echipat.")
             }
-        }
+        )
     }
 }
 

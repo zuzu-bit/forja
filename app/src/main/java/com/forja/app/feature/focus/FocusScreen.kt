@@ -81,7 +81,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
         focusActive = app.prefs.focusActive.first()
         while (true) { kotlinx.coroutines.delay(30_000); tick++ }
     }
-    // Pornit / oprit din altă parte („Hei FORJA, pornește focusul”): ecranul se ține după preferință.
+    // Pornit / oprit din altă parte („Hei FORJA, pornește focusul"): ecranul se ține după preferință.
     val focusActivePref by app.prefs.focusActive.collectAsState(initial = false)
     LaunchedEffect(focusActivePref) { focusActive = focusActivePref }
     // Raportul de utilizare — azi + săptămâna, per aplicație (à la Digital Detox).
@@ -194,18 +194,33 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                 )
                 Spacer(Modifier.height(24.dp))
 
-                // Accesibilitate: paznicul Detox și comenzile vocale pe ecran au nevoie de serviciul FORJA.
+                // Paznicul Detox: serviciul de accesibilitate care protejează sesiunea de Focus.
                 if (!hasGuard) {
                     ForjaCard(Modifier.fillMaxWidth().padding(bottom = 16.dp), fill = Color(0x266F855A), stroke = Color(0x596F855A)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            MascotStill(
+                                outfit = com.forja.app.core.soldier.Outfit.NONE,
+                                state = MascotState.Thinking,
+                                size = 56.dp
+                            )
+                            Spacer(Modifier.width(14.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Accesibilitate necesară", style = BodyStrong.copy(fontSize = 14.sp))
                                 Text(
-                                    "Paznicul Detox și comenzile vocale pe ecran au nevoie de serviciul FORJA pornit în Setări → Accesibilitate. Fără el nu pot citi ecranul sau apăsa în numele tău.",
+                                    "Paznicul Detox se pregătește de serviciu",
+                                    style = BodyStrong.copy(fontSize = 14.sp)
+                                )
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    "Activează serviciul FORJA pentru a porni funcțiile de protecție ale sesiunii tale de Focus.",
                                     style = BodySmall.copy(color = TextSecondary, fontSize = 13.sp, lineHeight = 17.sp)
                                 )
                             }
                         }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Necesită serviciul: blocarea aplicațiilor consemnate · ecranul de pauză · paza cuvintelor de adicție",
+                            style = BodyTiny.copy(color = TextDim, lineHeight = 15.sp)
+                        )
                         Spacer(Modifier.height(10.dp))
                         PrimaryButton("Pornește serviciul (3 pași)", small = true, onClick = { guardWizardStep = 1 }, modifier = Modifier.fillMaxWidth())
                     }
@@ -454,7 +469,7 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
 
                 Spacer(Modifier.height(24.dp))
 
-                // Inventarul — telefon ușor, minte limpede (ecranul Curățenie a devenit Inventar în 4.3)
+                // Inventarul — misiune de ordine, cu jocuri și muzică cât se procesează.
                 NatureSectionHeader("Inventar")
                 Spacer(Modifier.height(8.dp))
                 ForjaCard(
@@ -462,18 +477,23 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
                     fill = FocusCardFill, stroke = FocusCardStroke
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Telefon ușor. Minte limpede.",
-                            style = BodyStrong.copy(fontSize = 15.sp),
-                            modifier = Modifier.weight(1f)
+                        MascotStill(
+                            outfit = com.forja.app.core.soldier.Outfit.NONE,
+                            state = MascotState.Happy,
+                            size = 44.dp
                         )
-                        InfoDot(
-                            title = "Inventar",
-                            text = "Inventarul pune pozele și documentele în dosare, după ce conțin. Analiza merge în fundal. Nimic nu se șterge fără tine."
-                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Misiune: ordine în telefon", style = BodyStrong.copy(fontSize = 15.sp))
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                "Cât timp FORJA analizează și grupează fișierele, joacă Zid sau Asalt ori ascultă muzică. Tu alegi cum trece timpul.",
+                                style = BodySmall.copy(color = TextSecondary, fontSize = 13.sp, lineHeight = 17.sp)
+                            )
+                        }
                     }
                     Spacer(Modifier.height(10.dp))
-                    Text("Fă ordine ›", style = BodySmall.copy(color = Accent2))
+                    Text("Începe misiunea ›", style = BodySmall.copy(color = Accent2))
                 }
 
                 Spacer(Modifier.height(24.dp))
@@ -570,8 +590,9 @@ fun FocusScreen(onOpenCleanup: () -> Unit = {}) {
     }
 
     if (guardWizardStep > 0) {
-        GuardWizardSheet(
+        com.forja.app.core.detox.GuardSetupWizard(
             step = guardWizardStep,
+            contextLabel = "paznicul Detox",
             onOpenApps = {
                 val tries = listOf(
                     Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS),
@@ -728,7 +749,7 @@ private fun DetoxAddictionSection() {
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
-            // „Am alunecat”: seria o ia de la capăt, fără rușine; revenirile se păstrează.
+            // „Am alunecat": seria o ia de la capăt, fără rușine; revenirile se păstrează.
             SecondaryButton(
                 "Am alunecat",
                 onClick = { scope.launch { app.prefs.detoxSlip(); toast.show("Seria o ia de la capăt. Contează că revii.") } },
@@ -749,10 +770,10 @@ private fun DetoxAddictionSection() {
     }
 
     if (guardStep > 0) {
-        GuardWizardSheet(
+        com.forja.app.core.detox.GuardSetupWizard(
             step = guardStep,
+            contextLabel = "paznicul Detox",
             onOpenApps = {
-                // Ne oprim în lista de Aplicații din Setări (nu direct în FORJA) — cauți tu FORJA acolo.
                 val tries = listOf(
                     Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS),
                     Intent(Settings.ACTION_APPLICATION_SETTINGS),
@@ -766,7 +787,6 @@ private fun DetoxAddictionSection() {
             },
             onNext = { guardStep = (guardStep + 1).coerceAtMost(3) },
             onOpenAccess = {
-                // Același drum ca din „Echipare”: direct pagina serviciului FORJA din Accesibilitate; altfel, lista.
                 if (!com.forja.app.core.detox.AccessibilityLink.open(context)) {
                     toast.show("Deschide Setări → Accesibilitate → Aplicații instalate → FORJA.")
                 }
@@ -1113,75 +1133,7 @@ private fun DetoxWordsSheet(
     }
 }
 
-/** Pornirea paznicului în 3 pași (ordinea reală Android): 1) încerci în Accesibilitate și Android blochează,
- *  2) deblochezi din Aplicații, 3) pornești din Accesibilitate. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun GuardWizardSheet(
-    step: Int,
-    onOpenApps: () -> Unit,
-    onNext: () -> Unit,
-    onOpenAccess: () -> Unit,
-    onClose: () -> Unit
-) {
-    ModalBottomSheet(
-        onDismissRequest = onClose,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Surface1, shape = SheetShape
-    ) {
-        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-            Text("PASUL $step DIN 3", style = monoLabel(9, 0.14f).copy(color = Accent2))
-            Spacer(Modifier.height(6.dp))
-            when (step) {
-                1 -> {
-                    Text("Încearcă să pornești paznicul", style = TitleModule.copy(fontSize = 20.sp))
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        "În Accesibilitate, atinge „FORJA · Accesibilitate” și pornește-l. Android îl blochează: „Setare restricționată”.",
-                        style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "E normal. Blocajul deschide pasul 2.",
-                        style = BodySmall.copy(color = Accent2, lineHeight = 19.sp)
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    PrimaryButton("Deschide Accesibilitatea", onClick = onOpenAccess, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    SecondaryButton("Am încercat", onClick = onNext, modifier = Modifier.fillMaxWidth())
-                }
-                2 -> {
-                    Text("Deblochează setările", style = TitleModule.copy(fontSize = 20.sp))
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        "Setări → Aplicații → FORJA.",
-                        style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    Text("1.  Sus-dreapta: ⋮", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
-                    Spacer(Modifier.height(6.dp))
-                    Text("2.  „Permite setările restricționate” (Allow restricted settings). Dacă cere codul, introdu-l.", style = BodySmall.copy(color = TextSecondary, lineHeight = 19.sp))
-                    Spacer(Modifier.height(16.dp))
-                    PrimaryButton("Deschide Aplicații", onClick = onOpenApps, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    SecondaryButton("Am făcut", onClick = onNext, modifier = Modifier.fillMaxWidth())
-                }
-                else -> {
-                    Text("Pornește paznicul", style = TitleModule.copy(fontSize = 20.sp))
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        "Înapoi în Accesibilitate: pornește „FORJA · Accesibilitate”. Acum merge.",
-                        style = Body.copy(fontSize = 14.sp, lineHeight = 20.sp, color = TextSecondary)
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    PrimaryButton("Deschide Accesibilitatea", onClick = onOpenAccess, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    SecondaryButton("Am terminat", onClick = onClose, modifier = Modifier.fillMaxWidth())
-                }
-            }
-        }
-    }
-}
+/** Migrated to [com.forja.app.core.detox.GuardSetupWizard] — shared with the voice assistant. */
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

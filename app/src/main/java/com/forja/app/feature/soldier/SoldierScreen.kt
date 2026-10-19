@@ -388,7 +388,7 @@ private fun GearTile(item: GearItem, state: SoldierState, modifier: Modifier = M
             .border(1.dp, if (equipped) Color(0x996F855A) else StrokeCard, CardShape)
             .semantics { role = Role.Button; contentDescription = "${item.name}, " + if (locked) "de la gradul de ${Ranks.byIndex(item.rank).name}" else status.lowercase() }
             .pressable(onClick, scaleDown = 0.97f)
-            .padding(8.dp),
+            .padding(6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -398,10 +398,10 @@ private fun GearTile(item: GearItem, state: SoldierState, modifier: Modifier = M
                 Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Text(item.name, style = BodyStrong.copy(fontSize = 12.sp), maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(3.dp))
-        Text(status, style = monoLabel(8, 0.12f).copy(color = statusColor), maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(4.dp))
+        Text(item.name, style = BodyStrong.copy(fontSize = 11.sp, lineHeight = 14.sp), maxLines = 3, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(2.dp))
+        Text(status, style = monoLabel(8, 0.06f).copy(color = statusColor), maxLines = 3, textAlign = TextAlign.Center)
     }
 }
 
@@ -421,7 +421,7 @@ private fun RankCard(r: Rank, state: SoldierState) {
     ) {
         RankBadge(r.index, size = 44.dp, highlight = current)
         Spacer(Modifier.height(8.dp))
-        Text(r.name, style = BodyStrong.copy(fontSize = 12.sp), maxLines = 2, textAlign = TextAlign.Center, overflow = TextOverflow.Ellipsis)
+        Text(r.name, style = BodyStrong.copy(fontSize = 11.sp, lineHeight = 13.sp), maxLines = 3, textAlign = TextAlign.Center)
         Spacer(Modifier.height(4.dp))
         Text(
             if (current) "ACUM" else "${r.minPoints} PUNCTE",

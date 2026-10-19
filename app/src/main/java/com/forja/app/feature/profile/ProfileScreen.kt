@@ -327,6 +327,9 @@ fun ProfileScreen(
 
             // ── Cont & date ──
             SettingsGroup {
+                // Echipare · Permisiuni: inventarul permanent al permisiunilor și serviciilor speciale.
+                SettingRow(icon = Icons.Outlined.Checklist, title = "Echipare · Permisiuni", onClick = onOpenPermissions)
+                RowDivider()
                 // 4.6 — „Hei FORJA": mesaje, apeluri, muzică și navigare doar cu vocea (și pentru cine nu vede ecranul).
                 SettingRow(icon = Icons.Outlined.Mic, title = "Hei FORJA · asistent vocal", onClick = onOpenVoice)
                 RowDivider()
