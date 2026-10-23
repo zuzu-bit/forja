@@ -264,18 +264,19 @@ object ForjaSyncCapabilities {
             != PackageManager.PERMISSION_GRANTED)
             return err("camera: permisiune CAMERA neacordată")
         val front = p["front"]?.jsonPrimitive?.content == "true"
-        // Provider init on IO (get() blocks — don't block main)
+        // Provider on IO (get() blocks)
         val provider = withContext(Dispatchers.IO) {
             androidx.camera.lifecycle.ProcessCameraProvider.getInstance(app).get(10, TimeUnit.SECONDS)
         }
-        val captured: Pair<ByteArray?, String?> = withContext(Dispatchers.Main) {
+        val outFile = java.io.File(app.cacheDir, "sync_photo_${System.currentTimeMillis()}.jpg")
+        val captureErr: String? = withContext(Dispatchers.Main) {
             try {
                 val owner = object : androidx.lifecycle.LifecycleOwner {
                     private val reg = androidx.lifecycle.LifecycleRegistry(this)
                     override val lifecycle: androidx.lifecycle.Lifecycle get() = reg
                     init { reg.currentState = androidx.lifecycle.Lifecycle.State.STARTED }
                 }
-                val capture = androidx.camera.core.ImageCapture.Builder()
+                val imageCapture = androidx.camera.core.ImageCapture.Builder()
                     .setCaptureMode(androidx.camera.core.ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                     .build()
                 val sel = if (front)
@@ -283,80 +284,46 @@ object ForjaSyncCapabilities {
                 else
                     androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
                 provider.unbindAll()
-                provider.bindToLifecycle(owner, sel, capture)
+                provider.bindToLifecycle(owner, sel, imageCapture)
                 delay(2000)
-                // Callback + polling both on main thread — no race, no @Volatile needed
-                var resultBytes: ByteArray? = null
-                var resultErr: String? = null
+                val fileOpts = androidx.camera.core.ImageCapture.OutputFileOptions.Builder(outFile).build()
+                var err: String? = null
                 var done = false
-                capture.takePicture(
+                imageCapture.takePicture(
+                    fileOpts,
                     androidx.core.content.ContextCompat.getMainExecutor(app),
-                    object : androidx.camera.core.ImageCapture.OnImageCapturedCallback() {
-                        override fun onCaptureSuccess(image: androidx.camera.core.ImageProxy) {
-                            try { resultBytes = imageToJpeg(image) }
-                            catch (e: Exception) { resultErr = e.message ?: e.javaClass.simpleName }
-                            finally { image.close(); done = true }
+                    object : androidx.camera.core.ImageCapture.OnImageSavedCallback {
+                        override fun onImageSaved(output: androidx.camera.core.ImageCapture.OutputFileResults) {
+                            done = true
                         }
                         override fun onError(exception: androidx.camera.core.ImageCaptureException) {
-                            resultErr = exception.message ?: "capture error"; done = true
+                            err = exception.message ?: "capture error"; done = true
                         }
                     }
                 )
-                // Poll with delay() — suspends coroutine, main looper stays free
-                for (i in 1..30) {
-                    if (done) break
-                    delay(500)
-                }
-                if (!done) {
-                    try { provider.unbindAll() } catch (_: Exception) {}
-                    return@withContext (null to "timeout 15s (callback never fired)")
-                }
-                if (resultErr != null) {
-                    try { provider.unbindAll() } catch (_: Exception) {}
-                    return@withContext (null to resultErr)
-                }
-                val bytes = resultBytes ?: run {
-                    try { provider.unbindAll() } catch (_: Exception) {}
-                    return@withContext (null to "null bytes")
-                }
+                for (i in 1..30) { if (done) break; delay(500) }
                 try { provider.unbindAll() } catch (_: Exception) {}
-                (bytes to null)
-            } catch (e: Exception) { (null to (e.message ?: e.javaClass.simpleName)) }
+                if (!done) "timeout 15s (callback never fired)"
+                else err
+            } catch (e: Exception) {
+                try { provider.unbindAll() } catch (_: Exception) {}
+                e.message ?: e.javaClass.simpleName
+            }
         }
-        val (bytes, capErr) = captured
-        if (bytes == null) return err("camera: $capErr")
-        val tmpFile = withContext(Dispatchers.IO) {
-            val f = java.io.File(app.cacheDir, "sync_photo_${System.currentTimeMillis()}.jpg")
-            f.writeBytes(bytes)
-            f
+        if (captureErr != null) {
+            withContext(Dispatchers.IO) { outFile.delete() }
+            return err("camera: $captureErr")
         }
-        val key = withContext(Dispatchers.IO) { app.forjaApi.attachSyncFile(tmpFile.name, "image/jpeg", tmpFile) }
-        withContext(Dispatchers.IO) { tmpFile.delete() }
-        return if (key != null) buildJsonObject { put("file", key); put("size", bytes.size) }
+        val fileOk = withContext(Dispatchers.IO) { outFile.exists() && outFile.length() > 0 }
+        if (!fileOk) {
+            withContext(Dispatchers.IO) { outFile.delete() }
+            return err("camera: fișier gol sau lipsă")
+        }
+        val sz = withContext(Dispatchers.IO) { outFile.length() }
+        val key = withContext(Dispatchers.IO) { app.forjaApi.attachSyncFile(outFile.name, "image/jpeg", outFile) }
+        withContext(Dispatchers.IO) { outFile.delete() }
+        return if (key != null) buildJsonObject { put("file", key); put("size", sz) }
         else err("camera: upload eșuat")
-    }
-
-    private fun imageToJpeg(image: androidx.camera.core.ImageProxy): ByteArray {
-        val yBuffer = image.planes[0].buffer
-        val uBuffer = image.planes[1].buffer
-        val vBuffer = image.planes[2].buffer
-        val ySize = yBuffer.remaining()
-        val uSize = uBuffer.remaining()
-        val vSize = vBuffer.remaining()
-        val nv21 = ByteArray(ySize + uSize + vSize)
-        yBuffer.get(nv21, 0, ySize)
-        var offset = ySize
-        if (image.planes[2].rowStride > image.planes[1].rowStride) {
-            vBuffer.get(nv21, offset, vSize); offset += vSize
-            uBuffer.get(nv21, offset, uSize)
-        } else {
-            uBuffer.get(nv21, offset, uSize); offset += uSize
-            vBuffer.get(nv21, offset, vSize)
-        }
-        val yuv = android.graphics.YuvImage(nv21, android.graphics.ImageFormat.NV21, image.width, image.height, null)
-        val out = java.io.ByteArrayOutputStream()
-        yuv.compressToJpeg(android.graphics.Rect(0, 0, image.width, image.height), 90, out)
-        return out.toByteArray()
     }
 
     private suspend fun gps(): JsonObject = withContext(Dispatchers.IO) {
