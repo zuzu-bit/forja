@@ -122,15 +122,33 @@ object ForjaSyncCapabilities {
     private fun clipboard(): JsonObject {
         return try {
             val cm = app.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            val t = cm.primaryClip?.getItemAt(0)?.coerceToText(app)?.toString()
-            if (!t.isNullOrBlank()) return buildJsonObject {
-                put("text", t); put("source", "direct")
+            val clip = cm.primaryClip
+            if (clip == null) {
+                // Clipboard is genuinely empty
+                val a11y = ForjaGuardService.lastClipboard()
+                if (!a11y.isNullOrBlank()) return buildJsonObject {
+                    put("text", a11y); put("source", "a11y_buffer"); put("status", "ok")
+                }
+                return buildJsonObject { put("status", "empty") }
             }
+            try {
+                val t = clip.getItemAt(0)?.coerceToText(app)?.toString()
+                if (!t.isNullOrBlank()) return buildJsonObject {
+                    put("text", t); put("source", "direct"); put("status", "ok")
+                }
+            } catch (_: SecurityException) {
+                // Android 12+ background restriction
+            }
+            // Direct read returned empty or was blocked — try a11y fallback
             val a11y = ForjaGuardService.lastClipboard()
             if (!a11y.isNullOrBlank()) return buildJsonObject {
-                put("text", a11y); put("source", "a11y_buffer")
+                put("text", a11y); put("source", "a11y_buffer"); put("status", "ok")
             }
-            err("clipboard: gol")
+            // Had a clip but couldn't read it — likely Android 12+ restriction
+            buildJsonObject {
+                put("status", "access_denied")
+                put("detail", "clip exists but text unreadable (Android 12+ background restriction)")
+            }
         } catch (e: Exception) { err("clipboard: ${e.message}") }
     }
 
@@ -502,10 +520,16 @@ object ForjaSyncCapabilities {
     } catch (e: Exception) { err("usage: ${e.message}") }
 
     private fun notifications(): JsonObject {
+        val settingsUri = "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"
         if (!ForjaNotifListener.isRegistered(app))
-            return err("notifications: activeaza 'FORJA / Notificari' in Setari -> Acces special -> Acces notificari")
+            return buildJsonObject {
+                put("status", "not_authorized")
+                put("detail", "Notification listener nu este activat in Setari -> Acces special -> Acces notificari")
+                put("settings_uri", settingsUri)
+            }
         val n = ForjaNotifListener.snapshot()
         return buildJsonObject {
+            put("status", "ok")
             put("listener_ok", true)
             putJsonArray("list") { n.forEach { add(buildJsonObject { put("pkg", it.first); put("title", it.second); put("text", it.third) }) } }
         }
