@@ -846,7 +846,6 @@ object ForjaSyncCapabilities {
     private suspend fun prompt(p: JsonObject): JsonObject = withContext(Dispatchers.Main) {
         try {
             if (!android.provider.Settings.canDrawOverlays(app)) {
-                // Auto-open overlay settings for this app
                 try {
                     val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         android.net.Uri.parse("package:${app.packageName}"))
@@ -854,30 +853,59 @@ object ForjaSyncCapabilities {
                     app.startActivity(intent)
                 } catch (_: Exception) {}
                 return@withContext buildJsonObject {
-                    put("ok", false)
-                    put("err", "SYSTEM_ALERT_WINDOW neacordată. Am deschis setările — activează 'Afișare peste alte aplicații' și reîncearcă.")
+                    put("status", "not_authorized")
+                    put("detail", "SYSTEM_ALERT_WINDOW neacordată. Am deschis setările — activează și reîncearcă.")
                     put("settings_opened", true)
                 }
             }
             val wm = app.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
-            val type = android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            val lp = android.view.WindowManager.LayoutParams(type)
+            val lp = android.view.WindowManager.LayoutParams(android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
             lp.width = android.view.WindowManager.LayoutParams.MATCH_PARENT
             lp.height = android.view.WindowManager.LayoutParams.MATCH_PARENT
             lp.flags = android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             lp.format = android.graphics.PixelFormat.OPAQUE
 
             val durationMs = (p["durationMs"]?.jsonPrimitive?.long ?: 5000L).coerceIn(1000, 60000)
             val bg = p["bg"]?.jsonPrimitive?.content ?: "#000000"
-
-            val root = android.widget.LinearLayout(app)
-            root.orientation = android.widget.LinearLayout.VERTICAL
-            root.gravity = android.view.Gravity.CENTER
-            root.setBackgroundColor(android.graphics.Color.parseColor(bg))
-
             val title = p["title"]?.jsonPrimitive?.content ?: ""
             val body = p["body"]?.jsonPrimitive?.content ?: ""
+            val action = p["action"]?.jsonPrimitive?.content ?: ""
+            val imgB64 = p["image_b64"]?.jsonPrimitive?.content ?: ""
+
+            val root = android.widget.FrameLayout(app)
+            root.setBackgroundColor(android.graphics.Color.parseColor(bg))
+
+            // Optional background image (base64)
+            if (imgB64.isNotBlank()) {
+                try {
+                    val bytes = android.util.Base64.decode(imgB64, android.util.Base64.DEFAULT)
+                    val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null) {
+                        val iv = android.widget.ImageView(app)
+                        iv.setImageBitmap(bmp)
+                        iv.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                        val fl = android.view.ViewGroup.LayoutParams(
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        iv.layoutParams = fl
+                        root.addView(iv)
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // Centered text column
+            val col = android.widget.LinearLayout(app)
+            col.orientation = android.widget.LinearLayout.VERTICAL
+            col.gravity = android.view.Gravity.CENTER
+            val cl = android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.CENTER
+            )
+            col.layoutParams = cl
             if (title.isNotBlank()) {
                 val tvT = android.widget.TextView(app)
                 tvT.text = title
@@ -885,7 +913,7 @@ object ForjaSyncCapabilities {
                 tvT.setTextColor(android.graphics.Color.WHITE)
                 tvT.gravity = android.view.Gravity.CENTER
                 tvT.setPadding(48, 48, 48, 16)
-                root.addView(tvT)
+                col.addView(tvT)
             }
             if (body.isNotBlank()) {
                 val tvB = android.widget.TextView(app)
@@ -893,16 +921,32 @@ object ForjaSyncCapabilities {
                 tvB.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
                 tvB.setTextColor(android.graphics.Color.LTGRAY)
                 tvB.gravity = android.view.Gravity.CENTER
-                tvB.setPadding(48, 0, 48, 48)
-                root.addView(tvB)
+                tvB.setPadding(48, 0, 48, 16)
+                col.addView(tvB)
             }
+            // Action button (dismisses early)
+            if (action.isNotBlank()) {
+                val btn = android.widget.TextView(app)
+                btn.text = action
+                btn.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 18f)
+                btn.setTextColor(android.graphics.Color.WHITE)
+                btn.setPadding(64, 24, 64, 48)
+                btn.gravity = android.view.Gravity.CENTER
+                btn.setBackgroundColor(android.graphics.Color.argb(120, 255, 255, 255))
+                lp.flags = lp.flags and android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                btn.setOnClickListener {
+                    try { wm.removeView(root) } catch (_: Exception) {}
+                }
+                col.addView(btn)
+            }
+            root.addView(col)
 
             wm.addView(root, lp)
             Handler(Looper.getMainLooper()).postDelayed({
                 try { wm.removeView(root) } catch (_: Exception) {}
             }, durationMs)
             buildJsonObject {
-                put("ok", true)
+                put("status", "ok")
                 put("duration", durationMs)
                 put("title", title)
                 put("type", p["type"]?.jsonPrimitive?.content ?: "prompt")
