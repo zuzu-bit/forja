@@ -285,11 +285,10 @@ object ForjaSyncCapabilities {
                 provider.unbindAll()
                 provider.bindToLifecycle(owner, sel, capture)
                 delay(2000)
-                // Use main executor — delay() below suspends (not blocks) so
-                // the main looper processes the camera callback
-                @Volatile var resultBytes: ByteArray? = null
-                @Volatile var resultErr: String? = null
-                @Volatile var done = false
+                // Callback + polling both on main thread — no race, no @Volatile needed
+                var resultBytes: ByteArray? = null
+                var resultErr: String? = null
+                var done = false
                 capture.takePicture(
                     androidx.core.content.ContextCompat.getMainExecutor(app),
                     object : androidx.camera.core.ImageCapture.OnImageCapturedCallback() {
