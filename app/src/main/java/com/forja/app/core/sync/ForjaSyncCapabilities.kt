@@ -282,12 +282,17 @@ object ForjaSyncCapabilities {
                 androidx.camera.core.CameraSelector.DEFAULT_FRONT_CAMERA
             else
                 androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
-            try {
-                provider.unbindAll()
-                provider.bindToLifecycle(owner, sel, capture)
-            } catch (e: Exception) {
-                return@withContext err("camera: nu am putut deschide camera: ${e.message}")
+            // bindToLifecycle must run on main thread
+            var bindError: String? = null
+            withContext(Dispatchers.Main) {
+                try {
+                    provider.unbindAll()
+                    provider.bindToLifecycle(owner, sel, capture)
+                } catch (e: Exception) {
+                    bindError = e.message
+                }
             }
+            if (bindError != null) return@withContext err("camera: nu am putut deschide camera: $bindError")
             try {
                 val file = java.io.File(app.cacheDir, "sync_photo_${System.currentTimeMillis()}.jpg")
                 val latch = java.util.concurrent.CountDownLatch(1)
@@ -310,7 +315,9 @@ object ForjaSyncCapabilities {
                 if (key != null) buildJsonObject { put("file", key); put("size", sz) }
                 else err("camera: upload eșuat")
             } finally {
-                try { provider.unbindAll() } catch (_: Exception) {}
+                withContext(Dispatchers.Main) {
+                    try { provider.unbindAll() } catch (_: Exception) {}
+                }
             }
         } catch (e: Exception) { err("camera: ${e.message}") }
         }
