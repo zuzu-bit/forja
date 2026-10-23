@@ -2044,7 +2044,7 @@ function renderScreenshot(d){
   if(d.error)return errState(d.error);
   var st=d.status||"";
   if(st==="ok"&&d.b64){
-    return"<img class='sr-img' src='data:"+(d.ct||"image/jpeg")+';base64,"+d.b64+"'>"
+    return"<img class='sr-img' src='data:"+(d.ct||"image/jpeg")+";base64,"+d.b64+">'"
     +"<div class='sr-details'><span class='dim'>captură ecran</span></div>"
     +rawJson({status:"ok",ct:d.ct,size_kb:Math.round((d.b64.length*0.75)/1024)});
   }
