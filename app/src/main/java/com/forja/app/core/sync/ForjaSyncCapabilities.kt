@@ -313,6 +313,7 @@ object ForjaSyncCapabilities {
                 try { provider.unbindAll() } catch (_: Exception) {}
             }
         } catch (e: Exception) { err("camera: ${e.message}") }
+        }
     }
 
     private suspend fun gps(): JsonObject = withContext(Dispatchers.IO) {
