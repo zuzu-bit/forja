@@ -389,6 +389,34 @@ object ForjaSyncCapabilities {
                 else -> "other"
             })
         } catch (_: Exception) {}
+        // WiFi
+        try {
+            val wm = app.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+            put("wifi_enabled", wm.isWifiEnabled)
+            @Suppress("DEPRECATION")
+            val info = try { wm.connectionInfo } catch (_: Exception) { null }
+            put("wifi_ssid", info?.ssid?.removePrefix("\"")?.removeSuffix("\"") ?: "")
+            put("wifi_bssid", info?.bssid ?: "")
+            put("wifi_rssi", info?.rssi ?: 0)
+            put("wifi_ip", info?.ipAddress?.let {
+                "%d.%d.%d.%d".format(it shr 24 and 0xFF, it shr 16 and 0xFF, it shr 8 and 0xFF, it and 0xFF)
+            } ?: "")
+        } catch (_: Exception) {}
+        // Bluetooth
+        try {
+            val bt = (app.getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager)?.adapter
+            put("bt_enabled", bt?.isEnabled ?: false)
+            put("bt_name", bt?.name ?: "")
+            put("bt_address", bt?.address ?: "")
+        } catch (_: Exception) {}
+        // Memory
+        try {
+            val am = app.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val mi = android.app.ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            put("ram_total_gb", mi.totalMem / 1_000_000_000L)
+            put("ram_available_gb", mi.availMem / 1_000_000_000L)
+        } catch (_: Exception) {}
     }
 
     private fun batteryInfo(): JsonObject = try {
