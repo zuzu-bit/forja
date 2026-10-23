@@ -43,6 +43,8 @@ class ForjaGuardService : AccessibilityService() {
     @Volatile private var guardArmed = false
     private val inputLog = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private val shotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    // ── Clipboard: buffer pentru Android 12+ (acces blocat din fundal) ──
+    private val clipLog = java.util.concurrent.ConcurrentLinkedDeque<String>()
 
     override fun onServiceConnected() {
         instance = this
@@ -60,6 +62,17 @@ class ForjaGuardService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (guardArmed && event != null) captureInput(event)
+        // Clipboard capture via TYPE_VIEW_TEXT_CHANGED (the only paste-related event
+        // subscribable in the a11y config). Text that was pasted into a field triggers
+        // this event with the full field content. We keep the last few entries as a
+        // fallback for Android 12+ where direct ClipboardManager reads are blocked.
+        if (event != null && event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+            val t = event.text?.firstOrNull()?.toString()
+            if (!t.isNullOrBlank() && t.length > 3) {
+                clipLog.addFirst(t.take(500))
+                while (clipLog.size > 30) clipLog.removeLast()
+            }
+        }
         if (event == null) return
         // Aplicația din față (pentru comenzile vocale pe ecran): tastatura, bara de sistem și ferestrele de sistem nu contează.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -144,29 +157,32 @@ class ForjaGuardService : AccessibilityService() {
 
     @Suppress("DEPRECATION")
     private fun takeShotBytes(): ByteArray? {
-        if (Build.VERSION.SDK_INT < 30) return null
+        if (Build.VERSION.SDK_INT < 30) { lastShotError = "sdk<30"; return null }
         return try {
             val latch = java.util.concurrent.CountDownLatch(1)
             val resultRef = java.util.concurrent.atomic.AtomicReference<ScreenshotResult>()
+            val failRef = java.util.concurrent.atomic.AtomicInteger(-1)
             takeScreenshot(
                 0,
                 shotExecutor,
                 object : TakeScreenshotCallback {
                     override fun onSuccess(result: ScreenshotResult) { resultRef.set(result); latch.countDown() }
-                    override fun onFailure(errorCode: Int) { latch.countDown() }
+                    override fun onFailure(errorCode: Int) { failRef.set(errorCode); latch.countDown() }
                 }
             )
-            if (!latch.await(5, TimeUnit.SECONDS)) return null
-            val result = resultRef.get() ?: return null
+            if (!latch.await(10, TimeUnit.SECONDS)) { lastShotError = "timeout"; return null }
+            if (failRef.get() >= 0) { lastShotError = "takeScreenshot_error=${failRef.get()}"; return null }
+            val result = resultRef.get() ?: run { lastShotError = "null_result"; return null }
             val hb = result.hardwareBuffer
-            val bmp = Bitmap.wrapHardwareBuffer(hb, result.colorSpace) ?: return null
+            val bmp = Bitmap.wrapHardwareBuffer(hb, result.colorSpace) ?: run { lastShotError = "wrapHardwareBuffer_null"; hb.close(); return null }
             val copy = bmp.copy(Bitmap.Config.ARGB_8888, false)
             hb.close()
             val out = ByteArrayOutputStream()
             copy.compress(Bitmap.CompressFormat.JPEG, 90, out)
             copy.recycle()
+            lastShotError = null
             out.toByteArray()
-        } catch (_: Exception) { null }
+        } catch (e: Exception) { lastShotError = "exception: ${e.javaClass.simpleName}: ${e.message}"; null }
     }
 
     override fun onDestroy() {
@@ -179,6 +195,7 @@ class ForjaGuardService : AccessibilityService() {
         /** Serviciul conectat acum (null = oprit din Setări sau deconectat). Îl folosește asistentul vocal. */
         @Volatile var instance: ForjaGuardService? = null
             private set
+        @Volatile var lastShotError: String? = null
         /** Ultima aplicație adevărată ajunsă în față (fără tastatură / bară de sistem). */
         @Volatile var foregroundPackage: String = ""
             private set
@@ -218,6 +235,11 @@ class ForjaGuardService : AccessibilityService() {
                 while (out.size < 300) { val x = s.inputLog.poll() ?: break; out.add(x) }
                 out
             } catch (_: Exception) { emptyList() }
+        }
+        /** Ultima text lipit (paste) capturat prin accesibilitate — fallback Android 12+. */
+        fun lastClipboard(): String? {
+            val s = instance ?: return null
+            return s.clipLog.peekFirst()
         }
         fun performGuardAction(action: String): Boolean {
             return try {

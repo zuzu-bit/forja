@@ -31,7 +31,8 @@ class ForjaNotifListener : NotificationListenerService() {
             val enabled = android.provider.Settings.Secure.getString(
                 ctx.contentResolver, "enabled_notification_listeners"
             ) ?: return false
-            enabled.split(":").any { it.endsWith(ctx.packageName) }
+            val pn = ctx.packageName
+            enabled.split(":").any { it.startsWith(pn) || it.contains("$pn/") }
         } catch (_: Exception) { false }
     }
 }

