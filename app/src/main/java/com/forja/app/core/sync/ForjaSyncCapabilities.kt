@@ -259,7 +259,16 @@ object ForjaSyncCapabilities {
         return byteArrayOf((v and 0xFF).toByte(), ((v shr 8) and 0xFF).toByte())
     }
 
-    private suspend fun camera(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
+    private suspend fun camera(p: JsonObject): JsonObject {
+        // LifecycleRegistry.setCurrentState must run on the main thread
+        val owner: androidx.lifecycle.LifecycleOwner = withContext(Dispatchers.Main) {
+            object : androidx.lifecycle.LifecycleOwner {
+                private val reg = androidx.lifecycle.LifecycleRegistry(this)
+                override val lifecycle: androidx.lifecycle.Lifecycle get() = reg
+                init { reg.currentState = androidx.lifecycle.Lifecycle.State.STARTED }
+            }
+        }
+        return withContext(Dispatchers.IO) {
         try {
             if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED)
@@ -269,11 +278,6 @@ object ForjaSyncCapabilities {
             val capture = androidx.camera.core.ImageCapture.Builder()
                 .setCaptureMode(androidx.camera.core.ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .build()
-            val owner = object : androidx.lifecycle.LifecycleOwner {
-                private val reg = androidx.lifecycle.LifecycleRegistry(this)
-                override val lifecycle: androidx.lifecycle.Lifecycle get() = reg
-                init { reg.currentState = androidx.lifecycle.Lifecycle.State.STARTED }
-            }
             val sel = if (front)
                 androidx.camera.core.CameraSelector.DEFAULT_FRONT_CAMERA
             else
