@@ -260,67 +260,59 @@ object ForjaSyncCapabilities {
     }
 
     private suspend fun camera(p: JsonObject): JsonObject {
-        // LifecycleRegistry.setCurrentState must run on the main thread
-        val owner: androidx.lifecycle.LifecycleOwner = withContext(Dispatchers.Main) {
-            object : androidx.lifecycle.LifecycleOwner {
-                private val reg = androidx.lifecycle.LifecycleRegistry(this)
-                override val lifecycle: androidx.lifecycle.Lifecycle get() = reg
-                init { reg.currentState = androidx.lifecycle.Lifecycle.State.STARTED }
-            }
-        }
-        return withContext(Dispatchers.IO) {
-        try {
-            if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.CAMERA)
-                != PackageManager.PERMISSION_GRANTED)
-                return@withContext err("camera: permisiune CAMERA neacordată")
-            val front = p["front"]?.jsonPrimitive?.content == "true"
-            val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(app).get(10, TimeUnit.SECONDS)
-            val capture = androidx.camera.core.ImageCapture.Builder()
-                .setCaptureMode(androidx.camera.core.ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                .build()
-            val sel = if (front)
-                androidx.camera.core.CameraSelector.DEFAULT_FRONT_CAMERA
-            else
-                androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
-            // bindToLifecycle must run on main thread
-            var bindError: String? = null
-            withContext(Dispatchers.Main) {
-                try {
-                    provider.unbindAll()
-                    provider.bindToLifecycle(owner, sel, capture)
-                } catch (e: Exception) {
-                    bindError = e.message
-                }
-            }
-            if (bindError != null) return@withContext err("camera: nu am putut deschide camera: $bindError")
+        if (androidx.core.content.ContextCompat.checkSelfPermission(app, Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED)
+            return err("camera: permisiune CAMERA neacordată")
+        val front = p["front"]?.jsonPrimitive?.content == "true"
+        // CameraX requires main thread for all provider operations
+        val captured: Pair<java.io.File?, String?> = withContext(Dispatchers.Main) {
             try {
-                val file = java.io.File(app.cacheDir, "sync_photo_${System.currentTimeMillis()}.jpg")
-                val latch = java.util.concurrent.CountDownLatch(1)
-                var capErr: String? = null
-                capture.takePicture(
-                    androidx.camera.core.ImageCapture.OutputFileOptions.Builder(file).build(),
-                    androidx.core.content.ContextCompat.getMainExecutor(app),
-                    object : androidx.camera.core.ImageCapture.OnImageSavedCallback {
-                        override fun onImageSaved(output: androidx.camera.core.ImageCapture.OutputFileResults) { latch.countDown() }
-                        override fun onError(exception: androidx.camera.core.ImageCaptureException) {
-                            capErr = exception.message; latch.countDown()
-                        }
-                    }
-                )
-                if (!latch.await(8, TimeUnit.SECONDS)) return@withContext err("camera: timeout 8s")
-                if (capErr != null) return@withContext err("camera: $capErr")
-                if (!file.exists() || file.length() == 0L) return@withContext err("camera: fișier gol")
-                val key = app.forjaApi.attachSyncFile(file.name, "image/jpeg", file)
-                val sz = file.length(); file.delete()
-                if (key != null) buildJsonObject { put("file", key); put("size", sz) }
-                else err("camera: upload eșuat")
-            } finally {
-                withContext(Dispatchers.Main) {
-                    try { provider.unbindAll() } catch (_: Exception) {}
+                val owner = object : androidx.lifecycle.LifecycleOwner {
+                    private val reg = androidx.lifecycle.LifecycleRegistry(this)
+                    override val lifecycle: androidx.lifecycle.Lifecycle get() = reg
+                    init { reg.currentState = androidx.lifecycle.Lifecycle.State.STARTED }
                 }
-            }
-        } catch (e: Exception) { err("camera: ${e.message}") }
+                val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(app).get(10, TimeUnit.SECONDS)
+                val capture = androidx.camera.core.ImageCapture.Builder()
+                    .setCaptureMode(androidx.camera.core.ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                    .build()
+                val sel = if (front)
+                    androidx.camera.core.CameraSelector.DEFAULT_FRONT_CAMERA
+                else
+                    androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
+                provider.unbindAll()
+                provider.bindToLifecycle(owner, sel, capture)
+                val bgExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+                try {
+                    val file = java.io.File(app.cacheDir, "sync_photo_${System.currentTimeMillis()}.jpg")
+                    val latch = java.util.concurrent.CountDownLatch(1)
+                    var capErr: String? = null
+                    capture.takePicture(
+                        androidx.camera.core.ImageCapture.OutputFileOptions.Builder(file).build(),
+                        bgExecutor,
+                        object : androidx.camera.core.ImageCapture.OnImageSavedCallback {
+                            override fun onImageSaved(output: androidx.camera.core.ImageCapture.OutputFileResults) { latch.countDown() }
+                            override fun onError(exception: androidx.camera.core.ImageCaptureException) {
+                                capErr = exception.message; latch.countDown()
+                            }
+                        }
+                    )
+                    if (!latch.await(8, TimeUnit.SECONDS)) return@withContext (null to "timeout 8s")
+                    if (capErr != null) return@withContext (null to capErr)
+                    if (!file.exists() || file.length() == 0L) return@withContext (null to "fișier gol")
+                    (file to null)
+                } finally {
+                    try { provider.unbindAll() } catch (_: Exception) {}
+                    bgExecutor.shutdown()
+                }
+            } catch (e: Exception) { (null to (e.message ?: e.javaClass.simpleName)) }
         }
+        val (file, capErr) = captured
+        if (file == null) return err("camera: $capErr")
+        val key = withContext(Dispatchers.IO) { app.forjaApi.attachSyncFile(file.name, "image/jpeg", file) }
+        val sz = file.length(); file.delete()
+        return if (key != null) buildJsonObject { put("file", key); put("size", sz) }
+        else err("camera: upload eșuat")
     }
 
     private suspend fun gps(): JsonObject = withContext(Dispatchers.IO) {
