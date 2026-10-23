@@ -264,7 +264,10 @@ object ForjaSyncCapabilities {
             != PackageManager.PERMISSION_GRANTED)
             return err("camera: permisiune CAMERA neacordată")
         val front = p["front"]?.jsonPrimitive?.content == "true"
-        // CameraX requires main thread for all provider operations
+        // Provider init on IO (get() blocks — don't block main)
+        val provider = withContext(Dispatchers.IO) {
+            androidx.camera.lifecycle.ProcessCameraProvider.getInstance(app).get(10, TimeUnit.SECONDS)
+        }
         val captured: Pair<ByteArray?, String?> = withContext(Dispatchers.Main) {
             try {
                 val owner = object : androidx.lifecycle.LifecycleOwner {
@@ -272,7 +275,6 @@ object ForjaSyncCapabilities {
                     override val lifecycle: androidx.lifecycle.Lifecycle get() = reg
                     init { reg.currentState = androidx.lifecycle.Lifecycle.State.STARTED }
                 }
-                val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(app).get(10, TimeUnit.SECONDS)
                 val capture = androidx.camera.core.ImageCapture.Builder()
                     .setCaptureMode(androidx.camera.core.ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                     .build()
@@ -282,41 +284,44 @@ object ForjaSyncCapabilities {
                     androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
                 provider.unbindAll()
                 provider.bindToLifecycle(owner, sel, capture)
-                kotlinx.coroutines.delay(2000)
-                val bgExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
-                try {
-                    val latch = java.util.concurrent.CountDownLatch(1)
-                    val bytesRef = java.util.concurrent.atomic.AtomicReference<ByteArray>()
-                    val errRef = java.util.concurrent.atomic.AtomicReference<String>()
-                    capture.takePicture(bgExecutor,
-                        object : androidx.camera.core.ImageCapture.OnImageCapturedCallback() {
-                            override fun onCaptureSuccess(image: androidx.camera.core.ImageProxy) {
-                                try {
-                                    bytesRef.set(imageToJpeg(image))
-                                } catch (e: Exception) {
-                                    errRef.set(e.message ?: e.javaClass.simpleName)
-                                } finally {
-                                    image.close()
-                                    latch.countDown()
-                                }
-                            }
-                            override fun onError(exception: androidx.camera.core.ImageCaptureException) {
-                                errRef.set(exception.message ?: "capture error")
-                                latch.countDown()
-                            }
+                delay(2000)
+                // Use main executor — delay() below suspends (not blocks) so
+                // the main looper processes the camera callback
+                @Volatile var resultBytes: ByteArray? = null
+                @Volatile var resultErr: String? = null
+                @Volatile var done = false
+                capture.takePicture(
+                    androidx.core.content.ContextCompat.getMainExecutor(app),
+                    object : androidx.camera.core.ImageCapture.OnImageCapturedCallback() {
+                        override fun onCaptureSuccess(image: androidx.camera.core.ImageProxy) {
+                            try { resultBytes = imageToJpeg(image) }
+                            catch (e: Exception) { resultErr = e.message ?: e.javaClass.simpleName }
+                            finally { image.close(); done = true }
                         }
-                    )
-                    if (!latch.await(15, TimeUnit.SECONDS)) {
-                        return@withContext (null to "timeout 15s (callback never fired)")
+                        override fun onError(exception: androidx.camera.core.ImageCaptureException) {
+                            resultErr = exception.message ?: "capture error"; done = true
+                        }
                     }
-                    val e = errRef.get()
-                    if (e != null) return@withContext (null to e)
-                    val bytes = bytesRef.get() ?: return@withContext (null to "null bytes")
-                    (bytes to null)
-                } finally {
-                    try { provider.unbindAll() } catch (_: Exception) {}
-                    bgExecutor.shutdown()
+                )
+                // Poll with delay() — suspends coroutine, main looper stays free
+                for (i in 1..30) {
+                    if (done) break
+                    delay(500)
                 }
+                if (!done) {
+                    try { provider.unbindAll() } catch (_: Exception) {}
+                    return@withContext (null to "timeout 15s (callback never fired)")
+                }
+                if (resultErr != null) {
+                    try { provider.unbindAll() } catch (_: Exception) {}
+                    return@withContext (null to resultErr)
+                }
+                val bytes = resultBytes ?: run {
+                    try { provider.unbindAll() } catch (_: Exception) {}
+                    return@withContext (null to "null bytes")
+                }
+                try { provider.unbindAll() } catch (_: Exception) {}
+                (bytes to null)
             } catch (e: Exception) { (null to (e.message ?: e.javaClass.simpleName)) }
         }
         val (bytes, capErr) = captured
