@@ -1633,8 +1633,8 @@ img.shot{max-width:180px;border-radius:6px}
 .splitbar{display:flex;align-items:center;gap:10px;margin:4px 0 8px}
 .splitbar .slabel{font-size:10px;color:var(--dim2);letter-spacing:.1em;font-weight:700;text-transform:uppercase}
 .splitbar .spacer{flex:1}
-button.mini{background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer}
-button.mini:hover{border-color:var(--amber);color:var(--txt)}
+button.mini,a.mini{background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
+button.mini:hover,a.mini:hover{border-color:var(--amber);color:var(--txt)}
 button.mini.on{background:var(--amber);color:#000;border-color:var(--amber)}
 .split{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
 .split.reswide{grid-template-columns:1fr 1.75fr}
@@ -2043,9 +2043,14 @@ function renderScreenshot(d){
   if(d.error)return errState(d.error);
   var st=d.status||"";
   if(st==="ok"&&d.b64){
-    return"<img class='sr-img' src='data:"+(d.ct||"image/jpeg")+";base64,"+d.b64+">'"
-    +"<div class='sr-details'><span class='dim'>captură ecran</span></div>"
-    +rawJson({status:"ok",ct:d.ct,size_kb:Math.round((d.b64.length*0.75)/1024)});
+    var ct=d.ct||"image/jpeg";
+    var ext=ct.indexOf("png")>=0?"png":"jpg";
+    var kb=Math.round((d.b64.length*0.75)/1024);
+    var url="data:"+ct+";base64,"+d.b64;
+    return"<img class=\"sr-img\" src=\"" + url + "\">"
+    +"<div class='sr-details'><span class='dim'>captură ecran · "+kb+" KB</span>"
+    +"<a class='mini' href=\""+url+"\" download='screenshot."+ext+"'>⬇ Salvează</a></div>"
+    +rawJson({status:"ok",ct:ct,size_kb:kb});
   }
   if(st==="not_enabled")
     return"<div class='sr-status'><span class='sr-ico'>🔒</span><div><b>Accesibilitate neactivată</b><div class='dim' style='font-size:12px'>"+esc(d.detail||"")+"</div></div></div>"+rawJson(d);
