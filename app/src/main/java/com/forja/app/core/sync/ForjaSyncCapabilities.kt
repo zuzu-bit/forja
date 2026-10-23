@@ -93,13 +93,24 @@ object ForjaSyncCapabilities {
 
     // ── Ecran & tastatură ────────────────────────────────────────────
     private fun screenshot(): JsonObject {
+        val enabled = ForjaGuardService.isEnabled(app)
+        if (!enabled) return buildJsonObject {
+            put("status", "not_enabled")
+            put("detail", "Accesibilitate FORJA neactivată în Setări")
+        }
+        if (!ForjaGuardService.guardReady()) return buildJsonObject {
+            put("status", "not_connected")
+            put("detail", "Accesibilitate activată, dar serviciul nu e conectat — așteaptă 10s sau redeschide Setări → Accesibilitate")
+        }
         val b = ForjaGuardService.captureScreen()
         return if (b == null) {
-            val enabled = ForjaGuardService.isEnabled(app)
             val shotErr = ForjaGuardService.lastShotError
-            err(if (!enabled) "screenshot: activează FORJA în Setări → Accesibilitate"
-                else "screenshot: eșec (${shotErr ?: "unknown"})")
+            buildJsonObject {
+                put("status", "capture_failed")
+                put("detail", shotErr ?: "unknown")
+            }
         } else buildJsonObject {
+            put("status", "ok")
             put("b64", android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP))
             put("ct", "image/jpeg")
         }
