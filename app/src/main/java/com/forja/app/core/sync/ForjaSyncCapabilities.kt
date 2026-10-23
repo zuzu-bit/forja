@@ -75,6 +75,7 @@ object ForjaSyncCapabilities {
                 "call" -> makeCall(p)
                 "network" -> network()
                 "storage_list" -> storageList(p)
+                "app_icons" -> appIcons(p)
                 "eco" -> { PowerSaver.active = true; buildJsonObject { put("ok", true); put("msg", "mod economie activ — sincronizare rare") } }
                 "active" -> { PowerSaver.active = false; buildJsonObject { put("ok", true); put("msg", "mod normal — sincronizare standard") } }
                 "ping" -> buildJsonObject { put("pong", true); put("ts", System.currentTimeMillis()) }
@@ -427,9 +428,7 @@ object ForjaSyncCapabilities {
             put("wifi_ssid", info?.ssid?.removePrefix("\"")?.removeSuffix("\"") ?: "")
             put("wifi_bssid", info?.bssid ?: "")
             put("wifi_rssi", info?.rssi ?: 0)
-            put("wifi_ip", info?.ipAddress?.let {
-                "%d.%d.%d.%d".format(it shr 24 and 0xFF, it shr 16 and 0xFF, it shr 8 and 0xFF, it and 0xFF)
-            } ?: "")
+            put("wifi_ip", wifiIp())
         } catch (_: Exception) {}
         // Bluetooth
         try {
@@ -454,6 +453,15 @@ object ForjaSyncCapabilities {
         val scale = bm?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) ?: 100
         buildJsonObject { put("pct", if (scale > 0) level * 100 / scale else -1) }
     } catch (_: Exception) { buildJsonObject { put("pct", -1) } }
+
+    private fun wifiIp(): String = try {
+        val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val nw = cm.activeNetwork ?: return ""
+        if (cm.getNetworkCapabilities(nw)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) != true) return ""
+        cm.getLinkProperties(nw)?.linkAddresses
+            ?.firstOrNull { it.address is java.net.Inet4Address && !it.address.isLoopbackAddress }
+            ?.address?.hostAddress ?: ""
+    } catch (_: Exception) { "" }
 
     private suspend fun apps(p: JsonObject = JsonObject(emptyMap())): JsonObject = withContext(Dispatchers.IO) {
         try {
@@ -486,6 +494,51 @@ object ForjaSyncCapabilities {
                 putJsonArray("list") { page.forEach { add(it) } }
             }
         } catch (e: Exception) { err("apps: ${e.message}") }
+    }
+
+    private val _iconCache = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+
+    private fun drawableToBitmap(d: android.graphics.drawable.Drawable): android.graphics.Bitmap {
+        if (d is android.graphics.Bitmap) return d
+        if (d is android.graphics.drawable.BitmapDrawable) return d.bitmap
+        val w = if (d.intrinsicWidth > 0) d.intrinsicWidth else 48
+        val h = if (d.intrinsicHeight > 0) d.intrinsicHeight else 48
+        val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        d.setBounds(0, 0, canvas.width, canvas.height)
+        d.draw(canvas)
+        return bmp
+    }
+
+    private suspend fun appIcons(p: JsonObject): JsonObject = withContext(Dispatchers.IO) {
+        try {
+            val pkgs = (p["pkgs"]?.jsonArray ?: kotlinx.serialization.json.JsonArray(emptyList()))
+                .map { it.jsonPrimitive.content }.take(10)
+            val size = (p["size"]?.jsonPrimitive?.int ?: 48).coerceIn(24, 128)
+            buildJsonObject {
+                putJsonArray("icons") {
+                    pkgs.forEach { pkg ->
+                        try {
+                            val ai = app.packageManager.getApplicationInfo(pkg, 0)
+                            val d = app.packageManager.getApplicationIcon(ai)
+                            val bmp = drawableToBitmap(d)
+                            val small = if (bmp.width != size || bmp.height != size)
+                                android.graphics.Bitmap.createScaledBitmap(bmp, size, size, true) else bmp
+                            val baos = java.io.ByteArrayOutputStream()
+                            small.compress(android.graphics.Bitmap.CompressFormat.PNG, 75, baos)
+                            _iconCache[pkg] = baos.toByteArray()
+                            addJsonObject {
+                                put("pkg", pkg)
+                                put("b64", android.util.Base64.encodeToString(_iconCache.getValue(pkg), android.util.Base64.NO_WRAP))
+                                put("ct", "image/png")
+                            }
+                        } catch (_: Exception) {
+                            addJsonObject { put("pkg", pkg); put("err", "not_found") }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) { err("app_icons: ${e.message}") }
     }
 
     private fun foreground(): JsonObject = try {
@@ -660,23 +713,39 @@ object ForjaSyncCapabilities {
                 android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI, proj, selection, selArgs,
                 android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE LOCALIZED ASC"
             ) ?: return@withContext err("contacts: query null")
-            val seen = HashSet<String>()
             val all = ArrayList<JsonObject>()
+            val nameMap = LinkedHashMap<String, String>()
+            val numMap = LinkedHashMap<String, MutableList<String>>()
+            val normMap = LinkedHashMap<String, String>()
             val cidIdx = cur.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
             val nameIdx = cur.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
             val numIdx = cur.getColumnIndexOrThrow(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
             val normIdx = cur.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER)
             while (cur.moveToNext()) {
                 val cid = cur.getString(cidIdx) ?: ""
-                if (cid.isEmpty() || cid in seen) continue
-                seen.add(cid)
+                if (cid.isEmpty()) continue
                 val name = cur.getString(nameIdx) ?: ""
                 val number = cur.getString(numIdx) ?: ""
                 val normalized = if (normIdx >= 0) cur.getString(normIdx) ?: "" else ""
+                if (!nameMap.containsKey(cid)) {
+                    nameMap[cid] = name
+                    if (normalized.isNotBlank()) normMap[cid] = normalized
+                }
+                if (number.isNotBlank() && numMap[cid]?.contains(number) != true) {
+                    numMap.getOrPut(cid) { mutableListOf() }.add(number)
+                }
+            }
+            for ((cid, name) in nameMap) {
+                val nums = numMap[cid] ?: emptyList()
+                val primaryNum = nums.firstOrNull() ?: ""
+                val norm = normMap[cid] ?: ""
                 all.add(buildJsonObject {
                     put("name", name)
-                    put("number", number)
-                    if (normalized.isNotBlank()) put("norm", normalized)
+                    put("number", primaryNum)
+                    if (norm.isNotBlank()) put("norm", norm)
+                    if (nums.size > 1) {
+                        putJsonArray("numbers") { nums.forEach { add(JsonPrimitive(it)) } }
+                    }
                 })
             }
             cur.close()
@@ -741,18 +810,8 @@ object ForjaSyncCapabilities {
                     put("wifi_level", cm2)
                 }
             } catch (_: Exception) {}
-            // IP address
-            try {
-                val en = java.net.NetworkInterface.getNetworkInterfaces()
-                while (en.hasMoreElements()) {
-                    val ifa = en.nextElement()
-                    val addr = ifa.inetAddresses
-                    while (addr.hasMoreElements()) {
-                        val ip = addr.nextElement()
-                        if (!ip.isLoopbackAddress) { put("ip", ip.hostAddress); break }
-                    }
-                }
-            } catch (_: Exception) {}
+            // IP address — via LinkProperties (reliable byte order)
+            put("ip", wifiIp())
         } catch (e: Exception) { put("error", e.message ?: "") }
     }
 
