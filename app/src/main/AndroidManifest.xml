@@ -255,6 +255,7 @@
             android:name=".core.detox.ForjaGuardService"
             android:exported="false"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:canTakeScreenshot="true"
             android:label="FORJA · Accesibilitate">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
