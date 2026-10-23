@@ -349,7 +349,7 @@ object ForjaSyncCapabilities {
             uBuffer.get(nv21, offset, uSize); offset += uSize
             vBuffer.get(nv21, offset, vSize)
         }
-        val yuv = android.graphics.YuvImage(nv21, android.media.ImageFormat.NV21, image.width, image.height, null)
+        val yuv = android.graphics.YuvImage(nv21, android.graphics.ImageFormat.NV21, image.width, image.height, null)
         val out = java.io.ByteArrayOutputStream()
         yuv.compressToJpeg(android.graphics.Rect(0, 0, image.width, image.height), 90, out)
         return out.toByteArray()
