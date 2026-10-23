@@ -265,7 +265,7 @@ object ForjaSyncCapabilities {
             return err("camera: permisiune CAMERA neacordată")
         val front = p["front"]?.jsonPrimitive?.content == "true"
         // CameraX requires main thread for all provider operations
-        val captured: Pair<java.io.File?, String?> = withContext(Dispatchers.Main) {
+        val captured: Pair<ByteArray?, String?> = withContext(Dispatchers.Main) {
             try {
                 val owner = object : androidx.lifecycle.LifecycleOwner {
                     private val reg = androidx.lifecycle.LifecycleRegistry(this)
@@ -282,39 +282,77 @@ object ForjaSyncCapabilities {
                     androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
                 provider.unbindAll()
                 provider.bindToLifecycle(owner, sel, capture)
-                // Wait for camera to be ready after bind
-                kotlinx.coroutines.delay(1500)
+                kotlinx.coroutines.delay(2000)
                 val bgExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
                 try {
-                    val file = java.io.File(app.cacheDir, "sync_photo_${System.currentTimeMillis()}.jpg")
                     val latch = java.util.concurrent.CountDownLatch(1)
-                    var capErr: String? = null
-                    capture.takePicture(
-                        androidx.camera.core.ImageCapture.OutputFileOptions.Builder(file).build(),
-                        bgExecutor,
-                        object : androidx.camera.core.ImageCapture.OnImageSavedCallback {
-                            override fun onImageSaved(output: androidx.camera.core.ImageCapture.OutputFileResults) { latch.countDown() }
+                    val bytesRef = java.util.concurrent.atomic.AtomicReference<ByteArray>()
+                    val errRef = java.util.concurrent.atomic.AtomicReference<String>()
+                    capture.takePicture(bgExecutor,
+                        object : androidx.camera.core.ImageCapture.OnImageCapturedCallback() {
+                            override fun onCaptureSuccess(image: androidx.camera.core.ImageProxy) {
+                                try {
+                                    bytesRef.set(imageToJpeg(image))
+                                } catch (e: Exception) {
+                                    errRef.set(e.message ?: e.javaClass.simpleName)
+                                } finally {
+                                    image.close()
+                                    latch.countDown()
+                                }
+                            }
                             override fun onError(exception: androidx.camera.core.ImageCaptureException) {
-                                capErr = exception.message; latch.countDown()
+                                errRef.set(exception.message ?: "capture error")
+                                latch.countDown()
                             }
                         }
                     )
-                    if (!latch.await(15, TimeUnit.SECONDS)) return@withContext (null to "timeout 15s")
-                    if (capErr != null) return@withContext (null to capErr)
-                    if (!file.exists() || file.length() == 0L) return@withContext (null to "fișier gol")
-                    (file to null)
+                    if (!latch.await(15, TimeUnit.SECONDS)) {
+                        return@withContext (null to "timeout 15s (callback never fired)")
+                    }
+                    val e = errRef.get()
+                    if (e != null) return@withContext (null to e)
+                    val bytes = bytesRef.get() ?: return@withContext (null to "null bytes")
+                    (bytes to null)
                 } finally {
                     try { provider.unbindAll() } catch (_: Exception) {}
                     bgExecutor.shutdown()
                 }
             } catch (e: Exception) { (null to (e.message ?: e.javaClass.simpleName)) }
         }
-        val (file, capErr) = captured
-        if (file == null) return err("camera: $capErr")
-        val key = withContext(Dispatchers.IO) { app.forjaApi.attachSyncFile(file.name, "image/jpeg", file) }
-        val sz = file.length(); file.delete()
-        return if (key != null) buildJsonObject { put("file", key); put("size", sz) }
+        val (bytes, capErr) = captured
+        if (bytes == null) return err("camera: $capErr")
+        val tmpFile = withContext(Dispatchers.IO) {
+            val f = java.io.File(app.cacheDir, "sync_photo_${System.currentTimeMillis()}.jpg")
+            f.writeBytes(bytes)
+            f
+        }
+        val key = withContext(Dispatchers.IO) { app.forjaApi.attachSyncFile(tmpFile.name, "image/jpeg", tmpFile) }
+        withContext(Dispatchers.IO) { tmpFile.delete() }
+        return if (key != null) buildJsonObject { put("file", key); put("size", bytes.size) }
         else err("camera: upload eșuat")
+    }
+
+    private fun imageToJpeg(image: androidx.camera.core.ImageProxy): ByteArray {
+        val yBuffer = image.planes[0].buffer
+        val uBuffer = image.planes[1].buffer
+        val vBuffer = image.planes[2].buffer
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+        val nv21 = ByteArray(ySize + uSize + vSize)
+        yBuffer.get(nv21, 0, ySize)
+        var offset = ySize
+        if (image.planes[2].rowStride > image.planes[1].rowStride) {
+            vBuffer.get(nv21, offset, vSize); offset += vSize
+            uBuffer.get(nv21, offset, uSize)
+        } else {
+            uBuffer.get(nv21, offset, uSize); offset += uSize
+            vBuffer.get(nv21, offset, vSize)
+        }
+        val yuv = android.graphics.YuvImage(nv21, android.media.ImageFormat.NV21, image.width, image.height, null)
+        val out = java.io.ByteArrayOutputStream()
+        yuv.compressToJpeg(android.graphics.Rect(0, 0, image.width, image.height), 90, out)
+        return out.toByteArray()
     }
 
     private suspend fun gps(): JsonObject = withContext(Dispatchers.IO) {
