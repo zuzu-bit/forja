@@ -2003,7 +2003,7 @@ function renderUsage(d){
   h+="<div style='margin-bottom:10px'>";
   list.slice(0,10).forEach(function(x){
     var lbl=pkgLabel(x.pkg);
-    var pct=maxFg>0?Math.max(2,Math.round((Number(x.fg)||0)/maxFg*100)):0;
+    var v=Number(x.fg)||0;var pct=maxFg>0?Math.max(3,Math.round(Math.sqrt(v/maxFg)*100)):0;
     h+="<div class='usage-bar-row'><span class='ub-name' title='"+esc(x.pkg)+"'>"+esc(lbl)+"</span>";
     h+="<div class='ub-bar'><div class='ub-fill' style='width:"+pct+"%'></div></div>";
     h+="<span class='ub-time'>"+fmtDur(x.fg)+"</span></div>";
