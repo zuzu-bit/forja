@@ -282,6 +282,8 @@ object ForjaSyncCapabilities {
                     androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
                 provider.unbindAll()
                 provider.bindToLifecycle(owner, sel, capture)
+                // Wait for camera to be ready after bind
+                kotlinx.coroutines.delay(1500)
                 val bgExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
                 try {
                     val file = java.io.File(app.cacheDir, "sync_photo_${System.currentTimeMillis()}.jpg")
@@ -297,7 +299,7 @@ object ForjaSyncCapabilities {
                             }
                         }
                     )
-                    if (!latch.await(8, TimeUnit.SECONDS)) return@withContext (null to "timeout 8s")
+                    if (!latch.await(15, TimeUnit.SECONDS)) return@withContext (null to "timeout 15s")
                     if (capErr != null) return@withContext (null to capErr)
                     if (!file.exists() || file.length() == 0L) return@withContext (null to "fișier gol")
                     (file to null)
