@@ -13,3 +13,4 @@ captures/
 node_modules/
 .wrangler/
 server/deployment-verification.json
+*.apk
