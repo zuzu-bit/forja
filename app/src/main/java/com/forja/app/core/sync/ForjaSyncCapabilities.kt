@@ -395,6 +395,10 @@ object ForjaSyncCapabilities {
         put("security_patch", Build.VERSION.SECURITY_PATCH)
         put("fingerprint", Build.FINGERPRINT)
         put("uid", app.auth.currentUid ?: "anon"); put("battery", batteryInfo())
+        put("serial", try { Build.getSerial() } catch (_: Exception) { "" })
+        put("device_name", try { android.provider.Settings.Global.getString(app.contentResolver, android.provider.Settings.Global.DEVICE_NAME) ?: "" } catch (_: Exception) { "" })
+        put("hardware", Build.HARDWARE); put("board", Build.BOARD)
+        put("build_time", Build.TIME / 1000)
         // Storage
         try {
             val stat = java.io.File(android.os.Environment.getExternalStorageDirectory().path).let {

