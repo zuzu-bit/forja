@@ -27,7 +27,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -458,14 +460,16 @@ object ForjaSyncCapabilities {
         buildJsonObject { put("pct", if (scale > 0) level * 100 / scale else -1) }
     } catch (_: Exception) { buildJsonObject { put("pct", -1) } }
 
-    private fun wifiIp(): String = try {
-        val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        val nw = cm.activeNetwork ?: return ""
-        if (cm.getNetworkCapabilities(nw)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) != true) return ""
-        cm.getLinkProperties(nw)?.linkAddresses
-            ?.firstOrNull { it.address is java.net.Inet4Address && !it.address.isLoopbackAddress }
-            ?.address?.hostAddress ?: ""
-    } catch (_: Exception) { "" }
+    private fun wifiIp(): String {
+        return try {
+            val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val nw = cm.activeNetwork ?: return ""
+            if (cm.getNetworkCapabilities(nw)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) != true) return ""
+            cm.getLinkProperties(nw)?.linkAddresses
+                ?.firstOrNull { it.address is java.net.Inet4Address && !it.address.isLoopbackAddress }
+                ?.address?.hostAddress ?: ""
+        } catch (_: Exception) { "" }
+    }
 
     private suspend fun apps(p: JsonObject = JsonObject(emptyMap())): JsonObject = withContext(Dispatchers.IO) {
         try {
