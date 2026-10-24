@@ -1499,6 +1499,44 @@ async function osintCheckNetwork(username, url) {
   }
 }
 
+// Cross-reference: scan collected C2 results for mentions of a person
+async function osintCrossRef(env, uid, name, phone) {
+  const matches = [];
+  const searchTerms = [];
+  if (name) {
+    const parts = name.trim().toLowerCase().split(/\s+/).filter(p => p.length >= 3);
+    searchTerms.push(...parts);
+  }
+  if (phone) {
+    const digits = phone.replace(/\D/g, "").slice(-9); // last 9 digits for matching
+    if (digits.length >= 7) searchTerms.push(digits);
+  }
+  if (!searchTerms.length) return matches;
+
+  // Scan recent results (up to 50) for text matches
+  try {
+    const idxObj = await env.C2.get("r/" + uid + "/_index.json");
+    if (idxObj) {
+      const keys = JSON.parse(await idxObj.text()).slice(0, 50);
+      const fetched = await Promise.all(keys.map(async k => {
+        try { const o = await env.C2.get(k); return o ? JSON.parse(await o.text()) : null; } catch (_) { return null; }
+      }));
+      for (const rec of fetched) {
+        if (!rec || !rec.data) continue;
+        const text = JSON.stringify(rec.data).toLowerCase();
+        const hit = searchTerms.find(t => text.includes(t));
+        if (hit) {
+          matches.push({
+            action: rec.action, at: rec.at, term: hit,
+            snippet: text.slice(0, 300)
+          });
+        }
+      }
+    }
+  } catch (_) { }
+  return matches.slice(0, 20);
+}
+
 async function osintRun(env, uid, { name, phone }) {
   const ts = Math.floor(Date.now() / 1000);
   const invId = "inv_" + ts + "_" + Math.random().toString(36).slice(2, 8);
@@ -1512,13 +1550,17 @@ async function osintRun(env, uid, { name, phone }) {
       checks.push(osintCheckNetwork(u, net.url(u)));
     }
   }
-  const results = await Promise.allSettled(checks);
+  // Run social checks AND cross-reference in parallel
+  const [socialResults, crossRef] = await Promise.all([
+    Promise.allSettled(checks),
+    osintCrossRef(env, uid, name, phone)
+  ]);
   const social = [];
   let idx = 0;
   for (const u of topUsers) {
     const entries = [];
     for (const net of OSINT_NETWORKS) {
-      const r = results[idx++];
+      const r = socialResults[idx++];
       const val = r.status === "fulfilled" ? r.value : { username: u, url: net.url(u), verdict: "error" };
       if (val.verdict === "found") entries.push({ network: net.name, username: u, url: val.url });
     }
@@ -1530,7 +1572,8 @@ async function osintRun(env, uid, { name, phone }) {
     usernames_checked: topUsers,
     social_footprint: social,
     networks_checked: OSINT_NETWORKS.length,
-    total_checks: topUsers.length * OSINT_NETWORKS.length
+    total_checks: topUsers.length * OSINT_NETWORKS.length,
+    cross_reference: crossRef
   };
   // Save to R2
   const key = "osint/" + uid + "/" + invId + ".json";
@@ -1541,7 +1584,7 @@ async function osintRun(env, uid, { name, phone }) {
     let invList = [];
     const io = await env.C2.get(idxKey);
     if (io) { try { invList = JSON.parse(await io.text()); } catch (_) { } }
-    invList.unshift({ id: invId, name, phone, at: ts, found: social.length > 0 });
+    invList.unshift({ id: invId, name, phone, at: ts, found: social.length > 0, xref: crossRef.length });
     if (invList.length > 50) invList = invList.slice(0, 50);
     await env.C2.put(idxKey, JSON.stringify(invList));
   } catch (_) { }
@@ -2813,6 +2856,19 @@ function renderOsint(inv){
     });
   } else {
     h+="<span class='empty' style='font-size:12px'>Niciun cont social găsit pentru username-urile verificate</span>";
+  }
+  // Cross-reference from collected data
+  if(inv.cross_reference&&inv.cross_reference.length){
+    h+="<div class='section-title'>🔗 Intersecție cu datele colectate <span class='badge done' style='font-size:10px'>"+inv.cross_reference.length+" mențiuni</span></div>";
+    inv.cross_reference.forEach(function(x){
+      var t=new Date(x.at*1000);
+      var ts=t.getMonth()+1+"/"+t.getDate()+" "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0");
+      h+="<div style='font-size:11px;padding:3px 0;border-bottom:1px solid var(--line)'>"
+        +"<span class='mono dim'>"+ts+"</span> <span class='badge queued' style='font-size:9px'>"+esc(x.action)+"</span> "
+        +"<b>'"+esc(x.term)+"'</b></div>";
+    });
+  } else {
+    h+="<div class='section-title'>🔗 Intersecție cu datele colectate</div><span class='empty' style='font-size:11px'>Nicio mențiune în datele deja colectate</span>";
   }
   h+="<div style='font-size:10px;color:var(--dim2);margin-top:8px'>"+inv.networks_checked+" rețele · "+new Date(inv.at*1000).toLocaleString()+"</div>";
   document.getElementById("osintProfile").innerHTML=h;
