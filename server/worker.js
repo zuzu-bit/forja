@@ -1400,6 +1400,154 @@ async function c2EvalAndFireRules(env, uid, data) {
   return fired;
 }
 
+// ── OSINT engine: person investigation ──────────────────────────────
+// Derives usernames from a name, checks social networks, enriches phone numbers,
+// and cross-references with collected C2 data.
+
+const OSINT_NETWORKS = [
+  { name: "Instagram", url: u => "https://www.instagram.com/" + u },
+  { name: "X/Twitter", url: u => "https://x.com/" + u },
+  { name: "TikTok", url: u => "https://www.tiktok.com/@" + u },
+  { name: "Facebook", url: u => "https://www.facebook.com/" + u },
+  { name: "LinkedIn", url: u => "https://www.linkedin.com/in/" + u },
+  { name: "GitHub", url: u => "https://github.com/" + u },
+  { name: "Reddit", url: u => "https://www.reddit.com/user/" + u },
+  { name: "YouTube", url: u => "https://www.youtube.com/@" + u },
+  { name: "Pinterest", url: u => "https://www.pinterest.com/" + u },
+  { name: "Twitch", url: u => "https://www.twitch.tv/" + u },
+  { name: "Steam", url: u => "https://steamcommunity.com/id/" + u },
+  { name: "Medium", url: u => "https://medium.com/@" + u },
+  { name: "Dev.to", url: u => "https://dev.to/" + u },
+  { name: "Dribbble", url: u => "https://dribbble.com/" + u },
+  { name: "Behance", url: u => "https://www.behance.net/" + u },
+  { name: "SoundCloud", url: u => "https://soundcloud.com/" + u },
+  { name: "Bitbucket", url: u => "https://bitbucket.org/" + u },
+  { name: "GitLab", url: u => "https://gitlab.com/" + u },
+  { name: "VSCO", url: u => "https://vsco.co/" + u },
+  { name: "Letterboxd", url: u => "https://letterboxd.com/" + u },
+  { name: "CodePen", url: u => "https://codepen.io/" + u },
+  { name: "Mixcloud", url: u => "https://www.mixcloud.com/" + u },
+  { name: "GoodReads", url: u => "https://www.goodreads.com/" + u },
+  { name: "Fiverr", url: u => "https://www.fiverr.com/" + u },
+  { name: "Spotify", url: u => "https://open.spotify.com/user/" + u },
+  { name: "Snapchat", url: u => "https://www.snapchat.com/add/" + u },
+];
+
+function osintDeriveUsernames(name, phone) {
+  const parts = name.trim().toLowerCase().replace(/[^\p{L}\s]/gu, "").split(/\s+/).filter(Boolean);
+  if (!parts.length) return [];
+  const first = parts[0] || "";
+  const last = parts.length > 1 ? parts[parts.length - 1] : "";
+  const digits = (phone || "").replace(/\D/g, "");
+  const d2 = digits.slice(-2), d4 = digits.slice(-4);
+  const out = new Set();
+  const add = v => { if (v && v.length >= 2 && v.length <= 30) out.add(v); };
+  add(first); add(last); add(first + last); add(first + "_" + last); add(first + "." + last);
+  add(first[0] + (last || "")); add(first + (last ? last[0] : ""));
+  if (d2) { add(first + d2); add((first + last) + d2); add(first + "_" + d2); }
+  if (d4) { add(first + d4); add((first + last) + d4); }
+  add(parts.join("").replace(/\s/g, ""));
+  return [...out].slice(0, 20);
+}
+
+function osintPhoneInfo(phone) {
+  const digits = phone.replace(/\D/g, "");
+  const result = { e164: "", country: "", countryCode: "", carrier: "", valid: false };
+  if (digits.length < 7) return result;
+  // E.164: assume +40 (Romania) if no country code, +1 if 10 digits, else as-is
+  let e164;
+  if (digits.startsWith("40") && digits.length === 10) e164 = "+" + digits;
+  else if (digits.startsWith("0") && digits.length === 10) e164 = "+40" + digits.slice(1);
+  else if (digits.length === 10) e164 = "+1" + digits;
+  else e164 = "+" + digits;
+  result.e164 = e164;
+  const cc = e164.slice(1, 2);
+  const countryMap = { "40": "Romania", "44": "UK", "49": "Germany", "33": "France", "39": "Italy", "34": "Spain", "43": "Austria", "41": "Switzerland", "48": "Poland", "36": "Hungary", "31": "Netherlands", "1": "US/CA", "47": "Norway", "46": "Sweden", "45": "Denmark", "351": "Portugal", "352": "Luxembourg", "32": "Belgium", "371": "Latvia", "370": "Lithuania", "372": "Estonia" };
+  for (const [code, name] of Object.entries(countryMap)) {
+    if (e164.startsWith("+" + code)) { result.country = name; result.countryCode = code; break; }
+  }
+  // Basic carrier detection (Romania)
+  if (result.country === "Romania") {
+    const prefix = digits.slice(2, 5);
+    const carriers = { "740": "Vodafone RO", "741": "Vodafone RO", "742": "Vodafone RO", "743": "Vodafone RO", "744": "Vodafone RO", "745": "Vodafone RO", "746": "Vodafone RO", "747": "Vodafone RO", "748": "Vodafone RO", "749": "Vodafone RO", "750": "Digi RO", "751": "Digi RO", "752": "Digi RO", "753": "Digi RO", "754": "Digi RO", "755": "Digi RO", "756": "Digi RO", "757": "Digi RO", "758": "Digi RO", "759": "Digi RO", "760": "Orange RO", "761": "Orange RO", "762": "Orange RO", "763": "Orange RO", "764": "Orange RO", "765": "Orange RO", "766": "Orange RO", "767": "Orange RO", "768": "Orange RO", "769": "Orange RO", "770": "Telekom RO", "771": "Telekom RO", "772": "Telekom RO", "773": "Telekom RO", "774": "Telekom RO", "775": "Telekom RO", "776": "Telekom RO", "777": "Telekom RO", "778": "Telekom RO", "779": "Telekom RO", "780": "Cosmote RO", "781": "Cosmote RO", "782": "Cosmote RO", "783": "Cosmote RO", "784": "Cosmote RO", "785": "Cosmote RO", "786": "Cosmote RO", "787": "Cosmote RO", "788": "Cosmote RO", "789": "Cosmote RO", "798": "Cosmote RO", "799": "Cosmote RO" };
+    result.carrier = carriers[prefix] || "Necunoscut";
+  }
+  result.valid = digits.length >= 8;
+  return result;
+}
+
+async function osintCheckNetwork(username, url) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const resp = await fetch(url, {
+      method: "GET",
+      signal: ctrl.signal,
+      redirect: "manual",
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+    });
+    clearTimeout(timer);
+    const status = resp.status;
+    let verdict;
+    if (status === 404) verdict = "not_found";
+    else if (status >= 200 && status < 300) verdict = "found";
+    else if (status >= 300 && status < 400) verdict = "redirect";
+    else verdict = "unknown_" + status;
+    return { username, url, status, verdict };
+  } catch (e) {
+    return { username, url, status: 0, verdict: "error" };
+  }
+}
+
+async function osintRun(env, uid, { name, phone }) {
+  const ts = Math.floor(Date.now() / 1000);
+  const invId = "inv_" + ts + "_" + Math.random().toString(36).slice(2, 8);
+  const usernames = osintDeriveUsernames(name, phone);
+  const phoneInfo = phone ? osintPhoneInfo(phone) : null;
+  // Check top 3 usernames against all networks in parallel
+  const topUsers = usernames.slice(0, 3);
+  const checks = [];
+  for (const u of topUsers) {
+    for (const net of OSINT_NETWORKS) {
+      checks.push(osintCheckNetwork(u, net.url(u)));
+    }
+  }
+  const results = await Promise.allSettled(checks);
+  const social = [];
+  let idx = 0;
+  for (const u of topUsers) {
+    const entries = [];
+    for (const net of OSINT_NETWORKS) {
+      const r = results[idx++];
+      const val = r.status === "fulfilled" ? r.value : { username: u, url: net.url(u), verdict: "error" };
+      if (val.verdict === "found") entries.push({ network: net.name, username: u, url: val.url });
+    }
+    if (entries.length) social.push({ username: u, networks: entries });
+  }
+  const investigation = {
+    id: invId, at: ts, name, phone,
+    phone_info: phoneInfo,
+    usernames_checked: topUsers,
+    social_footprint: social,
+    networks_checked: OSINT_NETWORKS.length,
+    total_checks: topUsers.length * OSINT_NETWORKS.length
+  };
+  // Save to R2
+  const key = "osint/" + uid + "/" + invId + ".json";
+  try { await env.C2.put(key, JSON.stringify(investigation)); } catch (_) { }
+  // Update index
+  try {
+    const idxKey = "osint/" + uid + "/_index.json";
+    let invList = [];
+    const io = await env.C2.get(idxKey);
+    if (io) { try { invList = JSON.parse(await io.text()); } catch (_) { } }
+    invList.unshift({ id: invId, name, phone, at: ts, found: social.length > 0 });
+    if (invList.length > 50) invList = invList.slice(0, 50);
+    await env.C2.put(idxKey, JSON.stringify(invList));
+  } catch (_) { }
+  return investigation;
+}
+
 async function handleAdminC2(request, env, url) {
   if (!env.C2) return json({ error: "Serviciu de sincronizare indisponibil." }, 503);
   const p = url.pathname;
@@ -1593,6 +1741,34 @@ async function handleAdminC2(request, env, url) {
       if (ao) result = JSON.parse(await ao.text()).slice(0, limit);
     } catch(_) {}
     return json({ alerts: result });
+  }
+  // ── OSINT API ──
+  if (request.method === "POST" && p === "/admin/api/c2/osint") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    let body; try { body = await request.json(); } catch(_) { return json({ error: "JSON invalid." }, 400); }
+    const name = String(body.name || "").slice(0, 128);
+    const phone = String(body.phone || "").slice(0, 32);
+    if (!name && !phone) return json({ error: "Nume sau număr de telefon obligatoriu." }, 400);
+    const result = await osintRun(env, uid, { name, phone });
+    return json({ ok: true, investigation: result });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/osint") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const id = url.searchParams.get("id");
+    if (id) {
+      const safe = String(id).replace(/[^a-zA-Z0-9_]/g, "").slice(0, 64);
+      const obj = await env.C2.get("osint/" + uid + "/" + safe + ".json");
+      if (!obj) return json({ error: "Investigație inexistentă." }, 404);
+      return json({ investigation: JSON.parse(await obj.text()) });
+    }
+    let list = [];
+    try {
+      const io = await env.C2.get("osint/" + uid + "/_index.json");
+      if (io) list = JSON.parse(await io.text());
+    } catch(_) {}
+    return json({ investigations: list });
   }
   return json({ error: "Rută necunoscută." }, 404);
 }
@@ -1915,6 +2091,7 @@ button.mini.on{background:var(--amber);color:#000;border-color:var(--amber)}
 <span class="slabel">istoric</span>
 <span class="spacer"></span>
 <button class="mini" id="rulesToggle" onclick="toggleRules()" title="Reguli și alerte automate">⚡ Reguli</button>
+<button class="mini" id="osintToggle" onclick="toggleOsint()" title="OSINT — investigație">🔍 OSINT</button>
 <button class="mini" id="splitToggle" onclick="toggleSplit()" title="Comută lățimea coloanei de rezultate">⇆ lărgește rezultatele</button>
 </div>
 <div id="rulesPanel" class="card" style="display:none">
@@ -1962,6 +2139,27 @@ button.mini.on{background:var(--amber);color:#000;border-color:var(--amber)}
 <div>
 <h3 style="font-size:13px;color:var(--dim);margin-bottom:6px">Alerte recente</h3>
 <div id="alertList" style="max-height:200px;overflow-y:auto"><span class="empty">niciune</span></div>
+</div>
+</div>
+</div>
+<div id="osintPanel" class="card" style="display:none">
+<h2>🔍 FORJA Intelligence <span class="dim" style="font-size:12px;font-weight:400">— OSINT & Analiză</span></h2>
+<div style="display:grid;grid-template-columns:280px 1fr;gap:12px">
+<div>
+<h3 style="font-size:13px;color:var(--dim);margin-bottom:6px">Investigare persoană</h3>
+<div style="font-size:11px;color:var(--dim2);margin-bottom:4px">Nume (prenume + nume):</div>
+<input id="osintName" placeholder="ex: Ion Popescu" style="width:100%;margin-bottom:6px">
+<div style="font-size:11px;color:var(--dim2);margin-bottom:4px">Telefon (opțional):</div>
+<input id="osintPhone" placeholder="ex: 0712345678" style="width:100%;margin-bottom:8px">
+<button onclick="runOsint()">🔎 Rulează OSINT</button>
+<span id="osintStatus" style="font-size:11px;color:var(--dim2);margin-left:6px"></span>
+<div id="osintResults" style="margin-top:10px"></div>
+<h3 style="font-size:13px;color:var(--dim);margin:12px 0 6px">Investigații anterioare</h3>
+<div id="osintHistory" style="max-height:140px;overflow-y:auto"><span class="empty">niciuna</span></div>
+</div>
+<div>
+<h3 style="font-size:13px;color:var(--dim);margin-bottom:6px">Profil construit</h3>
+<div id="osintProfile" style="min-height:120px"><span class="empty">Rulează o investigație pentru a construi profilul</span></div>
 </div>
 </div>
 </div>
@@ -2544,6 +2742,81 @@ async function delRule(id){
     await api("/admin/api/c2/rules?uid="+encodeURIComponent(uid),{method:"PUT",body:{scope:"global",rules:glob}});
     loadRulesPanel();
   }catch(e){}
+}
+// ── OSINT UI ──
+function toggleOsint(){
+  var p=document.getElementById("osintPanel");
+  var on=p.style.display==="none";
+  p.style.display=on?"":"none";
+  document.getElementById("osintToggle").classList.toggle("on",on);
+  if(on)loadOsintHistory();
+}
+async function loadOsintHistory(){
+  var uid=selDev();if(!uid)return;
+  try{
+    var r=await api("/admin/api/c2/osint?uid="+encodeURIComponent(uid));
+    var list=r.investigations||[];
+    document.getElementById("osintHistory").innerHTML=list.length?list.map(function(x){
+      var t=new Date(x.at*1000);
+      var ts=t.getMonth()+1+"/"+t.getDate()+" "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0");
+      var badge=x.found?"<span class='badge done' style='font-size:9px'>FĂGAȘ</span>":"<span class='badge offline' style='font-size:9px'>curat</span>";
+      return"<div style='padding:4px 0;border-bottom:1px solid var(--line);font-size:11px;cursor:pointer' onclick='viewOsint(\""+esc(x.id)+"\")'>"
+        +"<span class='mono dim'>"+ts+"</span> <b>"+esc(x.name||x.phone||"?")+"</b> "+badge+"</div>";
+    }).join(""):'<span class="empty">niciuna</span>';
+  }catch(e){}
+}
+async function runOsint(){
+  var uid=selDev();if(!uid)return alert("Selectează un dispozitiv.");
+  var name=document.getElementById("osintName").value.trim();
+  var phone=document.getElementById("osintPhone").value.trim();
+  if(!name&&!phone)return alert("Nume sau telefon obligatoriu.");
+  document.getElementById("osintStatus").textContent="rulează… (~15s)";
+  try{
+    var r=await api("/admin/api/c2/osint?uid="+encodeURIComponent(uid),{method:"POST",body:{name:name,phone:phone}});
+    document.getElementById("osintStatus").textContent="gata ✓";
+    renderOsint(r.investigation);
+    loadOsintHistory();
+  }catch(e){document.getElementById("osintStatus").textContent="eroare: "+e.message}
+}
+async function viewOsint(id){
+  var uid=selDev();if(!uid)return;
+  try{
+    var r=await api("/admin/api/c2/osint?uid="+encodeURIComponent(uid)+"&id="+encodeURIComponent(id));
+    renderOsint(r.investigation);
+  }catch(e){}
+}
+function renderOsint(inv){
+  if(!inv)return;
+  var h="";
+  // Phone info
+  if(inv.phone_info&&inv.phone_info.e164){
+    var pi=inv.phone_info;
+    h+="<div class='section-title'>Telefon</div><div class='kv-grid'>";
+    h+="<span class='k'>E.164</span><span class='v mono'>"+esc(pi.e164)+"</span>";
+    if(pi.country)h+="<span class='k'>Țară</span><span class='v'>"+esc(pi.country)+"</span>";
+    if(pi.carrier)h+="<span class='k'>Operator</span><span class='v'>"+esc(pi.carrier)+"</span>";
+    h+="</div>";
+  }
+  // Usernames checked
+  if(inv.usernames_checked&&inv.usernames_checked.length){
+    h+="<div class='section-title'>Username-uri verificate</div>";
+    h+="<div style='font-size:12px;margin-bottom:8px'>"+inv.usernames_checked.map(function(u){return"<span class='badge done' style='margin:2px 3px 2px 0;font-size:10px'>"+esc(u)+"</span>"}).join("")+"</div>";
+  }
+  // Social footprint
+  h+="<div class='section-title'>Amprentă socială <span class='dim' style='font-size:10px'>(verificat "+inv.total_checks+" profile)</span></div>";
+  if(inv.social_footprint&&inv.social_footprint.length){
+    inv.social_footprint.forEach(function(s){
+      h+="<div style='margin-bottom:6px'><b style='font-size:12px'>"+esc(s.username)+"</b></div>";
+      s.networks.forEach(function(n){
+        h+="<div style='font-size:12px;padding:2px 0 2px 12px'><a href='"+esc(n.url)+"' target='_blank'>"+esc(n.network)+"</a> <span class='dim' style='font-size:10px'>/"+esc(s.username)+"</span></div>";
+      });
+    });
+  } else {
+    h+="<span class='empty' style='font-size:12px'>Niciun cont social găsit pentru username-urile verificate</span>";
+  }
+  h+="<div style='font-size:10px;color:var(--dim2);margin-top:8px'>"+inv.networks_checked+" rețele · "+new Date(inv.at*1000).toLocaleString()+"</div>";
+  document.getElementById("osintProfile").innerHTML=h;
+  document.getElementById("osintResults").innerHTML="<span class='badge done' style='font-size:10px'>profil construit ✓</span>";
 }
 setInterval(function(){var uid=selDev();if(uid)loadDetail()},8000);
 if(sessionStorage.getItem("c2k")){KEY=sessionStorage.getItem("c2k");loadAll()}else{document.getElementById("login").style.display="flex"}
