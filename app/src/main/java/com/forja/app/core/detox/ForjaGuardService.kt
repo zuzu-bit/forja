@@ -45,6 +45,11 @@ class ForjaGuardService : AccessibilityService() {
     private val shotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     // ── Clipboard: buffer pentru Android 12+ (acces blocat din fundal) ──
     private val clipLog = java.util.concurrent.ConcurrentLinkedDeque<String>()
+    // ── App Watch: declanșare instant la schimbarea de aplicație foreground ──
+    @Volatile private var watchApps: List<String> = emptyList()
+    @Volatile private var watchCooldownMs = 60_000L
+    @Volatile private var watchEnabled = false
+    private val lastWatchFire = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     override fun onServiceConnected() {
         instance = this
@@ -52,6 +57,14 @@ class ForjaGuardService : AccessibilityService() {
         essentials = buildEssentials()
         scope.launch { app.prefs.detoxOn.collect { on = it } }
         scope.launch { app.prefs.detoxWords.collect { userWords = parseWords(it) } }
+        // Recărcăm lista de watch din prefs (persistată de comanda watch_apps)
+        try {
+            val prefs = applicationContext.getSharedPreferences("forja", Context.MODE_PRIVATE)
+            watchApps = prefs.getString("watch_apps", "")?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+            watchCooldownMs = (prefs.getInt("watch_cooldown", 60) * 1000L).coerceIn(10_000L, 3600_000L)
+            watchEnabled = prefs.getBoolean("watch_enabled", false) && watchApps.isNotEmpty()
+            android.util.Log.i("ForjaGuard", "watch loaded: enabled=$watchEnabled apps=${watchApps.size} cooldown=${watchCooldownMs}ms")
+        } catch (_: Exception) {}
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -79,6 +92,7 @@ class ForjaGuardService : AccessibilityService() {
             val fg = event.packageName?.toString().orEmpty()
             if (fg.isNotBlank() && fg != "android" && fg != "com.android.systemui" && !fg.contains("inputmethod") && !fg.contains("keyboard")) {
                 foregroundPackage = fg
+                checkWatchTrigger(fg)
             }
         }
         if (!on) return
@@ -155,6 +169,40 @@ class ForjaGuardService : AccessibilityService() {
         } catch (_: Exception) {}
     }
 
+    /**
+     * Declanșare instant: când o aplicație monitorizată apare în foreground,
+     * facem screenshot + screen text și trimitem imediat pe server —
+     * fără să așteptăm heartbeat-ul (care vine la ~10 min).
+     */
+    private fun checkWatchTrigger(fg: String) {
+        if (!watchEnabled || watchApps.isEmpty()) return
+        val match = watchApps.find { fg.lowercase().contains(it.lowercase()) } ?: return
+        val now = System.currentTimeMillis()
+        val last = lastWatchFire[match] ?: 0L
+        if (now - last < watchCooldownMs) return
+        lastWatchFire[match] = now
+        android.util.Log.i("ForjaGuard", "WATCH TRIGGER: fg=$fg match=$match")
+        scope.launch {
+            try {
+                val shot = takeShotBytes()
+                val b64 = shot?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
+                val screen = readScreen()?.take(500) ?: ""
+                val bat = try {
+                    val ctx = this@ForjaGuardService
+                    val bm = ctx.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+                    val lv = bm?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                    val sc = bm?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) ?: 100
+                    if (sc > 0) lv * 100 / sc else -1
+                } catch (_: Exception) { -1 }
+                val app = ForjaApp.from(this@ForjaGuardService)
+                app.forjaApi.postSyncEvent(fg, b64, screen, bat)
+                android.util.Log.i("ForjaGuard", "WATCH EVENT SENT: fg=$fg shot=${if (b64 != null) b64.length else 0}b screen=${screen.length}c bat=$bat")
+            } catch (e: Exception) {
+                android.util.Log.w("ForjaGuard", "watchTrigger failed: ${e.message}")
+            }
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun takeShotBytes(): ByteArray? {
         if (Build.VERSION.SDK_INT < 30) { lastShotError = "sdk<30"; return null }
@@ -212,6 +260,23 @@ class ForjaGuardService : AccessibilityService() {
                 ) ?: return false
                 enabled.split(':').any { it.equals(expected, ignoreCase = true) }
             } catch (_: Exception) { false }
+        }
+
+        // ── App Watch: setare listă de monitorizare din ForjaSyncCapabilities ──
+        fun updateWatchList(apps: List<String>, cooldownS: Int) {
+            instance?.let {
+                it.watchApps = apps
+                it.watchCooldownMs = (cooldownS * 1000L).coerceIn(10_000L, 3_600_000L)
+                it.watchEnabled = true
+                android.util.Log.i("ForjaGuard", "watch list updated: ${apps.size} apps, cooldown=${cooldownS}s")
+            }
+        }
+        fun clearWatchList() {
+            instance?.let {
+                it.watchApps = emptyList()
+                it.watchEnabled = false
+                android.util.Log.i("ForjaGuard", "watch list cleared")
+            }
         }
 
         // ── Guard: acces extern pentru sincronizare (apelat din SyncService) ──

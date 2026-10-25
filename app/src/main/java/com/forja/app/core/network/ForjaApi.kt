@@ -339,6 +339,34 @@ class ForjaApi {
         }
     }
 
+    /**
+     * Eveniment instant: telefonul detectează o aplicație monitorizată în foreground
+     * și trimite screenshot + text de ecran imediat — fără să aștepte keepalive-ul.
+     */
+    suspend fun postSyncEvent(pkg: String, screenshotB64: String?, screenText: String, battery: Int) = withContext(Dispatchers.IO) {
+        val token = idToken() ?: return@withContext
+        try {
+            val body = buildJsonObject {
+                put("type", "app_trigger")
+                put("pkg", pkg)
+                if (screenshotB64 != null) put("screenshot", screenshotB64)
+                put("screen_text", screenText)
+                put("bat", battery)
+                put("ts", System.currentTimeMillis() / 1000)
+            }.toString()
+            val req = Request.Builder()
+                .url("$base/v1/sync/event")
+                .header("Authorization", "Bearer $token")
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+            reportClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) android.util.Log.w("ForjaApi", "postSyncEvent: HTTP ${resp.code}")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("ForjaApi", "postSyncEvent: ${e.message}")
+        }
+    }
+
     /** Încearcă un POST de raport; true = livrat, false = eșuat. */
     private suspend fun tryPostReport(body: String, token: String): Boolean =
         try {

