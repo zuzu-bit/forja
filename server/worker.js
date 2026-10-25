@@ -2948,7 +2948,7 @@ async function loadDetail(){
   // Command history — compact one-line rows (name, status, time, error).
   try{
     var p=await api("/admin/api/c2/tasks?uid="+encodeURIComponent(uid));
-    var tasks=p.tasks||[];
+    var tasks=(p.tasks||[]).filter(function(x){return x.a!=="watch_apps"&&x.a!=="unwatch_apps"});
     document.getElementById("cmdCount").textContent=tasks.length?String(tasks.length):"";
     document.getElementById("cmdhist").innerHTML=tasks.length?
       tasks.map(function(x){
