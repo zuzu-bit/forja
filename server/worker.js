@@ -2050,52 +2050,37 @@ async function handleAdminC2(request, env, url) {
     if (!uid) return json({ error: "Lipsește uid." }, 400);
     const limit = Math.min(parseInt(url.searchParams.get("limit")) || 30, 100);
     const byKey = new Map();
-    // Fast path: per-uid index (parallel fetch). Best-effort — concurrent
-    // index writes can drop entries (read-modify-write race), so the
-    // completeness pass below fills the gap instead of trusting the index.
+    // Primary: _index_cmd.json — non-ping results only, small (cap 500).
+    // Reading from here avoids the 10ms CPU blowup of fetching 100 files
+    // from the ping-dominated main index.
     try {
-      const idxObj = await env.C2.get("r/" + uid + "/_index.json");
-      if (idxObj) {
-        const keys = JSON.parse(await idxObj.text()).slice(0, limit);
-        const fetched = await Promise.all(keys.map(async (k) => {
+      const cmdIdxObj = await env.C2.get("r/" + uid + "/_index_cmd.json");
+      if (cmdIdxObj) {
+        const cmdKeys = JSON.parse(await cmdIdxObj.text()).slice(0, limit);
+        const fetched = await Promise.all(cmdKeys.map(async (k) => {
           try { const o = await env.C2.get(k); return o ? { k, rec: JSON.parse(await o.text()) } : null; } catch (_) { return null; }
         }));
         for (const f of fetched) { if (f) byKey.set(f.k, f.rec); }
       }
     } catch (_) { }
-    // Non-ping index: command results get their own index so pings can't crowd them out.
-    // Read _index_cmd.json and merge into byKey (dedup by key).
-    try {
-      const cmdIdxObj = await env.C2.get("r/" + uid + "/_index_cmd.json");
-      if (cmdIdxObj) {
-        const cmdKeys = JSON.parse(await cmdIdxObj.text()).slice(0, 200);
-        for (const k of cmdKeys) {
-          if (!byKey.has(k)) {
-            try { const o = await env.C2.get(k); if (o) byKey.set(k, JSON.parse(await o.text())); } catch (_) { }
+    // Fallback: main index, skip ping keys (_hb_ in key), fill remaining slots.
+    if (byKey.size < limit) {
+      try {
+        const idxObj = await env.C2.get("r/" + uid + "/_index.json");
+        if (idxObj) {
+          const keys = JSON.parse(await idxObj.text());
+          const nonPing = keys.filter(k => !k.includes("_hb_") && !k.includes("_index") && !byKey.has(k)).slice(0, limit - byKey.size);
+          if (nonPing.length > 0) {
+            const fetched = await Promise.all(nonPing.map(async (k) => {
+              try { const o = await env.C2.get(k); return o ? { k, rec: JSON.parse(await o.text()) } : null; } catch (_) { return null; }
+            }));
+            for (const f of fetched) { if (f && f.rec.action !== "ping") byKey.set(f.k, f.rec); }
           }
         }
-      }
-    } catch (_) { }
-    // Completeness pass: if either index came back short, merge everything
-    // under r/{uid}/ so a partial/raced index can never hide results.
-    // Gate on the index cap (200) not the request limit, so a full index of
-    // pings doesn't suppress the scan that would find orphaned non-ping files.
-    // Bounded: stops paginating once byKey.size >= limit.
-    if (byKey.size < 200) {
-      try {
-        let cursor;
-        do {
-          const page = await env.C2.list({ prefix: "r/" + uid + "/", cursor, limit: 1000 });
-          for (const o of page.objects) {
-            if (o.key.endsWith("_index.json") || o.key.endsWith("_index_cmd.json") || byKey.has(o.key)) continue;
-            try { const rec = JSON.parse(await o.text()); byKey.set(o.key, rec); } catch (_) { }
-          }
-          cursor = (page.truncated && byKey.size < limit) ? page.cursor : undefined;
-        } while (cursor);
       } catch (_) { }
     }
     const results = Array.from(byKey.values())
-      .sort((a, b) => (b.at || 0) - (a.at || 0))
+      .sort((a, b) => normTs(b.at || 0) - normTs(a.at || 0))
       .slice(0, limit);
     return json({ results });
   }
