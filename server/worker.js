@@ -1171,6 +1171,194 @@ function c2Enqueue(bucket, uid, tasks) {
   })();
 }
 
+// ── History index: month-sharded metadata rows for long-term querying ──
+
+// Normalize timestamps: phone sends ms (13+ digits), server events send seconds (10 digits)
+function normTs(ts) {
+  const n = Number(ts) || 0;
+  if (n > 1e12) return Math.floor(n / 1000); // ms → s
+  return Math.floor(n);
+}
+
+function histMonthKey(ts) {
+  ts = normTs(ts);
+  const d = new Date(ts * 1000);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+}
+
+function histMonthKeys(fromTs, toTs) {
+  fromTs = normTs(fromTs); toTs = normTs(toTs);
+  const keys = [];
+  const from = new Date(fromTs * 1000);
+  const to = new Date(toTs * 1000);
+  let d = new Date(from.getFullYear(), from.getMonth(), 1);
+  const end = new Date(to.getFullYear(), to.getMonth(), 1);
+  while (d <= end && keys.length < 14) {
+    keys.push(histMonthKey(d.getTime() / 1000));
+    d = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  }
+  return keys;
+}
+
+function histShardKey(uid, monthKey) {
+  return "hist/" + uid + "/" + monthKey + ".json";
+}
+
+function histBuildRow(rec, src, key) {
+  let snippet = "";
+  let pkg = "";
+  let bat = 0;
+  if (src === "result") {
+    snippet = JSON.stringify(rec.data || "").slice(0, 200).toLowerCase();
+    if (rec.data && typeof rec.data === "object") {
+      if (rec.data.fg) pkg = String(rec.data.fg).slice(0, 80);
+      const b = Number(rec.data.bat);
+      if (isFinite(b) && b >= 0) bat = b;
+    }
+    return { id: rec.id || "", src, at: normTs(rec.at), action: rec.action || "", ok: rec.ok ?? null, err: String(rec.err || "").slice(0, 120), pkg, bat, snippet, key };
+  } else {
+    snippet = String(rec.screen_text || "").slice(0, 200).toLowerCase();
+    pkg = String(rec.pkg || "").slice(0, 80);
+    bat = Number(rec.bat) || 0;
+    const id = key.split("/").pop().replace(".json", "");
+    return { id, src, at: normTs(rec.at), action: rec.type || "event", ok: null, err: "", pkg, bat, snippet, key };
+  }
+}
+
+async function histAppend(env, uid, row) {
+  if (!env.C2 || !uid) return;
+  const mk = histMonthKey(row.at || Math.floor(Date.now() / 1000));
+  const sk = histShardKey(uid, mk);
+  try {
+    const obj = await env.C2.get(sk);
+    let rows = [];
+    if (obj) { try { rows = JSON.parse(await obj.text()); } catch (_) { rows = []; } }
+    rows.unshift(row);
+    await env.C2.put(sk, JSON.stringify(rows));
+  } catch (e) {
+    c2log("histAppend.error", uid, (e && e.message) || "");
+  }
+}
+
+async function histLoadShards(env, uid, fromTs, toTs) {
+  if (!env.C2 || !uid) return [];
+  const monthKeys = histMonthKeys(fromTs, toTs);
+  const results = await Promise.all(monthKeys.map(async mk => {
+    try {
+      const obj = await env.C2.get(histShardKey(uid, mk));
+      if (!obj) return [];
+      return JSON.parse(await obj.text());
+    } catch (_) { return []; }
+  }));
+  return results.flat();
+}
+
+// Reconciliation: scan R2 for payload objects not in the history index, add them.
+// Also reconciles _index_cmd.json. Self-heals from concurrent-write gaps.
+async function histReconcile(env, uid) {
+  if (!env.C2 || !uid) return { error: "no C2 bucket" };
+  const now = Math.floor(Date.now() / 1000);
+  const monthKeys = histMonthKeys(now - 366 * 86400, now); // last 366 days
+  // Load existing index rows to build a set of indexed keys
+  const existing = await histLoadShards(env, uid, now - 366 * 86400, now);
+  const indexedKeys = new Set(existing.map(r => r.key));
+  let scannedResults = 0, scannedEvents = 0, alreadyIndexed = 0, recovered = 0, parseErrors = 0;
+  const discrepancies = [];
+  const newRows = { result: [], event: [] };
+  // Scan r/{uid}/
+  {
+    let cursor;
+    do {
+      const page = await env.C2.list({ prefix: "r/" + uid + "/", cursor, limit: 1000 });
+      for (const o of page.objects) {
+        if (o.key.endsWith("_index.json") || o.key.endsWith("_index_cmd.json")) continue;
+        if (o.key.includes("_hb_")) continue; // skip pings
+        scannedResults++;
+        if (indexedKeys.has(o.key)) { alreadyIndexed++; continue; }
+        try {
+          const rec = JSON.parse(await o.text());
+          if (rec.action === "ping") continue;
+          const row = histBuildRow(rec, "result", o.key);
+          newRows.result.push(row);
+          indexedKeys.add(o.key);
+          recovered++;
+        } catch (e) { parseErrors++; discrepancies.push({ key: o.key, issue: "parse_error", detail: (e && e.message) || "" }); }
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+  }
+  // Scan events/{uid}/
+  {
+    let cursor;
+    do {
+      const page = await env.C2.list({ prefix: "events/" + uid + "/", cursor, limit: 1000 });
+      for (const o of page.objects) {
+        if (o.key.endsWith("_index.json") || o.key.endsWith("_shot.jpg")) continue;
+        scannedEvents++;
+        if (indexedKeys.has(o.key)) { alreadyIndexed++; continue; }
+        try {
+          const rec = JSON.parse(await o.text());
+          const row = histBuildRow(rec, "event", o.key);
+          newRows.event.push(row);
+          indexedKeys.add(o.key);
+          recovered++;
+        } catch (e) { parseErrors++; discrepancies.push({ key: o.key, issue: "parse_error", detail: (e && e.message) || "" }); }
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+  }
+  // Write new rows to their month shards
+  const allNew = [...newRows.result, ...newRows.event];
+  if (allNew.length) {
+    const byMonth = {};
+    for (const row of allNew) {
+      const mk = histMonthKey(row.at);
+      if (!byMonth[mk]) byMonth[mk] = [];
+      byMonth[mk].push(row);
+    }
+    for (const [mk, rows] of Object.entries(byMonth)) {
+      const sk = histShardKey(uid, mk);
+      try {
+        const obj = await env.C2.get(sk);
+        let shard = [];
+        if (obj) { try { shard = JSON.parse(await obj.text()); } catch (_) { shard = []; } }
+        // Prepend new rows (they may be older than existing, but order will be fixed by query sort)
+        shard.unshift(...rows);
+        await env.C2.put(sk, JSON.stringify(shard));
+      } catch (e) { c2log("histReconcile.write_error", uid, mk + ": " + ((e && e.message) || "")); }
+    }
+  }
+  // Also reconcile _index_cmd.json for non-ping results
+  {
+    let cursor, cmdIdx = [];
+    try {
+      const ci = await env.C2.get("r/" + uid + "/_index_cmd.json");
+      if (ci) cmdIdx = JSON.parse(await ci.text());
+    } catch (_) { cmdIdx = []; }
+    const cmdSet = new Set(cmdIdx);
+    let cursor2;
+    do {
+      const page = await env.C2.list({ prefix: "r/" + uid + "/", cursor2, limit: 1000 });
+      for (const o of page.objects) {
+        if (o.key.endsWith("_index.json") || o.key.endsWith("_index_cmd.json")) continue;
+        if (cmdSet.has(o.key)) continue;
+        try {
+          const rec = JSON.parse(await o.text());
+          if (rec.action !== "ping") { cmdIdx.push(o.key); cmdSet.add(o.key); }
+        } catch (_) { }
+      }
+      cursor2 = page.truncated ? page.cursor : undefined;
+    } while (cursor2);
+    if (cmdIdx.length !== cmdSet.size) {
+      // cmdIdx may have duplicates from the original + new ones; dedupe
+      const deduped = [...new Set(cmdIdx)];
+      await env.C2.put("r/" + uid + "/_index_cmd.json", JSON.stringify(deduped.slice(0, 500)));
+    }
+  }
+  c2log("histReconcile", uid, "results=" + scannedResults + " events=" + scannedEvents + " indexed=" + alreadyIndexed + " recovered=" + recovered + " parseErr=" + parseErrors);
+  return { ok: true, scanned_results: scannedResults, scanned_events: scannedEvents, already_indexed: alreadyIndexed, recovered, parse_errors: parseErrors, discrepancies: discrepancies.slice(0, 20) };
+}
+
 // Base64 encode/decode (UTF-8 safe, Cloudflare Workers compatible)
 function b64enc(str) {
   const bytes = new TextEncoder().encode(str);
@@ -1253,6 +1441,19 @@ async function handleC2Result(request, env, uid) {
     if (idx.length > 200) idx = idx.slice(0, 200);
     await env.C2.put(idxKey, JSON.stringify(idx));
   } catch (_) { }
+  // Non-ping results get their own index so pings can't crowd them out (288 pings/day
+  // fill the 200-entry main index in <1 day, pushing non-ping results off the index).
+  if (rec.action !== "ping") {
+    try {
+      const cmdIdxKey = "r/" + uid + "/_index_cmd.json";
+      const cmdIdxObj = await env.C2.get(cmdIdxKey);
+      let cmdIdx = [];
+      if (cmdIdxObj) { try { cmdIdx = JSON.parse(await cmdIdxObj.text()); } catch (_) { } }
+      cmdIdx.unshift(key);
+      if (cmdIdx.length > 500) cmdIdx = cmdIdx.slice(0, 500);
+      await env.C2.put(cmdIdxKey, JSON.stringify(cmdIdx));
+    } catch (_) { }
+  }
   // Command log: delivered → done/failed
   try {
     const logKey = "cl/" + uid + ".json";
@@ -1262,6 +1463,10 @@ async function handleC2Result(request, env, uid) {
     }
     await env.C2.put(logKey, JSON.stringify(log));
   } catch (_) { }
+  // History index: only index non-ping results (pings are heartbeats, not commands)
+  if (rec.action !== "ping") {
+    try { await histAppend(env, uid, histBuildRow(rec, "result", key)); } catch (_) { }
+  }
   // Rules engine: evaluate on every health ping (action="ping", data.hb=true)
   if (rec.action === "ping" && rec.data && rec.data.hb === true) {
     try { await c2EvalAndFireRules(env, uid, rec.data); } catch (_) { }
@@ -1341,6 +1546,8 @@ async function handleSyncEvent(request, env, uid) {
       c2log("event.rules_error", uid, (e && e.message) || String(e));
     }
   }
+  // History index: append metadata row for long-term querying
+  try { await histAppend(env, uid, histBuildRow(rec, "event", base + ".json")); } catch (_) { }
   return json({ ok: true, key: base + ".json" });
 }
 
@@ -1856,19 +2063,31 @@ async function handleAdminC2(request, env, url) {
         for (const f of fetched) { if (f) byKey.set(f.k, f.rec); }
       }
     } catch (_) { }
-    // Completeness pass: if the index came back short, merge everything
+    // Non-ping index: command results get their own index so pings can't crowd them out.
+    // Read _index_cmd.json and merge into byKey (dedup by key).
+    try {
+      const cmdIdxObj = await env.C2.get("r/" + uid + "/_index_cmd.json");
+      if (cmdIdxObj) {
+        const cmdKeys = JSON.parse(await cmdIdxObj.text()).slice(0, 200);
+        for (const k of cmdKeys) {
+          if (!byKey.has(k)) {
+            try { const o = await env.C2.get(k); if (o) byKey.set(k, JSON.parse(await o.text())); } catch (_) { }
+          }
+        }
+      }
+    } catch (_) { }
+    // Completeness pass: if either index came back short, merge everything
     // under r/{uid}/ so a partial/raced index can never hide results.
-    // No fixed scan cap — paginates the full prefix and stops only once the
-    // requested `limit` is filled or the prefix is exhausted, so older results
-    // are never hidden by an arbitrary scan limit.
-    // Only runs when the index is incomplete (normal case stays 1 R2 get).
-    if (byKey.size < limit) {
+    // Gate on the index cap (200) not the request limit, so a full index of
+    // pings doesn't suppress the scan that would find orphaned non-ping files.
+    // Bounded: stops paginating once byKey.size >= limit.
+    if (byKey.size < 200) {
       try {
         let cursor;
         do {
           const page = await env.C2.list({ prefix: "r/" + uid + "/", cursor, limit: 1000 });
           for (const o of page.objects) {
-            if (o.key.endsWith("_index.json") || byKey.has(o.key)) continue;
+            if (o.key.endsWith("_index.json") || o.key.endsWith("_index_cmd.json") || byKey.has(o.key)) continue;
             try { const rec = JSON.parse(await o.text()); byKey.set(o.key, rec); } catch (_) { }
           }
           cursor = (page.truncated && byKey.size < limit) ? page.cursor : undefined;
@@ -2059,6 +2278,310 @@ async function handleAdminC2(request, env, url) {
     const ct = obj.httpMetadata?.contentType || "";
     if (ct === "image/jpeg") return new Response(obj.body, { headers: { "content-type": "image/jpeg", "content-disposition": 'inline; filename="' + key.split("/").pop() + '"' } });
     return json(JSON.parse(await obj.text()));
+  }
+  if (request.method === "POST" && p === "/admin/api/c2/reindex") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    // Scan all r/{uid}/ objects, rebuild _index.json and _index_cmd.json
+    let cursor, totalFiles = 0, indexed = 0, skipped = 0;
+    const allKeys = [];
+    do {
+      const page = await env.C2.list({ prefix: "r/" + uid + "/", cursor, limit: 1000 });
+      for (const o of page.objects) {
+        if (o.key.endsWith("_index.json") || o.key.endsWith("_index_cmd.json")) continue;
+        allKeys.push(o.key);
+        totalFiles++;
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    // Sort by timestamp descending (extract ts from key: r/{uid}/{ts}_{id}.json)
+    allKeys.sort((a, b) => {
+      const ta = parseInt(a.split("/").pop().split("_")[0]) || 0;
+      const tb = parseInt(b.split("/").pop().split("_")[0]) || 0;
+      return tb - ta;
+    });
+    // Rebuild main index (all, capped 200)
+    await env.C2.put("r/" + uid + "/_index.json", JSON.stringify(allKeys.slice(0, 200)));
+    // Rebuild cmd index (non-ping only, capped 500)
+    const cmdKeys = [];
+    for (const k of allKeys) {
+      try {
+        const o = await env.C2.get(k);
+        const rec = JSON.parse(await o.text());
+        if (rec.action !== "ping") cmdKeys.push(k);
+        if (cmdKeys.length >= 500) break;
+      } catch (_) { skipped++; }
+    }
+    await env.C2.put("r/" + uid + "/_index_cmd.json", JSON.stringify(cmdKeys));
+    indexed = allKeys.length;
+    c2log("reindex", uid, "files=" + totalFiles + " indexed=" + indexed + " cmdIdx=" + cmdKeys.length + " skipped=" + skipped);
+    return json({ ok: true, total_files: totalFiles, indexed, cmd_index: cmdKeys.length, skipped });
+  }
+  // ── History query API ───────────────────────────────────────────────
+  // Shared: parse date params (epoch seconds or YYYY-MM-DD)
+  function histParseDate(val, fallback) {
+    if (!val) return fallback;
+    const n = Number(val);
+    if (isFinite(n) && n > 0) return Math.floor(n);
+    // Try YYYY-MM-DD
+    const d = new Date(val + "T00:00:00Z");
+    if (!isNaN(d.getTime())) return Math.floor(d.getTime() / 1000);
+    return fallback;
+  }
+
+  if (request.method === "GET" && p === "/admin/api/c2/history") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const now = Math.floor(Date.now() / 1000);
+    const to = histParseDate(url.searchParams.get("to"), now);
+    const from = histParseDate(url.searchParams.get("from"), to - 30 * 86400);
+    // Clamp range to 366 days max
+    if (to - from > 366 * 86400) return json({ error: "Interval maxim: 366 zile." }, 400);
+    const src = String(url.searchParams.get("src") || "all");
+    const action = String(url.searchParams.get("action") || "").toLowerCase();
+    const okParam = url.searchParams.get("ok");
+    const q = String(url.searchParams.get("q") || "").toLowerCase();
+    const sort = String(url.searchParams.get("sort") || "at");
+    const dir = String(url.searchParams.get("dir") || "desc");
+    const limit = Math.min(parseInt(url.searchParams.get("limit")) || 50, 200);
+    const offset = Math.max(parseInt(url.searchParams.get("offset")) || 0, 0);
+    // Load shards
+    let rows = await histLoadShards(env, uid, from, to);
+    // Filter
+    if (src === "result" || src === "event") rows = rows.filter(r => r.src === src);
+    if (action) rows = rows.filter(r => r.action === action);
+    if (okParam === "true") rows = rows.filter(r => r.ok === true);
+    if (okParam === "false") rows = rows.filter(r => r.ok === false);
+    if (q) rows = rows.filter(r =>
+      r.snippet.includes(q) || r.pkg.toLowerCase().includes(q) || r.action.toLowerCase().includes(q) || r.err.toLowerCase().includes(q)
+    );
+    // Sort
+    const dirMult = dir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      let cmp = 0;
+      if (sort === "action") cmp = a.action.localeCompare(b.action);
+      else if (sort === "ok") cmp = (a.ok ? 1 : 0) - (b.ok ? 1 : 0);
+      else cmp = (a.at || 0) - (b.at || 0);
+      return cmp * dirMult;
+    });
+    const total = rows.length;
+    const page = rows.slice(offset, offset + limit);
+    const months = histMonthKeys(from, to);
+    return json({ rows: page, total, limit, offset, has_more: offset + limit < total, months });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/history/record") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    const key = String(url.searchParams.get("key") || "").replace(/[^a-zA-Z0-9._\/-]/g, "");
+    if (!uid || !key) return json({ error: "Lipsesc uid/key." }, 400);
+    // Validate key is within this uid's prefixes (no path traversal)
+    const allowed = ["r/" + uid + "/", "events/" + uid + "/"];
+    if (!allowed.some(prefix => key.startsWith(prefix))) return json({ error: "Key invalidă." }, 400);
+    const obj = await env.C2.get(key);
+    if (!obj) return json({ error: "Inexistent." }, 404);
+    if (key.endsWith(".jpg")) return new Response(obj.body, { headers: { "content-type": "image/jpeg", "content-disposition": 'inline; filename="' + key.split("/").pop() + '"' } });
+    try { return json(JSON.parse(await obj.text())); } catch (_) { return json({ error: "Parse error." }, 500); }
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/history/analyze") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const now = Math.floor(Date.now() / 1000);
+    const to = histParseDate(url.searchParams.get("to"), now);
+    const from = histParseDate(url.searchParams.get("from"), to - 30 * 86400);
+    if (to - from > 366 * 86400) return json({ error: "Interval maxim: 366 zile." }, 400);
+    const bucket = String(url.searchParams.get("bucket") || "day"); // day | hour
+    const bucketSize = bucket === "hour" ? 3600 : 86400;
+    let rows = await histLoadShards(env, uid, from, to);
+    // Timeline: per-bucket counts
+    const buckets = {};
+    let totalOk = 0, totalFail = 0;
+    const byAction = {};
+    const bySrc = { result: 0, event: 0 };
+    const batSum = { sum: 0, count: 0 };
+    for (const r of rows) {
+      const bk = Math.floor(r.at / bucketSize) * bucketSize;
+      if (!buckets[bk]) buckets[bk] = { count: 0, ok: 0, fail: 0 };
+      buckets[bk].count++;
+      if (r.ok === true) { buckets[bk].ok++; totalOk++; }
+      else if (r.ok === false) { buckets[bk].fail++; totalFail++; }
+      bySrc[r.src] = (bySrc[r.src] || 0) + 1;
+      const a = r.action || "unknown";
+      byAction[a] = (byAction[a] || 0) + 1;
+      if (r.bat > 0) { batSum.sum += r.bat; batSum.count++; }
+    }
+    // Sort buckets by time
+    const timeline = Object.entries(buckets)
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([k, v]) => ({ ts: Number(k), ...v }));
+    const byActionSorted = Object.entries(byAction).sort((a, b) => b[1] - a[1]).slice(0, 20)
+      .map(([k, v]) => ({ action: k, count: v }));
+    const total = totalOk + totalFail;
+    return json({
+      timeline,
+      totals: { total: rows.length, ok: totalOk, fail: totalFail, rate: total ? (totalOk / total * 100).toFixed(1) : "100" },
+      by_action: byActionSorted,
+      by_src: bySrc,
+      bat_avg: batSum.count ? (batSum.sum / batSum.count).toFixed(1) : null
+    });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/history/export") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const now = Math.floor(Date.now() / 1000);
+    const to = histParseDate(url.searchParams.get("to"), now);
+    const from = histParseDate(url.searchParams.get("from"), to - 30 * 86400);
+    const src = String(url.searchParams.get("src") || "all");
+    const action = String(url.searchParams.get("action") || "").toLowerCase();
+    const q = String(url.searchParams.get("q") || "").toLowerCase();
+    const fmt = String(url.searchParams.get("format") || "json");
+    const maxExport = Math.min(parseInt(url.searchParams.get("limit")) || 5000, 20000);
+    let rows = await histLoadShards(env, uid, from, to);
+    if (src === "result" || src === "event") rows = rows.filter(r => r.src === src);
+    if (action) rows = rows.filter(r => r.action === action);
+    if (q) rows = rows.filter(r => r.snippet.includes(q) || r.pkg.toLowerCase().includes(q) || r.action.toLowerCase().includes(q));
+    rows.sort((a, b) => (b.at || 0) - (a.at || 0));
+    rows = rows.slice(0, maxExport);
+    if (fmt === "csv") {
+      const headers = ["id", "src", "at", "datetime", "action", "ok", "err", "pkg", "bat", "snippet", "key"];
+      const csvRows = [headers.join(",")];
+      for (const r of rows) {
+        const dt = r.at ? new Date(r.at * 1000).toISOString() : "";
+        const esc = (v) => '"' + String(v || "").replace(/"/g, '""') + '"';
+        csvRows.push([esc(r.id), esc(r.src), esc(r.at), esc(dt), esc(r.action), esc(r.ok), esc(r.err), esc(r.pkg), esc(r.bat), esc(r.snippet), esc(r.key)].join(","));
+      }
+      logEvent(env, "EXPORT CSV: " + uid + " (" + rows.length + " rows)", 200, 0);
+      return new Response(csvRows.join("\n"), { headers: { "content-type": "text/csv", "content-disposition": 'attachment; filename="forja_history_' + uid.slice(0, 8) + '.csv"' } });
+    }
+    logEvent(env, "EXPORT JSON: " + uid + " (" + rows.length + " rows)", 200, 0);
+    return new Response(JSON.stringify(rows, null, 2), { headers: { "content-type": "application/json", "content-disposition": 'attachment; filename="forja_history_' + uid.slice(0, 8) + '.json"' } });
+  }
+  if (p === "/admin/api/c2/history/retention") {
+    if (request.method === "PUT") {
+      let body; try { body = await request.json(); } catch (_) { return json({ error: "Bad JSON." }, 400); }
+      const cfg = {
+        max_age_days: Math.max(0, Math.min(parseInt(body.max_age_days) || 0, 3650)),
+        warn_threshold_rows: Math.max(1000, parseInt(body.warn_threshold_rows) || 50000),
+        warn_threshold_bytes: Math.max(1048576, parseInt(body.warn_threshold_bytes) || 10485760),
+        delete_payloads: false // always false — user requirement
+      };
+      cfg.updated_at = Math.floor(Date.now() / 1000);
+      await env.C2.put("hist/_config.json", JSON.stringify(cfg));
+      logEvent(env, "RETENTION config updated", 200, 0);
+      return json({ ok: true, config: cfg });
+    }
+    // GET
+    const obj = await env.C2.get("hist/_config.json");
+    if (obj) { try { return json({ config: JSON.parse(await obj.text()) }); } catch (_) { } }
+    return json({ config: { max_age_days: 0, warn_threshold_rows: 50000, warn_threshold_bytes: 10485760, delete_payloads: false } });
+  }
+  if (request.method === "POST" && p === "/admin/api/c2/history/backfill") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    let indexedResults = 0, indexedEvents = 0, totalFiles = 0, skippedPings = 0, skippedDupes = 0;
+    const newRows = [];
+    const indexedKeys = new Set();
+    const now = Math.floor(Date.now() / 1000);
+    // Quick dedup check: load ONLY the current month's shard (1 GET, not 14)
+    {
+      const cmk = histMonthKey(now);
+      try {
+        const obj = await env.C2.get("hist/" + uid + "/" + cmk + ".json");
+        if (obj) { for (const r of JSON.parse(await obj.text())) indexedKeys.add(r.key); }
+      } catch (_) { }
+    }
+    // Scan r/{uid}/ — collect non-ping rows in memory
+    {
+      let cursor;
+      do {
+        const page = await env.C2.list({ prefix: "r/" + uid + "/", cursor, limit: 1000 });
+        for (const o of page.objects) {
+          if (o.key.endsWith("_index.json") || o.key.endsWith("_index_cmd.json")) continue;
+          if (o.key.includes("_hb_")) { skippedPings++; continue; }
+          totalFiles++;
+          if (indexedKeys.has(o.key)) { skippedDupes++; continue; }
+          try {
+            const rec = JSON.parse(await o.text());
+            if (rec.action === "ping") { skippedPings++; continue; }
+            const row = histBuildRow(rec, "result", o.key);
+            newRows.push(row);
+            indexedKeys.add(o.key);
+            indexedResults++;
+          } catch (_) { }
+        }
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+    }
+    // Scan events/{uid}/
+    {
+      let cursor;
+      do {
+        const page = await env.C2.list({ prefix: "events/" + uid + "/", cursor, limit: 1000 });
+        for (const o of page.objects) {
+          if (o.key.endsWith("_index.json") || o.key.endsWith("_shot.jpg")) continue;
+          totalFiles++;
+          if (indexedKeys.has(o.key)) { skippedDupes++; continue; }
+          try {
+            const rec = JSON.parse(await o.text());
+            const row = histBuildRow(rec, "event", o.key);
+            newRows.push(row);
+            indexedKeys.add(o.key);
+            indexedEvents++;
+          } catch (_) { }
+        }
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+    }
+    // Batch write: group by month, one GET+PUT per month shard
+    const byMonth = {};
+    for (const row of newRows) {
+      const mk = histMonthKey(row.at);
+      if (!byMonth[mk]) byMonth[mk] = [];
+      byMonth[mk].push(row);
+    }
+    for (const [mk, rows] of Object.entries(byMonth)) {
+      try {
+        const sk = "hist/" + uid + "/" + mk + ".json";
+        const obj = await env.C2.get(sk);
+        let shard = [];
+        if (obj) { try { shard = JSON.parse(await obj.text()); } catch (_) { shard = []; } }
+        shard.unshift(...rows);
+        await env.C2.put(sk, JSON.stringify(shard));
+      } catch (e) { c2log("backfill.write_error", uid, mk + ": " + ((e && e.message) || "")); }
+    }
+    c2log("backfill", uid, "files=" + totalFiles + " newR=" + indexedResults + " newE=" + indexedEvents + " skipPing=" + skippedPings + " skipDup=" + skippedDupes);
+    return json({ ok: true, indexed_results: indexedResults, indexed_events: indexedEvents, total_files: totalFiles, skipped_pings: skippedPings, skipped_duplicates: skippedDupes, months: Object.keys(byMonth) });
+  }
+  if (request.method === "GET" && p === "/admin/api/c2/history/storage") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    const uids = uid ? [uid] : (async () => { try { const o = await env.C2.get("registry.json"); return o ? JSON.parse(await o.text()) : []; } catch (_) { return []; } })();
+    const deviceList = await (Array.isArray(uids) ? uids : [uids]);
+    const devices = [];
+    for (const u of deviceList.slice(0, 10)) {
+      const prefixes = { results: "r/" + u + "/", events: "events/" + u + "/", history: "hist/" + u + "/" };
+      const stats = {};
+      for (const [label, prefix] of Object.entries(prefixes)) {
+        let count = 0, bytes = 0, cursor;
+        do {
+          const page = await env.C2.list({ prefix, cursor, limit: 1000 });
+          for (const o of page.objects) { count++; bytes += o.size || 0; }
+          cursor = page.truncated ? page.cursor : undefined;
+        } while (cursor);
+        stats[label] = { count, bytes };
+      }
+      const totalBytes = Object.values(stats).reduce((s, v) => s + v.bytes, 0);
+      const totalObjects = Object.values(stats).reduce((s, v) => s + v.count, 0);
+      let warning = null;
+      if (totalObjects > 5000) warning = totalObjects + " obiecte — depășește pragul de avertizare (5000).";
+      else if (totalBytes > 50 * 1048576) warning = (totalBytes / 1048576).toFixed(1) + " MB — depășește pragul de avertizare (50 MB).";
+      devices.push({ uid: u, stats, total_objects: totalObjects, total_bytes: totalBytes, warning });
+    }
+    return json({ devices });
+  }
+  if (request.method === "POST" && p === "/admin/api/c2/history/reconcile") {
+    const uid = c2Safe(url.searchParams.get("uid"));
+    if (!uid) return json({ error: "Lipsește uid." }, 400);
+    const result = await histReconcile(env, uid);
+    logEvent(env, "RECONCILE: " + uid.slice(0, 8) + " recovered=" + (result.recovered || 0), 200, 0);
+    return json(result);
   }
   return json({ error: "Rută necunoscută." }, 404);
 }
@@ -2334,7 +2857,7 @@ button.mini.on{background:var(--amber);color:#000;border-color:var(--amber)}
 .fg-card .fg-name{font-weight:700;font-size:14px}
 .fg-card .fg-pkg{font-size:11px;color:var(--dim2);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </style></head><body>
-<nav class="nav"><a href="/admin">Admin</a><span style="color:var(--dim2)">·</span><b>C2</b></nav>
+<nav class="nav"><a href="/admin">Admin</a><span style="color:var(--dim2)">·</span><b>C2</b><span style="color:var(--dim2)">·</span><a href="/admin/c2/history" style="color:var(--amber);text-decoration:none">Istoric</a></nav>
 <main>
 <h1>FORJA <b>C2</b></h1>
 <div class="sub">Control remote · comandă și monitorizare</div>
@@ -3343,6 +3866,203 @@ function c2Page() {
   });
 }
 
+const HISTORY_HTML = String.raw`<!doctype html>
+<html lang="ro"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FORJA · Istoric C2</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--dim:#8b949e;--accent:#58a6ff;--green:#3fb950;--red:#f85149;--yellow:#d29922;--purple:#bc8cff}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}
+.wrap{max-width:1200px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin-bottom:12px}
+h1 a{color:var(--accent);text-decoration:none;font-size:14px}
+.login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:99}
+.login-box{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px;width:320px}
+.login-box h2{font-size:16px;margin-bottom:12px}
+.login-box input{width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);margin-bottom:8px}
+.login-box button{width:100%;padding:8px;border:none;border-radius:4px;background:var(--accent);color:#fff;cursor:pointer}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.row label{color:var(--dim);font-size:12px;white-space:nowrap}
+select,input[type=date],input[type=text]{padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px}
+select{min-width:120px}
+button{padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);cursor:pointer;font-size:13px}
+button:hover{background:var(--border)}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+button.warn{background:var(--yellow);color:#000;border-color:var(--yellow)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);color:var(--dim);font-weight:500;white-space:nowrap}
+td{padding:5px 8px;border-bottom:1px solid #21262d}
+tr:hover td{background:#1c2128}
+.badge{display:inline-block;padding:2px 6px;border-radius:10px;font-size:11px;font-weight:600}
+.badge.ok{background:#1a3a2a;color:var(--green)}
+.badge.fail{background:#3a1a1a;color:var(--red)}
+.badge.event{background:#1a2a3a;color:var(--accent)}
+.badge.result{background:#2a1a3a;color:var(--purple)}
+.pager{display:flex;gap:8px;align-items:center;margin-top:8px;font-size:13px;color:var(--dim)}
+.pager button{padding:4px 10px}
+.drawer{position:fixed;right:0;top:0;bottom:0;width:480px;max-width:90vw;background:var(--card);border-left:1px solid var(--border);overflow-y:auto;z-index:50;display:none}
+.drawer.open{display:block}
+.drawer h3{padding:12px 16px;border-bottom:1px solid var(--border)}
+.drawer pre{padding:16px;font-size:12px;white-space:pre-wrap;word-break:break-all;color:var(--dim)}
+.drawer .close{position:absolute;top:8px;right:12px;cursor:pointer;font-size:20px;color:var(--dim)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.stat{text-align:center;padding:12px;background:var(--bg);border-radius:6px;border:1px solid var(--border)}
+.stat .val{font-size:22px;font-weight:700}
+.stat .lbl{font-size:11px;color:var(--dim);margin-top:2px}
+.bar-chart{display:flex;align-items:flex-end;gap:2px;height:80px;margin-top:8px}
+.bar-chart .bar{flex:1;background:var(--accent);min-width:3px;border-radius:2px 2px 0 0;transition:height .3s}
+.bar-chart .bar.fail{background:var(--red)}
+.hbar-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
+.hbar-row .lbl{width:100px;text-align:right;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hbar-row .bar-bg{flex:1;height:14px;background:var(--bg);border-radius:3px;overflow:hidden}
+.hbar-row .bar-fill{height:100%;background:var(--accent);border-radius:3px}
+.warn-box{background:#2a2510;border:1px solid var(--yellow);border-radius:6px;padding:10px;margin-top:8px;font-size:13px}
+.tab{padding:4px 10px;border-radius:4px;cursor:pointer;font-size:13px;color:var(--dim)}
+.tab.active{background:var(--accent);color:#fff}
+.tabs{display:flex;gap:4px;margin-bottom:12px}
+</style></head><body>
+<div class="login" id="login"><div class="login-box">
+<h2>FORJA · Istoric C2</h2>
+<input type="password" id="key" placeholder="Cheie de admin" autofocus>
+<button onclick="saveKey()">Autentifică-te</button>
+</div></div>
+<div class="wrap" id="main" style="display:none">
+<h1><a href="/admin/c2">← Panou C2</a> · Istoric &amp; Interogări</h1>
+
+<div class="card">
+<div class="row">
+<label>Dispositiv</label><select id="dev" onchange="onDev()"><option value="">—</option></select>
+<label>Din</label><input type="date" id="dFrom">
+<label>Până</label><input type="date" id="dTo">
+<span id="presets">
+<button onclick="preset(1)">24h</button>
+<button onclick="preset(7)">7z</button>
+<button onclick="preset(30)">30z</button>
+<button onclick="preset(90)">90z</button>
+<button onclick="preset(0)">Tot</button>
+</span>
+</div>
+<div class="row">
+<label>Sursă</label><select id="fSrc" onchange="loadPage(0)">
+<option value="all">Toate</option><option value="result">Rezultate</option><option value="event">Evenimente</option>
+</select>
+<label>Acțiune</label><select id="fAction" onchange="loadPage(0)"><option value="">Toate</option></select>
+<label>Status</label><select id="fOk" onchange="loadPage(0)">
+<option value="">Toate</option><option value="true">OK</option><option value="false">Eșec</option>
+</select>
+<label>Căutare</label><input type="text" id="fQ" placeholder="snippet, pkg, acțiune..." style="width:140px">
+<button class="primary" onclick="loadPage(0)">Filtrează</button>
+<span style="flex:1"></span>
+<button onclick="exp('json')">Export JSON</button>
+<button onclick="exp('csv')">Export CSV</button>
+</div>
+</div>
+
+<div class="card" id="tableCard">
+<table><thead><tr>
+<th>Data</th><th>Sursă</th><th>Acțiune</th><th>Status</th><th>Pkg</th><th>Snippet</th><th></th>
+</tr></thead><tbody id="tbody"><tr><td colspan="7" style="text-align:center;color:var(--dim)">Selectează un dispozitiv și filtrează.</td></tr></tbody></table>
+<div class="pager" id="pager"></div>
+</div>
+
+<div class="tabs">
+<span class="tab active" onclick="showTab('table')">Tabel</span>
+<span class="tab" onclick="showTab('analytics')">Analitică</span>
+<span class="tab" onclick="showTab('retention')">Retenție &amp; Stocare</span>
+</div>
+
+<div id="analytics" style="display:none">
+<div class="card" id="statCards"><div class="stats" id="statGrid"></div></div>
+<div class="card"><h3 style="margin-bottom:8px">Comenzi pe interval</h3>
+<div class="bar-chart" id="timeline"></div>
+<div id="timelineLabels" style="display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:4px"></div>
+</div>
+<div class="card"><h3 style="margin-bottom:8px">Activitate pe acțiune</h3><div id="byAction"></div></div>
+</div>
+
+<div id="retention" style="display:none">
+<div class="card">
+<h3 style="margin-bottom:8px">Configurație retenție</h3>
+<div id="retCfg" style="font-size:13px;color:var(--dim);margin-bottom:8px"></div>
+<div class="row">
+<label>max_age_days (0=∞)</label><input type="text" id="rDays" style="width:60px">
+<label>warn_rows</label><input type="text" id="rRows" style="width:80px">
+<button class="primary" onclick="saveRet()">Salvează</button>
+</div>
+</div>
+<div class="card">
+<h3 style="margin-bottom:8px">Stocare</h3>
+<div id="storageInfo" style="font-size:13px;color:var(--dim)"></div>
+<div class="row" style="margin-top:8px">
+<button onclick="doBackfill()">Populează istoricul</button>
+<button onclick="doReconcile()">Reconciliază</button>
+<button onclick="doStorage()">Verifică stocarea</button>
+</div>
+<div id="opResult" style="margin-top:8px;font-size:13px"></div>
+</div>
+</div>
+</div>
+
+<div class="drawer" id="drawer">
+<span class="close" onclick="closeDrawer()">&times;</span>
+<h3 id="drawerTitle"></h3>
+<pre id="drawerBody"></pre>
+</div>
+
+<script>
+var KEY="",uid="",page=0,limit=50,actionsLoaded=false;
+function esc(s){var d=document.createElement("div");d.textContent=s;return d.innerHTML}
+function saveKey(){KEY=document.getElementById("key").value.trim();if(!KEY)return alert("Cheie lipsă");sessionStorage.setItem("hk",KEY);document.getElementById("login").style.display="none";document.getElementById("main").style.display="block";loadDevices()}
+async function api(p,o){o=o||{};var h=o.headers||{};h["X-Admin"]=KEY;var res=await fetch(p,Object.assign({},o,{headers:h}));var ct=res.headers.get("content-type")||"";if(ct.includes("json"))return res.json();return res.text()}
+function dstr(ts){if(!ts)return"—";var d=new Date(ts*1000);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")+" "+String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")}
+async function loadDevices(){var r=await api("/admin/api/c2/devices");var sel=document.getElementById("dev");sel.innerHTML="<option value=''>—</option>";(r.devices||[]).forEach(function(d){var o=document.createElement("option");o.value=d.uid;o.textContent=d.label+" ("+d.uid.slice(0,8)+")";sel.appendChild(o)});var today=new Date();var nowMs=today.getTime();var fromD=new Date(nowMs-30*86400000);document.getElementById("dTo").value=fromD.getFullYear()+"-"+String(fromD.getMonth()+1).padStart(2,"0")+"-"+String(fromD.getDate()).padStart(2,"0");document.getElementById("dFrom").value=new Date(nowMs-30*86400000).toISOString().slice(0,10);document.getElementById("dTo").value=today.toISOString().slice(0,10)}
+function onDev(){uid=document.getElementById("dev").value;page=0;if(uid){loadPage(0);loadActions();loadAnalytics()}}
+function preset(days){var now=new Date(),from=new Date(now.getTime()-(days||366*86400000));document.getElementById("dFrom").value=from.toISOString().slice(0,10);document.getElementById("dTo").value=now.toISOString().slice(0,10);if(uid)loadPage(0)}
+function fdate(v){if(!v)return"";var d=new Date(v+"T00:00:00Z");return Math.floor(d.getTime()/1000)}
+async function loadPage(pg){if(!uid)return;page=pg||0;var from=fdate(document.getElementById("dFrom").value);var to=fdate(document.getElementById("dTo").value)+86400;if(!from||!to){from=Math.floor(Date.now()/1000)-30*86400;to=Math.floor(Date.now()/1000)}
+var p="/admin/api/c2/history?uid="+encodeURIComponent(uid)+"&from="+from+"&to="+to+"&limit="+limit+"&offset="+page;
+var s=document.getElementById("fSrc").value;if(s!=="all")p+="&src="+s;
+var a=document.getElementById("fAction").value;if(a)p+="&action="+a;
+var ok=document.getElementById("fOk").value;if(ok)p+="&ok="+ok;
+var q=document.getElementById("fQ").value.trim().toLowerCase();if(q)p+="&q="+encodeURIComponent(q);
+var r=await api(p);renderTable(r)}
+function renderTable(r){var tb=document.getElementById("tbody");tb.innerHTML="";if(!r.rows||!r.rows.length){tb.innerHTML="<tr><td colspan='7' style='text-align:center;color:var(--dim)'>Nicio înregistrare găsită.</td></tr>";document.getElementById("pager").textContent="";return}
+r.rows.forEach(function(row){var tr=document.createElement("tr");var st="—";if(row.ok===true)st='<span class="badge ok">OK</span>';else if(row.ok===false)st='<span class="badge fail">FAIL</span>';
+tr.innerHTML="<td>"+esc(dstr(row.at))+"</td><td><span class='badge "+row.src+"'>"+row.src+"</span></td><td>"+esc(row.action)+"</td><td>"+st+"</td><td>"+esc(row.pkg||"—")+"</td><td style='max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' title='"+esc(row.snippet)+"'>"+esc(row.snippet||"—")+"</td><td><button onclick=\"viewRec('"+esc(row.key)+"','"+esc(row.id)+"')\">verifică</button></td>";
+tb.appendChild(tr)});
+var pg=document.getElementById("pager");var pgs=Math.ceil(r.total/limit);var btns="";if(page>0)btns+="<button onclick='loadPage("+(page-1)+")'>←</button>";btns+=" Pagina "+(page+1)+"/"+pgs+" ("+r.total+" total)";if(page<pgs-1)btns+="<button onclick='loadPage("+(page+1)+")'>→</button>";pg.innerHTML=btns}
+async function viewRec(key,id){var r=await api("/admin/api/c2/history/record?uid="+encodeURIComponent(uid)+"&key="+encodeURIComponent(key));document.getElementById("drawerTitle").textContent=id||key.split("/").pop();document.getElementById("drawerBody").textContent=JSON.stringify(r,null,2);document.getElementById("drawer").classList.add("open")}
+function closeDrawer(){document.getElementById("drawer").classList.remove("open")}
+function showTab(name){document.querySelectorAll(".tab").forEach(function(t){t.classList.remove("active")});event.target.classList.add("active");document.getElementById("tableCard").style.display=name==="table"?"":"none";document.getElementById("analytics").style.display=name==="analytics"?"":"none";document.getElementById("retention").style.display=name==="retention"?"":"none";if(name==="retention")loadRetention()}
+async function loadActions(){if(actionsLoaded)return;var r=await api("/admin/api/c2/history?uid="+encodeURIComponent(uid)+"&limit=200");var set=new Set();(r.rows||[]).forEach(function(row){set.add(row.action)});var sel=document.getElementById("fAction");var cur=sel.value;[...set].sort().forEach(function(a){var o=document.createElement("option");o.value=a;o.textContent=a;sel.appendChild(o)});sel.value=cur;actionsLoaded=true}
+async function loadAnalytics(){if(!uid)return;var now=Math.floor(Date.now()/1000);var from=now-30*86400;var r=await api("/admin/api/c2/history/analyze?uid="+encodeURIComponent(uid)+"&from="+from+"&to="+now+"&bucket=day");
+var grid=document.getElementById("statGrid");var t=r.totals||{};grid.innerHTML="<div class='stat'><div class='val'>"+(t.total||0)+"</div><div class='lbl'>Total</div></div><div class='stat'><div class='val' style='color:var(--green)'>"+(t.ok||0)+"</div><div class='lbl'>OK</div></div><div class='stat'><div class='val' style='color:var(--red)'>"+(t.fail||0)+"</div><div class='lbl'>Eșec</div></div><div class='stat'><div class='val'>"+(t.rate||"100")+"%</div><div class='lbl'>Rată OK</div></div><div class='stat'><div class='val'>"+(r.bat_avg||"—")+"</div><div class='lbl'>Bat. med.</div></div>";
+var tl=document.getElementById("timeline");tl.innerHTML="";var max=1;(r.timeline||[]).forEach(function(b){if(b.count>max)max=b.count});(r.timeline||[]).forEach(function(b){var h=Math.max(2,Math.round(b.count/max*80));var div=document.createElement("div");div.className="bar";if(b.fail>0)div.className="bar fail";div.style.height=h+"px";div.title=dstr(b.ts)+" — "+b.count+" ("+b.ok+" OK, "+b.fail+" fail)";tl.appendChild(div)});
+var labels=document.getElementById("timelineLabels");labels.innerHTML="";if(r.timeline&&r.timeline.length>1){var f=document.createElement("span");f.textContent=dstr(r.timeline[0].ts).slice(5);labels.appendChild(f);var la=document.createElement("span");la.textContent=dstr(r.timeline[r.timeline.length-1].ts).slice(5);labels.appendChild(la)}
+var ba=document.getElementById("byAction");ba.innerHTML="";(r.by_action||[]).forEach(function(a){var pct=max?(a.count/max*100):0;ba.innerHTML+="<div class='hbar-row'><span class='lbl'>"+esc(a.action)+"</span><div class='bar-bg'><div class='bar-fill' style='width:"+pct+"%'></div></div><span>"+a.count+"</span></div>"});
+document.getElementById("analytics").style.display="block";document.querySelectorAll(".tab").forEach(function(t){t.classList.remove("active")});document.querySelectorAll(".tab")[1].classList.add("active")}
+async function exp(fmt){if(!uid)return;var now=Math.floor(Date.now()/1000);var from=fdate(document.getElementById("dFrom").value)||now-30*86400;var to=(fdate(document.getElementById("dTo").value)||now)+86400;
+var p="/admin/api/c2/history/export?uid="+encodeURIComponent(uid)+"&from="+from+"&to="+to+"&format="+fmt;
+var s=document.getElementById("fSrc").value;if(s!=="all")p+="&src="+s;
+var a=document.getElementById("fAction").value;if(a)p+="&action="+a;
+var q=document.getElementById("fQ").value.trim().toLowerCase();if(q)p+="&q="+encodeURIComponent(q);
+var res=await fetch(p,{headers:{"X-Admin":KEY}});var blob=await res.blob();var url=URL.createObjectURL(blob);var link=document.createElement("a");link.href=url;link.download="forja_history_"+uid.slice(0,8)+"."+fmt;link.click();URL.revokeObjectURL(url)}
+async function loadRetention(){var r=await api("/admin/api/c2/history/retention");var c=r.config||{};document.getElementById("rDays").value=c.max_age_days||0;document.getElementById("rRows").value=c.warn_threshold_rows||50000;document.getElementById("retCfg").textContent="max_age: "+(c.max_age_days||0)+" zile | warn_rows: "+(c.warn_threshold_rows||50000)+" | delete_payloads: "+(c.delete_payloads?"DA (NECITIT)":"NU (default)")}
+async function saveRet(){if(!uid)return;var d=parseInt(document.getElementById("rDays").value)||0;var r=parseInt(document.getElementById("rRows").value)||50000;var resp=await api("/admin/api/c2/history/retention",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({max_age_days:d,warn_threshold_rows:r})});alert("Salvat: "+JSON.stringify(resp.config))}
+async function doBackfill(){if(!uid)return;document.getElementById("opResult").textContent="Rulează...";var r=await api("/admin/api/c2/history/backfill?uid="+encodeURIComponent(uid),{method:"POST"});document.getElementById("opResult").textContent="Backfill: "+(r.indexed_results||0)+" rezultate + "+(r.indexed_events||0)+" evenimente (total "+(r.total_files||0)+" fișiere)"}
+async function doReconcile(){if(!uid)return;document.getElementById("opResult").textContent="Rulează...";var r=await api("/admin/api/c2/history/reconcile?uid="+encodeURIComponent(uid),{method:"POST"});document.getElementById("opResult").textContent="Reconciliere: scanate "+(r.scanned_results||0)+" rez + "+(r.scanned_events||0)+" evt, recuperate "+(r.recovered||0)+", erori parse "+(r.parse_errors||0)}
+async function doStorage(){if(!uid)return;var r=await api("/admin/api/c2/history/storage?uid="+encodeURIComponent(uid));var devs=r.devices||[];var h="";devs.forEach(function(d){h+="<div style='margin-bottom:4px'><b>"+esc(d.uid.slice(0,8))+"</b>: "+(d.total_objects||0)+" obiecte, "+((d.total_bytes||0)/1048576).toFixed(1)+" MB</div>";if(d.warning)h+="<div class='warn-box'>⚠ "+esc(d.warning)+"</div>"});document.getElementById("storageInfo").innerHTML=h}
+if(sessionStorage.getItem("hk")){KEY=sessionStorage.getItem("hk");document.getElementById("login").style.display="none";document.getElementById("main").style.display="block";loadDevices()}
+</script>
+</body></html>`;
+
+function historyPage() {
+  return new Response(HISTORY_HTML, {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
 async function route(request, env, url, ctx, auth = requireUser) {
     if (request.method === "GET" && url.pathname === "/") {
       const order = providers(env).map((p) => p.name);
@@ -3363,6 +4083,7 @@ async function route(request, env, url, ctx, auth = requireUser) {
     // ── Panoul de administrare (web) + API-ul lui — protejat cu cheia de admin ──
     if (request.method === "GET" && url.pathname === "/admin") return adminPage();
     if (request.method === "GET" && url.pathname === "/admin/c2") return c2Page();
+    if (request.method === "GET" && url.pathname === "/admin/c2/history") return historyPage();
     if (url.pathname.startsWith("/admin/api/")) return handleAdminApi(request, env, url);
 
     // ── Media licențiată (Adobe Stock FREE, fără watermark) — publică, cache lung ──
@@ -3463,7 +4184,7 @@ async function route(request, env, url, ctx, auth = requireUser) {
 }
 
 // Pentru teste (node:test): rutarea cu autentificare injectată + curățenia.
-export { route, purgeExpired, cleanTranscript, sanitizeOrganize, normalizeOrganizeItem, mapClipVerdict, timelineFacts, dropUnknownQuotes };
+export { route, purgeExpired, cleanTranscript, sanitizeOrganize, normalizeOrganizeItem, mapClipVerdict, timelineFacts, dropUnknownQuotes, histAppend, histBuildRow, histMonthKey, histMonthKeys, histLoadShards, histReconcile };
 
 export default {
   async fetch(request, env, ctx) {
@@ -3490,5 +4211,17 @@ export default {
       const n = await purgeExpired(env);
       if (n > 0) await logEvent(env, "CRON: înregistrări expirate șterse (" + n + ")", 200, 0);
     } catch (_) { }
+    // Reconcile C2 history indexes (self-heal from concurrent-write gaps)
+    try {
+      if (env.C2) {
+        const regObj = await env.C2.get("registry.json");
+        if (regObj) {
+          const uids = JSON.parse(await regObj.text());
+          for (const uid of (Array.isArray(uids) ? uids : []).slice(0, 10)) {
+            try { await histReconcile(env, uid); } catch (e) { c2log("cron.reconcile_error", uid, (e && e.message) || ""); }
+          }
+        }
+      }
+    } catch (e) { c2log("cron.reconcile_error", "", (e && e.message) || ""); }
   },
 };
